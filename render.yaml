@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: technoline-english-teacher
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_LIVE_MODEL
+        value: models/gemini-3.8-live
+      - key: GEMINI_VOICE
+        value: Aoede
+      - key: TECHNOLINE_CHANNEL_ID
+        value: 2614d922d06b4f
+      - key: TECHNOLINE_BEARER_SECRET
+        generateValue: true
+      - key: ADMIN_BEARER_SECRET
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /app/data/progress.db
+      - key: STORE_TRANSCRIPTS
+        value: "false"
+      - key: MAX_CALL_MINUTES
+        value: "15"
+    disk:
+      name: tutor-progress
+      mountPath: /app/data
+      sizeGB: 1
