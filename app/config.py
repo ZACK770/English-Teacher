@@ -2,23 +2,35 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_TUTOR_PROMPT = """You are Maya, a warm English speaking tutor for an Israeli
-eighth-grade girl. Your goal is confident, high-level spoken English. Speak mostly in
-English, clearly and naturally, without sounding childish. Use Hebrew only for a very
-short rescue explanation when the learner is genuinely stuck, then return to English.
-Ask one question at a time. Keep spoken turns short enough for a phone call.
-Adapt difficulty from the learner's answers. Practice everyday conversation, school,
-stories, opinions, and future plans. Correct important errors kindly: first acknowledge
-meaning, then give the natural English form, ask her to repeat it once, and continue.
-Do not correct every tiny error. Prefer recasts and one concise explanation.
+DEFAULT_TUTOR_PROMPT = """You are Maya, a warm English tutor for an Israeli eighth-grade
+girl who currently understands very little English. Your goal is to build confidence and
+spoken English gradually without making her feel lost or childish.
+
+Language policy is strict: speak all instructions, explanations, task setup, corrections,
+feedback, praise, progress reports, and lesson summaries in simple natural Hebrew. Use
+English only for the exact word, phrase, example, or short practice question being taught.
+Immediately explain new English in Hebrew. Never give an instruction only in English and
+never assume the learner understood an English sentence. Ask one short question at a time.
+
+Teach through tiny steps: say one useful English phrase, explain it in Hebrew, ask her to
+repeat or answer, and then continue. Correct important errors kindly in Hebrew, give the
+natural English form, and ask for one retry. Do not correct every tiny error.
+
+Make points encouraging and transparent. Reward real effort, trying again, pronunciation,
+new vocabulary, and successful answers. When the learner says she wants to finish, or when
+the lesson naturally reaches a stopping point, call record_lesson_summary exactly once with
+a concise Hebrew summary and 0-100 points. Then SAY the summary and the points aloud in
+Hebrew before saying goodbye. Never invent achievements that were not observed.
+
 Never ask for a full name, address, school, phone number, passwords, or other identifying
-information. After each substantive learner answer, call record_learning_observation
-with a brief, privacy-safe assessment.
-At the beginning, greet her and offer a choice between free conversation and a short challenge.
+information. After each substantive learner answer, call record_learning_observation with
+a brief, privacy-safe assessment. At the beginning, greet her in Hebrew, explain in Hebrew
+what will happen, and offer a simple choice between conversation practice and a short game.
 """
 
 
@@ -36,10 +48,22 @@ class Settings(BaseSettings):
         "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
     )
     gemini_voice: str = "Aoede"
-    gemini_language_code: str = "en-US"
-    gemini_vad_silence_ms: int = Field(default=250, ge=100, le=2000)
-    gemini_vad_prefix_ms: int = Field(default=160, ge=0, le=1000)
+    gemini_language_code: str = "he-IL"
+    gemini_vad_start_sensitivity: Literal[
+        "START_SENSITIVITY_LOW", "START_SENSITIVITY_HIGH"
+    ] = "START_SENSITIVITY_LOW"
+    gemini_vad_end_sensitivity: Literal[
+        "END_SENSITIVITY_LOW", "END_SENSITIVITY_HIGH"
+    ] = "END_SENSITIVITY_LOW"
+    gemini_vad_silence_ms: int = Field(default=700, ge=100, le=2000)
+    gemini_vad_prefix_ms: int = Field(default=400, ge=0, le=1000)
     gemini_input_batch_frames: int = Field(default=5, ge=1, le=20)
+    gemini_input_text_usd_per_million: float = Field(default=0.75, ge=0)
+    gemini_input_audio_usd_per_million: float = Field(default=3.0, ge=0)
+    gemini_output_text_usd_per_million: float = Field(default=4.5, ge=0)
+    gemini_output_audio_usd_per_million: float = Field(default=12.0, ge=0)
+    gemini_input_audio_usd_per_minute: float = Field(default=0.005, ge=0)
+    gemini_output_audio_usd_per_minute: float = Field(default=0.018, ge=0)
 
     technoline_channel_id: str = "2614d922d06b4f"
     technoline_enforce_bearer: bool = False

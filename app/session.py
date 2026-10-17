@@ -12,7 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .audio import downsample_24k_to_8k, upsample_8k_to_16k
 from .config import Settings
 from .gemini_live import GeminiLive
-from .progress import Observation, ProgressStore
+from .progress import LessonSummary, Observation, ProgressStore, UsageTotals
 from .technoline import StartFrame
 
 LOGGER = logging.getLogger(__name__)
@@ -45,7 +45,15 @@ class TutorSession:
         self.learner_turns = 0
         self.tutor_turns = 0
         self.observations: list[Observation] = []
+        self.lesson_summary: LessonSummary | None = None
         self.transcript: list[dict[str, str]] = []
+        self.input_text_tokens = 0
+        self.input_audio_tokens = 0
+        self.output_text_tokens = 0
+        self.output_audio_tokens = 0
+        self.thoughts_tokens = 0
+        self.input_audio_bytes = 0
+        self.output_audio_bytes = 0
         self._out: collections.deque[bytes] = collections.deque()
         self._partial = b""
         self._resample_carry = b""
@@ -72,6 +80,9 @@ class TutorSession:
                 tutor_turns=self.tutor_turns,
                 observations=self.observations,
                 transcript=self.transcript if self.settings.store_transcripts else None,
+                summary=self.lesson_summary or self._fallback_summary(),
+                usage=self._usage_totals(),
+                model=self.settings.gemini_live_model,
             )
 
     async def _bridge(self, ai: GeminiLive) -> None:
@@ -104,7 +115,9 @@ class TutorSession:
                     continue
                 batch.append(audio)
                 if len(batch) >= self.settings.gemini_input_batch_frames:
-                    await ai.send_audio(upsample_8k_to_16k(b"".join(batch)))
+                    pcm16k = upsample_8k_to_16k(b"".join(batch))
+                    self.input_audio_bytes += len(pcm16k)
+                    await ai.send_audio(pcm16k)
                     batch.clear()
                 continue
             text = message.get("text")
@@ -121,6 +134,7 @@ class TutorSession:
         async for event in ai.events():
             kind = event["type"]
             if kind == "audio":
+                self.output_audio_bytes += len(event["pcm24k"])
                 pcm8, self._resample_carry = downsample_24k_to_8k(
                     event["pcm24k"], self._resample_carry
                 )
@@ -143,8 +157,10 @@ class TutorSession:
                 self._learner_seen_this_turn = False
             elif kind == "tool_call":
                 for call in event["calls"]:
-                    saved = self._record_observation(call)
+                    saved = self._record_tool_call(call)
                     await ai.submit_tool_result(call, saved)
+            elif kind == "usage":
+                self._record_usage(event["usage"])
             elif kind == "go_away":
                 LOGGER.warning("Gemini requested session close: %s", event.get("detail"))
                 raise CallEnded
@@ -165,7 +181,9 @@ class TutorSession:
             self._out.append(data[offset : offset + FRAME_BYTES])
         self._partial = data[whole:]
 
-    def _record_observation(self, call: dict) -> bool:
+    def _record_tool_call(self, call: dict) -> bool:
+        if call.get("name") == "record_lesson_summary":
+            return self._record_summary(call)
         if call.get("name") != "record_learning_observation":
             return False
         try:
@@ -181,3 +199,114 @@ class TutorSession:
             return False
         self.observations.append(observation)
         return True
+
+    def _record_summary(self, call: dict) -> bool:
+        try:
+            arguments = call.get("args") or {}
+            self.lesson_summary = LessonSummary(
+                summary_he=str(arguments["summary_he"]).strip()[:500],
+                success_he=str(arguments["success_he"]).strip()[:300],
+                next_step_he=str(arguments["next_step_he"]).strip()[:300],
+                points=max(0, min(100, int(arguments["points"]))),
+            )
+        except (KeyError, TypeError, ValueError):
+            LOGGER.warning("Ignoring malformed lesson summary")
+            return False
+        return True
+
+    @staticmethod
+    def _modality_tokens(details: object, modality: str) -> int:
+        if not isinstance(details, list):
+            return 0
+        total = 0
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("modality", "")).upper() == modality:
+                total += TutorSession._safe_nonnegative_int(item.get("tokenCount"))
+        return total
+
+    @staticmethod
+    def _safe_nonnegative_int(value: object) -> int:
+        try:
+            return max(0, int(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+
+    def _record_usage(self, usage: dict) -> None:
+        self.input_text_tokens += self._modality_tokens(
+            usage.get("promptTokensDetails"), "TEXT"
+        )
+        self.input_audio_tokens += self._modality_tokens(
+            usage.get("promptTokensDetails"), "AUDIO"
+        )
+        self.output_text_tokens += self._modality_tokens(
+            usage.get("responseTokensDetails"), "TEXT"
+        )
+        self.output_audio_tokens += self._modality_tokens(
+            usage.get("responseTokensDetails"), "AUDIO"
+        )
+        self.thoughts_tokens += self._safe_nonnegative_int(
+            usage.get("thoughtsTokenCount")
+        )
+
+    def _fallback_summary(self) -> LessonSummary:
+        points = min(
+            100,
+            self.learner_turns * 5
+            + sum(observation.score * 2 for observation in self.observations),
+        )
+        if self.observations:
+            best = max(self.observations, key=lambda item: item.score)
+            correction = next(
+                (item.correction for item in reversed(self.observations) if item.correction),
+                "להמשיך לתרגל משפטים קצרים בקול.",
+            )
+            return LessonSummary(
+                summary_he=f"בשיחה תורגלו {len(self.observations)} מיומנויות באנגלית.",
+                success_he=best.result or "הייתה השתתפות טובה בתרגול.",
+                next_step_he=correction,
+                points=points,
+            )
+        return LessonSummary(
+            summary_he="השיחה הסתיימה לפני שנאסף מספיק מידע לסיכום מלא.",
+            success_he="עצם הכניסה לתרגול היא התחלה טובה.",
+            next_step_he="בשיחה הבאה נתחיל ממשפט אנגלי קצר אחד.",
+            points=points,
+        )
+
+    def _usage_totals(self) -> UsageTotals:
+        if any(
+            (
+                self.input_text_tokens,
+                self.input_audio_tokens,
+                self.output_text_tokens,
+                self.output_audio_tokens,
+                self.thoughts_tokens,
+            )
+        ):
+            cost = (
+                self.input_text_tokens * self.settings.gemini_input_text_usd_per_million
+                + self.input_audio_tokens * self.settings.gemini_input_audio_usd_per_million
+                + (self.output_text_tokens + self.thoughts_tokens)
+                * self.settings.gemini_output_text_usd_per_million
+                + self.output_audio_tokens * self.settings.gemini_output_audio_usd_per_million
+            ) / 1_000_000
+            basis = "gemini_usage_metadata"
+        else:
+            input_minutes = self.input_audio_bytes / (16_000 * 2 * 60)
+            output_minutes = self.output_audio_bytes / (24_000 * 2 * 60)
+            cost = (
+                input_minutes * self.settings.gemini_input_audio_usd_per_minute
+                + output_minutes * self.settings.gemini_output_audio_usd_per_minute
+            )
+            basis = "audio_duration_estimate" if cost else "none"
+        return UsageTotals(
+            input_text_tokens=self.input_text_tokens,
+            input_audio_tokens=self.input_audio_tokens,
+            output_text_tokens=self.output_text_tokens,
+            output_audio_tokens=self.output_audio_tokens,
+            thoughts_tokens=self.thoughts_tokens,
+            estimated_cost_usd=round(cost, 8),
+            cost_basis=basis,
+        )

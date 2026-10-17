@@ -5,9 +5,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import HTMLResponse
 
 from .auth import bearer_value, ip_is_allowed, secure_equal
 from .config import Settings, get_settings
+from .dashboard import dashboard_html
 from .progress import ProgressStore
 from .session import TutorSession
 from .technoline import ProtocolError, parse_start_frame
@@ -44,6 +46,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not active.gemini_api_key.get_secret_value():
             raise HTTPException(status_code=503, detail="Gemini is not configured")
         return {"status": "ready"}
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard() -> HTMLResponse:
+        return HTMLResponse(
+            dashboard_html(app.state.settings.student_id),
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    "default-src 'none'; style-src 'unsafe-inline'; "
+                    "script-src 'unsafe-inline'; connect-src 'self'; "
+                    "base-uri 'none'; form-action 'none'"
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
 
     @app.get("/v1/progress/{student_id}")
     async def progress_report(

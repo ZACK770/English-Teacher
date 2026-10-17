@@ -31,6 +31,35 @@ OBSERVATION_TOOL = {
     },
 }
 
+LESSON_SUMMARY_TOOL = {
+    "name": "record_lesson_summary",
+    "description": "Save the Hebrew end-of-lesson summary and the points awarded.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "summary_he": {
+                "type": "string",
+                "description": "A short Hebrew summary of what was practiced",
+            },
+            "success_he": {
+                "type": "string",
+                "description": "A short Hebrew description of what went well",
+            },
+            "next_step_he": {
+                "type": "string",
+                "description": "One concrete next step in Hebrew",
+            },
+            "points": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Encouraging lesson points based on observed effort and success",
+            },
+        },
+        "required": ["summary_he", "success_he", "next_step_he", "points"],
+    },
+}
+
 
 class GeminiLive:
     """Small server-to-server Gemini Live client with normalized events."""
@@ -66,15 +95,19 @@ class GeminiLive:
                     },
                     "inputAudioTranscription": {},
                     "outputAudioTranscription": {},
-                    "tools": [{"functionDeclarations": [OBSERVATION_TOOL]}],
+                    "tools": [
+                        {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL]}
+                    ],
                     "contextWindowCompression": {
                         "triggerTokens": 12000,
                         "slidingWindow": {"targetTokens": 6000},
                     },
                     "realtimeInputConfig": {
                         "automaticActivityDetection": {
-                            "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
-                            "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+                            "startOfSpeechSensitivity": (
+                                self.settings.gemini_vad_start_sensitivity
+                            ),
+                            "endOfSpeechSensitivity": self.settings.gemini_vad_end_sensitivity,
                             "prefixPaddingMs": self.settings.gemini_vad_prefix_ms,
                             "silenceDurationMs": self.settings.gemini_vad_silence_ms,
                         },
@@ -122,8 +155,9 @@ class GeminiLive:
                             "parts": [
                                 {
                                     "text": (
-                                        "Start the lesson now. Greet the learner briefly and offer "
-                                        "free conversation or a short challenge."
+                                        "התחילי עכשיו את השיעור. ברכי את התלמידה "
+                                        "בעברית, הסבירי בעברית מה נעשה, והציעי בחירה "
+                                        "פשוטה בין תרגול שיחה למשחק קצר."
                                     )
                                 }
                             ],
@@ -152,6 +186,9 @@ class GeminiLive:
             except ValueError:
                 LOGGER.warning("Gemini sent a non-JSON frame")
                 continue
+            usage = event.get("usageMetadata")
+            if usage:
+                yield {"type": "usage", "usage": usage}
             calls = (event.get("toolCall") or {}).get("functionCalls")
             if calls:
                 yield {"type": "tool_call", "calls": calls}

@@ -20,6 +20,10 @@ def test_health_readiness_and_protected_progress(tmp_path) -> None:
     with TestClient(app) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
         assert client.get("/readyz").status_code == 200
+        dashboard = client.get("/dashboard")
+        assert dashboard.status_code == 200
+        assert "לוח ההורה" in dashboard.text
+        assert dashboard.headers["cache-control"] == "no-store"
         assert client.get("/v1/progress/student").status_code == 401
         response = client.get(
             "/v1/progress/student",

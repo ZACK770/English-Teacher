@@ -12,6 +12,16 @@ services:
         value: models/gemini-3.8-live
       - key: GEMINI_VOICE
         value: Aoede
+      - key: GEMINI_LANGUAGE_CODE
+        value: he-IL
+      - key: GEMINI_VAD_START_SENSITIVITY
+        value: START_SENSITIVITY_LOW
+      - key: GEMINI_VAD_END_SENSITIVITY
+        value: END_SENSITIVITY_LOW
+      - key: GEMINI_VAD_SILENCE_MS
+        value: "700"
+      - key: GEMINI_VAD_PREFIX_MS
+        value: "400"
       - key: TECHNOLINE_CHANNEL_ID
         value: 2614d922d06b4f
       - key: TECHNOLINE_ENFORCE_BEARER
