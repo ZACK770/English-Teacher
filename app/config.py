@@ -42,7 +42,8 @@ class Settings(BaseSettings):
     gemini_input_batch_frames: int = Field(default=5, ge=1, le=20)
 
     technoline_channel_id: str = "2614d922d06b4f"
-    technoline_bearer_secret: SecretStr
+    technoline_enforce_bearer: bool = False
+    technoline_bearer_secret: SecretStr | None = None
     technoline_allowed_ips: list[str] = Field(default_factory=list)
     technoline_return_extension: str = "/"
 
@@ -54,12 +55,21 @@ class Settings(BaseSettings):
     store_transcripts: bool = False
     tutor_prompt: str = DEFAULT_TUTOR_PROMPT
 
-    @field_validator("technoline_bearer_secret", "admin_bearer_secret")
+    @field_validator("admin_bearer_secret")
     @classmethod
-    def reject_weak_secrets(cls, value: SecretStr) -> SecretStr:
+    def reject_weak_admin_secret(cls, value: SecretStr) -> SecretStr:
         raw = value.get_secret_value()
         if len(raw) < 32:
             raise ValueError("must contain at least 32 characters")
+        return value
+
+    @field_validator("technoline_bearer_secret")
+    @classmethod
+    def reject_weak_optional_technoline_secret(
+        cls, value: SecretStr | None
+    ) -> SecretStr | None:
+        if value is not None and value.get_secret_value() and len(value.get_secret_value()) < 32:
+            raise ValueError("must contain at least 32 characters when configured")
         return value
 
     @field_validator("technoline_return_extension")

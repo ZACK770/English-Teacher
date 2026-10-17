@@ -8,7 +8,7 @@
 
 ## מה כלול
 
-- WebSocket מאומת ב־Bearer עבור טכנוליין.
+- WebSocket ציבורי עבור טכנוליין; אימות Bearer כבוי כברירת מחדל.
 - אימות נפרד של מזהה הערוץ 2614d922d06b4f — הוא מזהה, לא סוד.
 - תמיכה בפרוטוקול שנמדד: PCM16LE, מונו, 8kHz, מסגרת של 320 בתים בכל 20ms.
 - המרה רציפה 8kHz → 16kHz עבור Gemini ו־24kHz → 8kHz עבור המרכזייה.
@@ -28,13 +28,11 @@
    https://<render-domain>/readyz
    ~~~
 
-5. ב־Render פותחים Environment ומעתיקים את הערך שנוצר עבור
-   TECHNOLINE_BEARER_SECRET.
-6. בטכנוליין מגדירים:
+5. בטכנוליין מגדירים:
 
    ~~~text
    WebSocket endpoint: wss://<render-domain>/v1/technoline/stream
-   Authentication secret: הערך של TECHNOLINE_BEARER_SECRET
+   Authentication secret: להשאיר ריק
    Channel token: 2614d922d06b4f
    ~~~
 
@@ -52,14 +50,13 @@ cp .env.example .env
 uvicorn app.main:app --host 127.0.0.1 --port 8080
 ~~~
 
-יש ליצור שני סודות שונים באורך 32 תווים לפחות:
+יש ליצור סוד מנהל באורך 32 תווים לפחות:
 
 ~~~bash
 python scripts/generate_secret.py
-python scripts/generate_secret.py
 ~~~
 
-שומרים אותם ב־.env תחת TECHNOLINE_BEARER_SECRET ו־ADMIN_BEARER_SECRET.
+שומרים אותו ב־.env תחת ADMIN_BEARER_SECRET.
 את מפתח Gemini שומרים רק במשתני הסביבה.
 
 ## דוח התקדמות
@@ -83,7 +80,7 @@ docker build -t technoline-english-teacher .
 לבדיקת WebSocket לאחר פריסה:
 
 ~~~bash
-TECHNOLINE_BEARER_SECRET=... python scripts/smoke_test.py wss://<render-domain>/v1/technoline/stream
+python scripts/smoke_test.py wss://<render-domain>/v1/technoline/stream
 ~~~
 
 הבדיקה פותחת חיבור אמיתי ל־Gemini ועלולה להיות מחויבת.

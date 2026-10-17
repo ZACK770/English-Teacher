@@ -14,8 +14,8 @@ services:
         value: Aoede
       - key: TECHNOLINE_CHANNEL_ID
         value: 2614d922d06b4f
-      - key: TECHNOLINE_BEARER_SECRET
-        generateValue: true
+      - key: TECHNOLINE_ENFORCE_BEARER
+        value: "false"
       - key: ADMIN_BEARER_SECRET
         generateValue: true
       - key: DATABASE_PATH

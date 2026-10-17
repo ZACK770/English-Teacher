@@ -15,11 +15,10 @@ def main() -> None:
     args = parser.parse_args()
     secret = os.environ.get("TECHNOLINE_BEARER_SECRET")
     channel_id = os.environ.get("TECHNOLINE_CHANNEL_ID", "2614d922d06b4f")
-    if not secret:
-        raise SystemExit("TECHNOLINE_BEARER_SECRET is required")
+    headers = {"Authorization": f"Bearer {secret}"} if secret else None
     with connect(
         args.url,
-        additional_headers={"Authorization": f"Bearer {secret}"},
+        additional_headers=headers,
         ssl=ssl.create_default_context(),
     ) as socket:
         socket.send(

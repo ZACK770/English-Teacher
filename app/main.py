@@ -60,11 +60,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.websocket("/v1/technoline/stream")
     async def technoline_stream(websocket: WebSocket) -> None:
         active: Settings = app.state.settings
-        supplied = bearer_value(websocket.headers.get("authorization"))
         remote_ip = websocket.client.host if websocket.client else None
-        if not secure_equal(supplied, active.technoline_bearer_secret.get_secret_value()):
-            await websocket.close(code=1008, reason="Unauthorized")
-            return
+        if active.technoline_enforce_bearer:
+            supplied = bearer_value(websocket.headers.get("authorization"))
+            configured_secret = active.technoline_bearer_secret
+            expected = configured_secret.get_secret_value() if configured_secret else ""
+            if not expected or not secure_equal(supplied, expected):
+                LOGGER.warning(
+                    "Rejected Technoline WebSocket: bearer authentication failed"
+                )
+                await websocket.close(code=1008, reason="Unauthorized")
+                return
         if not ip_is_allowed(remote_ip, active.technoline_allowed_ips):
             await websocket.close(code=1008, reason="Forbidden")
             return

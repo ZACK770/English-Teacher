@@ -17,7 +17,8 @@
 }
 ~~~
 
-token הוא מזהה הערוץ ולא סוד האימות. האימות האמיתי נעשה בכותרת:
+token הוא מזהה הערוץ ולא סוד אימות. ברירת המחדל אינה דורשת כותרת אימות.
+אם מפעילים במפורש TECHNOLINE_ENFORCE_BEARER=true, נדרשת הכותרת:
 
 ~~~text
 Authorization: Bearer <TECHNOLINE_BEARER_SECRET>
