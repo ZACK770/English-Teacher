@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,8 +40,9 @@ class UsageTotals:
 
 
 class ProgressStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, legacy_profile_id: str = "student") -> None:
         self.path = path
+        self.legacy_profile_id = legacy_profile_id
 
     async def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,8 +89,47 @@ class ProgressStore:
                     settings_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS tutor_profile_settings (
+                    profile_id TEXT PRIMARY KEY,
+                    settings_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS active_calls (
+                    call_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    acquired_at REAL NOT NULL,
+                    lease_expires_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS diagnostic_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    details_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_diagnostics_profile_created
+                ON diagnostic_events(profile_id, id DESC);
                 """
             )
+            legacy = db.execute(
+                "SELECT settings_json, updated_at FROM tutor_settings WHERE id = 1"
+            ).fetchone()
+            if legacy is not None:
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO tutor_profile_settings (
+                        profile_id, settings_json, updated_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (
+                        self.legacy_profile_id,
+                        legacy["settings_json"],
+                        legacy["updated_at"],
+                    ),
+                )
+            db.execute("DELETE FROM active_calls WHERE lease_expires_at <= ?", (time.time(),))
             existing = {
                 str(row["name"]) for row in db.execute("PRAGMA table_info(sessions)").fetchall()
             }
@@ -173,13 +214,20 @@ class ProgressStore:
     async def lesson_context(self, student_id: str, limit: int = 5) -> str:
         return await asyncio.to_thread(self._lesson_context_sync, student_id, limit)
 
-    async def load_tutor_controls(self, defaults: TutorControls) -> TutorControls:
-        return await asyncio.to_thread(self._load_tutor_controls_sync, defaults)
+    async def load_tutor_controls(
+        self, profile_id: str, defaults: TutorControls
+    ) -> TutorControls:
+        return await asyncio.to_thread(
+            self._load_tutor_controls_sync, profile_id, defaults
+        )
 
-    def _load_tutor_controls_sync(self, defaults: TutorControls) -> TutorControls:
+    def _load_tutor_controls_sync(
+        self, profile_id: str, defaults: TutorControls
+    ) -> TutorControls:
         with self._connect() as db:
             row = db.execute(
-                "SELECT settings_json FROM tutor_settings WHERE id = 1"
+                "SELECT settings_json FROM tutor_profile_settings WHERE profile_id = ?",
+                (profile_id,),
             ).fetchone()
         if row is None:
             return defaults
@@ -191,31 +239,188 @@ class ProgressStore:
         except (json.JSONDecodeError, TypeError, ValueError):
             return defaults
 
-    async def save_tutor_controls(self, controls: TutorControls) -> None:
-        await asyncio.to_thread(self._save_tutor_controls_sync, controls)
+    async def save_tutor_controls(
+        self, profile_id: str, controls: TutorControls
+    ) -> None:
+        await asyncio.to_thread(self._save_tutor_controls_sync, profile_id, controls)
 
-    def _save_tutor_controls_sync(self, controls: TutorControls) -> None:
+    def _save_tutor_controls_sync(
+        self, profile_id: str, controls: TutorControls
+    ) -> None:
         with self._connect() as db:
             db.execute(
                 """
-                INSERT INTO tutor_settings (id, settings_json, updated_at)
-                VALUES (1, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
+                INSERT INTO tutor_profile_settings (profile_id, settings_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
                     settings_json = excluded.settings_json,
                     updated_at = excluded.updated_at
                 """,
                 (
+                    profile_id,
                     json.dumps(controls.model_dump(), ensure_ascii=False),
                     datetime.now(UTC).isoformat(),
                 ),
             )
 
-    async def reset_tutor_controls(self) -> None:
-        await asyncio.to_thread(self._reset_tutor_controls_sync)
+    async def reset_tutor_controls(self, profile_id: str) -> None:
+        await asyncio.to_thread(self._reset_tutor_controls_sync, profile_id)
 
-    def _reset_tutor_controls_sync(self) -> None:
+    def _reset_tutor_controls_sync(self, profile_id: str) -> None:
         with self._connect() as db:
-            db.execute("DELETE FROM tutor_settings WHERE id = 1")
+            db.execute(
+                "DELETE FROM tutor_profile_settings WHERE profile_id = ?",
+                (profile_id,),
+            )
+
+    async def claim_call(
+        self,
+        *,
+        call_id: str,
+        profile_id: str,
+        owner_id: str,
+        lease_seconds: int = 20,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._claim_call_sync,
+            call_id,
+            profile_id,
+            owner_id,
+            lease_seconds,
+        )
+
+    def _claim_call_sync(
+        self,
+        call_id: str,
+        profile_id: str,
+        owner_id: str,
+        lease_seconds: int,
+    ) -> bool:
+        now = time.time()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM active_calls WHERE lease_expires_at <= ?", (now,))
+            completed = db.execute(
+                "SELECT 1 FROM sessions WHERE call_id = ? LIMIT 1", (call_id,)
+            ).fetchone()
+            if completed is not None:
+                return False
+            try:
+                db.execute(
+                    """
+                    INSERT INTO active_calls (
+                        call_id, profile_id, owner_id, acquired_at, lease_expires_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (call_id, profile_id, owner_id, now, now + lease_seconds),
+                )
+            except sqlite3.IntegrityError:
+                return False
+        return True
+
+    async def renew_call_lease(
+        self, call_id: str, owner_id: str, lease_seconds: int = 20
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._renew_call_lease_sync, call_id, owner_id, lease_seconds
+        )
+
+    def _renew_call_lease_sync(
+        self, call_id: str, owner_id: str, lease_seconds: int
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                UPDATE active_calls SET lease_expires_at = ?
+                WHERE call_id = ? AND owner_id = ?
+                """,
+                (time.time() + lease_seconds, call_id, owner_id),
+            )
+            return cursor.rowcount == 1
+
+    async def release_call(self, call_id: str, owner_id: str) -> None:
+        await asyncio.to_thread(self._release_call_sync, call_id, owner_id)
+
+    def _release_call_sync(self, call_id: str, owner_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "DELETE FROM active_calls WHERE call_id = ? AND owner_id = ?",
+                (call_id, owner_id),
+            )
+
+    async def log_diagnostic(
+        self,
+        *,
+        profile_id: str,
+        call_id: str,
+        event_type: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        await asyncio.to_thread(
+            self._log_diagnostic_sync,
+            profile_id,
+            call_id,
+            event_type,
+            details or {},
+        )
+
+    def _log_diagnostic_sync(
+        self,
+        profile_id: str,
+        call_id: str,
+        event_type: str,
+        details: dict[str, Any],
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO diagnostic_events (
+                    created_at, profile_id, call_id, event_type, details_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now(UTC).isoformat(),
+                    profile_id,
+                    call_id,
+                    event_type[:80],
+                    json.dumps(details, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            db.execute(
+                """
+                DELETE FROM diagnostic_events
+                WHERE id <= COALESCE((SELECT MAX(id) - 5000 FROM diagnostic_events), 0)
+                """
+            )
+
+    async def recent_diagnostics(
+        self, profile_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._recent_diagnostics_sync, profile_id, max(1, min(limit, 300))
+        )
+
+    def _recent_diagnostics_sync(
+        self, profile_id: str, limit: int
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT created_at, call_id, event_type, details_json
+                FROM diagnostic_events WHERE profile_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (profile_id, limit),
+            ).fetchall()
+        return [
+            {
+                "created_at": row["created_at"],
+                "call_id": row["call_id"],
+                "event_type": row["event_type"],
+                "details": json.loads(row["details_json"]),
+            }
+            for row in rows
+        ]
 
     def _lesson_context_sync(self, student_id: str, limit: int) -> str:
         with self._connect() as db:

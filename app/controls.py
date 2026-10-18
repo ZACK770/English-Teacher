@@ -4,7 +4,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .config import DEFAULT_OPENING_MESSAGE, DEFAULT_TUTOR_PROMPT
+from .config import (
+    DEFAULT_ADULT_OPENING_MESSAGE,
+    DEFAULT_ADULT_TUTOR_PROMPT,
+    DEFAULT_OPENING_MESSAGE,
+    DEFAULT_TUTOR_PROMPT,
+)
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -136,6 +141,21 @@ class TutorControls(BaseModel):
             max_call_minutes=settings.max_call_minutes,
         )
 
+    @classmethod
+    def adult_from_settings(cls, settings: Settings) -> TutorControls:
+        return cls.from_settings(settings).model_copy(
+            update={
+                "base_prompt": DEFAULT_ADULT_TUTOR_PROMPT,
+                "opening_message": DEFAULT_ADULT_OPENING_MESSAGE,
+                "learning_goal": (
+                    "לשפר שטף, דיוק וניסוח טבעי באנגלית ברמה בינונית־מתקדמת"
+                ),
+                "target_lesson_minutes": 25,
+                "language_code": "en-US",
+                "transcription_language_codes": ["en-US", "he-IL"],
+            }
+        )
+
     def build_system_instruction(self, history: str) -> str:
         policy = {
             "learner_only": (
@@ -145,7 +165,8 @@ class TutorControls(BaseModel):
             ),
             "after_target_with_permission": (
                 "Do not suggest ending before the target duration. After the target duration, "
-                "you may ask once whether the learner wants to continue. End only if she agrees."
+                "you may ask once whether the learner wants to continue. End only if the "
+                "learner agrees."
             ),
             "model_discretion": (
                 "You may suggest ending when a meaningful lesson unit has been completed, but "
@@ -160,7 +181,9 @@ class TutorControls(BaseModel):
         if self.learning_goal.strip():
             controls.append(f"- Current learning goal: {self.learning_goal.strip()}")
         if self.custom_instructions.strip():
-            controls.append(f"- Additional parent instructions: {self.custom_instructions.strip()}")
+            controls.append(
+                f"- Additional administrator instructions: {self.custom_instructions.strip()}"
+            )
         parts = (self.base_prompt.strip(), "\n".join(controls), history.strip())
         return "\n\n".join(
             part for part in parts if part

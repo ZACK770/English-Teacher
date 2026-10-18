@@ -52,10 +52,12 @@ async def test_controls_and_lifetime_context_are_persistent(tmp_path) -> None:
     changed = defaults.model_copy(
         update={"learning_goal": "מילים למסעדה", "vad_silence_ms": 900}
     )
-    await store.save_tutor_controls(changed)
-    loaded = await store.load_tutor_controls(defaults)
+    await store.save_tutor_controls("student", changed)
+    loaded = await store.load_tutor_controls("student", defaults)
     assert loaded.learning_goal == "מילים למסעדה"
     assert loaded.vad_silence_ms == 900
+    adult = await store.load_tutor_controls("adult", defaults)
+    assert adult.learning_goal == defaults.learning_goal
 
     for index in range(6):
         await store.save_session(
@@ -78,3 +80,53 @@ async def test_controls_and_lifetime_context_are_persistent(tmp_path) -> None:
     assert report["session_count"] == 6
     assert report["displayed_session_count"] == 2
     assert report["total_points"] == 60
+
+
+@pytest.mark.asyncio
+async def test_active_call_lease_blocks_duplicates_and_completed_calls(tmp_path) -> None:
+    store = ProgressStore(tmp_path / "progress.db")
+    await store.initialize()
+    second_instance = ProgressStore(tmp_path / "progress.db")
+    await second_instance.initialize()
+    assert await store.claim_call(
+        call_id="same-call", profile_id="student", owner_id="owner-1"
+    )
+    assert not await second_instance.claim_call(
+        call_id="same-call", profile_id="student", owner_id="owner-2"
+    )
+    assert await store.renew_call_lease("same-call", "owner-1")
+    await store.release_call("same-call", "owner-1")
+    assert await store.claim_call(
+        call_id="same-call", profile_id="student", owner_id="owner-2"
+    )
+    await store.release_call("same-call", "owner-2")
+
+    await store.save_session(
+        student_id="student",
+        call_id="same-call",
+        started_at=datetime.now(UTC),
+        learner_turns=0,
+        tutor_turns=1,
+        observations=[],
+        transcript=None,
+        summary=LessonSummary("סיכום", "", "", 0),
+        usage=UsageTotals(),
+        model="test-model",
+    )
+    assert not await store.claim_call(
+        call_id="same-call", profile_id="student", owner_id="owner-3"
+    )
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_log_is_profile_scoped(tmp_path) -> None:
+    store = ProgressStore(tmp_path / "progress.db")
+    await store.initialize()
+    await store.log_diagnostic(
+        profile_id="student",
+        call_id="call-1",
+        event_type="tutor_turn_complete",
+        details={"tutor_turn": 1},
+    )
+    assert len(await store.recent_diagnostics("student")) == 1
+    assert await store.recent_diagnostics("adult") == []

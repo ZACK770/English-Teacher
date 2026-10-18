@@ -59,11 +59,20 @@ class TutorSession:
         self._partial = b""
         self._resample_carry = b""
         self._learner_seen_this_turn = False
+        self._turn_input_transcript_chars = 0
+        self._turn_output_transcript_chars = 0
+        self._turn_output_audio_bytes = 0
 
     async def run(self) -> None:
         try:
-            defaults = TutorControls.from_settings(self.settings)
-            controls = await self.progress.load_tutor_controls(defaults)
+            defaults = (
+                TutorControls.adult_from_settings(self.settings)
+                if self.settings.student_id == self.settings.adult_student_id
+                else TutorControls.from_settings(self.settings)
+            )
+            controls = await self.progress.load_tutor_controls(
+                self.settings.student_id, defaults
+            )
             history = await self.progress.lesson_context(self.settings.student_id)
             system_instruction = controls.build_system_instruction(history)
             self.settings = self.settings.model_copy(
@@ -71,7 +80,18 @@ class TutorSession:
             )
             async with asyncio.timeout(self.settings.max_call_minutes * 60):
                 async with GeminiLive(self.settings) as ai:
+                    await self.progress.log_diagnostic(
+                        profile_id=self.settings.student_id,
+                        call_id=self.start.call_id,
+                        event_type="gemini_connected",
+                        details={"model": self.settings.gemini_live_model},
+                    )
                     await ai.start_greeting()
+                    await self.progress.log_diagnostic(
+                        profile_id=self.settings.student_id,
+                        call_id=self.start.call_id,
+                        event_type="greeting_requested",
+                    )
                     await self._bridge(ai)
         except (TimeoutError, CallEnded, WebSocketDisconnect):
             pass
@@ -87,6 +107,18 @@ class TutorSession:
                 summary=self.lesson_summary or self._fallback_summary(),
                 usage=self._usage_totals(),
                 model=self.settings.gemini_live_model,
+            )
+            await self.progress.log_diagnostic(
+                profile_id=self.settings.student_id,
+                call_id=self.start.call_id,
+                event_type="session_saved",
+                details={
+                    "learner_turns": self.learner_turns,
+                    "tutor_turns": self.tutor_turns,
+                    "duration_seconds": max(
+                        0, int((datetime.now(UTC) - self.started_at).total_seconds())
+                    ),
+                },
             )
 
     async def _bridge(self, ai: GeminiLive) -> None:
@@ -139,6 +171,7 @@ class TutorSession:
             kind = event["type"]
             if kind == "audio":
                 self.output_audio_bytes += len(event["pcm24k"])
+                self._turn_output_audio_bytes += len(event["pcm24k"])
                 pcm8, self._resample_carry = downsample_24k_to_8k(
                     event["pcm24k"], self._resample_carry
                 )
@@ -147,6 +180,12 @@ class TutorSession:
                 self._out.clear()
                 self._partial = b""
                 self._resample_carry = b""
+                await self.progress.log_diagnostic(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    event_type="tutor_interrupted",
+                    details={"queued_audio_cleared": True},
+                )
             elif kind == "transcript":
                 role = str(event["role"])
                 transcript = str(event["text"]).strip()
@@ -156,10 +195,49 @@ class TutorSession:
                 if role == "learner" and not self._learner_seen_this_turn:
                     self.learner_turns += 1
                     self._learner_seen_this_turn = True
+                if role == "learner":
+                    self._turn_input_transcript_chars += len(transcript)
+                else:
+                    self._turn_output_transcript_chars += len(transcript)
             elif kind == "turn_complete":
+                possible_unprompted = self.tutor_turns > 0 and not self._learner_seen_this_turn
                 self.tutor_turns += 1
+                await self.progress.log_diagnostic(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    event_type=(
+                        "possible_unprompted_response"
+                        if possible_unprompted
+                        else "tutor_turn_complete"
+                    ),
+                    details={
+                        "tutor_turn": self.tutor_turns,
+                        "learner_transcript_seen": self._learner_seen_this_turn,
+                        "learner_transcript_chars": self._turn_input_transcript_chars,
+                        "tutor_transcript_chars": self._turn_output_transcript_chars,
+                        "output_audio_bytes": self._turn_output_audio_bytes,
+                    },
+                )
+                if possible_unprompted:
+                    LOGGER.warning(
+                        "Possible unprompted Gemini response call=%s profile=%s turn=%s",
+                        self.start.call_id,
+                        self.settings.student_id,
+                        self.tutor_turns,
+                    )
                 self._learner_seen_this_turn = False
+                self._turn_input_transcript_chars = 0
+                self._turn_output_transcript_chars = 0
+                self._turn_output_audio_bytes = 0
             elif kind == "tool_call":
+                await self.progress.log_diagnostic(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    event_type="tool_call",
+                    details={
+                        "names": [str(call.get("name", "")) for call in event["calls"]]
+                    },
+                )
                 for call in event["calls"]:
                     saved = self._record_tool_call(call)
                     await ai.submit_tool_result(call, saved)

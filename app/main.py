@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -29,7 +30,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             level=getattr(logging, active_settings.log_level.upper(), logging.INFO),
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
-        store = ProgressStore(active_settings.database_path)
+        store = ProgressStore(
+            active_settings.database_path,
+            legacy_profile_id=active_settings.student_id,
+        )
         await store.initialize()
         app.state.settings = active_settings
         app.state.progress = store
@@ -52,7 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:
         return HTMLResponse(
-            dashboard_html(app.state.settings.student_id),
+            dashboard_html(),
             headers={
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": (
@@ -71,16 +75,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not secure_equal(token, active.admin_bearer_secret.get_secret_value()):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
-    async def admin_config_payload() -> dict:
+    def profile_specs() -> dict[str, dict[str, object]]:
         active: Settings = app.state.settings
-        defaults = TutorControls.from_settings(active)
-        controls = await app.state.progress.load_tutor_controls(defaults)
-        history = await app.state.progress.lesson_context(active.student_id)
+        return {
+            active.student_id: {
+                "id": active.student_id,
+                "label": "המורה של הבת",
+                "audience": "child",
+                "websocket_path": "/v1/technoline/stream",
+                "channel_configured": bool(active.technoline_channel_id),
+                "channel_id": active.technoline_channel_id,
+            },
+            active.adult_student_id: {
+                "id": active.adult_student_id,
+                "label": "המורה שלי",
+                "audience": "adult",
+                "websocket_path": "/v1/technoline/stream/adult",
+                "channel_configured": bool(active.technoline_adult_channel_id),
+                "channel_id": active.technoline_adult_channel_id,
+            },
+        }
+
+    def require_profile(profile_id: str) -> dict[str, object]:
+        profile = profile_specs().get(profile_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Tutor profile not found")
+        return profile
+
+    def default_controls(profile_id: str) -> TutorControls:
+        active: Settings = app.state.settings
+        if profile_id == active.adult_student_id:
+            return TutorControls.adult_from_settings(active)
+        return TutorControls.from_settings(active)
+
+    async def admin_config_payload(profile_id: str) -> dict:
+        active: Settings = app.state.settings
+        profile = require_profile(profile_id)
+        defaults = default_controls(profile_id)
+        controls = await app.state.progress.load_tutor_controls(profile_id, defaults)
+        history = await app.state.progress.lesson_context(profile_id)
         system_instruction = controls.build_system_instruction(history)
         preview_settings = active.model_copy(
-            update=controls.settings_updates(system_instruction)
+            update={
+                **controls.settings_updates(system_instruction),
+                "student_id": profile_id,
+            }
         )
         return {
+            "profile": {
+                key: value for key, value in profile.items() if key != "channel_id"
+            },
             "controls": controls.model_dump(),
             "options": {
                 "voices": VOICE_OPTIONS,
@@ -119,6 +163,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 },
                 "history_context": history,
                 "read_only_runtime": {
+                    "profile_id": profile_id,
+                    "profile_label": profile["label"],
+                    "technoline_websocket_path": profile["websocket_path"],
+                    "technoline_channel_configured": profile["channel_configured"],
                     "websocket_endpoint": active.gemini_live_url,
                     "automatic_activity_detection": "enabled",
                     "automatic_activity_detection_editable": False,
@@ -136,12 +184,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
 
+    @app.get("/v1/admin/profiles")
+    async def get_admin_profiles(
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        return {
+            "profiles": [
+                {key: value for key, value in profile.items() if key != "channel_id"}
+                for profile in profile_specs().values()
+            ]
+        }
+
     @app.get("/v1/admin/config")
     async def get_admin_config(
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
-        return await admin_config_payload()
+        return await admin_config_payload(app.state.settings.student_id)
+
+    @app.get("/v1/admin/config/{profile_id}")
+    async def get_profile_admin_config(
+        profile_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        return await admin_config_payload(profile_id)
 
     @app.put("/v1/admin/config")
     async def update_admin_config(
@@ -149,30 +217,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
-        await app.state.progress.save_tutor_controls(controls)
-        return await admin_config_payload()
+        profile_id = app.state.settings.student_id
+        await app.state.progress.save_tutor_controls(profile_id, controls)
+        return await admin_config_payload(profile_id)
+
+    @app.put("/v1/admin/config/{profile_id}")
+    async def update_profile_admin_config(
+        profile_id: str,
+        controls: TutorControls,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        require_profile(profile_id)
+        await app.state.progress.save_tutor_controls(profile_id, controls)
+        return await admin_config_payload(profile_id)
 
     @app.delete("/v1/admin/config")
     async def reset_admin_config(
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
-        await app.state.progress.reset_tutor_controls()
-        return await admin_config_payload()
+        profile_id = app.state.settings.student_id
+        await app.state.progress.reset_tutor_controls(profile_id)
+        return await admin_config_payload(profile_id)
+
+    @app.delete("/v1/admin/config/{profile_id}")
+    async def reset_profile_admin_config(
+        profile_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        require_profile(profile_id)
+        await app.state.progress.reset_tutor_controls(profile_id)
+        return await admin_config_payload(profile_id)
 
     @app.get("/v1/progress/{student_id}")
     async def progress_report(
         student_id: str, authorization: str | None = Header(default=None)
     ) -> dict:
-        active: Settings = app.state.settings
         require_admin(authorization)
-        if student_id != active.student_id:
-            raise HTTPException(status_code=404, detail="Student not found")
+        require_profile(student_id)
         return await app.state.progress.report(student_id)
 
-    @app.websocket("/v1/technoline/stream")
-    async def technoline_stream(websocket: WebSocket) -> None:
+    @app.get("/v1/admin/diagnostics/{profile_id}")
+    async def diagnostic_report(
+        profile_id: str,
+        limit: int = 100,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        require_profile(profile_id)
+        return {
+            "profile_id": profile_id,
+            "privacy": "Metadata only; no audio or transcript text is stored here.",
+            "events": await app.state.progress.recent_diagnostics(profile_id, limit),
+        }
+
+    async def maintain_call_lease(
+        call_id: str, profile_id: str, owner_id: str
+    ) -> None:
+        while True:
+            await asyncio.sleep(5)
+            renewed = await app.state.progress.renew_call_lease(call_id, owner_id)
+            if not renewed:
+                LOGGER.error("Lost active-call lease for %s", call_id)
+                await app.state.progress.log_diagnostic(
+                    profile_id=profile_id,
+                    call_id=call_id,
+                    event_type="call_lease_lost",
+                )
+                return
+
+    async def handle_technoline_stream(
+        websocket: WebSocket, profile_id: str
+    ) -> None:
         active: Settings = app.state.settings
+        profile = profile_specs().get(profile_id)
+        if profile is None:
+            await websocket.close(code=1008, reason="Unknown tutor profile")
+            return
+        expected_channel_id = profile["channel_id"]
+        if not expected_channel_id:
+            await websocket.close(code=1013, reason="Tutor channel is not configured")
+            return
         remote_ip = websocket.client.host if websocket.client else None
         if active.technoline_enforce_bearer:
             supplied = bearer_value(websocket.headers.get("authorization"))
@@ -195,14 +322,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
 
         await slots.acquire()
+        owner_id: str | None = None
+        active_call_id: str | None = None
+        heartbeat: asyncio.Task[None] | None = None
         try:
             first = await asyncio.wait_for(websocket.receive_text(), timeout=10)
-            start = parse_start_frame(first, active.technoline_channel_id)
-            LOGGER.info("Accepted Technoline call %s", start.call_id)
+            start = parse_start_frame(first, str(expected_channel_id))
+            owner_id = secrets.token_urlsafe(18)
+            active_call_id = start.call_id
+            claimed = await app.state.progress.claim_call(
+                call_id=start.call_id,
+                profile_id=profile_id,
+                owner_id=owner_id,
+            )
+            if not claimed:
+                LOGGER.warning(
+                    "Rejected duplicate Technoline call %s profile=%s",
+                    start.call_id,
+                    profile_id,
+                )
+                await app.state.progress.log_diagnostic(
+                    profile_id=profile_id,
+                    call_id=start.call_id,
+                    event_type="duplicate_connection_rejected",
+                )
+                await websocket.close(code=1008, reason="Duplicate call connection")
+                return
+            heartbeat = asyncio.create_task(
+                maintain_call_lease(start.call_id, profile_id, owner_id),
+                name=f"call-lease-{start.call_id[:12]}",
+            )
+            LOGGER.info(
+                "Accepted Technoline call %s profile=%s", start.call_id, profile_id
+            )
+            await app.state.progress.log_diagnostic(
+                profile_id=profile_id,
+                call_id=start.call_id,
+                event_type="call_accepted",
+                details={"endpoint": profile["websocket_path"]},
+            )
+            session_settings = active.model_copy(update={"student_id": profile_id})
             session = TutorSession(
                 pbx=websocket,
                 start=start,
-                settings=active,
+                settings=session_settings,
                 progress=app.state.progress,
             )
             await session.run()
@@ -211,14 +374,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await websocket.close(code=1008, reason="Invalid start frame")
         except WebSocketDisconnect:
             pass
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("Call failed")
+            if active_call_id is not None:
+                await app.state.progress.log_diagnostic(
+                    profile_id=profile_id,
+                    call_id=active_call_id,
+                    event_type="call_failed",
+                    details={"error_type": type(exc).__name__},
+                )
             try:
                 await websocket.close(code=1011, reason="Call failed")
             except RuntimeError:
                 pass
         finally:
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            if owner_id is not None and active_call_id is not None:
+                await app.state.progress.release_call(active_call_id, owner_id)
             slots.release()
+
+    @app.websocket("/v1/technoline/stream")
+    async def technoline_stream(websocket: WebSocket) -> None:
+        await handle_technoline_stream(websocket, app.state.settings.student_id)
+
+    @app.websocket("/v1/technoline/stream/{profile_id}")
+    async def profile_technoline_stream(websocket: WebSocket, profile_id: str) -> None:
+        resolved_profile_id = (
+            app.state.settings.adult_student_id if profile_id == "adult" else profile_id
+        )
+        await handle_technoline_stream(websocket, resolved_profile_id)
 
     return app
 

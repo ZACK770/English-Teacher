@@ -31,6 +31,13 @@
 wss://<render-domain>/v1/technoline/stream
 ~~~
 
+למורה הנפרד למבוגר יש ליצור ערוץ גולמי נוסף, לשמור את המזהה שלו במשתנה
+`TECHNOLINE_ADULT_CHANNEL_ID`, ולהפנות אותו אל:
+
+~~~text
+wss://<render-domain>/v1/technoline/stream/adult
+~~~
+
 משאירים את שדה סוד האימות של טכנוליין ריק. אימות Bearer כבוי כברירת מחדל.
 מזהה הערוץ משמש רק לבדיקת מסגרת הפתיחה ואינו סוד.
 

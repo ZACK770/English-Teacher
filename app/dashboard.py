@@ -1,14 +1,11 @@
 # The dashboard is a self-contained HTML/JavaScript artifact; keeping its source lines
 # intact makes the browser markup substantially easier to maintain.
-# ruff: noqa: E501
+# ruff: noqa: E501,F541
 
 from __future__ import annotations
 
-import json
 
-
-def dashboard_html(student_id: str) -> str:
-    progress_endpoint = json.dumps(f"/v1/progress/{student_id}")
+def dashboard_html() -> str:
     return f"""<!doctype html>
 <html lang="he" dir="rtl">
 <head>
@@ -27,6 +24,8 @@ def dashboard_html(student_id: str) -> str:
     .brand {{ display:flex; align-items:center; gap:9px; padding:0 7px; white-space:nowrap; color:var(--ink); text-decoration:none; font-weight:850; }}
     .brand-mark {{ display:grid; place-items:center; width:34px; height:34px; border-radius:11px; color:white;
       background:linear-gradient(135deg,var(--brand),var(--brand2)); box-shadow:0 6px 16px rgba(109,92,231,.28); }}
+    .profile-switch {{ display:flex; align-items:center; gap:7px; min-width:165px; }} .profile-switch label {{ margin:0; white-space:nowrap; }}
+    .profile-switch select {{ padding:8px 9px; min-width:125px; border-color:#cfc8ef; background:#faf9ff; font-weight:700; }}
     .nav-links {{ display:flex; align-items:center; gap:4px; min-width:0; overflow-x:auto; scrollbar-width:none; flex:1; }}
     .nav-links::-webkit-scrollbar {{ display:none; }} .nav-link {{ flex:0 0 auto; padding:9px 11px; border-radius:10px;
       color:#5d6475; text-decoration:none; font-size:13px; font-weight:700; transition:.15s ease; }}
@@ -62,6 +61,7 @@ def dashboard_html(student_id: str) -> str:
     textarea {{ min-height:92px; resize:vertical; line-height:1.5; direction:auto; }} textarea.large {{ min-height:240px; font-family:Consolas,monospace; font-size:13px; }}
     .check {{ display:flex; align-items:center; gap:9px; padding-top:23px; }} .check input {{ width:auto; }} .check label {{ margin:0; color:var(--ink); }}
     .section-note {{ background:#faf9ff; border-right:4px solid var(--brand2); padding:10px 12px; border-radius:8px; color:var(--muted); font-size:13px; line-height:1.55; }}
+    .section-note.warning {{ border-right-color:#e3a23c; background:#fff9ec; color:#725018; }}
     .anchor-section {{ scroll-margin-top:92px; }} .management-card {{ padding:22px; border-color:#dcd7f4;
       background:linear-gradient(155deg,rgba(255,255,255,.98),rgba(248,246,255,.94)); }}
     .management-head {{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:13px; }}
@@ -80,24 +80,32 @@ def dashboard_html(student_id: str) -> str:
     pre {{ direction:ltr; text-align:left; white-space:pre-wrap; overflow-wrap:anywhere; background:#121827; color:#e7ebff; padding:16px;
       border-radius:13px; max-height:520px; overflow:auto; font-size:12px; line-height:1.45; }} details {{ margin-top:12px; }} summary {{ cursor:pointer; font-weight:700; }}
     .status {{ min-height:20px; color:var(--good); font-size:13px; }} .status.error {{ color:var(--bad); }}
+    .diagnostic-list {{ display:grid; gap:8px; margin-top:14px; }} .diagnostic-event {{ display:grid;
+      grid-template-columns:155px 190px 1fr; gap:10px; align-items:start; padding:11px 12px; border:1px solid var(--line); border-radius:12px; background:#fbfbfe; font-size:12px; }}
+    .diagnostic-event.warn {{ border-color:#efc8c3; background:#fff7f6; }} .event-name {{ font-weight:800; color:#4d3fc0; }}
+    .event-details {{ direction:ltr; text-align:left; overflow-wrap:anywhere; color:var(--muted); font-family:Consolas,monospace; }}
     .login {{ position:fixed; inset:0; display:grid; place-items:center; padding:20px; background:rgba(24,24,45,.36); backdrop-filter:blur(7px); z-index:20; }}
     .login-box {{ width:min(420px,100%); background:white; padding:28px; border-radius:24px; box-shadow:0 30px 90px rgba(25,22,55,.25); }}
     .login-box h2 {{ font-size:25px; }} .error {{ min-height:20px; color:var(--bad); font-size:14px; }} [hidden] {{ display:none!important; }}
     @media(max-width:850px) {{ .wrap {{ width:min(100% - 18px,1180px); padding-top:9px; }} .topbar {{ top:5px; margin-bottom:22px; }}
       .topbar-inner {{ flex-wrap:wrap; gap:6px; }} .brand {{ flex:1; }} .nav-links {{ order:3; flex-basis:100%; border-top:1px solid var(--line); padding-top:5px; }}
+      .profile-switch {{ order:2; flex:1 1 100%; }}
       .top-actions button {{ padding:8px 10px; }} .stats {{ grid-template-columns:repeat(2,1fr) }} .grid,.form-grid {{ grid-template-columns:1fr }}
       .span2,.span3 {{ grid-column:auto }} header {{ align-items:start; flex-direction:column; }} .management-card {{ padding:14px; }}
-      .management-section {{ padding:14px; }} .management-head {{ align-items:flex-start; flex-direction:column; }} }}
+      .management-section {{ padding:14px; }} .management-head {{ align-items:flex-start; flex-direction:column; }}
+      .diagnostic-event {{ grid-template-columns:1fr; gap:4px; }} }}
   </style>
 </head>
 <body>
   <main class="wrap">
     <nav class="topbar" aria-label="ניווט ראשי"><div class="topbar-inner">
       <a class="brand" href="#overview"><span class="brand-mark">ET</span><span>English Teacher</span></a>
+      <div class="profile-switch"><label for="profileSelect">מורה:</label><select id="profileSelect" aria-label="בחירת פרופיל מורה"></select></div>
       <div class="nav-links">
         <a class="nav-link active" href="#overview">סקירה</a><a class="nav-link" href="#history-section">סיכומי שיחות</a>
         <a class="nav-link" href="#controlForm">ניהול</a><a class="nav-link" href="#speech-settings">דיבור ו־VAD</a>
         <a class="nav-link" href="#transcription-settings">תמלול</a><a class="nav-link" href="#ai-preview">מה נשלח ל־AI</a>
+        <a class="nav-link" href="#diagnostics">יומן טכני</a>
       </div>
       <div class="top-actions"><button id="refresh" class="secondary" type="button">רענון</button><button id="logout" class="secondary" type="button">יציאה</button></div>
     </div></nav>
@@ -116,8 +124,9 @@ def dashboard_html(student_id: str) -> str:
     </section>
 
     <form class="card management-card anchor-section" id="controlForm">
-      <div class="management-head"><h2>שליטה בשיעור הבא</h2><span class="management-badge">חל מהשיחה החדשה הבאה</span></div>
+      <div class="management-head"><div><h2>שליטה בשיעור הבא</h2><p class="sub" id="activeProfileLabel"></p></div><span class="management-badge">חל מהשיחה החדשה הבאה</span></div>
       <p class="section-note">השינויים נשמרים מיידית במסד הנתונים וחלים על שיחה חדשה. הם אינם משנים שיחה שכבר מחוברת.</p>
+      <p class="section-note warning" id="channelNotice" hidden></p>
       <section class="management-section" id="behavior-settings"><h3>מטרות והתנהגות</h3>
       <div class="form-grid">
         <div class="span2"><label for="learning_goal">מטרת הלמידה העדכנית</label><textarea id="learning_goal" placeholder="לדוגמה: לנהל שיחה קצרה בחנות ולתרגל מספרים ומחירים"></textarea></div>
@@ -167,12 +176,22 @@ def dashboard_html(student_id: str) -> str:
       <details><summary>כל הודעת ה־setup המדויקת ל־Gemini</summary><pre id="setupPayload"></pre></details>
       <details><summary>פרטים קבועים שאינם ניתנים לשינוי דינמי</summary><pre id="runtimePayload"></pre></details>
     </section>
+
+    <section class="card anchor-section" id="diagnostics">
+      <div class="management-head"><div><h2>יומן טכני</h2><p class="sub">אירועי שיחה ותורים בלבד — ללא אודיו וללא תוכן התמליל.</p></div><button type="button" class="secondary" id="refreshDiagnostics">רענון יומן</button></div>
+      <p class="section-note">היומן נועד לזהות חיבור כפול, תגובה ללא תור תלמידה, קטיעה וקריאות כלי. הוא שומר מטא־נתונים קטנים בלבד ואינו רושם כל חבילת אודיו.</p>
+      <div id="diagnosticList" class="diagnostic-list empty">עדיין אין אירועים לפרופיל הזה.</div>
+    </section>
   </main>
   <section class="login" id="login"><form class="login-box" id="loginForm"><h2>כניסה ללוח ההורה</h2>
     <p class="sub">הזינו את סיסמת המנהל המוגדרת ב־Render.</p><input id="token" type="password" autocomplete="current-password" placeholder="סיסמת מנהל" required>
     <div class="error" id="error"></div><button type="submit">כניסה</button></form></section>
   <script>
-    const progressEndpoint={progress_endpoint}, configEndpoint="/v1/admin/config"; const $=id=>document.getElementById(id);
+    const profilesEndpoint="/v1/admin/profiles"; const $=id=>document.getElementById(id);
+    let profiles=[],currentProfile=sessionStorage.getItem("tutorProfile")||"";
+    const progressEndpoint=()=>"/v1/progress/"+encodeURIComponent(currentProfile);
+    const configEndpoint=()=>"/v1/admin/config/"+encodeURIComponent(currentProfile);
+    const diagnosticsEndpoint=()=>"/v1/admin/diagnostics/"+encodeURIComponent(currentProfile);
     const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}}[c]));
     const money=n=>n>0&&n<0.0001?"פחות מ־$0.0001":"$"+Number(n||0).toFixed(4);
     const auth=()=>({{Authorization:"Bearer "+sessionStorage.getItem("adminToken")}});
@@ -190,19 +209,27 @@ def dashboard_html(student_id: str) -> str:
       const names={{fluency:"שטף דיבור",grammar:"דקדוק",vocabulary:"אוצר מילים",pronunciation:"הגייה",comprehension:"הבנה"}};
       $("skills").className=skills.length?"":"empty";$("skills").innerHTML=skills.length?skills.map(([n,s])=>`<div class="skill"><div class="skill-head"><span>${{esc(names[n]||n)}}</span><strong>${{Number(s).toFixed(1)}}/5</strong></div><div class="bar"><span style="width:${{Math.min(100,Number(s)*20)}}%"></span></div></div>`).join(""):"עדיין אין ציונים";
       const rows=data.sessions||[];$("history").className=rows.length?"":"empty";$("history").innerHTML=rows.length?rows.map(r=>`<article class="session"><div class="session-title"><strong>${{esc(new Date(r.started_at).toLocaleString("he-IL"))}}</strong><span class="points">+${{Number(r.points||0)}} נקודות</span></div><p class="summary">${{esc(r.summary_he||"השיחה נשמרה ללא סיכום מילולי.")}}</p>${{r.success_he?`<p><b>מה הצליח:</b> ${{esc(r.success_he)}}</p>`:""}}${{r.next_step_he?`<p><b>הצעד הבא:</b> ${{esc(r.next_step_he)}}</p>`:""}}<div class="meta"><span class="pill">${{Math.round((r.duration_seconds||0)/60)}} דקות</span><span class="pill">${{r.learner_turns||0}} תשובות</span><span class="pill">עלות ${{money(r.estimated_cost_usd)}}</span></div></article>`).join(""):"עדיין אין שיחות שמורות";}}
-    function renderConfig(data){{const c=data.controls,o=data.options;["learning_goal","custom_instructions","opening_message","base_prompt","language_code"].forEach(k=>$(k).value=c[k]??"");
+    function renderConfig(data){{const c=data.controls,o=data.options;$("activeProfileLabel").textContent=data.profile.label;$("channelNotice").hidden=!!data.profile.channel_configured;
+      $("channelNotice").textContent=data.profile.channel_configured?"":`כדי לקבל שיחות בפרופיל זה יש ליצור ערוץ סטרימינג נוסף בטכנוליין, להפנות אותו אל ${{data.profile.websocket_path}}, ולהגדיר ב־Render את TECHNOLINE_ADULT_CHANNEL_ID.`;
+      ["learning_goal","custom_instructions","opening_message","base_prompt","language_code"].forEach(k=>$(k).value=c[k]??"");
       ["target_lesson_minutes","max_call_minutes","input_batch_frames","vad_prefix_ms","vad_silence_ms","context_trigger_tokens","context_target_tokens"].forEach(k=>$(k).value=c[k]);
       $("temperature").value=c.temperature??"";$("ending_policy").value=c.ending_policy;$("store_transcripts").checked=!!c.store_transcripts;
       $("transcription_language_codes").value=(c.transcription_language_codes||[]).join(",");$("custom_vocabulary").value=(c.custom_vocabulary||[]).join("\\n");
       fillSelect("voice",o.voices,c.voice);fillSelect("vad_start_sensitivity",o.vad_start_sensitivity,c.vad_start_sensitivity);fillSelect("vad_end_sensitivity",o.vad_end_sensitivity,c.vad_end_sensitivity);fillSelect("activity_handling",o.activity_handling,c.activity_handling);fillSelect("turn_coverage",o.turn_coverage,c.turn_coverage);fillSelect("transcription_mode",o.transcription_mode,c.transcription_mode);
       const setup=data.effective.setup_message;$("effectivePrompt").textContent=setup.setup.systemInstruction.parts[0].text;$("setupPayload").textContent=JSON.stringify(setup,null,2);$("openingPayload").textContent=JSON.stringify(data.effective.opening_client_message,null,2);$("runtimePayload").textContent=JSON.stringify(data.effective.read_only_runtime,null,2);}}
+    const eventNames={{call_accepted:"השיחה התקבלה",duplicate_connection_rejected:"חיבור כפול נחסם",gemini_connected:"Gemini התחבר",greeting_requested:"הפתיחה הופעלה",tutor_turn_complete:"תגובת המורה הסתיימה",possible_unprompted_response:"תגובה ללא תמליל תלמיד",tutor_interrupted:"המורה נקטעה",tool_call:"קריאת כלי",session_saved:"השיחה נשמרה",call_lease_lost:"נעילת השיחה אבדה",call_failed:"שגיאת שיחה"}};
+    function renderDiagnostics(data){{const rows=data.events||[];$("diagnosticList").className=rows.length?"diagnostic-list":"diagnostic-list empty";$("diagnosticList").innerHTML=rows.length?rows.map(event=>{{const warn=["duplicate_connection_rejected","possible_unprompted_response","call_lease_lost","call_failed"].includes(event.event_type);return `<div class="diagnostic-event${{warn?" warn":""}}"><time>${{esc(new Date(event.created_at).toLocaleString("he-IL"))}}</time><div><span class="event-name">${{esc(eventNames[event.event_type]||event.event_type)}}</span><br><span class="muted">${{esc(String(event.call_id||"").slice(0,14))}}</span></div><div class="event-details">${{esc(JSON.stringify(event.details||{{}}))}}</div></div>`;}}).join(""):"עדיין אין אירועים לפרופיל הזה.";}}
+    function renderProfiles(data){{profiles=data.profiles||[];if(!profiles.some(item=>item.id===currentProfile))currentProfile=profiles[0]?.id||"";$("profileSelect").innerHTML=profiles.map(item=>`<option value="${{esc(item.id)}}">${{esc(item.label)}}${{item.channel_configured?"":" — טרם חוברה שלוחה"}}</option>`).join("");$("profileSelect").value=currentProfile;sessionStorage.setItem("tutorProfile",currentProfile);}}
     function controlsFromForm(){{const integer=id=>Number.parseInt($(id).value,10),list=(id,separator)=>$(id).value.split(separator).map(x=>x.trim()).filter(Boolean);
       return {{base_prompt:$("base_prompt").value,opening_message:$("opening_message").value,learning_goal:$("learning_goal").value,custom_instructions:$("custom_instructions").value,target_lesson_minutes:integer("target_lesson_minutes"),ending_policy:$("ending_policy").value,voice:$("voice").value,language_code:$("language_code").value,temperature:$("temperature").value===""?null:Number($("temperature").value),vad_start_sensitivity:$("vad_start_sensitivity").value,vad_end_sensitivity:$("vad_end_sensitivity").value,vad_prefix_ms:integer("vad_prefix_ms"),vad_silence_ms:integer("vad_silence_ms"),activity_handling:$("activity_handling").value,turn_coverage:$("turn_coverage").value,input_batch_frames:integer("input_batch_frames"),transcription_mode:$("transcription_mode").value,transcription_language_codes:list("transcription_language_codes",","),custom_vocabulary:list("custom_vocabulary",/\\r?\\n/),store_transcripts:$("store_transcripts").checked,context_trigger_tokens:integer("context_trigger_tokens"),context_target_tokens:integer("context_target_tokens"),max_call_minutes:integer("max_call_minutes")}};}}
     async function request(url,options={{}}){{const response=await fetch(url,{{...options,headers:{{...auth(),...(options.headers||{{}})}},cache:"no-store"}});if(!response.ok){{let msg=response.status===401?"הסיסמה אינה נכונה":"הפעולה נכשלה";try{{const body=await response.json();msg=body.detail?JSON.stringify(body.detail):msg}}catch{{}}throw new Error(msg)}}return response.json();}}
-    async function loadAll(token){{sessionStorage.setItem("adminToken",token);const [progress,config]=await Promise.all([request(progressEndpoint),request(configEndpoint)]);renderProgress(progress);renderConfig(config);$("login").hidden=true;}}
+    async function loadProfile(){{const [progress,config,diagnostics]=await Promise.all([request(progressEndpoint()),request(configEndpoint()),request(diagnosticsEndpoint())]);renderProgress(progress);renderConfig(config);renderDiagnostics(diagnostics);}}
+    async function loadAll(token){{sessionStorage.setItem("adminToken",token);renderProfiles(await request(profilesEndpoint));await loadProfile();$("login").hidden=true;}}
     $("loginForm").addEventListener("submit",async e=>{{e.preventDefault();$("error").textContent="";try{{await loadAll($("token").value)}}catch(err){{$("error").textContent=err.message}}}});
-    $("controlForm").addEventListener("submit",async e=>{{e.preventDefault();$("save").disabled=true;$("saveStatus").className="status";$("saveStatus").textContent="שומר…";try{{const data=await request(configEndpoint,{{method:"PUT",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(controlsFromForm())}});renderConfig(data);$("saveStatus").textContent="נשמר. ההגדרות יחולו בשיחה הבאה."}}catch(err){{$("saveStatus").className="status error";$("saveStatus").textContent=err.message}}finally{{$("save").disabled=false}}}});
-    $("reset").addEventListener("click",async()=>{{if(!confirm("לאפס את כל הגדרות המורה לברירות המחדל?"))return;try{{renderConfig(await request(configEndpoint,{{method:"DELETE"}}));$("saveStatus").textContent="ההגדרות אופסו."}}catch(err){{$("saveStatus").className="status error";$("saveStatus").textContent=err.message}}}});
+    $("controlForm").addEventListener("submit",async e=>{{e.preventDefault();$("save").disabled=true;$("saveStatus").className="status";$("saveStatus").textContent="שומר…";try{{const data=await request(configEndpoint(),{{method:"PUT",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(controlsFromForm())}});renderConfig(data);$("saveStatus").textContent="נשמר. ההגדרות יחולו בשיחה הבאה של המורה שנבחרה."}}catch(err){{$("saveStatus").className="status error";$("saveStatus").textContent=err.message}}finally{{$("save").disabled=false}}}});
+    $("reset").addEventListener("click",async()=>{{if(!confirm("לאפס את הגדרות המורה שנבחרה לברירות המחדל שלה?"))return;try{{renderConfig(await request(configEndpoint(),{{method:"DELETE"}}));$("saveStatus").textContent="הגדרות הפרופיל אופסו."}}catch(err){{$("saveStatus").className="status error";$("saveStatus").textContent=err.message}}}});
+    $("profileSelect").addEventListener("change",async()=>{{currentProfile=$("profileSelect").value;sessionStorage.setItem("tutorProfile",currentProfile);$("saveStatus").textContent="טוען פרופיל…";try{{await loadProfile();$("saveStatus").textContent=""}}catch(err){{$("saveStatus").className="status error";$("saveStatus").textContent=err.message}}}});
+    $("refreshDiagnostics").addEventListener("click",async()=>{{try{{renderDiagnostics(await request(diagnosticsEndpoint()))}}catch(err){{$("diagnosticList").className="status error";$("diagnosticList").textContent=err.message}}}});
     $("refresh").addEventListener("click",()=>loadAll(sessionStorage.getItem("adminToken")).catch(()=>$("login").hidden=false));
     $("logout").addEventListener("click",()=>{{sessionStorage.removeItem("adminToken");$("token").value="";$("login").hidden=false}});
     const navLinks=[...document.querySelectorAll(".nav-link")];

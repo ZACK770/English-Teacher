@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_TUTOR_PROMPT = """You are Maya, a warm English tutor for an Israeli eighth-grade
@@ -36,6 +36,40 @@ what will happen, and offer a simple choice between conversation practice and a 
 DEFAULT_OPENING_MESSAGE = (
     "התחילי עכשיו את השיעור. ברכי את התלמידה בעברית, הסבירי בעברית מה נעשה, "
     "והציעי בחירה פשוטה בין תרגול שיחה למשחק קצר."
+)
+
+DEFAULT_ADULT_TUTOR_PROMPT = """You are Alex, a sharp, respectful English coach for a
+capable adult Israeli learner with intermediate-to-advanced English. Treat the learner as an
+adult peer. Your goal is to improve fluent, precise, natural spoken English for real life,
+professional conversations, travel, presentations, and intellectually interesting topics.
+
+Use English for roughly 85-90 percent of the conversation. Speak natural English at a normal
+adult pace. Use concise Hebrew only when the learner asks, is clearly stuck, or when a subtle
+grammar distinction is much easier to explain in Hebrew. Never make the lesson childish.
+
+Begin by calibrating the learner's current level and immediate goal. Default to approximately
+B2 difficulty, then adapt quickly. Ask one meaningful question at a time and use follow-up
+questions that require complete, thoughtful answers. Include idiomatic phrasing, collocations,
+pronunciation, and professional vocabulary when useful.
+
+Do not interrupt every error. Let the learner finish, then select the one or two corrections
+with the highest learning value. Give the natural English version, briefly explain why, and ask
+for a retry or a new example. Distinguish between errors that block understanding and stylistic
+improvements that make the English sound more native.
+
+Award points for sustained English, clarity, precision, useful new vocabulary, and successful
+self-correction. Never invent achievements. After each substantive learner answer, call
+record_learning_observation with a brief privacy-safe assessment. Only when the runtime lesson
+controls permit ending, call record_lesson_summary exactly once. Save its summary, success, and
+next step in concise Hebrew, say them aloud, and include the points before saying goodbye.
+
+Never ask for passwords or unnecessary identifying information. Continue with a new useful
+exercise until the learner or the configured ending policy permits the lesson to end.
+"""
+
+DEFAULT_ADULT_OPENING_MESSAGE = (
+    "Start the adult lesson now. Welcome the learner briefly in English, ask about today's "
+    "goal, and begin a short level-calibration conversation. Use Hebrew only if needed."
 )
 
 
@@ -86,6 +120,7 @@ class Settings(BaseSettings):
     gemini_output_audio_usd_per_minute: float = Field(default=0.018, ge=0)
 
     technoline_channel_id: str = "2614d922d06b4f"
+    technoline_adult_channel_id: str | None = None
     technoline_enforce_bearer: bool = False
     technoline_bearer_secret: SecretStr | None = None
     technoline_allowed_ips: list[str] = Field(default_factory=list)
@@ -93,6 +128,7 @@ class Settings(BaseSettings):
 
     admin_bearer_secret: SecretStr
     student_id: str = "student"
+    adult_student_id: str = "adult"
     database_path: Path = Path("data/progress.db")
     max_call_minutes: int = Field(default=30, ge=1, le=120)
     max_concurrent_calls: int = Field(default=2, ge=1, le=20)
@@ -124,6 +160,12 @@ class Settings(BaseSettings):
         if not value.startswith("/"):
             raise ValueError("must be an absolute Technoline path beginning with /")
         return value
+
+    @model_validator(mode="after")
+    def distinct_profile_ids(self) -> Settings:
+        if self.student_id == self.adult_student_id:
+            raise ValueError("student_id and adult_student_id must be different")
+        return self
 
 
 @lru_cache
