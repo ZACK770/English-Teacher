@@ -23,6 +23,11 @@ def test_health_readiness_and_protected_progress(tmp_path) -> None:
         dashboard = client.get("/dashboard")
         assert dashboard.status_code == 200
         assert "לוח ההורה" in dashboard.text
+        assert "Gemini מציע רשמית רק שתי דרגות" in dashboard.text
+        assert "נמוכה — פחות רגישה לרעשים" in dashboard.text
+        assert 'class="help-tip"' in dashboard.text
+        assert 'class="topbar"' in dashboard.text
+        assert 'href="#speech-settings"' in dashboard.text
         assert dashboard.headers["cache-control"] == "no-store"
         assert client.get("/v1/progress/student").status_code == 401
         response = client.get(
