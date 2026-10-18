@@ -3,6 +3,7 @@ from pathlib import Path
 from pydantic import SecretStr
 
 from app.config import Settings
+from app.gemini_live import build_setup_payload
 from app.progress import ProgressStore
 from app.session import TutorSession
 from app.technoline import StartFrame
@@ -62,3 +63,22 @@ def test_lesson_summary_points_are_clamped(tmp_path) -> None:
     )
     assert session.lesson_summary is not None
     assert session.lesson_summary.points == 100
+
+
+def test_setup_payload_contains_configurable_speech_controls(tmp_path) -> None:
+    session = make_session(tmp_path)
+    configured = session.settings.model_copy(
+        update={
+            "gemini_activity_handling": "NO_INTERRUPTION",
+            "gemini_turn_coverage": "TURN_INCLUDES_ALL_INPUT",
+            "gemini_transcription_mode": "SMART",
+            "gemini_custom_vocabulary": ["Technoline"],
+            "gemini_temperature": 0.4,
+        }
+    )
+    setup = build_setup_payload(configured)["setup"]
+    assert setup["generationConfig"]["temperature"] == 0.4
+    assert setup["inputAudioTranscription"]["mode"] == "SMART"
+    assert setup["inputAudioTranscription"]["customVocabulary"] == ["Technoline"]
+    assert setup["realtimeInputConfig"]["activityHandling"] == "NO_INTERRUPTION"
+    assert setup["realtimeInputConfig"]["turnCoverage"] == "TURN_INCLUDES_ALL_INPUT"

@@ -9,7 +9,9 @@ from fastapi.responses import HTMLResponse
 
 from .auth import bearer_value, ip_is_allowed, secure_equal
 from .config import Settings, get_settings
+from .controls import VOICE_OPTIONS, TutorControls
 from .dashboard import dashboard_html
+from .gemini_live import build_setup_payload
 from .progress import ProgressStore
 from .session import TutorSession
 from .technoline import ProtocolError, parse_start_frame
@@ -63,14 +65,107 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
+    def require_admin(authorization: str | None) -> None:
+        active: Settings = app.state.settings
+        token = bearer_value(authorization)
+        if not secure_equal(token, active.admin_bearer_secret.get_secret_value()):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    async def admin_config_payload() -> dict:
+        active: Settings = app.state.settings
+        defaults = TutorControls.from_settings(active)
+        controls = await app.state.progress.load_tutor_controls(defaults)
+        history = await app.state.progress.lesson_context(active.student_id)
+        system_instruction = controls.build_system_instruction(history)
+        preview_settings = active.model_copy(
+            update=controls.settings_updates(system_instruction)
+        )
+        return {
+            "controls": controls.model_dump(),
+            "options": {
+                "voices": VOICE_OPTIONS,
+                "vad_start_sensitivity": [
+                    "START_SENSITIVITY_LOW",
+                    "START_SENSITIVITY_HIGH",
+                ],
+                "vad_end_sensitivity": [
+                    "END_SENSITIVITY_LOW",
+                    "END_SENSITIVITY_HIGH",
+                ],
+                "activity_handling": [
+                    "START_OF_ACTIVITY_INTERRUPTS",
+                    "NO_INTERRUPTION",
+                ],
+                "turn_coverage": [
+                    "TURN_COVERAGE_UNSPECIFIED",
+                    "TURN_INCLUDES_ONLY_ACTIVITY",
+                    "TURN_INCLUDES_ALL_INPUT",
+                    "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO",
+                ],
+                "transcription_mode": ["VERBATIM", "SMART"],
+            },
+            "effective": {
+                "setup_message": build_setup_payload(preview_settings),
+                "opening_client_message": {
+                    "clientContent": {
+                        "turns": [
+                            {
+                                "role": "user",
+                                "parts": [{"text": controls.opening_message}],
+                            }
+                        ],
+                        "turnComplete": True,
+                    }
+                },
+                "history_context": history,
+                "read_only_runtime": {
+                    "websocket_endpoint": active.gemini_live_url,
+                    "automatic_activity_detection": "enabled",
+                    "automatic_activity_detection_editable": False,
+                    "reason_not_editable": (
+                        "Disabling it requires a client-side VAD implementation that sends "
+                        "activityStart and activityEnd signals."
+                    ),
+                    "pbx_input": "PCM16LE mono 8000Hz",
+                    "gemini_input": "PCM16LE mono 16000Hz",
+                    "gemini_output": "PCM16LE mono 24000Hz",
+                    "pbx_output": "PCM16LE mono 8000Hz, paced in 20ms frames",
+                    "speaking_rate_control": "not exposed by Gemini Live",
+                    "session_resumption": "not implemented",
+                },
+            },
+        }
+
+    @app.get("/v1/admin/config")
+    async def get_admin_config(
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        return await admin_config_payload()
+
+    @app.put("/v1/admin/config")
+    async def update_admin_config(
+        controls: TutorControls,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        await app.state.progress.save_tutor_controls(controls)
+        return await admin_config_payload()
+
+    @app.delete("/v1/admin/config")
+    async def reset_admin_config(
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        await app.state.progress.reset_tutor_controls()
+        return await admin_config_payload()
+
     @app.get("/v1/progress/{student_id}")
     async def progress_report(
         student_id: str, authorization: str | None = Header(default=None)
     ) -> dict:
         active: Settings = app.state.settings
-        token = bearer_value(authorization)
-        if not secure_equal(token, active.admin_bearer_secret.get_secret_value()):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+        require_admin(authorization)
         if student_id != active.student_id:
             raise HTTPException(status_code=404, detail="Student not found")
         return await app.state.progress.report(student_id)

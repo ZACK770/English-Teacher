@@ -61,6 +61,55 @@ LESSON_SUMMARY_TOOL = {
 }
 
 
+def build_setup_payload(settings: Settings) -> dict[str, Any]:
+    generation_config: dict[str, Any] = {
+        "responseModalities": ["AUDIO"],
+        "speechConfig": {
+            "languageCode": settings.gemini_language_code,
+            "voiceConfig": {
+                "prebuiltVoiceConfig": {"voiceName": settings.gemini_voice}
+            },
+        },
+    }
+    if settings.gemini_temperature is not None:
+        generation_config["temperature"] = settings.gemini_temperature
+
+    input_transcription: dict[str, Any] = {
+        "mode": settings.gemini_transcription_mode,
+    }
+    if settings.gemini_transcription_language_codes:
+        input_transcription["languageCodes"] = settings.gemini_transcription_language_codes
+    if settings.gemini_custom_vocabulary:
+        input_transcription["customVocabulary"] = settings.gemini_custom_vocabulary
+
+    return {
+        "setup": {
+            "model": settings.gemini_live_model,
+            "generationConfig": generation_config,
+            "systemInstruction": {"parts": [{"text": settings.tutor_prompt}]},
+            "inputAudioTranscription": input_transcription,
+            "outputAudioTranscription": {},
+            "tools": [
+                {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL]}
+            ],
+            "contextWindowCompression": {
+                "triggerTokens": settings.gemini_context_trigger_tokens,
+                "slidingWindow": {"targetTokens": settings.gemini_context_target_tokens},
+            },
+            "realtimeInputConfig": {
+                "automaticActivityDetection": {
+                    "startOfSpeechSensitivity": settings.gemini_vad_start_sensitivity,
+                    "endOfSpeechSensitivity": settings.gemini_vad_end_sensitivity,
+                    "prefixPaddingMs": settings.gemini_vad_prefix_ms,
+                    "silenceDurationMs": settings.gemini_vad_silence_ms,
+                },
+                "activityHandling": settings.gemini_activity_handling,
+                "turnCoverage": settings.gemini_turn_coverage,
+            },
+        }
+    }
+
+
 class GeminiLive:
     """Small server-to-server Gemini Live client with normalized events."""
 
@@ -77,45 +126,7 @@ class GeminiLive:
             ping_timeout=20,
             close_timeout=5,
         )
-        await self._send(
-            {
-                "setup": {
-                    "model": self.settings.gemini_live_model,
-                    "generationConfig": {
-                        "responseModalities": ["AUDIO"],
-                        "speechConfig": {
-                            "languageCode": self.settings.gemini_language_code,
-                            "voiceConfig": {
-                                "prebuiltVoiceConfig": {"voiceName": self.settings.gemini_voice}
-                            },
-                        },
-                    },
-                    "systemInstruction": {
-                        "parts": [{"text": self.settings.tutor_prompt}]
-                    },
-                    "inputAudioTranscription": {},
-                    "outputAudioTranscription": {},
-                    "tools": [
-                        {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL]}
-                    ],
-                    "contextWindowCompression": {
-                        "triggerTokens": 12000,
-                        "slidingWindow": {"targetTokens": 6000},
-                    },
-                    "realtimeInputConfig": {
-                        "automaticActivityDetection": {
-                            "startOfSpeechSensitivity": (
-                                self.settings.gemini_vad_start_sensitivity
-                            ),
-                            "endOfSpeechSensitivity": self.settings.gemini_vad_end_sensitivity,
-                            "prefixPaddingMs": self.settings.gemini_vad_prefix_ms,
-                            "silenceDurationMs": self.settings.gemini_vad_silence_ms,
-                        },
-                        "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
-                    },
-                }
-            }
-        )
+        await self._send(build_setup_payload(self.settings))
         await self.socket.recv()  # setupComplete
         return self
 
@@ -154,11 +165,7 @@ class GeminiLive:
                             "role": "user",
                             "parts": [
                                 {
-                                    "text": (
-                                        "התחילי עכשיו את השיעור. ברכי את התלמידה "
-                                        "בעברית, הסבירי בעברית מה נעשה, והציעי בחירה "
-                                        "פשוטה בין תרגול שיחה למשחק קצר."
-                                    )
+                                    "text": self.settings.tutor_opening_message
                                 }
                             ],
                         }

@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .controls import TutorControls
+
 
 @dataclass(frozen=True)
 class Observation:
@@ -80,6 +82,11 @@ class ProgressStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_sessions_student_started
                 ON sessions(student_id, started_at DESC);
+                CREATE TABLE IF NOT EXISTS tutor_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    settings_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             existing = {
@@ -166,31 +173,100 @@ class ProgressStore:
     async def lesson_context(self, student_id: str, limit: int = 5) -> str:
         return await asyncio.to_thread(self._lesson_context_sync, student_id, limit)
 
+    async def load_tutor_controls(self, defaults: TutorControls) -> TutorControls:
+        return await asyncio.to_thread(self._load_tutor_controls_sync, defaults)
+
+    def _load_tutor_controls_sync(self, defaults: TutorControls) -> TutorControls:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT settings_json FROM tutor_settings WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return defaults
+        try:
+            saved = json.loads(row["settings_json"])
+            merged = defaults.model_dump()
+            merged.update(saved)
+            return TutorControls.model_validate(merged)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return defaults
+
+    async def save_tutor_controls(self, controls: TutorControls) -> None:
+        await asyncio.to_thread(self._save_tutor_controls_sync, controls)
+
+    def _save_tutor_controls_sync(self, controls: TutorControls) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO tutor_settings (id, settings_json, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    settings_json = excluded.settings_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    json.dumps(controls.model_dump(), ensure_ascii=False),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+    async def reset_tutor_controls(self) -> None:
+        await asyncio.to_thread(self._reset_tutor_controls_sync)
+
+    def _reset_tutor_controls_sync(self) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM tutor_settings WHERE id = 1")
+
     def _lesson_context_sync(self, student_id: str, limit: int) -> str:
         with self._connect() as db:
             rows = db.execute(
                 """
-                SELECT observations_json, summary_he, points FROM sessions WHERE student_id = ?
+                SELECT observations_json, summary_he, next_step_he, points
+                FROM sessions WHERE student_id = ?
                 ORDER BY started_at DESC LIMIT ?
                 """,
                 (student_id, limit),
             ).fetchall()
+            lifetime = db.execute(
+                """
+                SELECT COUNT(*) AS call_count, COALESCE(SUM(points), 0) AS total_points
+                FROM sessions WHERE student_id = ?
+                """,
+                (student_id,),
+            ).fetchone()
         observations: list[dict[str, Any]] = []
         summaries: list[dict[str, Any]] = []
+        next_steps: list[str] = []
+        for row in rows:
+            next_step = str(row["next_step_he"] or "").strip()
+            if next_step and next_step not in next_steps:
+                next_steps.append(next_step)
         for row in reversed(rows):
             observations.extend(json.loads(row["observations_json"]))
             if row["summary_he"]:
                 summaries.append({"summary_he": row["summary_he"], "points": row["points"]})
-        if not observations and not summaries:
+        total_points = int(lifetime["total_points"]) if lifetime else 0
+        call_count = int(lifetime["call_count"]) if lifetime else 0
+        if not observations and not summaries and not call_count:
             return ""
         compact = observations[-12:]
         return (
-            "\nPrevious privacy-safe learning notes. Use them only to adapt the lesson; "
-            "do not read them aloud verbatim:\n"
+            "Previous privacy-safe learning notes. Use them to adapt the lesson and begin "
+            "with the newest relevant next step; do not read this block aloud verbatim:\n"
             + json.dumps(
-                {"observations": compact, "recent_summaries": summaries[-3:]},
+                {
+                    "lifetime_progress": {
+                        "completed_calls": call_count,
+                        "total_points": total_points,
+                    },
+                    "recommended_next_steps": next_steps[:3],
+                    "observations": compact,
+                    "recent_summaries": summaries[-3:],
+                },
                 ensure_ascii=False,
             )
+            + "\nPrioritize the newest recommended next step. Also revisit recurring "
+            "corrections or skills scored 3 or lower."
         )
 
     def _report_sync(self, student_id: str, limit: int) -> dict[str, Any]:
@@ -207,6 +283,16 @@ class ProgressStore:
                 """,
                 (student_id, limit),
             ).fetchall()
+            lifetime = db.execute(
+                """
+                SELECT COUNT(*) AS session_count,
+                       COALESCE(SUM(duration_seconds), 0) AS duration_seconds,
+                       COALESCE(SUM(points), 0) AS total_points,
+                       COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost_usd
+                FROM sessions WHERE student_id = ?
+                """,
+                (student_id,),
+            ).fetchone()
         sessions = []
         scores: list[int] = []
         skill_scores: dict[str, list[int]] = {}
@@ -240,13 +326,12 @@ class ProgressStore:
             )
         return {
             "student_id": student_id,
-            "session_count": len(sessions),
-            "total_minutes": round(sum(x["duration_seconds"] for x in sessions) / 60, 1),
+            "session_count": int(lifetime["session_count"]),
+            "displayed_session_count": len(sessions),
+            "total_minutes": round(float(lifetime["duration_seconds"]) / 60, 1),
             "average_score": round(sum(scores) / len(scores), 2) if scores else None,
-            "total_points": sum(int(x["points"]) for x in sessions),
-            "estimated_cost_usd": round(
-                sum(float(x["estimated_cost_usd"]) for x in sessions), 6
-            ),
+            "total_points": int(lifetime["total_points"]),
+            "estimated_cost_usd": round(float(lifetime["estimated_cost_usd"]), 6),
             "skill_averages": {
                 skill: round(sum(values) / len(values), 2)
                 for skill, values in sorted(skill_scores.items())

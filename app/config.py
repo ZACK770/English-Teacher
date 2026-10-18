@@ -22,16 +22,21 @@ repeat or answer, and then continue. Correct important errors kindly in Hebrew, 
 natural English form, and ask for one retry. Do not correct every tiny error.
 
 Make points encouraging and transparent. Reward real effort, trying again, pronunciation,
-new vocabulary, and successful answers. When the learner says she wants to finish, or when
-the lesson naturally reaches a stopping point, call record_lesson_summary exactly once with
-a concise Hebrew summary and 0-100 points. Then SAY the summary and the points aloud in
-Hebrew before saying goodbye. Never invent achievements that were not observed.
+new vocabulary, and successful answers. Only when the runtime lesson controls permit ending,
+call record_lesson_summary exactly once with a concise Hebrew summary and 0-100 points.
+Then SAY the summary and the points aloud in Hebrew before saying goodbye. Never invent
+achievements that were not observed.
 
 Never ask for a full name, address, school, phone number, passwords, or other identifying
 information. After each substantive learner answer, call record_learning_observation with
 a brief, privacy-safe assessment. At the beginning, greet her in Hebrew, explain in Hebrew
 what will happen, and offer a simple choice between conversation practice and a short game.
 """
+
+DEFAULT_OPENING_MESSAGE = (
+    "התחילי עכשיו את השיעור. ברכי את התלמידה בעברית, הסבירי בעברית מה נעשה, "
+    "והציעי בחירה פשוטה בין תרגול שיחה למשחק קצר."
+)
 
 
 class Settings(BaseSettings):
@@ -57,6 +62,21 @@ class Settings(BaseSettings):
     ] = "END_SENSITIVITY_LOW"
     gemini_vad_silence_ms: int = Field(default=700, ge=100, le=2000)
     gemini_vad_prefix_ms: int = Field(default=400, ge=0, le=1000)
+    gemini_activity_handling: Literal[
+        "START_OF_ACTIVITY_INTERRUPTS", "NO_INTERRUPTION"
+    ] = "START_OF_ACTIVITY_INTERRUPTS"
+    gemini_turn_coverage: Literal[
+        "TURN_COVERAGE_UNSPECIFIED",
+        "TURN_INCLUDES_ONLY_ACTIVITY",
+        "TURN_INCLUDES_ALL_INPUT",
+        "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO",
+    ] = "TURN_INCLUDES_ONLY_ACTIVITY"
+    gemini_transcription_mode: Literal["VERBATIM", "SMART"] = "VERBATIM"
+    gemini_transcription_language_codes: list[str] = Field(default_factory=list)
+    gemini_custom_vocabulary: list[str] = Field(default_factory=list)
+    gemini_context_trigger_tokens: int = Field(default=12000, ge=1000, le=120000)
+    gemini_context_target_tokens: int = Field(default=6000, ge=500, le=100000)
+    gemini_temperature: float | None = Field(default=None, ge=0, le=2)
     gemini_input_batch_frames: int = Field(default=5, ge=1, le=20)
     gemini_input_text_usd_per_million: float = Field(default=0.75, ge=0)
     gemini_input_audio_usd_per_million: float = Field(default=3.0, ge=0)
@@ -78,6 +98,7 @@ class Settings(BaseSettings):
     max_concurrent_calls: int = Field(default=2, ge=1, le=20)
     store_transcripts: bool = False
     tutor_prompt: str = DEFAULT_TUTOR_PROMPT
+    tutor_opening_message: str = DEFAULT_OPENING_MESSAGE
 
     @field_validator("admin_bearer_secret")
     @classmethod

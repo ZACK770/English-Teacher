@@ -11,6 +11,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from .audio import downsample_24k_to_8k, upsample_8k_to_16k
 from .config import Settings
+from .controls import TutorControls
 from .gemini_live import GeminiLive
 from .progress import LessonSummary, Observation, ProgressStore, UsageTotals
 from .technoline import StartFrame
@@ -61,12 +62,15 @@ class TutorSession:
 
     async def run(self) -> None:
         try:
+            defaults = TutorControls.from_settings(self.settings)
+            controls = await self.progress.load_tutor_controls(defaults)
+            history = await self.progress.lesson_context(self.settings.student_id)
+            system_instruction = controls.build_system_instruction(history)
+            self.settings = self.settings.model_copy(
+                update=controls.settings_updates(system_instruction)
+            )
             async with asyncio.timeout(self.settings.max_call_minutes * 60):
-                history = await self.progress.lesson_context(self.settings.student_id)
-                live_settings = self.settings.model_copy(
-                    update={"tutor_prompt": self.settings.tutor_prompt + history}
-                )
-                async with GeminiLive(live_settings) as ai:
+                async with GeminiLive(self.settings) as ai:
                     await ai.start_greeting()
                     await self._bridge(ai)
         except (TimeoutError, CallEnded, WebSocketDisconnect):

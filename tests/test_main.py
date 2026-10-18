@@ -32,6 +32,32 @@ def test_health_readiness_and_protected_progress(tmp_path) -> None:
         assert response.status_code == 200
         assert response.json()["session_count"] == 0
 
+        assert client.get("/v1/admin/config").status_code == 401
+        config = client.get(
+            "/v1/admin/config",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+        )
+        assert config.status_code == 200
+        body = config.json()
+        assert body["controls"]["ending_policy"] == "learner_only"
+        assert body["effective"]["setup_message"]["setup"][
+            "realtimeInputConfig"
+        ]["automaticActivityDetection"]["silenceDurationMs"] == 700
+
+        controls = body["controls"]
+        controls["learning_goal"] = "לתרגל קניות באנגלית"
+        controls["vad_silence_ms"] = 850
+        updated = client.put(
+            "/v1/admin/config",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+            json=controls,
+        )
+        assert updated.status_code == 200
+        assert updated.json()["controls"]["vad_silence_ms"] == 850
+        assert "לתרגל קניות באנגלית" in updated.json()["effective"][
+            "setup_message"
+        ]["setup"]["systemInstruction"]["parts"][0]["text"]
+
 
 def test_technoline_websocket_accepts_without_bearer_by_default(tmp_path) -> None:
     app = create_app(settings(tmp_path / "progress.db"))
