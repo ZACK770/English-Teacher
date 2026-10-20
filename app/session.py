@@ -10,12 +10,13 @@ from datetime import UTC, datetime
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .audio import downsample_24k_to_8k, upsample_8k_to_16k
+from .business import BusinessStore
 from .config import Settings
 from .controls import TutorControls
 from .gemini_live import GeminiLive
 from .progress import LessonSummary, Observation, ProgressStore, UsageTotals
 from .prompting import compile_prompt
-from .technoline import StartFrame
+from .technoline import StartFrame, transfer_command
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,11 +39,16 @@ class TutorSession:
         start: StartFrame,
         settings: Settings,
         progress: ProgressStore,
+        business: BusinessStore | None = None,
     ) -> None:
         self.pbx = pbx
         self.start = start
         self.settings = settings
         self.progress = progress
+        self.business = business
+        self.customer_id = settings.student_id
+        self._sent_audio_turns: set[int] = set()
+        self._meter_started: float | None = None
         self.started_at = datetime.now(UTC)
         self.learner_turns = 0
         self.tutor_turns = 0
@@ -56,7 +62,7 @@ class TutorSession:
         self.thoughts_tokens = 0
         self.input_audio_bytes = 0
         self.output_audio_bytes = 0
-        self._out: collections.deque[bytes] = collections.deque()
+        self._out: collections.deque[tuple[int, bytes]] = collections.deque()
         self._partial = b""
         self._resample_carry = b""
         self._learner_seen_this_turn = False
@@ -71,6 +77,11 @@ class TutorSession:
     async def run(self) -> None:
         try:
             await self._latency("session_started")
+            if self.business:
+                self.customer_id = await asyncio.to_thread(
+                    self.business.identify_call, self.start.caller,
+                    self.start.call_id, self.settings.student_id,
+                )
             defaults = (
                 TutorControls.adult_from_settings(self.settings)
                 if self.settings.student_id == self.settings.adult_student_id
@@ -80,7 +91,11 @@ class TutorSession:
                 self.settings.student_id, defaults
             )
             await self._latency("configuration_loaded")
-            history = await self.progress.lesson_context(self.settings.student_id)
+            history = await self.progress.lesson_context(self.customer_id)
+            if self.business:
+                history += await asyncio.to_thread(
+                    self.business.lesson_context, self.customer_id, self.settings.student_id,
+                )
             artifact = compile_prompt(
                 controls=controls,
                 history_context=history,
@@ -88,6 +103,17 @@ class TutorSession:
                 profile_id=self.settings.student_id,
             )
             self.settings = artifact.runtime_settings
+            allowed_seconds = self.settings.max_call_minutes * 60
+            if self.business:
+                allowance = await asyncio.to_thread(
+                    self.business.reserve_call, self.customer_id, self.settings.student_id,
+                    self.start.call_id, allowed_seconds,
+                )
+                allowed_seconds = allowance["seconds"]
+                await self._latency("access_checked", {"mode": allowance["mode"]})
+                if not allowed_seconds:
+                    await self.pbx.send_text(transfer_command(allowance["extension"]))
+                    return
             await self.progress.save_prompt_snapshot(
                 profile_id=self.settings.student_id,
                 call_id=self.start.call_id,
@@ -97,12 +123,13 @@ class TutorSession:
                 "prompt_compiled",
                 {"fingerprint": artifact.fingerprint, "history_chars": len(history)},
             )
-            async with asyncio.timeout(self.settings.max_call_minutes * 60):
+            async with asyncio.timeout(allowed_seconds + 20):
                 await self._latency("gemini_connect_started")
                 async with GeminiLive(
                     self.settings, setup_payload=artifact.setup_message
                 ) as ai:
                     await self._latency("gemini_connected")
+                    self._meter_started = time.monotonic()
                     await self.progress.log_diagnostic(
                         profile_id=self.settings.student_id,
                         call_id=self.start.call_id,
@@ -116,12 +143,16 @@ class TutorSession:
                         call_id=self.start.call_id,
                         event_type="greeting_requested",
                     )
-                    await self._bridge(ai)
+                    async with asyncio.timeout(allowed_seconds):
+                        await self._bridge(ai)
         except (TimeoutError, CallEnded, WebSocketDisconnect):
             pass
         finally:
+            if self.business:
+                billed = (time.monotonic() - self._meter_started) if self._meter_started else 0
+                await asyncio.to_thread(self.business.settle_call, self.start.call_id, billed)
             await self.progress.save_session(
-                student_id=self.settings.student_id,
+                student_id=self.customer_id,
                 call_id=self.start.call_id,
                 started_at=self.started_at,
                 learner_turns=self.learner_turns,
@@ -152,14 +183,17 @@ class TutorSession:
             asyncio.create_task(self._ai_to_queue(ai), name="gemini-to-pbx-queue"),
             asyncio.create_task(self._paced_output(), name="paced-pbx-output"),
         }
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        for task in done:
-            exception = task.exception()
-            if exception and not isinstance(exception, (CallEnded, WebSocketDisconnect)):
-                raise exception
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                exception = task.exception()
+                if exception and not isinstance(exception, (CallEnded, WebSocketDisconnect)):
+                    raise exception
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _pbx_to_ai(self, ai: GeminiLive) -> None:
         batch: list[bytes] = []
@@ -314,29 +348,38 @@ class TutorSession:
         self, event_name: str, details: dict[str, object] | None = None
     ) -> None:
         now = time.monotonic()
+        previous = self._clock_previous
+        self._clock_previous = now
         await self.progress.log_latency(
             profile_id=self.settings.student_id,
             call_id=self.start.call_id,
             event_name=event_name,
             since_call_start_ms=(now - self._clock_start) * 1000,
-            since_previous_ms=(now - self._clock_previous) * 1000,
+            since_previous_ms=(now - previous) * 1000,
             details=dict(details or {}),
         )
-        self._clock_previous = now
 
     async def _paced_output(self) -> None:
         next_tick = time.monotonic()
         while True:
             next_tick += FRAME_SECONDS
             await asyncio.sleep(max(0, next_tick - time.monotonic()))
-            frame = self._out.popleft() if self._out else SILENCE_FRAME
+            had_audio = bool(self._out)
+            turn, frame = self._out.popleft() if had_audio else (0, SILENCE_FRAME)
             await self.pbx.send_bytes(frame)
+            if had_audio and turn not in self._sent_audio_turns:
+                self._sent_audio_turns.add(turn)
+                await self._latency(
+                    "first_audio_sent_to_phone",
+                    {"queue_frames": len(self._out), "customer_id": self.customer_id,
+                     "tutor_turn": turn},
+                )
 
     def _enqueue(self, pcm8: bytes) -> None:
         data = self._partial + pcm8
         whole = len(data) - (len(data) % FRAME_BYTES)
         for offset in range(0, whole, FRAME_BYTES):
-            self._out.append(data[offset : offset + FRAME_BYTES])
+            self._out.append((self.tutor_turns + 1, data[offset : offset + FRAME_BYTES]))
         self._partial = data[whole:]
 
     def _record_tool_call(self, call: dict) -> bool:

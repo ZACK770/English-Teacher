@@ -5,15 +5,20 @@ import logging
 import secrets
 import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from .auth import bearer_value, ip_is_allowed, secure_equal
 from .bots import BotCreate, BotUpdate
+from .business import BusinessStore, install_business_api
 from .config import Settings, get_settings
 from .controls import VOICE_OPTIONS, TutorControls
 from .dashboard import dashboard_html
+from .narration import install_narration_api
+from .portal import install_portal_api
 from .progress import ProgressStore
 from .prompting import compile_prompt
 from .session import TutorSession
@@ -37,6 +42,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             legacy_profile_id=active_settings.student_id,
         )
         await store.initialize()
+        app.state.business = BusinessStore(active_settings.database_path)
+        await asyncio.to_thread(app.state.business.initialize)
         await store.seed_bot(
             bot_id=active_settings.student_id,
             label="המורה של הבת",
@@ -57,6 +64,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title="Technoline English Tutor", version="1.0.0", lifespan=lifespan)
+    static_path = Path(__file__).parent / "static"
+    app.mount("/console-assets", StaticFiles(directory=static_path), name="console-assets")
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -72,12 +81,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:
         return HTMLResponse(
-            dashboard_html(),
+            (static_path / "console.html").read_text(encoding="utf-8"),
             headers={
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": (
-                    "default-src 'none'; style-src 'unsafe-inline'; "
-                    "script-src 'unsafe-inline'; connect-src 'self'; "
+                    "default-src 'none'; style-src 'self' 'unsafe-inline'; "
+                    "script-src 'self'; connect-src 'self'; img-src 'self' data:; "
+                    "media-src 'self' blob:; "
                     "base-uri 'none'; form-action 'none'"
                 ),
                 "X-Content-Type-Options": "nosniff",
@@ -85,11 +95,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/dashboard/legacy", response_class=HTMLResponse)
+    async def legacy_dashboard():
+        return HTMLResponse(dashboard_html(), headers={"Cache-Control": "no-store"})
+
     def require_admin(authorization: str | None) -> None:
         active: Settings = app.state.settings
         token = bearer_value(authorization)
         if not secure_equal(token, active.admin_bearer_secret.get_secret_value()):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    install_business_api(app, require_admin)
+    install_narration_api(app, require_admin)
+    install_portal_api(app, static_path)
 
     async def require_profile(profile_id: str) -> dict[str, object]:
         profile = await app.state.progress.get_bot(profile_id)
@@ -108,7 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile = await require_profile(profile_id)
         defaults = default_controls(profile_id)
         controls = await app.state.progress.load_tutor_controls(profile_id, defaults)
-        history = await app.state.progress.lesson_context(profile_id)
+        history = ""
         artifact = compile_prompt(
             controls=controls,
             history_context=history,
@@ -194,13 +212,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         require_admin(authorization)
         active: Settings = app.state.settings
+        controls = TutorControls.from_settings(active)
+        if bot.role == "translator":
+            controls = controls.model_copy(update={
+                "base_prompt": (
+                    "You are a concise telephone translator. Translate Hebrew speech to English "
+                    "and other languages to Hebrew unless the caller selects another target. "
+                    "Return only the translation. Do not add lessons, commentary or quizzes. "
+                    "Ask briefly for clarification only if the input cannot be understood."
+                ),
+                "opening_message": "אמרו למתקשר בעברית: שלום, נא לומר את המשפט לתרגום.",
+                "max_call_minutes": 5,
+            })
         try:
             created = await app.state.progress.create_bot(
-                bot, TutorControls.from_settings(active)
+                bot, controls
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="Bot id already exists") from exc
         return {"bot": created, "config": await admin_config_payload(bot.id)}
+
+    @app.post("/v1/admin/bots/{bot_id}/duplicate", status_code=201)
+    async def duplicate_bot(
+        bot_id: str, bot: BotCreate,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        await require_profile(bot_id)
+        controls = await app.state.progress.load_tutor_controls(bot_id, default_controls(bot_id))
+        try:
+            created = await app.state.progress.create_bot(bot, controls)
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "Bot id already exists") from exc
+        return {"bot": created}
 
     @app.put("/v1/admin/bots/{bot_id}")
     async def update_admin_bot(
@@ -224,6 +268,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_admin(authorization)
         await require_profile(bot_id)
         return {"bot_id": bot_id, "versions": await app.state.progress.bot_versions(bot_id)}
+
+    @app.post("/v1/admin/bots/{bot_id}/restore/{version}")
+    async def restore_bot(
+        bot_id: str, version: int, authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        await require_profile(bot_id)
+        versions = await app.state.progress.bot_versions(bot_id, limit=100)
+        selected = next((v for v in versions if v["version"] == version), None)
+        if selected is None:
+            raise HTTPException(404, "Version not found")
+        await app.state.progress.save_tutor_controls(
+            bot_id, TutorControls.model_validate(selected["controls"])
+        )
+        return await admin_config_payload(bot_id)
+
+    @app.post("/v1/admin/bots/{bot_id}/preview")
+    async def preview_bot(
+        bot_id: str, controls: TutorControls,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        await require_profile(bot_id)
+        return compile_prompt(
+            controls=controls, history_context="", settings=app.state.settings,
+            profile_id=bot_id,
+        ).public_payload()
 
     @app.get("/v1/admin/config")
     async def get_admin_config(
@@ -416,6 +487,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 start=start,
                 settings=session_settings,
                 progress=app.state.progress,
+                business=app.state.business,
             )
             await session.run()
         except (ProtocolError, TimeoutError) as exc:

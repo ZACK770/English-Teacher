@@ -22,14 +22,10 @@ def test_health_readiness_and_protected_progress(tmp_path) -> None:
         assert client.get("/readyz").status_code == 200
         dashboard = client.get("/dashboard")
         assert dashboard.status_code == 200
-        assert "לוח ההורה" in dashboard.text
-        assert "Gemini מציע רשמית רק שתי דרגות" in dashboard.text
-        assert "נמוכה — פחות רגישה לרעשים" in dashboard.text
-        assert 'class="help-tip"' in dashboard.text
-        assert 'class="topbar"' in dashboard.text
-        assert 'href="#speech-settings"' in dashboard.text
-        assert 'href="#diagnostics"' in dashboard.text
-        assert 'id="profileSelect"' in dashboard.text
+        assert "מרכז הניהול" in dashboard.text
+        assert '/console-assets/console.js' in dashboard.text
+        assert client.get('/console-assets/console.js').status_code == 200
+        assert client.get('/console-assets/console.css').status_code == 200
         assert dashboard.headers["cache-control"] == "no-store"
         assert client.get("/v1/progress/student").status_code == 401
         response = client.get(

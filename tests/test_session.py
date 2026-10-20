@@ -1,5 +1,7 @@
+import asyncio
 from pathlib import Path
 
+import pytest
 from pydantic import SecretStr
 
 from app.config import Settings
@@ -82,3 +84,23 @@ def test_setup_payload_contains_configurable_speech_controls(tmp_path) -> None:
     assert setup["inputAudioTranscription"]["customVocabulary"] == ["Technoline"]
     assert setup["realtimeInputConfig"]["activityHandling"] == "NO_INTERRUPTION"
     assert setup["realtimeInputConfig"]["turnCoverage"] == "TURN_INCLUDES_ALL_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_expired_call_cancels_every_bridge_task(tmp_path, monkeypatch):
+    session = make_session(tmp_path)
+    finished = []
+
+    async def blocked(*args):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            finished.append(True)
+
+    monkeypatch.setattr(session, "_pbx_to_ai", blocked)
+    monkeypatch.setattr(session, "_ai_to_queue", blocked)
+    monkeypatch.setattr(session, "_paced_output", blocked)
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(.03):
+            await session._bridge(None)
+    assert len(finished) == 3
