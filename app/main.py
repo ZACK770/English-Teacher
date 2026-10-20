@@ -5,6 +5,7 @@ import logging
 import secrets
 import sqlite3
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -18,7 +19,7 @@ from .config import Settings, get_settings
 from .controls import VOICE_OPTIONS, TutorControls
 from .dashboard import dashboard_html
 from .narration import install_narration_api
-from .pbx import install_pbx_api, seed_project
+from .pbx import install_pbx_api, load_context, seed_project
 from .portal import install_portal_api
 from .progress import ProgressStore
 from .prompting import compile_prompt
@@ -204,9 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         require_admin(authorization)
         profiles = await app.state.progress.list_bots()
-        return {
-            "profiles": profiles
-        }
+        return {"profiles": profiles}
 
     @app.post("/v1/admin/bots", status_code=201)
     async def create_admin_bot(
@@ -217,27 +216,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         active: Settings = app.state.settings
         controls = TutorControls.from_settings(active)
         if bot.role == "translator":
-            controls = controls.model_copy(update={
-                "base_prompt": (
-                    "You are a concise telephone translator. Translate Hebrew speech to English "
-                    "and other languages to Hebrew unless the caller selects another target. "
-                    "Return only the translation. Do not add lessons, commentary or quizzes. "
-                    "Ask briefly for clarification only if the input cannot be understood."
-                ),
-                "opening_message": "אמרו למתקשר בעברית: שלום, נא לומר את המשפט לתרגום.",
-                "max_call_minutes": 5,
-            })
-        try:
-            created = await app.state.progress.create_bot(
-                bot, controls
+            controls = controls.model_copy(
+                update={
+                    "base_prompt": (
+                        "You are a concise telephone translator. Translate Hebrew speech "
+                        "to English "
+                        "and other languages to Hebrew unless the caller selects another target. "
+                        "Return only the translation. Do not add lessons, commentary or quizzes. "
+                        "Ask briefly for clarification only if the input cannot be understood."
+                    ),
+                    "opening_message": "אמרו למתקשר בעברית: שלום, נא לומר את המשפט לתרגום.",
+                    "max_call_minutes": 5,
+                }
             )
+        try:
+            created = await app.state.progress.create_bot(bot, controls)
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="Bot id already exists") from exc
         return {"bot": created, "config": await admin_config_payload(bot.id)}
 
     @app.post("/v1/admin/bots/{bot_id}/duplicate", status_code=201)
     async def duplicate_bot(
-        bot_id: str, bot: BotCreate,
+        bot_id: str,
+        bot: BotCreate,
         authorization: str | None = Header(default=None),
     ):
         require_admin(authorization)
@@ -274,7 +275,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/admin/bots/{bot_id}/restore/{version}")
     async def restore_bot(
-        bot_id: str, version: int, authorization: str | None = Header(default=None),
+        bot_id: str,
+        version: int,
+        authorization: str | None = Header(default=None),
     ):
         require_admin(authorization)
         await require_profile(bot_id)
@@ -289,13 +292,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/admin/bots/{bot_id}/preview")
     async def preview_bot(
-        bot_id: str, controls: TutorControls,
+        bot_id: str,
+        controls: TutorControls,
         authorization: str | None = Header(default=None),
     ):
         require_admin(authorization)
         await require_profile(bot_id)
         return compile_prompt(
-            controls=controls, history_context="", settings=app.state.settings,
+            controls=controls,
+            history_context="",
+            settings=app.state.settings,
             profile_id=bot_id,
         ).public_payload()
 
@@ -341,9 +347,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         require_admin(authorization)
         profile_id = app.state.settings.student_id
-        await app.state.progress.save_tutor_controls(
-            profile_id, default_controls(profile_id)
-        )
+        await app.state.progress.save_tutor_controls(profile_id, default_controls(profile_id))
         return await admin_config_payload(profile_id)
 
     @app.delete("/v1/admin/config/{profile_id}")
@@ -353,9 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         require_admin(authorization)
         await require_profile(profile_id)
-        await app.state.progress.save_tutor_controls(
-            profile_id, default_controls(profile_id)
-        )
+        await app.state.progress.save_tutor_controls(profile_id, default_controls(profile_id))
         return await admin_config_payload(profile_id)
 
     @app.get("/v1/progress/{student_id}")
@@ -393,9 +395,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "traces": await app.state.progress.recent_traces(profile_id, limit),
         }
 
-    async def maintain_call_lease(
-        call_id: str, profile_id: str, owner_id: str
-    ) -> None:
+    async def maintain_call_lease(call_id: str, profile_id: str, owner_id: str) -> None:
         while True:
             await asyncio.sleep(5)
             renewed = await app.state.progress.renew_call_lease(call_id, owner_id)
@@ -409,7 +409,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return
 
     async def handle_technoline_stream(
-        websocket: WebSocket, profile_id: str
+        websocket: WebSocket, profile_id: str, *, first_frame: str | None = None
     ) -> None:
         active: Settings = app.state.settings
         profile = await app.state.progress.get_bot(profile_id)
@@ -419,7 +419,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not profile["enabled"]:
             await websocket.close(code=1008, reason="Tutor profile is disabled")
             return
-        expected_channel_id = profile["channel_id"]
+        expected_channel_id = active.tlivr_router_channel if first_frame else profile["channel_id"]
+        if first_frame and not profile["phone_enabled"]:
+            await websocket.close(code=1008, reason="Telephone channel disabled")
+            return
         if not expected_channel_id:
             await websocket.close(code=1013, reason="Tutor channel is not configured")
             return
@@ -429,16 +432,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             configured_secret = active.technoline_bearer_secret
             expected = configured_secret.get_secret_value() if configured_secret else ""
             if not expected or not secure_equal(supplied, expected):
-                LOGGER.warning(
-                    "Rejected Technoline WebSocket: bearer authentication failed"
-                )
+                LOGGER.warning("Rejected Technoline WebSocket: bearer authentication failed")
                 await websocket.close(code=1008, reason="Unauthorized")
                 return
         if not ip_is_allowed(remote_ip, active.technoline_allowed_ips):
             await websocket.close(code=1008, reason="Forbidden")
             return
 
-        await websocket.accept()
+        if first_frame is None:
+            await websocket.accept()
         slots: asyncio.Semaphore = app.state.call_slots
         if slots.locked():
             await websocket.close(code=1013, reason="All tutor lines are busy")
@@ -449,7 +451,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         active_call_id: str | None = None
         heartbeat: asyncio.Task[None] | None = None
         try:
-            first = await asyncio.wait_for(websocket.receive_text(), timeout=10)
+            first = first_frame or await asyncio.wait_for(websocket.receive_text(), timeout=10)
             start = parse_start_frame(first, str(expected_channel_id))
             owner_id = secrets.token_urlsafe(18)
             active_call_id = start.call_id
@@ -475,9 +477,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 maintain_call_lease(start.call_id, profile_id, owner_id),
                 name=f"call-lease-{start.call_id[:12]}",
             )
-            LOGGER.info(
-                "Accepted Technoline call %s profile=%s", start.call_id, profile_id
-            )
+            LOGGER.info("Accepted Technoline call %s profile=%s", start.call_id, profile_id)
             await app.state.progress.log_diagnostic(
                 profile_id=profile_id,
                 call_id=start.call_id,
@@ -485,9 +485,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 details={"endpoint": profile["websocket_path"]},
             )
             session_settings = active.model_copy(update={"student_id": profile_id})
+            session_start = start
+            if first_frame:
+                segment_id = start.call_id[:160] + "~" + secrets.token_hex(8)
+                await asyncio.to_thread(
+                    app.state.business.link_call_segment,
+                    start.call_id,
+                    segment_id,
+                    profile_id,
+                )
+                from .pbx import save_context
+
+                context = await asyncio.to_thread(load_context, app.state.business, start.call_id)
+                await asyncio.to_thread(save_context, app.state.business, segment_id, context)
+                session_start = replace(start, call_id=segment_id)
             session = TutorSession(
                 pbx=websocket,
-                start=start,
+                start=session_start,
                 settings=session_settings,
                 progress=app.state.progress,
                 business=app.state.business,
@@ -533,6 +547,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.websocket("/v1/technoline/stream/bots/{bot_id}")
     async def bot_technoline_stream(websocket: WebSocket, bot_id: str) -> None:
         await handle_technoline_stream(websocket, bot_id)
+
+    @app.websocket("/v1/technoline/router")
+    async def managed_technoline_stream(websocket: WebSocket) -> None:
+        active = app.state.settings
+        if not active.tlivr_project_enabled or not active.tlivr_router_channel:
+            await websocket.close(code=1013, reason="Managed channel not configured")
+            return
+        await websocket.accept()
+        try:
+            first = await asyncio.wait_for(websocket.receive_text(), timeout=10)
+            start = parse_start_frame(first, active.tlivr_router_channel)
+            context = await asyncio.to_thread(load_context, app.state.business, start.call_id)
+            bot_id = context.get("selected_bot")
+            if not bot_id:
+                await websocket.close(code=1008, reason="Select a bot in IVR first")
+                return
+            await handle_technoline_stream(websocket, bot_id, first_frame=first)
+        except (ProtocolError, TimeoutError):
+            await websocket.close(code=1008, reason="Invalid managed start")
+        except WebSocketDisconnect:
+            pass
 
     return app
 

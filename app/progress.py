@@ -192,6 +192,12 @@ class ProgressStore:
                     ),
                 )
             db.execute("DELETE FROM active_calls WHERE lease_expires_at <= ?", (time.time(),))
+            bot_columns = {r["name"] for r in db.execute("PRAGMA table_info(bots)")}
+            if "phone_enabled" not in bot_columns:
+                db.execute("ALTER TABLE bots ADD COLUMN phone_enabled INTEGER NOT NULL DEFAULT 0")
+                db.execute("UPDATE bots SET phone_enabled=1 WHERE id LIKE 'isaac-%'")
+            if "web_enabled" not in bot_columns:
+                db.execute("ALTER TABLE bots ADD COLUMN web_enabled INTEGER NOT NULL DEFAULT 1")
             existing = {
                 str(row["name"]) for row in db.execute("PRAGMA table_info(sessions)").fetchall()
             }
@@ -276,16 +282,10 @@ class ProgressStore:
     async def lesson_context(self, student_id: str, limit: int = 5) -> str:
         return await asyncio.to_thread(self._lesson_context_sync, student_id, limit)
 
-    async def load_tutor_controls(
-        self, profile_id: str, defaults: TutorControls
-    ) -> TutorControls:
-        return await asyncio.to_thread(
-            self._load_tutor_controls_sync, profile_id, defaults
-        )
+    async def load_tutor_controls(self, profile_id: str, defaults: TutorControls) -> TutorControls:
+        return await asyncio.to_thread(self._load_tutor_controls_sync, profile_id, defaults)
 
-    def _load_tutor_controls_sync(
-        self, profile_id: str, defaults: TutorControls
-    ) -> TutorControls:
+    def _load_tutor_controls_sync(self, profile_id: str, defaults: TutorControls) -> TutorControls:
         with self._connect() as db:
             row = db.execute(
                 "SELECT settings_json FROM tutor_profile_settings WHERE profile_id = ?",
@@ -301,16 +301,10 @@ class ProgressStore:
         except (json.JSONDecodeError, TypeError, ValueError):
             return defaults
 
-    async def save_tutor_controls(
-        self, profile_id: str, controls: TutorControls
-    ) -> int:
-        return await asyncio.to_thread(
-            self._save_tutor_controls_sync, profile_id, controls
-        )
+    async def save_tutor_controls(self, profile_id: str, controls: TutorControls) -> int:
+        return await asyncio.to_thread(self._save_tutor_controls_sync, profile_id, controls)
 
-    def _save_tutor_controls_sync(
-        self, profile_id: str, controls: TutorControls
-    ) -> int:
+    def _save_tutor_controls_sync(self, profile_id: str, controls: TutorControls) -> int:
         now = datetime.now(UTC).isoformat()
         settings_json = json.dumps(controls.model_dump(), ensure_ascii=False)
         with self._connect() as db:
@@ -459,7 +453,7 @@ class ProgressStore:
             rows = db.execute(
                 """
                 SELECT id, label, role, description, audience, channel_id,
-                       enabled, active_version, created_at, updated_at
+                       enabled, phone_enabled, web_enabled, active_version, created_at, updated_at
                 FROM bots ORDER BY created_at, id
                 """
             ).fetchall()
@@ -473,7 +467,7 @@ class ProgressStore:
             row = db.execute(
                 """
                 SELECT id, label, role, description, audience, channel_id,
-                       enabled, active_version, created_at, updated_at
+                       enabled, phone_enabled, web_enabled, active_version, created_at, updated_at
                 FROM bots WHERE id = ?
                 """,
                 (bot_id,),
@@ -492,15 +486,15 @@ class ProgressStore:
             "channel_id": row["channel_id"],
             "channel_configured": bool(row["channel_id"]),
             "enabled": bool(row["enabled"]),
+            "phone_enabled": bool(row["phone_enabled"]),
+            "web_enabled": bool(row["web_enabled"]),
             "active_version": int(row["active_version"]),
             "websocket_path": f"/v1/technoline/stream/bots/{bot_id}",
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
 
-    async def create_bot(
-        self, bot: BotCreate, controls: TutorControls
-    ) -> dict[str, Any]:
+    async def create_bot(self, bot: BotCreate, controls: TutorControls) -> dict[str, Any]:
         await asyncio.to_thread(self._create_bot_sync, bot, controls)
         created = await self.get_bot(bot.id)
         if created is None:
@@ -515,8 +509,8 @@ class ProgressStore:
                 """
                 INSERT INTO bots (
                     id, label, role, description, audience, channel_id,
-                    enabled, active_version, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    enabled, phone_enabled, web_enabled, active_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     bot.id,
@@ -526,6 +520,8 @@ class ProgressStore:
                     bot.audience,
                     bot.channel_id,
                     int(bot.enabled),
+                    int(bot.phone_enabled),
+                    int(bot.web_enabled),
                     now,
                     now,
                 ),
@@ -555,7 +551,7 @@ class ProgressStore:
             cursor = db.execute(
                 """
                 UPDATE bots SET label = ?, role = ?, description = ?, audience = ?,
-                    channel_id = ?, enabled = ?, updated_at = ?
+                    channel_id = ?, enabled = ?, phone_enabled = ?, web_enabled = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -565,6 +561,8 @@ class ProgressStore:
                     update.audience,
                     update.channel_id,
                     int(update.enabled),
+                    int(update.phone_enabled),
+                    int(update.web_enabled),
                     datetime.now(UTC).isoformat(),
                     bot_id,
                 ),
@@ -573,9 +571,7 @@ class ProgressStore:
                 raise KeyError(bot_id)
 
     async def bot_versions(self, bot_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(
-            self._bot_versions_sync, bot_id, max(1, min(limit, 100))
-        )
+        return await asyncio.to_thread(self._bot_versions_sync, bot_id, max(1, min(limit, 100)))
 
     def _bot_versions_sync(self, bot_id: str, limit: int) -> list[dict[str, Any]]:
         with self._connect() as db:
@@ -641,16 +637,12 @@ class ProgressStore:
                 return False
         return True
 
-    async def renew_call_lease(
-        self, call_id: str, owner_id: str, lease_seconds: int = 20
-    ) -> bool:
+    async def renew_call_lease(self, call_id: str, owner_id: str, lease_seconds: int = 20) -> bool:
         return await asyncio.to_thread(
             self._renew_call_lease_sync, call_id, owner_id, lease_seconds
         )
 
-    def _renew_call_lease_sync(
-        self, call_id: str, owner_id: str, lease_seconds: int
-    ) -> bool:
+    def _renew_call_lease_sync(self, call_id: str, owner_id: str, lease_seconds: int) -> bool:
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -716,16 +708,12 @@ class ProgressStore:
                 """
             )
 
-    async def recent_diagnostics(
-        self, profile_id: str, limit: int = 100
-    ) -> list[dict[str, Any]]:
+    async def recent_diagnostics(self, profile_id: str, limit: int = 100) -> list[dict[str, Any]]:
         return await asyncio.to_thread(
             self._recent_diagnostics_sync, profile_id, max(1, min(limit, 300))
         )
 
-    def _recent_diagnostics_sync(
-        self, profile_id: str, limit: int
-    ) -> list[dict[str, Any]]:
+    def _recent_diagnostics_sync(self, profile_id: str, limit: int) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -895,16 +883,10 @@ class ProgressStore:
                 ),
             )
 
-    async def recent_traces(
-        self, profile_id: str, limit: int = 20
-    ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(
-            self._recent_traces_sync, profile_id, max(1, min(limit, 50))
-        )
+    async def recent_traces(self, profile_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._recent_traces_sync, profile_id, max(1, min(limit, 50)))
 
-    def _recent_traces_sync(
-        self, profile_id: str, limit: int
-    ) -> list[dict[str, Any]]:
+    def _recent_traces_sync(self, profile_id: str, limit: int) -> list[dict[str, Any]]:
         with self._connect() as db:
             snapshots = db.execute(
                 """

@@ -23,6 +23,8 @@ def client(tmp_path):
             tlivr_basic_channel="basic-token",
             tlivr_advanced_channel="advanced-token",
             tlivr_translator_channel="translator-token",
+            tlivr_router_channel="router-token",
+            public_base_url="https://example.test",
         )
     )
     with TestClient(app) as test_client:
@@ -143,3 +145,142 @@ def test_anonymous_identity_stable_within_callback_and_stream(client):
             ]
             == "isaac-basic"
         )
+
+
+def test_new_bot_automatically_appears_in_phone_and_can_be_disabled(client):
+    headers = {"Authorization": "Bearer " + "a" * 32}
+    bot = client.post(
+        "/v1/admin/bots",
+        headers=headers,
+        json={"id": "new-teacher", "label": "New dynamic teacher"},
+    ).json()["bot"]
+    assert bot["phone_enabled"] and bot["web_enabled"]
+    assert bot["channel_id"] is None
+    response = callback(client, "teachers").json()
+    assert "New dynamic teacher" in response["files"][0]["text"]
+    context = client.app.state.business
+    from app.pbx import load_context
+
+    mapping = load_context(context, "call-one")["teacher_choices"]
+    digit = next(k for k, v in mapping.items() if v == "new-teacher")
+    assert callback(client, "teachers", isaacBotChoice=digit).json()["goTo"] == "/99/5"
+    assert load_context(context, "call-one")["selected_bot"] == "new-teacher"
+    assert (
+        client.put(
+            "/v1/admin/bots/new-teacher", headers=headers, json={**bot, "phone_enabled": False}
+        ).status_code
+        == 200
+    )
+    assert (
+        "New dynamic teacher"
+        not in callback(client, "teachers", PBXcallId="another-call").json()["files"][0]["text"]
+    )
+
+
+def test_portal_preferences_and_telephone_use_the_same_identity(client):
+    headers = {"Authorization": "Bearer " + "a" * 32}
+    callback(client)
+    customer = client.app.state.business.list("customers")[0]
+    invite = client.post(
+        f"/v1/admin/business/customers/{customer['id']}/invite", headers=headers
+    ).json()
+    learner = {"Authorization": "Bearer " + invite["token"]}
+    assert (
+        client.post(
+            "/v1/portal/preferences",
+            headers=learner,
+            json={
+                "selected_bot": "isaac-advanced",
+                "mode": "free",
+                "language": "Russian",
+            },
+        ).status_code
+        == 200
+    )
+    assert callback(client, "school", isaacTeacher="1").json()["goTo"] == "/99/5"
+    from app.pbx import load_context
+
+    assert load_context(client.app.state.business, "call-one")["selected_bot"] == "isaac-advanced"
+    assert (
+        client.get("/v1/portal/me", headers=learner).json()["preferences"]["language"] == "Russian"
+    )
+
+
+def test_managed_stream_loads_selected_bot_without_private_channel(client, monkeypatch):
+    from app.pbx import save_context
+
+    seen = []
+
+    class Session:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def run(self):
+            seen.append(self.kwargs["settings"].student_id)
+            await self.kwargs["pbx"].close()
+
+    monkeypatch.setattr("app.main.TutorSession", Session)
+    save_context(client.app.state.business, "managed-call", {"selected_bot": "isaac-basic"})
+    client.app.state.business.identify_call("0501234567", "managed-call", "ivr")
+    with client.websocket_connect("/v1/technoline/router") as ws:
+        ws.send_json(
+            {
+                "type": "start",
+                "callId": "managed-call",
+                "caller": "0501234567",
+                "token": "router-token",
+                "format": "pcm16;rate=8000;ch=1",
+            }
+        )
+        assert ws.receive()["type"] == "websocket.close"
+    assert seen == ["isaac-basic"]
+
+
+def test_only_approved_current_narration_is_published(client):
+    import hashlib
+
+    from app.business import Narration
+
+    headers = {"Authorization": "Bearer " + "a" * 32}
+    store = client.app.state.business
+    record = store.save(
+        "narrations",
+        Narration(
+            name="Welcome",
+            placement="welcome",
+            text="ברוכים הבאים לקו הלימוד החדש.",
+            status="approved",
+        ).model_dump(),
+    )
+    store.save_audio(record["id"], hashlib.sha256(record["text"].encode()).hexdigest(), b"RIFFtest")
+    path = f"/v1/admin/narrations/{record['id']}/publish-to-ivr"
+    assert client.post(path, headers=headers, json={"slot": "welcome"}).json()["published"]
+    link = callback(client).json()["files"][0]["fileLink"]
+    assert client.get(link).content == b"RIFFtest"
+    copy = client.get("/v1/admin/pbx/config", headers=headers).json()["copy"]
+    copy["welcome"] = "נוסח אחר לגמרי, ללא ההקלטה הישנה."
+    client.put("/v1/admin/pbx/config", headers=headers, json=copy)
+    assert callback(client).json()["files"][0]["text"] == copy["welcome"]
+    assert client.get(link).status_code == 404
+
+
+def test_reconcile_refuses_to_overwrite_occupied_extension(client, monkeypatch):
+    from app.pbx import reconcile_project
+
+    def request(self, action, params=None, **kwargs):
+        if action == "folderSettings":
+            return {"id": 1, "num": "0765673575"}
+        if action == "foldersList":
+            return {
+                "1": {
+                    "id": 1,
+                    "children": {
+                        "2": {"id": 2, "extension": "99", "name": "Existing other service"}
+                    },
+                }
+            }
+        pytest.fail("Must not perform a write")
+
+    monkeypatch.setattr(PBXClient, "request", request)
+    with pytest.raises(PBXError, match="99"):
+        reconcile_project(client.app.state.settings, client.app.state.business)

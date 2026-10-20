@@ -367,6 +367,17 @@ class BusinessStore:
                 WHERE call_id=? AND billed_seconds IS NULL""", (max(0, seconds), call_id),
             )
 
+    def link_call_segment(self, parent_call_id, segment_id, bot_id):
+        """One PBX call can visit several bots; each segment has its own usage and traces."""
+        with self.connect() as db:
+            parent = db.execute(
+                "SELECT customer_id FROM call_customers WHERE call_id=?", (parent_call_id,)
+            ).fetchone()
+            if not parent:
+                raise ValueError("Call must enter authenticated IVR before streaming")
+            db.execute("INSERT INTO call_customers VALUES (?,?,?,?,?)",
+                       (segment_id, parent[0], bot_id, "phone", now()))
+
     def customer_detail(self, customer_id):
         customer = next((c for c in self.list("customers") if c["id"] == customer_id), None)
         if not customer:

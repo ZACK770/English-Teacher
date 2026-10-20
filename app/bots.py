@@ -15,6 +15,8 @@ class BotCreate(BaseModel):
     description: str = Field(default="", max_length=1000)
     channel_id: str | None = Field(default=None, max_length=200)
     enabled: bool = True
+    phone_enabled: bool = True
+    web_enabled: bool = True
     audience: str = Field(default="general", max_length=40)
 
     @field_validator("id")
@@ -40,6 +42,8 @@ class BotUpdate(BaseModel):
     description: str = Field(default="", max_length=1000)
     channel_id: str | None = Field(default=None, max_length=200)
     enabled: bool = True
+    phone_enabled: bool = True
+    web_enabled: bool = True
     audience: str = Field(default="general", max_length=40)
 
     @field_validator("channel_id")

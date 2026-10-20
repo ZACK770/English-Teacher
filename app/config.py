@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     tlivr_basic_channel: str | None = None
     tlivr_advanced_channel: str | None = None
     tlivr_translator_channel: str | None = None
+    tlivr_router_channel: str | None = None
 
     admin_bearer_secret: SecretStr
     student_id: str = "student"

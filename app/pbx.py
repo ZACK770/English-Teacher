@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 
 from fastapi import Header, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .auth import secure_equal
@@ -43,17 +44,16 @@ class IVRCopy(BaseModel):
     )
     school: str = Field(
         default=(
-            "ברוכים הבאים לבית הספר לאנגלית. למורה בסיסי, עם הסברים בעברית, הקישו 1. "
-            "למורה מתקדם, בעיקר באנגלית, הקישו 2. למידע וחבילות הקישו 3. לחזרה הקישו 0."
+            "שלום וברוכים הבאים לבית הספר. לכניסה ללמידה הקישו 1. "
+            "למידע ומכירות הקישו 2. לשירות לקוחות הקישו 3. לחזרה הקישו 0."
         ),
         min_length=10,
         max_length=2000,
     )
     translator: str = Field(
         default=(
-            "הגעתם לתרגומון. לתחילת תרגום הקישו 1. ברירת המחדל היא מעברית לאנגלית, "
-            "ומשפה אחרת לעברית. לבחירת שפת יעד אחרת הקישו 9. "
-            "ללימוד אנגלית הקישו 2. לחזרה הקישו 0."
+            "שלום, הגעתם לתרגומון של שיטת אייזיק. לתרגום לשפה אחרת הקישו כעת 9. "
+            "ללמוד לדבר אנגלית בעצמכם? לבית הספר לאנגלית הקישו 2."
         ),
         min_length=10,
         max_length=2000,
@@ -61,7 +61,8 @@ class IVRCopy(BaseModel):
     languages: str = Field(
         default=(
             "לבחירת שפת יעד: לאנגלית הקישו 1. לעברית 2. ליידיש 3. "
-            "לערבית 4. לרוסית 5. לצרפתית 6. לחזרה הקישו 0."
+            "לערבית 4. לרוסית 5. לצרפתית 6. לזיהוי אוטומטי ותרגום עברית אנגלית הקישו 7. "
+            "לחזרה הקישו 0."
         ),
         min_length=10,
         max_length=2000,
@@ -134,6 +135,112 @@ class PBXClient:
             raise PBXError("לא ניתן להשלים את הבקשה לטכנוליין כרגע") from None
 
 
+def reconcile_project(settings, business):
+    """Idempotent desired-state sync. Never mutate anything outside the project subtree."""
+    if not settings.tlivr_project_enabled or not settings.tlivr_router_channel:
+        raise PBXError("נתב הבוטים טרם הוגדר בשרת")
+    client = PBXClient(settings)
+    root = client.request("folderSettings", {"path": "/"})
+    if str(root.get("num")) != settings.tlivr_system_phone:
+        raise PBXError("מספר המערכת אינו תואם. הסנכרון נעצר ללא שינוי")
+    base = settings.tlivr_project_path
+    if base != "/99":
+        raise PBXError("הסנכרון מוגבל לשלוחה 99 בלבד")
+    secret = settings.tlivr_callback_secret
+    if not secret or not settings.public_base_url:
+        raise PBXError("כתובת ציבורית וסוד callback נדרשים לפני סנכרון")
+    tree = client.request("foldersList")
+    root_node = tree.get(str(root["id"]), {})
+
+    def child(parent, digit):
+        children = parent.get("children", {})
+        return next((v for v in children.values() if str(v.get("extension")) == digit), None)
+
+    current = child(root_node, "99")
+    if current and not current.get("name", "").startswith("אייזיק ·"):
+        raise PBXError("שלוחה 99 תפוסה ואינה מזוהה כשייכת למיזם; לא תידרס")
+    manifest = [
+        ("", "כניסה", "main"),
+        ("/1", "בית הספר", "school"),
+        ("/1/1", "בחירת מורה", "teachers"),
+        ("/2", "תרגומון", "translator"),
+        ("/2/1", "תחילת תרגום", "start-translation"),
+        ("/2/9", "בחירת שפה", "languages"),
+        ("/3", "מידע וחבילות", "sales"),
+        ("/4", "שירות והודעות", "service"),
+        ("/5", "סוג למידה", "mode"),
+        ("/6", "בוטים נוספים", "bots"),
+        ("/7", "נתב בוטים", None),
+        ("/8", "סיום מכסה", "quota"),
+    ]
+    nodes = {"/": str(root["id"])}
+    changes = []
+    verified = []
+    for suffix, label, route in manifest:
+        path = base + suffix
+        parent_path, _, digit = path.rpartition("/")
+        parent_id = nodes[parent_path or "/"]
+        # Read from tree rather than treating arbitrary provider errors as 'not found'.
+        cursor = root_node
+        for part in path.strip("/").split("/"):
+            cursor = child(cursor, part) if cursor else None
+        existing = (
+            client.request("folderSettings", {"extensionId": cursor["id"]}) if cursor else None
+        )
+        if route:
+            target = settings.public_base_url.rstrip("/") + "/v1/technoline/ivr/" + route
+            target += "?" + urllib.parse.urlencode({"key": secret.get_secret_value()})
+            wanted = {"url": target, "paramsMode": "chain", "method": "POST"}
+            kind = "api"
+        else:
+            wanted = {"streamId": settings.tlivr_router_channel}
+            kind = "stream"
+        old_settings = (existing or {}).get("settings") or {}
+        different = (
+            not existing
+            or existing.get("type") != kind
+            or any(str(old_settings.get(k, "")) != str(v) for k, v in wanted.items())
+        )
+        if different:
+            snapshot = {
+                "path": path,
+                "at": now(),
+                "before": {k: v for k, v in (existing or {}).items() if k != "settings"},
+                "settings": {k: v for k, v in dict(old_settings).items() if k != "url"},
+            }
+            business.save("pbx-snapshots", snapshot)
+            fields = {
+                "extensionId": str(existing["id"]) if existing else "NEW",
+                "belowExtension": parent_id,
+                "name": "אייזיק · " + label,
+                "extension": digit,
+                "type": kind,
+                **{"settings[" + k + "]": v for k, v in wanted.items()},
+            }
+            client.request("extensionSet", fields, write=True)
+            changes.append(path)
+        check = client.request("folderSettings", {"path": path})
+        actual = check.get("settings") or {}
+        if check.get("type") != kind or any(
+            str(actual.get(k, "")) != str(v) for k, v in wanted.items()
+        ):
+            raise PBXError("אימות הגדרות השלוחה נכשל. יש לבדוק את דוח הסנכרון")
+        nodes[path] = str(check["id"])
+        verified.append({"path": path, "id": str(check["id"]), "type": kind, "route": route})
+        # A fresh tree includes newly-created parents for the next iteration.
+        tree = client.request("foldersList")
+        root_node = tree.get(str(root["id"]), {})
+    result = {
+        "at": now(),
+        "changed": changes,
+        "verified": verified,
+        "root_untouched": True,
+        "channel_strategy": "shared-dynamic-router",
+    }
+    save_context(business, "sync-status", result)
+    return result
+
+
 def get_copy(business):
     with business.connect() as db:
         row = db.execute("SELECT body FROM console_settings WHERE id='ivr-copy'").fetchone()
@@ -154,12 +261,95 @@ def save_context(business, call_id, values):
         )
 
 
-def runtime_context(business, call_id):
+def load_context(business, call_id):
     with business.connect() as db:
         row = db.execute(
             "SELECT body FROM console_settings WHERE id=?", ("ivr:" + call_id,)
         ).fetchone()
-    values = json.loads(row[0]) if row else {}
+    return json.loads(row[0]) if row else {}
+
+
+def save_preference(business, customer_id, values):
+    save_context(business, "preferences:" + customer_id, values)
+    if values.get("selected_bot"):
+        with business.connect() as db:
+            row = db.execute(
+                "SELECT body FROM console_records WHERE kind='customers' AND id=?",
+                (customer_id,),
+            ).fetchone()
+            if row:
+                body = json.loads(row[0])
+                body["preferred_bot"] = values["selected_bot"]
+                db.execute(
+                    "UPDATE console_records SET body=?,updated_at=? "
+                    "WHERE kind='customers' AND id=?",
+                    (json.dumps(body, ensure_ascii=False), now(), customer_id),
+                )
+
+
+async def choose_teacher(app, params, copy, call_id, customer_id, *, other_bots=False):
+    """Snapshot choices per call, so concurrent admin changes cannot remap a digit."""
+    business = app.state.business
+    base = app.state.settings.tlivr_project_path
+    context = await asyncio.to_thread(load_context, business, call_id)
+    choice = params.get("isaacBotChoice")
+    selected = context.get("teacher_choices", {}).get(choice)
+    if selected:
+        bot = await app.state.progress.get_bot(selected)
+        if (
+            bot
+            and bot["enabled"]
+            and bot["phone_enabled"]
+            and (other_bots or bot["role"] == "teacher")
+        ):
+            await asyncio.to_thread(save_context, business, call_id, {"selected_bot": selected})
+            await asyncio.to_thread(
+                save_preference, business, customer_id, {"selected_bot": selected}
+            )
+            return {
+                "type": "goTo",
+                "goTo": base + ("/7" if other_bots else "/5"),
+                "removeParams": ["isaacBotChoice", "isaacMode"],
+            }
+    if choice == "0":
+        return {
+            "type": "goTo",
+            "goTo": base + "/1",
+            "removeParams": ["isaacBotChoice", "isaacTeacher"],
+        }
+    if choice == "ERROR":
+        return {"type": "hangup"}
+    bots = [
+        b
+        for b in await app.state.progress.list_bots()
+        if b["enabled"]
+        and b["phone_enabled"]
+        and (b["role"] not in {"teacher", "translator"} if other_bots else b["role"] == "teacher")
+    ]
+    offset = int(context.get("teacher_offset", 0)) + (8 if choice == "9" else 0)
+    if offset >= len(bots):
+        offset = 0
+    page = bots[offset : offset + 8]
+    mapping = {str(i + 1): b["id"] for i, b in enumerate(page)}
+    await asyncio.to_thread(
+        save_context, business, call_id, {"teacher_choices": mapping, "teacher_offset": offset}
+    )
+    text = "בחרו את המורה המתאים לכם. " + " ".join(
+        f"ל{b['label']} הקישו {i + 1}." for i, b in enumerate(page)
+    )
+    if len(bots) > 8:
+        text += " למורים נוספים הקישו 9."
+    if not bots:
+        text = "אין מורה זמין כרגע."
+    return menu(
+        "isaacBotChoice",
+        text + " לחזרה הקישו 0.",
+        ",".join([*mapping, *(["9"] if len(bots) > 8 else []), "0"]),
+    )
+
+
+def runtime_context(business, call_id):
+    values = load_context(business, call_id)
     lines = []
     if values.get("language"):
         lines.append("Translation target selected in IVR: " + values["language"] + ".")
@@ -171,6 +361,28 @@ def runtime_context(business, call_id):
             "otherwise start with a short level calibration and a useful basic lesson."
         )
     return "\n".join(lines)
+
+
+def narration_for_slot(business, slot, text):
+    bindings = load_context(business, "audio-bindings")
+    narration_id = bindings.get(slot)
+    if not narration_id:
+        return None
+    record = next((n for n in business.list("narrations") if n["id"] == narration_id), None)
+    audio = business.get_audio(narration_id)
+    if (
+        not record
+        or record["status"] != "approved"
+        or record["text"] != text
+        or not audio
+        or audio["text_hash"] != hashlib.sha256(text.encode()).hexdigest()
+    ):
+        return None
+    return {
+        "id": narration_id,
+        "hash": hashlib.sha256(audio["wav"]).hexdigest(),
+        "wav": audio["wav"],
+    }
 
 
 async def seed_project(app, settings, progress):
@@ -280,6 +492,8 @@ def ivr_response(route, params, copy, base):
                 "isaacThanks",
                 "isaacMessage",
                 "FILEID_isaacMessage",
+                "isaacBotChoice",
+                "isaacMode",
             ],
         }
 
@@ -289,29 +503,30 @@ def ivr_response(route, params, copy, base):
         "main": (
             "isaacMain",
             copy.welcome,
-            "1,2,3,4",
-            {"1": "/1", "2": "/2", "3": "/3", "4": "/4"},
+            "1,2,3,4,5",
+            {"1": "/1", "2": "/2", "3": "/3", "4": "/4", "5": "/6"},
         ),
         "school": (
             "isaacTeacher",
             copy.school,
             "0,1,2,3",
-            {"0": "", "1": "/1/1", "2": "/1/2", "3": "/3"},
+            {"0": "", "1": "/1/1", "2": "/3", "3": "/4"},
         ),
         "translator": (
             "isaacTranslation",
             copy.translator,
             "0,1,2,9",
-            {"0": "", "1": "/2/1", "2": "/1", "9": "/2/9"},
+            {"0": "", "1": "/2/1", "2": "/1", "9": "/2/9", "START": "/2/1"},
         ),
         "languages": (
             "isaacLanguage",
             copy.languages,
-            "0,1,2,3,4,5,6",
-            {"0": "/2", **{str(i): "/2/1" for i in range(1, 7)}},
+            "0,1,2,3,4,5,6,7",
+            {"0": "/2", **{str(i): "/2/1" for i in range(1, 8)}},
         ),
         "sales": ("isaacSales", copy.sales, "0,1", {"0": "", "1": "/4"}),
         "quota": ("isaacQuota", copy.quota, "0,1,2", {"0": "", "1": "/3", "2": "/1"}),
+        "mode": ("isaacMode", copy.school_mode, "0,1,2", {"0": "/1/1", "1": "/7", "2": "/7"}),
         "basic": (
             "isaacBasicMode",
             copy.school_mode,
@@ -353,10 +568,28 @@ def ivr_response(route, params, copy, base):
     choice = params.get(name)
     if choice == "ERROR":
         return {"type": "hangup"}
-    return go(targets[choice]) if choice in targets else menu(name, text, keys)
+    response = go(targets[choice]) if choice in targets else menu(name, text, keys)
+    if route == "translator" and response["type"] == "simpleMenu":
+        response.update({"times": 1, "timeout": 2, "errorReturn": "START"})
+    return response
 
 
 def install_pbx_api(app, require_admin):
+    sync_lock = asyncio.Lock()
+
+    @app.post("/v1/admin/pbx/reconcile")
+    async def reconcile(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        if sync_lock.locked():
+            raise HTTPException(409, "סנכרון כבר פועל")
+        async with sync_lock:
+            try:
+                return await asyncio.to_thread(
+                    reconcile_project, app.state.settings, app.state.business
+                )
+            except PBXError as exc:
+                raise HTTPException(502, str(exc)) from None
+
     @app.get("/v1/admin/pbx/config")
     async def config(authorization: str | None = Header(default=None)):
         require_admin(authorization)
@@ -370,6 +603,10 @@ def install_pbx_api(app, require_admin):
             "callback_configured": bool(s.tlivr_callback_secret),
             "payment_configured": False,
             "live_dtmf_supported": False,
+            "managed_channel_configured": bool(s.tlivr_router_channel),
+            "audio_bindings": await asyncio.to_thread(
+                load_context, app.state.business, "audio-bindings"
+            ),
         }
 
     @app.put("/v1/admin/pbx/config")
@@ -412,6 +649,59 @@ def install_pbx_api(app, require_admin):
         require_admin(authorization)
         return {"events": await asyncio.to_thread(app.state.business.list, "ivr-events")}
 
+    @app.post("/v1/admin/narrations/{narration_id}/publish-to-ivr")
+    async def publish_narration(
+        narration_id: str, body: dict, authorization: str | None = Header(default=None)
+    ):
+        require_admin(authorization)
+        business = app.state.business
+        slot = body.get("slot")
+        copy = await asyncio.to_thread(get_copy, business)
+        if slot not in IVRCopy.model_fields:
+            raise HTTPException(400, "Unknown narration placement")
+        record = next(
+            (
+                n
+                for n in await asyncio.to_thread(business.list, "narrations")
+                if n["id"] == narration_id
+            ),
+            None,
+        )
+        audio = await asyncio.to_thread(business.get_audio, narration_id)
+        if not record or record["status"] != "approved" or not audio:
+            raise HTTPException(409, "נדרש נוסח מאושר וקובץ קריינות שנוצר")
+        if audio["text_hash"] != hashlib.sha256(record["text"].encode()).hexdigest():
+            raise HTTPException(409, "הנוסח השתנה; יש לייצר קריינות מחדש")
+        values = copy.model_dump()
+        values[slot] = record["text"]
+        new_copy = IVRCopy.model_validate(values)
+        with business.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO console_settings VALUES ('ivr-copy',?)",
+                (new_copy.model_dump_json(),),
+            )
+        await asyncio.to_thread(save_context, business, "audio-bindings", {slot: narration_id})
+        return {
+            "published": True,
+            "slot": slot,
+            "narration_id": narration_id,
+            "delivery": "PBX fileLink; no manual upload required",
+        }
+
+    @app.get("/v1/technoline/narrations/{narration_id}/{fingerprint}.wav")
+    async def public_ivr_audio(narration_id: str, fingerprint: str):
+        business = app.state.business
+        copy = await asyncio.to_thread(get_copy, business)
+        for slot, text in copy.model_dump().items():
+            audio = await asyncio.to_thread(narration_for_slot, business, slot, text)
+            if audio and audio["id"] == narration_id and secure_equal(audio["hash"], fingerprint):
+                return Response(
+                    audio["wav"],
+                    media_type="audio/wav",
+                    headers={"Cache-Control": "public, max-age=86400, immutable"},
+                )
+        raise HTTPException(404, "Narration not published")
+
     @app.api_route("/v1/technoline/ivr/{route}", methods=["GET", "POST"])
     async def callback(route: str, request: Request):
         start = time.monotonic()
@@ -453,13 +743,100 @@ def install_pbx_api(app, require_admin):
         }.get(params.get("isaacLanguage"))
         if route == "languages" and language:
             values["language"] = language
-        mode_key = {"basic": "isaacBasicMode", "advanced": "isaacAdvancedMode"}.get(route)
+        if route == "languages" and params.get("isaacLanguage") == "7":
+            values["language"] = ""
+        mode_key = {
+            "basic": "isaacBasicMode",
+            "advanced": "isaacAdvancedMode",
+            "mode": "isaacMode",
+        }.get(route)
         if mode_key and params.get(mode_key) in {"1", "2"}:
             values["mode"] = "course" if params[mode_key] == "1" else "free"
         if values:
             await asyncio.to_thread(save_context, business, call_id, values)
+            await asyncio.to_thread(save_preference, business, customer_id, values)
         copy = await asyncio.to_thread(get_copy, business)
-        result = ivr_response(route, params, copy, s.tlivr_project_path)
+        if (
+            route == "school"
+            and params.get("isaacTeacher") == "1"
+            and params.get("PBXcallStatus") != "HANGUP"
+        ):
+            customers = await asyncio.to_thread(business.list, "customers")
+            customer = next((c for c in customers if c["id"] == customer_id), {})
+            preferred = await app.state.progress.get_bot(customer.get("preferred_bot", ""))
+            if (
+                preferred
+                and preferred["enabled"]
+                and preferred["phone_enabled"]
+                and preferred["role"] == "teacher"
+            ):
+                await asyncio.to_thread(
+                    save_context, business, call_id, {"selected_bot": preferred["id"]}
+                )
+                result = {
+                    "type": "goTo",
+                    "goTo": s.tlivr_project_path + "/5",
+                    "removeParams": ["isaacTeacher", "isaacMode"],
+                }
+            else:
+                result = ivr_response(route, params, copy, s.tlivr_project_path)
+        elif route == "teachers" and params.get("PBXcallStatus") != "HANGUP":
+            result = await choose_teacher(app, params, copy, call_id, customer_id)
+        elif route == "bots" and params.get("PBXcallStatus") != "HANGUP":
+            result = await choose_teacher(app, params, copy, call_id, customer_id, other_bots=True)
+        elif route == "start-translation" and params.get("PBXcallStatus") != "HANGUP":
+            bots = [
+                b
+                for b in await app.state.progress.list_bots()
+                if b["enabled"] and b["phone_enabled"] and b["role"] == "translator"
+            ]
+            if bots:
+                saved = await asyncio.to_thread(
+                    load_context, business, "preferences:" + customer_id
+                )
+                context = await asyncio.to_thread(load_context, business, call_id)
+                values = {"selected_bot": bots[0]["id"], "mode": "translation"}
+                if "language" not in context and saved.get("language"):
+                    values["language"] = saved["language"]
+                await asyncio.to_thread(save_context, business, call_id, values)
+                result = {"type": "goTo", "goTo": s.tlivr_project_path + "/7"}
+            else:
+                result = menu("isaacMain", "התרגומון אינו זמין כרגע. לחזרה הקישו 0.", "0")
+        else:
+            result = ivr_response(route, params, copy, s.tlivr_project_path)
+        if route == "main" and result.get("type") == "simpleMenu":
+            others = [
+                b
+                for b in await app.state.progress.list_bots()
+                if b["enabled"]
+                and b["phone_enabled"]
+                and b["role"] not in {"teacher", "translator"}
+            ]
+            if others:
+                result["files"][0]["text"] += " לבוטים נוספים הקישו 5."
+        slot = {
+            "main": "welcome",
+            "school": "school",
+            "translator": "translator",
+            "languages": "languages",
+            "sales": "sales",
+            "quota": "quota",
+            "mode": "school_mode",
+            "service": "service",
+        }.get(route)
+        if slot and result.get("files"):
+            # Editing copy automatically invalidates a previous recording; fall back to TTS.
+            text = result["files"][0].get("text", "")
+            if route == "service" and result.get("name") == "isaacThanks":
+                slot = "thanks"
+            audio = await asyncio.to_thread(narration_for_slot, business, slot, text)
+            if audio and s.public_base_url:
+                result["files"] = [
+                    {
+                        "fileLink": s.public_base_url.rstrip("/")
+                        + f"/v1/technoline/narrations/{audio['id']}/{audio['hash']}.wav"
+                    }
+                ]
         # Allowlist input: neither raw request nor credential/credit-card values are logged.
         inputs = {
             k: v[:200]
