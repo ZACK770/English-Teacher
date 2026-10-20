@@ -67,7 +67,7 @@ def test_menus_and_language_context_are_real_and_idempotent(client):
     assert "free conversation" in runtime_context(client.app.state.business, "call-one")
     callback(client, "basic", isaacBasicMode="2")
     events = client.app.state.business.list("ivr-events")
-    assert len([e for e in events if e["route"] == "basic"]) == 1
+    assert len([e for e in events if e["route"] == "basic"]) == 2
     assert events[0]["latency_ms"] >= 0
 
 
@@ -132,6 +132,15 @@ def test_callback_access_log_redaction():
     )
     CallbackLogFilter().filter(record)
     assert "secret" not in record.getMessage() and "0501234567" not in record.getMessage()
+
+
+def test_collecting_menu_never_deletes_the_answer_it_is_collecting(client):
+    first = callback(client).json()
+    assert first["name"] not in first.get("removeParams", [])
+    selected = callback(client, isaacMain="1").json()
+    assert selected["type"] == "goTo" and selected["goTo"] == "/99/1"
+    assert "isaacMain" in selected.get("removeParams", [])
+    assert "isaacTeacher" not in callback(client, "school").json().get("removeParams", [])
 
 
 def test_anonymous_identity_stable_within_callback_and_stream(client):

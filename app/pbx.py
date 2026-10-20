@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import secrets
 import time
 import urllib.parse
 import urllib.request
@@ -468,7 +469,6 @@ def menu(name, text, keys):
         "timeout": 7,
         "errorReturn": "ERROR",
         "post": True,
-        "removeParams": [name],
         "files": [{"text": text}],
     }
 
@@ -851,14 +851,12 @@ def install_pbx_api(app, require_admin):
             "output": result,
             "latency_ms": round((time.monotonic() - start) * 1000, 2),
             "at": now(),
+            "request_method": request.method,
+            "content_type": request.headers.get("content-type", ""),
+            "received_field_names": sorted(
+                k for k in params if k.startswith("PBX") or k.startswith("isaac")
+            ),
         }
-        event_id = hashlib.sha256(
-            (
-                call_id
-                + route
-                + json.dumps(inputs, sort_keys=True)
-                + params.get("PBXcallStatus", "")
-            ).encode()
-        ).hexdigest()
+        event_id = secrets.token_hex(16)
         await asyncio.to_thread(business.save, "ivr-events", details, event_id)
         return result
