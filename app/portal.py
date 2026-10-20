@@ -204,6 +204,10 @@ def install_portal_api(app, static_path):
                     elif event["type"] == "tool_call":
                         for call in event["calls"]:
                             await ai.submit_tool_result(call, session._record_tool_call(call))
+                            if call.get("name") == "end_session":
+                                break
+                        if session._end_reason:
+                            break
                     elif event["type"] == "turn_complete":
                         session.tutor_turns = 1
                         await session._latency("tutor_turn_complete")

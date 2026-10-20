@@ -79,7 +79,30 @@ compiled prompt/setup/fingerprint/input/output and latency timeline.
 A successful API check is NOT a completed telephone call. Test real audio/key
 handling by dialing99 after the owner enables routing.
 
-## Honest remaining limits / decisions
+## AI lifecycle and cost guards (2026-10-20)
+
+Every bot's compiled prompt and Google tool schema include end_session. Model
+termination closes the Google context BEFORE draining up to2seconds of already
+generated audio and sending the PBX final hangup/return command. Default action
+is hangup; each bot can instead return to the menu with NO AI connection left.
+The phone idle watchdog defaults to60seconds, configurable15–300. It measures
+human input activity (PCM RMS or learner transcription), not mere arrival of
+continuous silence frames or the AI's own speech. Idle timeout cannot be disabled.
+There is also a15-second missing-PBX-input guard and the existing hard call/minute
+allowance timeout. All bridge tasks are cancelled and awaited on termination.
+
+Google connection/setup has a20-second total bound. A failed or cancelled
+__aenter__ explicitly closes its socket (Python otherwise never calls __aexit__).
+Close handshake is bounded and the transport is aborted afterward. Web turns
+and generated narrations also handle end_session and retain their finite timeouts.
+
+Logs include ai_connection_closed, idle_timeout and phone_session_ended with reason.
+Admin /v1/admin/active-ai-sessions lists currently tracked phone sessions; POST
+/{call_id}/stop requests shutdown. The Calls/Performance screen exposes this control.
+This registry is process-local: preserve the current single-worker deployment,
+or implement shared cancellation routing before scaling workers/instances.
+
+## Remaining commercial / provider decisions
 
 - Technoline Asterisk20 streaming does NOT deliver DTMF today. Key9 is before
   streaming; changing language during AI conversation is by voice.

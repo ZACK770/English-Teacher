@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -61,14 +62,36 @@ LESSON_SUMMARY_TOOL = {
 }
 
 
+END_SESSION_TOOL = {
+    "name": "end_session",
+    "description": (
+        "Immediately end this AI session and release its connection. Call after saying "
+        "a brief final goodbye when the caller asks to stop or the permitted task is done. "
+        "Do not leave a finished conversation running. The server controls phone disposition."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "enum": [
+                    "caller_requested",
+                    "task_completed",
+                    "no_response",
+                ],
+            }
+        },
+        "required": ["reason"],
+    },
+}
+
+
 def build_setup_payload(settings: Settings) -> dict[str, Any]:
     generation_config: dict[str, Any] = {
         "responseModalities": ["AUDIO"],
         "speechConfig": {
             "languageCode": settings.gemini_language_code,
-            "voiceConfig": {
-                "prebuiltVoiceConfig": {"voiceName": settings.gemini_voice}
-            },
+            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": settings.gemini_voice}},
         },
     }
     if settings.gemini_temperature is not None:
@@ -90,7 +113,7 @@ def build_setup_payload(settings: Settings) -> dict[str, Any]:
             "inputAudioTranscription": input_transcription,
             "outputAudioTranscription": {},
             "tools": [
-                {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL]}
+                {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL]}
             ],
             "contextWindowCompression": {
                 "triggerTokens": settings.gemini_context_trigger_tokens,
@@ -125,15 +148,24 @@ class GeminiLive:
 
     async def __aenter__(self) -> GeminiLive:
         key = self.settings.gemini_api_key.get_secret_value()
-        self.socket = await connect(
-            f"{self.settings.gemini_live_url}?key={key}",
-            max_size=None,
-            ping_interval=20,
-            ping_timeout=20,
-            close_timeout=5,
-        )
-        await self._send(self.setup_payload)
-        await self.socket.recv()  # setupComplete
+        try:
+            async with asyncio.timeout(20):
+                self.socket = await connect(
+                    f"{self.settings.gemini_live_url}?key={key}",
+                    max_size=None,
+                    open_timeout=10,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=3,
+                )
+                await self._send(self.setup_payload)
+                response = json.loads(await self.socket.recv())
+                if "setupComplete" not in response:
+                    raise RuntimeError("Gemini setup was not acknowledged")
+        except BaseException:
+            # __aexit__ is NOT called if __aenter__ fails or is cancelled.
+            await self.close()
+            raise
         return self
 
     async def __aexit__(
@@ -142,8 +174,20 @@ class GeminiLive:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        if self.socket is not None:
-            await self.socket.close()
+        await self.close()
+
+    async def close(self) -> None:
+        socket, self.socket = self.socket, None
+        if socket is None:
+            return
+        try:
+            async with asyncio.timeout(4):
+                await socket.close()
+        finally:
+            # A stuck closing handshake must not leave a transport/session alive.
+            transport = getattr(socket, "transport", None)
+            if transport is not None:
+                transport.abort()
 
     async def _send(self, payload: dict[str, Any]) -> None:
         if self.socket is None:
@@ -169,11 +213,7 @@ class GeminiLive:
                     "turns": [
                         {
                             "role": "user",
-                            "parts": [
-                                {
-                                    "text": self.settings.tutor_opening_message
-                                }
-                            ],
+                            "parts": [{"text": self.settings.tutor_opening_message}],
                         }
                     ],
                     "turnComplete": True,

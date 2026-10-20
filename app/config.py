@@ -140,6 +140,9 @@ class Settings(BaseSettings):
     adult_student_id: str = "adult"
     database_path: Path = Path("data/progress.db")
     max_call_minutes: int = Field(default=30, ge=1, le=120)
+    session_idle_timeout_seconds: int = Field(default=60, ge=15, le=300)
+    session_idle_audio_threshold: int = Field(default=300, ge=50, le=5000)
+    session_end_action: Literal["hangup", "return_to_menu"] = "hangup"
     max_concurrent_calls: int = Field(default=2, ge=1, le=20)
     store_transcripts: bool = True
     tutor_prompt: str = DEFAULT_TUTOR_PROMPT

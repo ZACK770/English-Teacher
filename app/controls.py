@@ -93,6 +93,9 @@ class TutorControls(BaseModel):
     context_trigger_tokens: int = Field(default=12000, ge=1000, le=120000)
     context_target_tokens: int = Field(default=6000, ge=500, le=100000)
     max_call_minutes: int = Field(default=30, ge=1, le=120)
+    idle_timeout_seconds: int = Field(default=60, ge=15, le=300)
+    idle_audio_threshold: int = Field(default=300, ge=50, le=5000)
+    session_end_action: Literal["hangup", "return_to_menu"] = "hangup"
 
     @field_validator("voice")
     @classmethod
@@ -141,6 +144,9 @@ class TutorControls(BaseModel):
             context_trigger_tokens=settings.gemini_context_trigger_tokens,
             context_target_tokens=settings.gemini_context_target_tokens,
             max_call_minutes=settings.max_call_minutes,
+            idle_timeout_seconds=settings.session_idle_timeout_seconds,
+            idle_audio_threshold=settings.session_idle_audio_threshold,
+            session_end_action=settings.session_end_action,
         )
 
     @classmethod
@@ -179,6 +185,14 @@ class TutorControls(BaseModel):
             "Runtime lesson controls (authoritative):",
             f"- Target lesson duration: {self.target_lesson_minutes} minutes.",
             f"- Ending policy: {policy}",
+            "- Session lifecycle: when the caller asks to stop, hang up, says goodbye, "
+            "or the permitted task is finished, briefly say goodbye and call end_session. "
+            "Do not just say goodbye while leaving the session running. Do not wait for "
+            "another caller response after the final goodbye. This applies to every role, "
+            "including translator, teacher, sales, service and custom bots. Never end a "
+            "translation session after a single translated sentence unless the caller is done. "
+            "Respect the ending policy for deciding task completion, but explicit caller "
+            "requests to stop always permit immediate session closure.",
         ]
         if self.learning_goal.strip():
             controls.append(f"- Current learning goal: {self.learning_goal.strip()}")
@@ -212,5 +226,8 @@ class TutorControls(BaseModel):
             "gemini_context_trigger_tokens": self.context_trigger_tokens,
             "gemini_context_target_tokens": self.context_target_tokens,
             "max_call_minutes": self.max_call_minutes,
+            "session_idle_timeout_seconds": self.idle_timeout_seconds,
+            "session_idle_audio_threshold": self.idle_audio_threshold,
+            "session_end_action": self.session_end_action,
             "store_transcripts": self.store_transcripts,
         }

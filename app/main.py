@@ -64,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.progress = store
         await seed_project(app, active_settings, store)
         app.state.call_slots = asyncio.Semaphore(active_settings.max_concurrent_calls)
+        app.state.live_ai_sessions = {}
         yield
 
     app = FastAPI(title="Technoline English Tutor", version="1.0.0", lifespan=lifespan)
@@ -112,6 +113,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_narration_api(app, require_admin)
     install_portal_api(app, static_path)
     install_pbx_api(app, require_admin)
+
+    @app.get("/v1/admin/active-ai-sessions")
+    async def active_ai_sessions(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return {
+            "sessions": [
+                {
+                    "call_id": call_id,
+                    "bot_id": session.settings.student_id,
+                    "started_at": session.started_at.isoformat(),
+                    "stopping": session._stop_requested.is_set(),
+                }
+                for call_id, session in app.state.live_ai_sessions.items()
+                if not session._ai_connection_closed
+            ]
+        }
+
+    @app.post("/v1/admin/active-ai-sessions/{call_id}/stop", status_code=202)
+    async def stop_ai_session(call_id: str, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        session = app.state.live_ai_sessions.get(call_id)
+        if not session:
+            raise HTTPException(404, "Session is no longer active")
+        session.request_stop()
+        return {"stopping": True, "call_id": call_id}
 
     async def require_profile(profile_id: str) -> dict[str, object]:
         profile = await app.state.progress.get_bot(profile_id)
@@ -506,7 +532,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 progress=app.state.progress,
                 business=app.state.business,
             )
-            await session.run()
+            app.state.live_ai_sessions[start.call_id] = session
+            try:
+                await session.run()
+            finally:
+                app.state.live_ai_sessions.pop(start.call_id, None)
         except (ProtocolError, TimeoutError) as exc:
             LOGGER.warning("Rejected Technoline stream: %s", exc)
             await websocket.close(code=1008, reason="Invalid start frame")

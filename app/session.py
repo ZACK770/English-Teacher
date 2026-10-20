@@ -4,6 +4,7 @@ import asyncio
 import collections
 import json
 import logging
+import struct
 import time
 from datetime import UTC, datetime
 
@@ -16,7 +17,7 @@ from .controls import TutorControls
 from .gemini_live import GeminiLive
 from .progress import LessonSummary, Observation, ProgressStore, UsageTotals
 from .prompting import compile_prompt
-from .technoline import StartFrame, transfer_command
+from .technoline import StartFrame, hangup_command, transfer_command
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,32 +74,52 @@ class TutorSession:
         self._clock_previous = self._clock_start
         self._first_pbx_audio_seen = False
         self._first_output_audio_seen = False
+        self._last_human_activity = time.monotonic()
+        self._end_reason: str | None = None
+        self._pbx_disconnected = False
+        self._pbx_finish_sent = False
+        self._gemini_entered = False
+        self._ai_connection_closed = False
+        self._stop_requested = asyncio.Event()
+
+    def request_stop(self) -> None:
+        self._end_reason = "admin_requested"
+        self._stop_requested.set()
+
+    async def _stop_watchdog(self) -> None:
+        await self._stop_requested.wait()
+        raise CallEnded
 
     async def run(self) -> None:
         try:
             await self._latency("session_started")
             if self.business:
                 self.customer_id = await asyncio.to_thread(
-                    self.business.identify_call, self.start.caller,
-                    self.start.call_id, self.settings.student_id,
+                    self.business.identify_call,
+                    self.start.caller,
+                    self.start.call_id,
+                    self.settings.student_id,
                 )
             defaults = (
                 TutorControls.adult_from_settings(self.settings)
                 if self.settings.student_id == self.settings.adult_student_id
                 else TutorControls.from_settings(self.settings)
             )
-            controls = await self.progress.load_tutor_controls(
-                self.settings.student_id, defaults
-            )
+            controls = await self.progress.load_tutor_controls(self.settings.student_id, defaults)
             await self._latency("configuration_loaded")
             history = await self.progress.lesson_context(self.customer_id)
             if self.business:
                 history += await asyncio.to_thread(
-                    self.business.lesson_context, self.customer_id, self.settings.student_id,
+                    self.business.lesson_context,
+                    self.customer_id,
+                    self.settings.student_id,
                 )
                 from .pbx import runtime_context
+
                 history += "\n" + await asyncio.to_thread(
-                    runtime_context, self.business, self.start.call_id,
+                    runtime_context,
+                    self.business,
+                    self.start.call_id,
                 )
             artifact = compile_prompt(
                 controls=controls,
@@ -110,13 +131,17 @@ class TutorSession:
             allowed_seconds = self.settings.max_call_minutes * 60
             if self.business:
                 allowance = await asyncio.to_thread(
-                    self.business.reserve_call, self.customer_id, self.settings.student_id,
-                    self.start.call_id, allowed_seconds,
+                    self.business.reserve_call,
+                    self.customer_id,
+                    self.settings.student_id,
+                    self.start.call_id,
+                    allowed_seconds,
                 )
                 allowed_seconds = allowance["seconds"]
                 await self._latency("access_checked", {"mode": allowance["mode"]})
                 if not allowed_seconds:
                     await self.pbx.send_text(transfer_command(allowance["extension"]))
+                    self._pbx_finish_sent = True
                     return
             await self.progress.save_prompt_snapshot(
                 profile_id=self.settings.student_id,
@@ -129,10 +154,12 @@ class TutorSession:
             )
             async with asyncio.timeout(allowed_seconds + 20):
                 await self._latency("gemini_connect_started")
-                async with GeminiLive(
-                    self.settings, setup_payload=artifact.setup_message
-                ) as ai:
+                async with GeminiLive(self.settings, setup_payload=artifact.setup_message) as ai:
                     await self._latency("gemini_connected")
+                    self._gemini_entered = True
+                    self._last_human_activity = time.monotonic()
+                    if self._stop_requested.is_set():
+                        raise CallEnded
                     self._meter_started = time.monotonic()
                     await self.progress.log_diagnostic(
                         profile_id=self.settings.student_id,
@@ -150,18 +177,31 @@ class TutorSession:
                     async with asyncio.timeout(allowed_seconds):
                         await self._bridge(ai)
         except TimeoutError:
+            self._end_reason = "hard_time_limit"
             if self.settings.student_id.startswith("isaac-"):
                 try:
                     await self.pbx.send_text(
                         transfer_command(self.settings.tlivr_project_path + "/8")
                     )
+                    self._pbx_finish_sent = True
                 except (RuntimeError, WebSocketDisconnect):
                     pass
         except (CallEnded, WebSocketDisconnect):
             pass
         finally:
+            # The Gemini context has exited BEFORE any phone drain, database save or transfer.
+            self._ai_connection_closed = True
+            meter_ended = time.monotonic()
+            if self._gemini_entered:
+                await self._latency(
+                    "ai_connection_closed",
+                    {
+                        "reason": self._end_reason or "transport_ended",
+                    },
+                )
+            await self._finish_pbx()
             if self.business:
-                billed = (time.monotonic() - self._meter_started) if self._meter_started else 0
+                billed = (meter_ended - self._meter_started) if self._meter_started else 0
                 await asyncio.to_thread(self.business.settle_call, self.start.call_id, billed)
             await self.progress.save_session(
                 student_id=self.customer_id,
@@ -194,6 +234,8 @@ class TutorSession:
             asyncio.create_task(self._pbx_to_ai(ai), name="pbx-to-gemini"),
             asyncio.create_task(self._ai_to_queue(ai), name="gemini-to-pbx-queue"),
             asyncio.create_task(self._paced_output(), name="paced-pbx-output"),
+            asyncio.create_task(self._idle_watchdog(), name="session-idle-watchdog"),
+            asyncio.create_task(self._stop_watchdog(), name="session-stop-watchdog"),
         }
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -210,8 +252,14 @@ class TutorSession:
     async def _pbx_to_ai(self, ai: GeminiLive) -> None:
         batch: list[bytes] = []
         while True:
-            message = await self.pbx.receive()
+            try:
+                message = await asyncio.wait_for(self.pbx.receive(), timeout=15)
+            except TimeoutError:
+                self._end_reason = "pbx_input_timeout"
+                raise CallEnded from None
             if message.get("type") == "websocket.disconnect":
+                self._pbx_disconnected = True
+                self._end_reason = "caller_disconnected"
                 raise CallEnded
             audio = message.get("bytes")
             if audio is not None:
@@ -220,6 +268,8 @@ class TutorSession:
                 if len(audio) % 2:
                     LOGGER.warning("Dropping odd-length PCM frame for call %s", self.start.call_id)
                     continue
+                if self._has_voice_activity(audio):
+                    self._last_human_activity = time.monotonic()
                 if not self._first_pbx_audio_seen:
                     self._first_pbx_audio_seen = True
                     await self._latency("first_pbx_audio")
@@ -238,6 +288,8 @@ class TutorSession:
             except json.JSONDecodeError:
                 continue
             if str(control.get("type", "")).lower() in {"stop", "hangup", "end"}:
+                self._pbx_disconnected = True
+                self._end_reason = "caller_disconnected"
                 raise CallEnded
 
     async def _ai_to_queue(self, ai: GeminiLive) -> None:
@@ -291,6 +343,7 @@ class TutorSession:
                         {"learner_turn": self.learner_turns},
                     )
                 if role == "learner":
+                    self._last_human_activity = time.monotonic()
                     self._turn_input_transcript_chars += len(transcript)
                 else:
                     if self._turn_output_transcript_chars == 0:
@@ -342,13 +395,13 @@ class TutorSession:
                     profile_id=self.settings.student_id,
                     call_id=self.start.call_id,
                     event_type="tool_call",
-                    details={
-                        "names": [str(call.get("name", "")) for call in event["calls"]]
-                    },
+                    details={"names": [str(call.get("name", "")) for call in event["calls"]]},
                 )
                 for call in event["calls"]:
                     saved = self._record_tool_call(call)
                     await ai.submit_tool_result(call, saved)
+                    if call.get("name") == "end_session":
+                        return  # Unwind the context and close Google immediately.
             elif kind == "usage":
                 self._record_usage(event["usage"])
             elif kind == "go_away":
@@ -356,9 +409,69 @@ class TutorSession:
                 raise CallEnded
         raise CallEnded
 
-    async def _latency(
-        self, event_name: str, details: dict[str, object] | None = None
-    ) -> None:
+    def _has_voice_activity(self, audio: bytes) -> bool:
+        count = len(audio) // 2
+        if not count:
+            return False
+        samples = struct.unpack(f"<{count}h", audio)
+        return sum(v * v for v in samples) / count >= (
+            self.settings.session_idle_audio_threshold**2
+        )
+
+    async def _idle_watchdog(self) -> None:
+        # Constant PCM silence and the bot's own speech must NOT keep an idle session alive.
+        while True:
+            remaining = self.settings.session_idle_timeout_seconds - (
+                time.monotonic() - self._last_human_activity
+            )
+            if remaining <= 0:
+                self._end_reason = "idle_timeout"
+                await self._latency(
+                    "idle_timeout",
+                    {
+                        "idle_seconds": self.settings.session_idle_timeout_seconds,
+                    },
+                )
+                raise CallEnded
+            await asyncio.sleep(min(1, remaining))
+
+    async def _finish_pbx(self) -> None:
+        if self.pbx is None or self._pbx_disconnected or self._pbx_finish_sent:
+            return
+        try:
+            # Play only audio already generated; never keep Google open waiting for playback.
+            if self._end_reason and self._end_reason.startswith("model:"):
+                async with asyncio.timeout(2):
+                    while self._out:
+                        _, frame = self._out.popleft()
+                        await self.pbx.send_bytes(frame)
+                        await asyncio.sleep(FRAME_SECONDS)
+        except (TimeoutError, RuntimeError, WebSocketDisconnect):
+            pass
+        self._out.clear()
+        try:
+            command = hangup_command()
+            if self.settings.session_end_action == "return_to_menu":
+                path = (
+                    self.settings.tlivr_project_path
+                    if "~" in self.start.call_id
+                    else self.settings.technoline_return_extension
+                )
+                command = transfer_command(path)
+            async with asyncio.timeout(3):
+                await self.pbx.send_text(command)
+            self._pbx_finish_sent = True
+            await self._latency(
+                "phone_session_ended",
+                {
+                    "reason": self._end_reason or "transport_ended",
+                    "action": self.settings.session_end_action,
+                },
+            )
+        except (TimeoutError, RuntimeError, WebSocketDisconnect):
+            pass
+
+    async def _latency(self, event_name: str, details: dict[str, object] | None = None) -> None:
         now = time.monotonic()
         previous = self._clock_previous
         self._clock_previous = now
@@ -383,8 +496,11 @@ class TutorSession:
                 self._sent_audio_turns.add(turn)
                 await self._latency(
                     "first_audio_sent_to_phone",
-                    {"queue_frames": len(self._out), "customer_id": self.customer_id,
-                     "tutor_turn": turn},
+                    {
+                        "queue_frames": len(self._out),
+                        "customer_id": self.customer_id,
+                        "tutor_turn": turn,
+                    },
                 )
 
     def _enqueue(self, pcm8: bytes) -> None:
@@ -395,6 +511,12 @@ class TutorSession:
         self._partial = data[whole:]
 
     def _record_tool_call(self, call: dict) -> bool:
+        if call.get("name") == "end_session":
+            reason = (call.get("args") or {}).get("reason", "task_completed")
+            if reason not in {"caller_requested", "task_completed", "no_response"}:
+                reason = "task_completed"
+            self._end_reason = "model:" + reason
+            return True
         if call.get("name") == "record_lesson_summary":
             return self._record_summary(call)
         if call.get("name") != "record_learning_observation":
@@ -447,21 +569,13 @@ class TutorSession:
             return 0
 
     def _record_usage(self, usage: dict) -> None:
-        self.input_text_tokens += self._modality_tokens(
-            usage.get("promptTokensDetails"), "TEXT"
-        )
-        self.input_audio_tokens += self._modality_tokens(
-            usage.get("promptTokensDetails"), "AUDIO"
-        )
-        self.output_text_tokens += self._modality_tokens(
-            usage.get("responseTokensDetails"), "TEXT"
-        )
+        self.input_text_tokens += self._modality_tokens(usage.get("promptTokensDetails"), "TEXT")
+        self.input_audio_tokens += self._modality_tokens(usage.get("promptTokensDetails"), "AUDIO")
+        self.output_text_tokens += self._modality_tokens(usage.get("responseTokensDetails"), "TEXT")
         self.output_audio_tokens += self._modality_tokens(
             usage.get("responseTokensDetails"), "AUDIO"
         )
-        self.thoughts_tokens += self._safe_nonnegative_int(
-            usage.get("thoughtsTokenCount")
-        )
+        self.thoughts_tokens += self._safe_nonnegative_int(usage.get("thoughtsTokenCount"))
 
     def _fallback_summary(self) -> LessonSummary:
         points = min(

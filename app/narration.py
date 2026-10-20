@@ -82,7 +82,9 @@ def install_narration_api(app, require_admin):
                         usage = event["usage"]
                     elif event["type"] == "tool_call":
                         for call in event["calls"]:
-                            await ai.submit_tool_result(call, False)
+                            await ai.submit_tool_result(call, call.get("name") == "end_session")
+                        if any(call.get("name") == "end_session" for call in event["calls"]):
+                            break
                     elif event["type"] == "turn_complete":
                         break
             if not audio:
