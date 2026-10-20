@@ -95,6 +95,45 @@ def test_health_readiness_and_protected_progress(tmp_path) -> None:
         assert diagnostics.status_code == 200
         assert diagnostics.json()["events"] == []
 
+        created = client.post(
+            "/v1/admin/bots",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+            json={
+                "id": "sales-agent",
+                "label": "נציג מכירות",
+                "role": "sales",
+                "description": "בדיקה",
+                "audience": "general",
+                "channel_id": "channel-2",
+                "enabled": True,
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["bot"]["websocket_path"].endswith(
+            "/bots/sales-agent"
+        )
+        new_config = created.json()["config"]
+        assert new_config["effective"]["prompt_fingerprint"]
+        new_controls = new_config["controls"]
+        new_controls["language_code"] = "en-US"
+        new_controls["model"] = "models/gemini-test-live"
+        published = client.put(
+            "/v1/admin/config/sales-agent",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+            json=new_controls,
+        )
+        assert published.status_code == 200
+        assert published.json()["profile"]["active_version"] == 2
+        assert (
+            published.json()["effective"]["setup_message"]["setup"]["model"]
+            == "models/gemini-test-live"
+        )
+        versions = client.get(
+            "/v1/admin/bots/sales-agent/versions",
+            headers={"Authorization": f"Bearer {'a' * 32}"},
+        ).json()["versions"]
+        assert [item["version"] for item in versions] == [2, 1]
+
 
 def test_technoline_websocket_accepts_without_bearer_by_default(tmp_path) -> None:
     app = create_app(settings(tmp_path / "progress.db"))

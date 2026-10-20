@@ -113,8 +113,14 @@ def build_setup_payload(settings: Settings) -> dict[str, Any]:
 class GeminiLive:
     """Small server-to-server Gemini Live client with normalized events."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        setup_payload: dict[str, Any] | None = None,
+    ) -> None:
         self.settings = settings
+        self.setup_payload = setup_payload or build_setup_payload(settings)
         self.socket: ClientConnection | None = None
 
     async def __aenter__(self) -> GeminiLive:
@@ -126,7 +132,7 @@ class GeminiLive:
             ping_timeout=20,
             close_timeout=5,
         )
-        await self._send(build_setup_payload(self.settings))
+        await self._send(self.setup_payload)
         await self.socket.recv()  # setupComplete
         return self
 

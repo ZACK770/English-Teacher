@@ -3,17 +3,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
 
 from .auth import bearer_value, ip_is_allowed, secure_equal
+from .bots import BotCreate, BotUpdate
 from .config import Settings, get_settings
 from .controls import VOICE_OPTIONS, TutorControls
 from .dashboard import dashboard_html
-from .gemini_live import build_setup_payload
 from .progress import ProgressStore
+from .prompting import compile_prompt
 from .session import TutorSession
 from .technoline import ProtocolError, parse_start_frame
 
@@ -35,6 +37,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             legacy_profile_id=active_settings.student_id,
         )
         await store.initialize()
+        await store.seed_bot(
+            bot_id=active_settings.student_id,
+            label="המורה של הבת",
+            audience="child",
+            channel_id=active_settings.technoline_channel_id,
+            controls=TutorControls.from_settings(active_settings),
+        )
+        await store.seed_bot(
+            bot_id=active_settings.adult_student_id,
+            label="המורה שלי",
+            audience="adult",
+            channel_id=active_settings.technoline_adult_channel_id,
+            controls=TutorControls.adult_from_settings(active_settings),
+        )
         app.state.settings = active_settings
         app.state.progress = store
         app.state.call_slots = asyncio.Semaphore(active_settings.max_concurrent_calls)
@@ -75,29 +91,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not secure_equal(token, active.admin_bearer_secret.get_secret_value()):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
-    def profile_specs() -> dict[str, dict[str, object]]:
-        active: Settings = app.state.settings
-        return {
-            active.student_id: {
-                "id": active.student_id,
-                "label": "המורה של הבת",
-                "audience": "child",
-                "websocket_path": "/v1/technoline/stream",
-                "channel_configured": bool(active.technoline_channel_id),
-                "channel_id": active.technoline_channel_id,
-            },
-            active.adult_student_id: {
-                "id": active.adult_student_id,
-                "label": "המורה שלי",
-                "audience": "adult",
-                "websocket_path": "/v1/technoline/stream/adult",
-                "channel_configured": bool(active.technoline_adult_channel_id),
-                "channel_id": active.technoline_adult_channel_id,
-            },
-        }
-
-    def require_profile(profile_id: str) -> dict[str, object]:
-        profile = profile_specs().get(profile_id)
+    async def require_profile(profile_id: str) -> dict[str, object]:
+        profile = await app.state.progress.get_bot(profile_id)
         if profile is None:
             raise HTTPException(status_code=404, detail="Tutor profile not found")
         return profile
@@ -110,21 +105,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def admin_config_payload(profile_id: str) -> dict:
         active: Settings = app.state.settings
-        profile = require_profile(profile_id)
+        profile = await require_profile(profile_id)
         defaults = default_controls(profile_id)
         controls = await app.state.progress.load_tutor_controls(profile_id, defaults)
         history = await app.state.progress.lesson_context(profile_id)
-        system_instruction = controls.build_system_instruction(history)
-        preview_settings = active.model_copy(
-            update={
-                **controls.settings_updates(system_instruction),
-                "student_id": profile_id,
-            }
+        artifact = compile_prompt(
+            controls=controls,
+            history_context=history,
+            settings=active,
+            profile_id=profile_id,
         )
         return {
-            "profile": {
-                key: value for key, value in profile.items() if key != "channel_id"
-            },
+            "profile": profile,
             "controls": controls.model_dump(),
             "options": {
                 "voices": VOICE_OPTIONS,
@@ -149,7 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "transcription_mode": ["VERBATIM", "SMART"],
             },
             "effective": {
-                "setup_message": build_setup_payload(preview_settings),
+                "setup_message": artifact.setup_message,
                 "opening_client_message": {
                     "clientContent": {
                         "turns": [
@@ -162,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     }
                 },
                 "history_context": history,
+                "prompt_fingerprint": artifact.fingerprint,
                 "read_only_runtime": {
                     "profile_id": profile_id,
                     "profile_label": profile["label"],
@@ -189,12 +182,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
+        profiles = await app.state.progress.list_bots()
         return {
-            "profiles": [
-                {key: value for key, value in profile.items() if key != "channel_id"}
-                for profile in profile_specs().values()
-            ]
+            "profiles": profiles
         }
+
+    @app.post("/v1/admin/bots", status_code=201)
+    async def create_admin_bot(
+        bot: BotCreate,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        active: Settings = app.state.settings
+        try:
+            created = await app.state.progress.create_bot(
+                bot, TutorControls.from_settings(active)
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="Bot id already exists") from exc
+        return {"bot": created, "config": await admin_config_payload(bot.id)}
+
+    @app.put("/v1/admin/bots/{bot_id}")
+    async def update_admin_bot(
+        bot_id: str,
+        update: BotUpdate,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        await require_profile(bot_id)
+        try:
+            bot = await app.state.progress.update_bot(bot_id, update)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Bot not found") from exc
+        return {"bot": bot}
+
+    @app.get("/v1/admin/bots/{bot_id}/versions")
+    async def get_bot_versions(
+        bot_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        await require_profile(bot_id)
+        return {"bot_id": bot_id, "versions": await app.state.progress.bot_versions(bot_id)}
 
     @app.get("/v1/admin/config")
     async def get_admin_config(
@@ -228,7 +257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
-        require_profile(profile_id)
+        await require_profile(profile_id)
         await app.state.progress.save_tutor_controls(profile_id, controls)
         return await admin_config_payload(profile_id)
 
@@ -238,7 +267,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         require_admin(authorization)
         profile_id = app.state.settings.student_id
-        await app.state.progress.reset_tutor_controls(profile_id)
+        await app.state.progress.save_tutor_controls(
+            profile_id, default_controls(profile_id)
+        )
         return await admin_config_payload(profile_id)
 
     @app.delete("/v1/admin/config/{profile_id}")
@@ -247,8 +278,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
-        require_profile(profile_id)
-        await app.state.progress.reset_tutor_controls(profile_id)
+        await require_profile(profile_id)
+        await app.state.progress.save_tutor_controls(
+            profile_id, default_controls(profile_id)
+        )
         return await admin_config_payload(profile_id)
 
     @app.get("/v1/progress/{student_id}")
@@ -256,7 +289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         student_id: str, authorization: str | None = Header(default=None)
     ) -> dict:
         require_admin(authorization)
-        require_profile(student_id)
+        await require_profile(student_id)
         return await app.state.progress.report(student_id)
 
     @app.get("/v1/admin/diagnostics/{profile_id}")
@@ -266,11 +299,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
     ) -> dict:
         require_admin(authorization)
-        require_profile(profile_id)
+        await require_profile(profile_id)
         return {
             "profile_id": profile_id,
             "privacy": "Metadata only; no audio or transcript text is stored here.",
             "events": await app.state.progress.recent_diagnostics(profile_id, limit),
+        }
+
+    @app.get("/v1/admin/traces/{profile_id}")
+    async def trace_report(
+        profile_id: str,
+        limit: int = 20,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        require_admin(authorization)
+        await require_profile(profile_id)
+        return {
+            "profile_id": profile_id,
+            "traces": await app.state.progress.recent_traces(profile_id, limit),
         }
 
     async def maintain_call_lease(
@@ -292,9 +338,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         websocket: WebSocket, profile_id: str
     ) -> None:
         active: Settings = app.state.settings
-        profile = profile_specs().get(profile_id)
+        profile = await app.state.progress.get_bot(profile_id)
         if profile is None:
             await websocket.close(code=1008, reason="Unknown tutor profile")
+            return
+        if not profile["enabled"]:
+            await websocket.close(code=1008, reason="Tutor profile is disabled")
             return
         expected_channel_id = profile["channel_id"]
         if not expected_channel_id:
@@ -405,6 +454,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.settings.adult_student_id if profile_id == "adult" else profile_id
         )
         await handle_technoline_stream(websocket, resolved_profile_id)
+
+    @app.websocket("/v1/technoline/stream/bots/{bot_id}")
+    async def bot_technoline_stream(websocket: WebSocket, bot_id: str) -> None:
+        await handle_technoline_stream(websocket, bot_id)
 
     return app
 

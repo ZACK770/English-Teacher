@@ -5,6 +5,7 @@ import pytest
 from app.config import Settings
 from app.controls import TutorControls
 from app.progress import LessonSummary, Observation, ProgressStore, UsageTotals
+from app.prompting import compile_prompt
 
 
 @pytest.mark.asyncio
@@ -130,3 +131,55 @@ async def test_diagnostic_log_is_profile_scoped(tmp_path) -> None:
     )
     assert len(await store.recent_diagnostics("student")) == 1
     assert await store.recent_diagnostics("adult") == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_turn_and_latency_trace_share_one_call(tmp_path) -> None:
+    database = tmp_path / "progress.db"
+    active = Settings(
+        gemini_api_key="gemini-test",
+        admin_bearer_secret="a" * 32,
+        database_path=database,
+    )
+    controls = TutorControls.from_settings(active)
+    store = ProgressStore(database)
+    await store.initialize()
+    await store.seed_bot(
+        bot_id="student",
+        label="מורה",
+        audience="child",
+        channel_id="channel",
+        controls=controls,
+    )
+    artifact = compile_prompt(
+        controls=controls,
+        history_context="history",
+        settings=active,
+        profile_id="student",
+    )
+    await store.save_prompt_snapshot(
+        profile_id="student", call_id="trace-call", artifact=artifact
+    )
+    await store.log_conversation_turn(
+        profile_id="student",
+        call_id="trace-call",
+        direction="input",
+        text="Hello",
+    )
+    await store.log_conversation_turn(
+        profile_id="student",
+        call_id="trace-call",
+        direction="output",
+        text="Hi there",
+    )
+    await store.log_latency(
+        profile_id="student",
+        call_id="trace-call",
+        event_name="first_gemini_audio",
+        since_call_start_ms=320.5,
+        since_previous_ms=110.25,
+    )
+    traces = await store.recent_traces("student")
+    assert traces[0]["fingerprint"] == artifact.fingerprint
+    assert [turn["direction"] for turn in traces[0]["turns"]] == ["input", "output"]
+    assert traces[0]["latency"][0]["since_call_start_ms"] == 320.5

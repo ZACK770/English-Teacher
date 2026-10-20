@@ -14,6 +14,7 @@ from .config import Settings
 from .controls import TutorControls
 from .gemini_live import GeminiLive
 from .progress import LessonSummary, Observation, ProgressStore, UsageTotals
+from .prompting import compile_prompt
 from .technoline import StartFrame
 
 LOGGER = logging.getLogger(__name__)
@@ -62,9 +63,14 @@ class TutorSession:
         self._turn_input_transcript_chars = 0
         self._turn_output_transcript_chars = 0
         self._turn_output_audio_bytes = 0
+        self._clock_start = time.monotonic()
+        self._clock_previous = self._clock_start
+        self._first_pbx_audio_seen = False
+        self._first_output_audio_seen = False
 
     async def run(self) -> None:
         try:
+            await self._latency("session_started")
             defaults = (
                 TutorControls.adult_from_settings(self.settings)
                 if self.settings.student_id == self.settings.adult_student_id
@@ -73,13 +79,30 @@ class TutorSession:
             controls = await self.progress.load_tutor_controls(
                 self.settings.student_id, defaults
             )
+            await self._latency("configuration_loaded")
             history = await self.progress.lesson_context(self.settings.student_id)
-            system_instruction = controls.build_system_instruction(history)
-            self.settings = self.settings.model_copy(
-                update=controls.settings_updates(system_instruction)
+            artifact = compile_prompt(
+                controls=controls,
+                history_context=history,
+                settings=self.settings,
+                profile_id=self.settings.student_id,
+            )
+            self.settings = artifact.runtime_settings
+            await self.progress.save_prompt_snapshot(
+                profile_id=self.settings.student_id,
+                call_id=self.start.call_id,
+                artifact=artifact,
+            )
+            await self._latency(
+                "prompt_compiled",
+                {"fingerprint": artifact.fingerprint, "history_chars": len(history)},
             )
             async with asyncio.timeout(self.settings.max_call_minutes * 60):
-                async with GeminiLive(self.settings) as ai:
+                await self._latency("gemini_connect_started")
+                async with GeminiLive(
+                    self.settings, setup_payload=artifact.setup_message
+                ) as ai:
+                    await self._latency("gemini_connected")
                     await self.progress.log_diagnostic(
                         profile_id=self.settings.student_id,
                         call_id=self.start.call_id,
@@ -87,6 +110,7 @@ class TutorSession:
                         details={"model": self.settings.gemini_live_model},
                     )
                     await ai.start_greeting()
+                    await self._latency("greeting_sent")
                     await self.progress.log_diagnostic(
                         profile_id=self.settings.student_id,
                         call_id=self.start.call_id,
@@ -120,6 +144,7 @@ class TutorSession:
                     ),
                 },
             )
+            await self._latency("session_saved")
 
     async def _bridge(self, ai: GeminiLive) -> None:
         tasks = {
@@ -149,6 +174,9 @@ class TutorSession:
                 if len(audio) % 2:
                     LOGGER.warning("Dropping odd-length PCM frame for call %s", self.start.call_id)
                     continue
+                if not self._first_pbx_audio_seen:
+                    self._first_pbx_audio_seen = True
+                    await self._latency("first_pbx_audio")
                 batch.append(audio)
                 if len(batch) >= self.settings.gemini_input_batch_frames:
                     pcm16k = upsample_8k_to_16k(b"".join(batch))
@@ -170,6 +198,12 @@ class TutorSession:
         async for event in ai.events():
             kind = event["type"]
             if kind == "audio":
+                if not self._first_output_audio_seen:
+                    self._first_output_audio_seen = True
+                    await self._latency(
+                        "first_gemini_audio",
+                        {"tutor_turn": self.tutor_turns + 1},
+                    )
                 self.output_audio_bytes += len(event["pcm24k"])
                 self._turn_output_audio_bytes += len(event["pcm24k"])
                 pcm8, self._resample_carry = downsample_24k_to_8k(
@@ -180,6 +214,7 @@ class TutorSession:
                 self._out.clear()
                 self._partial = b""
                 self._resample_carry = b""
+                await self._latency("tutor_interrupted")
                 await self.progress.log_diagnostic(
                     profile_id=self.settings.student_id,
                     call_id=self.start.call_id,
@@ -192,16 +227,43 @@ class TutorSession:
                 if not transcript:
                     continue
                 self.transcript.append({"role": role, "text": transcript})
+                if self.settings.store_transcripts:
+                    await self.progress.log_conversation_turn(
+                        profile_id=self.settings.student_id,
+                        call_id=self.start.call_id,
+                        direction="input" if role == "learner" else "output",
+                        text=transcript,
+                        metadata={
+                            "learner_turn": self.learner_turns + (1 if role == "learner" else 0),
+                            "tutor_turn": self.tutor_turns + (1 if role == "tutor" else 0),
+                        },
+                    )
                 if role == "learner" and not self._learner_seen_this_turn:
                     self.learner_turns += 1
                     self._learner_seen_this_turn = True
+                    await self._latency(
+                        "learner_transcript_ready",
+                        {"learner_turn": self.learner_turns},
+                    )
                 if role == "learner":
                     self._turn_input_transcript_chars += len(transcript)
                 else:
+                    if self._turn_output_transcript_chars == 0:
+                        await self._latency(
+                            "tutor_transcript_started",
+                            {"tutor_turn": self.tutor_turns + 1},
+                        )
                     self._turn_output_transcript_chars += len(transcript)
             elif kind == "turn_complete":
                 possible_unprompted = self.tutor_turns > 0 and not self._learner_seen_this_turn
                 self.tutor_turns += 1
+                await self._latency(
+                    "tutor_turn_complete",
+                    {
+                        "tutor_turn": self.tutor_turns,
+                        "possible_unprompted": possible_unprompted,
+                    },
+                )
                 await self.progress.log_diagnostic(
                     profile_id=self.settings.student_id,
                     call_id=self.start.call_id,
@@ -229,6 +291,7 @@ class TutorSession:
                 self._turn_input_transcript_chars = 0
                 self._turn_output_transcript_chars = 0
                 self._turn_output_audio_bytes = 0
+                self._first_output_audio_seen = False
             elif kind == "tool_call":
                 await self.progress.log_diagnostic(
                     profile_id=self.settings.student_id,
@@ -247,6 +310,20 @@ class TutorSession:
                 LOGGER.warning("Gemini requested session close: %s", event.get("detail"))
                 raise CallEnded
         raise CallEnded
+
+    async def _latency(
+        self, event_name: str, details: dict[str, object] | None = None
+    ) -> None:
+        now = time.monotonic()
+        await self.progress.log_latency(
+            profile_id=self.settings.student_id,
+            call_id=self.start.call_id,
+            event_name=event_name,
+            since_call_start_ms=(now - self._clock_start) * 1000,
+            since_previous_ms=(now - self._clock_previous) * 1000,
+            details=dict(details or {}),
+        )
+        self._clock_previous = now
 
     async def _paced_output(self) -> None:
         next_tick = time.monotonic()

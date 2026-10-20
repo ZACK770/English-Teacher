@@ -9,7 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .bots import BotCreate, BotUpdate
 from .controls import TutorControls
+from .prompting import PromptArtifact
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,66 @@ class ProgressStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_diagnostics_profile_created
                 ON diagnostic_events(profile_id, id DESC);
+                CREATE TABLE IF NOT EXISTS bots (
+                    id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    audience TEXT NOT NULL DEFAULT 'general',
+                    channel_id TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    active_version INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS bot_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    settings_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id),
+                    UNIQUE(bot_id, version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_bot_versions_bot
+                ON bot_versions(bot_id, version DESC);
+                CREATE TABLE IF NOT EXISTS prompt_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL UNIQUE,
+                    bot_version INTEGER NOT NULL DEFAULT 0,
+                    fingerprint TEXT NOT NULL,
+                    system_instruction TEXT NOT NULL,
+                    opening_message TEXT NOT NULL,
+                    history_context TEXT NOT NULL,
+                    setup_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_prompt_snapshots_profile
+                ON prompt_snapshots(profile_id, id DESC);
+                CREATE TABLE IF NOT EXISTS conversation_turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_turns_call
+                ON conversation_turns(call_id, id);
+                CREATE TABLE IF NOT EXISTS latency_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    call_id TEXT NOT NULL,
+                    event_name TEXT NOT NULL,
+                    since_call_start_ms REAL NOT NULL,
+                    since_previous_ms REAL NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_latency_call
+                ON latency_events(call_id, id);
                 """
             )
             legacy = db.execute(
@@ -241,13 +303,32 @@ class ProgressStore:
 
     async def save_tutor_controls(
         self, profile_id: str, controls: TutorControls
-    ) -> None:
-        await asyncio.to_thread(self._save_tutor_controls_sync, profile_id, controls)
+    ) -> int:
+        return await asyncio.to_thread(
+            self._save_tutor_controls_sync, profile_id, controls
+        )
 
     def _save_tutor_controls_sync(
         self, profile_id: str, controls: TutorControls
-    ) -> None:
+    ) -> int:
+        now = datetime.now(UTC).isoformat()
+        settings_json = json.dumps(controls.model_dump(), ensure_ascii=False)
         with self._connect() as db:
+            bot = db.execute(
+                "SELECT active_version FROM bots WHERE id = ?", (profile_id,)
+            ).fetchone()
+            if bot is None:
+                db.execute(
+                    """
+                    INSERT INTO bots (
+                        id, label, role, description, audience, channel_id,
+                        enabled, active_version, created_at, updated_at
+                    ) VALUES (?, ?, 'teacher', '', 'general', NULL, 1, 0, ?, ?)
+                    """,
+                    (profile_id, profile_id, now, now),
+                )
+                bot = {"active_version": 0}
+            version = int(bot["active_version"]) + 1
             db.execute(
                 """
                 INSERT INTO tutor_profile_settings (profile_id, settings_json, updated_at)
@@ -258,10 +339,24 @@ class ProgressStore:
                 """,
                 (
                     profile_id,
-                    json.dumps(controls.model_dump(), ensure_ascii=False),
-                    datetime.now(UTC).isoformat(),
+                    settings_json,
+                    now,
                 ),
             )
+            db.execute(
+                """
+                INSERT INTO bot_versions (bot_id, version, settings_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (profile_id, version, settings_json, now),
+            )
+            db.execute(
+                """
+                UPDATE bots SET active_version = ?, updated_at = ? WHERE id = ?
+                """,
+                (version, now, profile_id),
+            )
+        return version
 
     async def reset_tutor_controls(self, profile_id: str) -> None:
         await asyncio.to_thread(self._reset_tutor_controls_sync, profile_id)
@@ -272,6 +367,234 @@ class ProgressStore:
                 "DELETE FROM tutor_profile_settings WHERE profile_id = ?",
                 (profile_id,),
             )
+
+    async def seed_bot(
+        self,
+        *,
+        bot_id: str,
+        label: str,
+        audience: str,
+        channel_id: str | None,
+        controls: TutorControls,
+    ) -> None:
+        await asyncio.to_thread(
+            self._seed_bot_sync,
+            bot_id,
+            label,
+            audience,
+            channel_id,
+            controls,
+        )
+
+    def _seed_bot_sync(
+        self,
+        bot_id: str,
+        label: str,
+        audience: str,
+        channel_id: str | None,
+        controls: TutorControls,
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO bots (
+                    id, label, role, description, audience, channel_id,
+                    enabled, active_version, created_at, updated_at
+                ) VALUES (?, ?, 'teacher', '', ?, ?, 1, 0, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    channel_id = COALESCE(bots.channel_id, excluded.channel_id)
+                """,
+                (bot_id, label, audience, channel_id, now, now),
+            )
+            saved = db.execute(
+                "SELECT settings_json FROM tutor_profile_settings WHERE profile_id = ?",
+                (bot_id,),
+            ).fetchone()
+            if saved is None:
+                settings_json = json.dumps(controls.model_dump(), ensure_ascii=False)
+                db.execute(
+                    """
+                    INSERT INTO tutor_profile_settings (
+                        profile_id, settings_json, updated_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (bot_id, settings_json, now),
+                )
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO bot_versions (
+                        bot_id, version, settings_json, created_at
+                    ) VALUES (?, 1, ?, ?)
+                    """,
+                    (bot_id, settings_json, now),
+                )
+                db.execute(
+                    "UPDATE bots SET active_version = 1 WHERE id = ?",
+                    (bot_id,),
+                )
+            else:
+                version = db.execute(
+                    "SELECT active_version FROM bots WHERE id = ?", (bot_id,)
+                ).fetchone()
+                if version is not None and int(version["active_version"]) == 0:
+                    db.execute(
+                        """
+                        INSERT OR IGNORE INTO bot_versions (
+                            bot_id, version, settings_json, created_at
+                        ) VALUES (?, 1, ?, ?)
+                        """,
+                        (bot_id, saved["settings_json"], now),
+                    )
+                    db.execute(
+                        "UPDATE bots SET active_version = 1 WHERE id = ?",
+                        (bot_id,),
+                    )
+
+    async def list_bots(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_bots_sync)
+
+    def _list_bots_sync(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT id, label, role, description, audience, channel_id,
+                       enabled, active_version, created_at, updated_at
+                FROM bots ORDER BY created_at, id
+                """
+            ).fetchall()
+        return [self._bot_row(row) for row in rows]
+
+    async def get_bot(self, bot_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_bot_sync, bot_id)
+
+    def _get_bot_sync(self, bot_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT id, label, role, description, audience, channel_id,
+                       enabled, active_version, created_at, updated_at
+                FROM bots WHERE id = ?
+                """,
+                (bot_id,),
+            ).fetchone()
+        return self._bot_row(row) if row is not None else None
+
+    @staticmethod
+    def _bot_row(row: sqlite3.Row) -> dict[str, Any]:
+        bot_id = str(row["id"])
+        return {
+            "id": bot_id,
+            "label": row["label"],
+            "role": row["role"],
+            "description": row["description"],
+            "audience": row["audience"],
+            "channel_id": row["channel_id"],
+            "channel_configured": bool(row["channel_id"]),
+            "enabled": bool(row["enabled"]),
+            "active_version": int(row["active_version"]),
+            "websocket_path": f"/v1/technoline/stream/bots/{bot_id}",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def create_bot(
+        self, bot: BotCreate, controls: TutorControls
+    ) -> dict[str, Any]:
+        await asyncio.to_thread(self._create_bot_sync, bot, controls)
+        created = await self.get_bot(bot.id)
+        if created is None:
+            raise RuntimeError("bot creation failed")
+        return created
+
+    def _create_bot_sync(self, bot: BotCreate, controls: TutorControls) -> None:
+        now = datetime.now(UTC).isoformat()
+        settings_json = json.dumps(controls.model_dump(), ensure_ascii=False)
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO bots (
+                    id, label, role, description, audience, channel_id,
+                    enabled, active_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    bot.id,
+                    bot.label,
+                    bot.role,
+                    bot.description,
+                    bot.audience,
+                    bot.channel_id,
+                    int(bot.enabled),
+                    now,
+                    now,
+                ),
+            )
+            db.execute(
+                """
+                INSERT INTO tutor_profile_settings (
+                    profile_id, settings_json, updated_at
+                ) VALUES (?, ?, ?)
+                """,
+                (bot.id, settings_json, now),
+            )
+            db.execute(
+                """
+                INSERT INTO bot_versions (bot_id, version, settings_json, created_at)
+                VALUES (?, 1, ?, ?)
+                """,
+                (bot.id, settings_json, now),
+            )
+
+    async def update_bot(self, bot_id: str, update: BotUpdate) -> dict[str, Any] | None:
+        await asyncio.to_thread(self._update_bot_sync, bot_id, update)
+        return await self.get_bot(bot_id)
+
+    def _update_bot_sync(self, bot_id: str, update: BotUpdate) -> None:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                UPDATE bots SET label = ?, role = ?, description = ?, audience = ?,
+                    channel_id = ?, enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    update.label,
+                    update.role,
+                    update.description,
+                    update.audience,
+                    update.channel_id,
+                    int(update.enabled),
+                    datetime.now(UTC).isoformat(),
+                    bot_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(bot_id)
+
+    async def bot_versions(self, bot_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._bot_versions_sync, bot_id, max(1, min(limit, 100))
+        )
+
+    def _bot_versions_sync(self, bot_id: str, limit: int) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT version, settings_json, created_at
+                FROM bot_versions WHERE bot_id = ?
+                ORDER BY version DESC LIMIT ?
+                """,
+                (bot_id, limit),
+            ).fetchall()
+        return [
+            {
+                "version": int(row["version"]),
+                "created_at": row["created_at"],
+                "controls": json.loads(row["settings_json"]),
+            }
+            for row in rows
+        ]
 
     async def claim_call(
         self,
@@ -421,6 +744,227 @@ class ProgressStore:
             }
             for row in rows
         ]
+
+    async def save_prompt_snapshot(
+        self,
+        *,
+        profile_id: str,
+        call_id: str,
+        artifact: PromptArtifact,
+    ) -> None:
+        await asyncio.to_thread(
+            self._save_prompt_snapshot_sync,
+            profile_id,
+            call_id,
+            artifact,
+        )
+
+    def _save_prompt_snapshot_sync(
+        self,
+        profile_id: str,
+        call_id: str,
+        artifact: PromptArtifact,
+    ) -> None:
+        with self._connect() as db:
+            bot = db.execute(
+                "SELECT active_version FROM bots WHERE id = ?", (profile_id,)
+            ).fetchone()
+            version = int(bot["active_version"]) if bot is not None else 0
+            db.execute(
+                """
+                INSERT INTO prompt_snapshots (
+                    created_at, profile_id, call_id, bot_version, fingerprint,
+                    system_instruction, opening_message, history_context, setup_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(call_id) DO UPDATE SET
+                    bot_version = excluded.bot_version,
+                    fingerprint = excluded.fingerprint,
+                    system_instruction = excluded.system_instruction,
+                    opening_message = excluded.opening_message,
+                    history_context = excluded.history_context,
+                    setup_json = excluded.setup_json
+                """,
+                (
+                    datetime.now(UTC).isoformat(),
+                    profile_id,
+                    call_id,
+                    version,
+                    artifact.fingerprint,
+                    artifact.system_instruction,
+                    artifact.opening_message,
+                    artifact.history_context,
+                    json.dumps(
+                        artifact.setup_message,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+
+    async def log_conversation_turn(
+        self,
+        *,
+        profile_id: str,
+        call_id: str,
+        direction: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await asyncio.to_thread(
+            self._log_conversation_turn_sync,
+            profile_id,
+            call_id,
+            direction,
+            text,
+            metadata or {},
+        )
+
+    def _log_conversation_turn_sync(
+        self,
+        profile_id: str,
+        call_id: str,
+        direction: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        cleaned = text.strip()
+        if not cleaned:
+            return
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO conversation_turns (
+                    created_at, profile_id, call_id, direction, text, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now(UTC).isoformat(),
+                    profile_id,
+                    call_id,
+                    direction[:30],
+                    cleaned[:20000],
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+
+    async def log_latency(
+        self,
+        *,
+        profile_id: str,
+        call_id: str,
+        event_name: str,
+        since_call_start_ms: float,
+        since_previous_ms: float,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        await asyncio.to_thread(
+            self._log_latency_sync,
+            profile_id,
+            call_id,
+            event_name,
+            since_call_start_ms,
+            since_previous_ms,
+            details or {},
+        )
+
+    def _log_latency_sync(
+        self,
+        profile_id: str,
+        call_id: str,
+        event_name: str,
+        since_call_start_ms: float,
+        since_previous_ms: float,
+        details: dict[str, Any],
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO latency_events (
+                    created_at, profile_id, call_id, event_name,
+                    since_call_start_ms, since_previous_ms, details_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now(UTC).isoformat(),
+                    profile_id,
+                    call_id,
+                    event_name[:80],
+                    round(max(0.0, since_call_start_ms), 3),
+                    round(max(0.0, since_previous_ms), 3),
+                    json.dumps(details, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+
+    async def recent_traces(
+        self, profile_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._recent_traces_sync, profile_id, max(1, min(limit, 50))
+        )
+
+    def _recent_traces_sync(
+        self, profile_id: str, limit: int
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            snapshots = db.execute(
+                """
+                SELECT created_at, call_id, bot_version, fingerprint,
+                       system_instruction, opening_message, history_context, setup_json
+                FROM prompt_snapshots WHERE profile_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (profile_id, limit),
+            ).fetchall()
+            result: list[dict[str, Any]] = []
+            for snapshot in snapshots:
+                call_id = str(snapshot["call_id"])
+                turns = db.execute(
+                    """
+                    SELECT created_at, direction, text, metadata_json
+                    FROM conversation_turns WHERE call_id = ? ORDER BY id
+                    """,
+                    (call_id,),
+                ).fetchall()
+                latency = db.execute(
+                    """
+                    SELECT created_at, event_name, since_call_start_ms,
+                           since_previous_ms, details_json
+                    FROM latency_events WHERE call_id = ? ORDER BY id
+                    """,
+                    (call_id,),
+                ).fetchall()
+                result.append(
+                    {
+                        "created_at": snapshot["created_at"],
+                        "call_id": call_id,
+                        "bot_version": int(snapshot["bot_version"]),
+                        "fingerprint": snapshot["fingerprint"],
+                        "system_instruction": snapshot["system_instruction"],
+                        "opening_message": snapshot["opening_message"],
+                        "history_context": snapshot["history_context"],
+                        "setup_message": json.loads(snapshot["setup_json"]),
+                        "turns": [
+                            {
+                                "created_at": row["created_at"],
+                                "direction": row["direction"],
+                                "text": row["text"],
+                                "metadata": json.loads(row["metadata_json"]),
+                            }
+                            for row in turns
+                        ],
+                        "latency": [
+                            {
+                                "created_at": row["created_at"],
+                                "event_name": row["event_name"],
+                                "since_call_start_ms": row["since_call_start_ms"],
+                                "since_previous_ms": row["since_previous_ms"],
+                                "details": json.loads(row["details_json"]),
+                            }
+                            for row in latency
+                        ],
+                    }
+                )
+        return result
 
     def _lesson_context_sync(self, student_id: str, limit: int) -> str:
         with self._connect() as db:

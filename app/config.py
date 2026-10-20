@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     database_path: Path = Path("data/progress.db")
     max_call_minutes: int = Field(default=30, ge=1, le=120)
     max_concurrent_calls: int = Field(default=2, ge=1, le=20)
-    store_transcripts: bool = False
+    store_transcripts: bool = True
     tutor_prompt: str = DEFAULT_TUTOR_PROMPT
     tutor_opening_message: str = DEFAULT_OPENING_MESSAGE
 

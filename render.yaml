@@ -33,7 +33,7 @@ services:
       - key: DATABASE_PATH
         value: /app/data/progress.db
       - key: STORE_TRANSCRIPTS
-        value: "false"
+        value: "true"
       - key: MAX_CALL_MINUTES
         value: "15"
     disk:

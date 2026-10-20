@@ -62,6 +62,7 @@ class TutorControls(BaseModel):
     ] = "learner_only"
 
     voice: str = "Aoede"
+    model: str = Field(default="models/gemini-3.8-live", min_length=3, max_length=200)
     language_code: str = Field(default="he-IL", min_length=2, max_length=20)
     temperature: float | None = Field(default=None, ge=0, le=2)
 
@@ -123,6 +124,7 @@ class TutorControls(BaseModel):
             base_prompt=settings.tutor_prompt,
             opening_message=settings.tutor_opening_message,
             voice=settings.gemini_voice,
+            model=settings.gemini_live_model,
             language_code=settings.gemini_language_code,
             temperature=settings.gemini_temperature,
             vad_start_sensitivity=settings.gemini_vad_start_sensitivity,
@@ -194,6 +196,7 @@ class TutorControls(BaseModel):
             "tutor_prompt": system_instruction,
             "tutor_opening_message": self.opening_message,
             "gemini_voice": self.voice,
+            "gemini_live_model": self.model,
             "gemini_language_code": self.language_code,
             "gemini_temperature": self.temperature,
             "gemini_vad_start_sensitivity": self.vad_start_sensitivity,
