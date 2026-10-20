@@ -187,7 +187,7 @@ def dashboard_html() -> str:
       <div class="form-grid">
         <div><label class="field-label" for="transcription_mode">מצב תמלול <span class="help-tip" tabindex="0" role="note" aria-label="מילולי שומר את הנאמר קרוב ככל האפשר למקור. חכם עשוי לנקות ולנרמל את הטקסט. זה משפיע על התמליל, לא על איכות האודיו עצמו." data-help="„מילולי” שומר את הנאמר קרוב ככל האפשר למקור. „חכם” עשוי לנקות ולנרמל את הטקסט. זה משפיע על התמליל, לא על איכות האודיו עצמו.">?</span></label><select id="transcription_mode"></select></div>
         <div><label class="field-label" for="transcription_language_codes">רמזי שפה, מופרדים בפסיק <span class="help-tip" tabindex="0" role="note" aria-label="רשימת השפות הצפויות בתמלול, למשל he-IL,en-US. אלו רמזים למזהה הדיבור ואינם הוראה למורה באיזו שפה לדבר." data-help="רשימת השפות הצפויות בתמלול, למשל he-IL,en-US. אלו רמזים למזהה הדיבור ואינם הוראה למורה באיזו שפה לדבר.">?</span></label><input id="transcription_language_codes" placeholder="he-IL,en-US"></div>
-        <div class="check"><input id="store_transcripts" type="checkbox"><label for="store_transcripts">לשמור תמלילים מלאים (רגיש לפרטיות)</label></div>
+        <div class="check"><input id="store_transcripts" type="checkbox"><label for="store_transcripts">לשמור עותק נוסף של התמליל גם בסיכום השיחה</label></div>
         <div class="span2"><label for="custom_vocabulary">אוצר מילים מותאם, מונח אחד בכל שורה</label><textarea id="custom_vocabulary"></textarea></div>
         <div><label for="context_trigger_tokens">סף דחיסת הקשר</label><input id="context_trigger_tokens" type="number" min="1000" max="120000"></div>
         <div><label for="context_target_tokens">יעד לאחר דחיסה</label><input id="context_target_tokens" type="number" min="500" max="100000"></div>
@@ -212,7 +212,7 @@ def dashboard_html() -> str:
     </section>
     <section class="card anchor-section" id="conversation-logs">
       <div class="management-head"><div><h2>מה התקבל, מה נשלח ומדדי מהירות</h2><p class="sub">הפרומפט המדויק, תמלילי שני הצדדים וציר הזמן של כל שיחה</p></div><button type="button" class="secondary" id="refreshTraces">רענון לוגים</button></div>
-      <p class="section-note">כל שיחה מקבלת טביעת פרומפט וגרסה. מדדי ההשהיה נמדדים מתחילת החיבור ובין אירועים עוקבים, כדי לזהות עיכוב בטכנוליין, בחיבור ל־Gemini, בזיהוי הדיבור או ביצירת האודיו.</p>
+      <p class="section-note">כל שיחה מקבלת טביעת פרומפט וגרסה, ותמלילי הקלט והפלט נשמרים בלוג זה. אודיו גולמי אינו נשמר. מדדי ההשהיה נמדדים מתחילת החיבור ובין אירועים עוקבים, כדי לזהות עיכוב בטכנוליין, בחיבור ל־Gemini, בזיהוי הדיבור או ביצירת האודיו.</p>
       <div id="traceList" class="empty">עדיין אין שיחות מתועדות בפרופיל הזה.</div>
     </section>
   </main>

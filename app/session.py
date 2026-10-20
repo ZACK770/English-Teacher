@@ -227,17 +227,16 @@ class TutorSession:
                 if not transcript:
                     continue
                 self.transcript.append({"role": role, "text": transcript})
-                if self.settings.store_transcripts:
-                    await self.progress.log_conversation_turn(
-                        profile_id=self.settings.student_id,
-                        call_id=self.start.call_id,
-                        direction="input" if role == "learner" else "output",
-                        text=transcript,
-                        metadata={
-                            "learner_turn": self.learner_turns + (1 if role == "learner" else 0),
-                            "tutor_turn": self.tutor_turns + (1 if role == "tutor" else 0),
-                        },
-                    )
+                await self.progress.log_conversation_turn(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    direction="input" if role == "learner" else "output",
+                    text=transcript,
+                    metadata={
+                        "learner_turn": self.learner_turns + (1 if role == "learner" else 0),
+                        "tutor_turn": self.tutor_turns + (1 if role == "tutor" else 0),
+                    },
+                )
                 if role == "learner" and not self._learner_seen_this_turn:
                     self.learner_turns += 1
                     self._learner_seen_this_turn = True
