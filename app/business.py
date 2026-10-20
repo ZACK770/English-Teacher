@@ -287,6 +287,15 @@ class BusinessStore:
             phone = None
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT customer_id FROM call_customers WHERE call_id=?", (call_id,)
+            ).fetchone()
+            if existing:
+                if bot_id != "ivr":
+                    db.execute(
+                        "UPDATE call_customers SET bot_id=? WHERE call_id=?", (bot_id, call_id)
+                    )
+                return existing["customer_id"]
             row = db.execute(
                 "SELECT customer_id FROM customer_phones WHERE phone=?", (phone,)
             ).fetchone() if phone else None

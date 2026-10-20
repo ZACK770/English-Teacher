@@ -96,6 +96,10 @@ class TutorSession:
                 history += await asyncio.to_thread(
                     self.business.lesson_context, self.customer_id, self.settings.student_id,
                 )
+                from .pbx import runtime_context
+                history += "\n" + await asyncio.to_thread(
+                    runtime_context, self.business, self.start.call_id,
+                )
             artifact = compile_prompt(
                 controls=controls,
                 history_context=history,
@@ -145,7 +149,15 @@ class TutorSession:
                     )
                     async with asyncio.timeout(allowed_seconds):
                         await self._bridge(ai)
-        except (TimeoutError, CallEnded, WebSocketDisconnect):
+        except TimeoutError:
+            if self.settings.student_id.startswith("isaac-"):
+                try:
+                    await self.pbx.send_text(
+                        transfer_command(self.settings.tlivr_project_path + "/8")
+                    )
+                except (RuntimeError, WebSocketDisconnect):
+                    pass
+        except (CallEnded, WebSocketDisconnect):
             pass
         finally:
             if self.business:

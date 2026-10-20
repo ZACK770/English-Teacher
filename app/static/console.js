@@ -14,6 +14,7 @@ async function api(path,method="GET",body){
  return r.json();
 }
 const business=(path,method,body)=>api("/v1/admin/business/"+path,method,body);
+pages.splice(pages.length-1,0,["pbx","☎","מרכזייה חיה"]);
 function head(title,description,action=""){return `<div class="page-head"><div><span class="eyebrow">מרכז הניהול / ${esc(pages.find(p=>p[0]===state.page)?.[2]||"בוטים")}</span><h1>${esc(title)}</h1><p>${esc(description)}</p></div>${action}</div>`}
 function empty(title,text){return `<div class="empty"><div class="empty-icon">◇</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`}
 function metric(label,value,note,dark=false){return `<article class="metric ${dark?"dark":""}"><p>${esc(label)}</p><div class="value">${esc(value)}</div><small>${esc(note)}</small></article>`}
@@ -167,6 +168,7 @@ function botControls(){
  return c;
 }
 function bind(){
+ if($("ivrCopyForm"))$("ivrCopyForm").onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{await api("/v1/admin/pbx/config","PUT",readFields(e.target));toast("הנוסחים נשמרו ויחולו בפנייה הבאה מהקו")}catch(err){toast(err.message)}finally{e.submitter.disabled=false}};
  $("search")?.addEventListener("input",e=>{const q=e.target.value.toLowerCase();$("content").querySelectorAll("tbody tr,.trace").forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(q))});
  $("logBot")?.addEventListener("change",e=>{state.logBot=e.target.value;render()});
  $("content").querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{if(["prompt","speech","context"].includes(state.tab))state.drafts[state.bot]=botControls();state.tab=b.dataset.tab;render()});
@@ -220,4 +222,16 @@ async function renderNarration(button){
  button.disabled=true;const label=button.textContent;button.textContent="מייצר אודיו…";
  try{const r=await fetch(`/v1/admin/narrations/${encodeURIComponent(button.dataset.audio)}/audio`,{method:"POST",headers:{Authorization:"Bearer "+state.token}});if(!r.ok){const b=await r.json();throw Error(b.detail||"יצירת הקריינות נכשלה")};const url=URL.createObjectURL(await r.blob());dialog("הקריינות מוכנה",`<p>האזן ואשר את ההגייה לפני שימוש בקו. הקובץ הוא WAV חד־ערוצי ב־8kHz.</p><audio controls src="${url}"></audio><a class="ghost" href="${url}" download="narration.wav">הורדת הקריינות</a>`,async()=>{});toast("הקריינות נוצרה ונשמרה")}catch(e){toast(e.message)}finally{button.disabled=false;button.textContent=label}
 }
+views.pbx=async()=>{
+ const c=await api("/v1/admin/pbx/config"), events=(await api("/v1/admin/pbx/events")).events;
+ let live,error;try{live=await api("/v1/admin/pbx/status")}catch(e){error=e.message}
+ const labels={welcome:"פתיחת המערכת",school:"בחירת מורה",school_mode:"קורס או שיחה חופשית",translator:"פתיחת התרגומון",languages:"בחירת שפת יעד · מקש 9",sales:"מידע וחבילות",service:"השארת הודעה",thanks:"אישור קבלת הודעה",quota:"סיום מכסה"};
+ return head("המרכזייה החיה","הניהול מבודד לשלוחה "+c.project_path+" בלבד. אין שינוי בתפריט הראשי או בהפניית המתקשרים.")
+ +`<section class="metrics">${metric("מספר המערכת",c.phone,"ההפניה לשלוחה נשארת בידיך",true)}${metric("שלוחת המיזם",c.project_path,live?"נבדקה מול טכנוליין":"טרם אומתה")}${metric("חיבור ניהול",live?"מחובר":"לא אומת",error||"בדיקת API אמיתית")}${metric("אירועי תפריט",events.length,"ללא נתוני הדגמה")}</section>`
+ +`<p class="notice warn">סליקה אוטומטית אינה מוגדרת. מקש 9 פועל לפני הכניסה לשיחת התרגום; בזמן סטרימינג טכנוליין אינה מעבירה כיום הקשות. אפשר לבקש שינוי שפה בקול. בית הספר במצב הרצה: עד 10 דקות לשיחה, ללא גבייה אוטומטית. בתרגומון מוגדרות שתי שיחות חינם של 30 שניות בחודש, לאדם.</p>`
+ +`<section class="panel"><div class="panel-head"><h2>כל מילה בחוויה הטלפונית</h2>${badge("עריכה חיה")}</div><p>שינויים נשמרים בשרת. אין צורך לפרוס מחדש או לערוך בטכנוליין. טקסטים אלה מוקראים כרגע באמצעות מנגנון ההקראה של טכנוליין.</p><form id="ivrCopyForm"><div class="form-grid">${Object.entries(c.copy).map(([key,value])=>field(key,labels[key]||key,value,"textarea","",true)).join("")}</div><div class="actions"><button class="primary">שמירת הנוסחים לקו</button></div></form></section>`
+ +`<section class="panel"><h2>מסלולי השיחה</h2>${table(["שלוחה","תפקיד"],[["/99","תפריט כניסה"],["/99/1","בחירת מורה"],["/99/1/1","מורה בסיסי · בחירת סוג לימוד"],["/99/1/2","מורה מתקדם · בחירת סוג לימוד"],["/99/2","תרגומון"],["/99/2/9","בחירת שפה"],["/99/3","מידע וחבילות"],["/99/4","הודעה לשירות"],["/99/8","סיום מכסה"]].map(([a,b])=>row([`<code>${a}</code>`,b])))}</section>`
+ +`<section class="panel"><h2>תנועה ושיחות · נתוני טכנוליין</h2>${live?`<details><summary>פתיחת דוח כניסות לשלוחה</summary><pre>${esc(JSON.stringify(live.visits,null,2))}</pre></details>`:empty("החיבור טרם אומת",error||"הגדר חיבור בשרת")}</section>`
+ +`<section class="panel"><h2>לוג תפריטים · קלט, פלט וזמן תגובה</h2>${events.length?table(["מועד","שלב","זמן טיפול","פירוט"],events.slice(0,100).map(x=>row([esc(date(x.at)),esc(x.route),esc(x.latency_ms)+" מ״ש",`<details><summary>קלט ופלט</summary><pre>${esc(JSON.stringify(x,null,2))}</pre></details>`]))):empty("אין שיחות עדיין","הלוג יתמלא לאחר כניסת מתקשרים לשלוחה.")}</section>`;
+};
 if(state.token)start().catch(e=>{$("loginError").textContent=e.message});

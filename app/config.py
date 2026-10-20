@@ -125,6 +125,14 @@ class Settings(BaseSettings):
     technoline_bearer_secret: SecretStr | None = None
     technoline_allowed_ips: list[str] = Field(default_factory=list)
     technoline_return_extension: str = "/"
+    tlivr_system_api_key: SecretStr | None = None
+    tlivr_callback_secret: SecretStr | None = None
+    tlivr_system_phone: str = "0765673575"
+    tlivr_project_path: str = "/99"
+    tlivr_project_enabled: bool = False
+    tlivr_basic_channel: str | None = None
+    tlivr_advanced_channel: str | None = None
+    tlivr_translator_channel: str | None = None
 
     admin_bearer_secret: SecretStr
     student_id: str = "student"

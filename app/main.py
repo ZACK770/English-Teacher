@@ -18,6 +18,7 @@ from .config import Settings, get_settings
 from .controls import VOICE_OPTIONS, TutorControls
 from .dashboard import dashboard_html
 from .narration import install_narration_api
+from .pbx import install_pbx_api, seed_project
 from .portal import install_portal_api
 from .progress import ProgressStore
 from .prompting import compile_prompt
@@ -60,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.settings = active_settings
         app.state.progress = store
+        await seed_project(app, active_settings, store)
         app.state.call_slots = asyncio.Semaphore(active_settings.max_concurrent_calls)
         yield
 
@@ -108,6 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_business_api(app, require_admin)
     install_narration_api(app, require_admin)
     install_portal_api(app, static_path)
+    install_pbx_api(app, require_admin)
 
     async def require_profile(profile_id: str) -> dict[str, object]:
         profile = await app.state.progress.get_bot(profile_id)
