@@ -46,6 +46,9 @@ def test_every_prompt_and_setup_contains_the_same_end_session_tool(tmp_path):
     assert artifact.runtime_settings.session_idle_timeout_seconds == 45
     assert artifact.runtime_settings.session_end_action == "return_to_menu"
     assert "end_session" in str(build_setup_payload(session.settings))
+    for tool in tools:
+        for parameter in tool.get("parameters", {}).get("properties", {}).values():
+            assert "" not in parameter.get("enum", []), "Provider rejects empty enum members"
 
 
 @pytest.mark.asyncio

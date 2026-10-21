@@ -103,8 +103,8 @@ TRANSLATION_LANGUAGE_TOOL = {
         "type": "object",
         "properties": {"language": {
             "type": "string",
-            "enum": ["", "English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"],
-            "description": "Empty string restores automatic Hebrew/English translation.",
+            "enum": ["auto", "English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"],
+            "description": "Use auto to restore automatic Hebrew/English translation.",
         }},
         "required": ["language"],
     },

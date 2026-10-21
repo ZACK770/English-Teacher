@@ -569,6 +569,8 @@ class TutorSession:
             from .pbx import load_context, save_context, save_preference
 
             language = (call.get("args") or {}).get("language")
+            if language == "auto":
+                language = ""
             languages = {"", "English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"}
             if (not self.business or "~" not in self.start.call_id or not isinstance(language, str)
                     or language not in languages):

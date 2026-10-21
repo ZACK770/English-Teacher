@@ -410,6 +410,10 @@ def test_voice_language_cookie_is_shared_with_phone_and_rejects_arbitrary_values
     callback(client, "translator", PBXcallId="after-voice")
     assert load_context(business, "after-voice")["language"] == "Russian"
     assert load_context(business, "call-one")["language"] == "Russian"
+    assert session._record_tool_call({"name": "save_translation_language",
+                                      "args": {"language": "auto"}})
+    callback(client, "translator", PBXcallId="after-auto")
+    assert load_context(business, "after-auto")["language"] == ""
     assert not session._record_tool_call({"name": "save_translation_language",
                                           "args": {"language": "arbitrary-value"}})
     assert not session._record_tool_call({"name": "save_translation_language",
