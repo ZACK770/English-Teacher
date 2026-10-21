@@ -51,8 +51,9 @@ The existing PBX config response also exposes `payment_configured`.
 
 If a payment stays pending, inspect its order and the Nedarim transaction history.
 Do not tell the caller to pay again merely because a callback was delayed.
-Use the provider's delivery retry or resend a genuine signed event; this version
-does not poll transaction history or automatically reverse wallet credits on refunds.
+Nedarim does not automatically retry webhooks. Use the panel's reconciliation
+button to recover missing transactions and refusals through authenticated history.
+The app does not automatically reverse wallet credits on refunds.
 Refunds and extra payments require administrator review. Manual receipt tools
 remain available and must not duplicate the `nedarim:` transaction reference.
 
@@ -61,10 +62,32 @@ extensions are untouched; the current `/99/3` API extension needs no tree change
 
 ## Validation
 
-69 tests pass, including 14 new payment cases: signature/replay rejection,
+76 tests pass, including payment cases for signature/replay rejection,
 duplicate delivery, simultaneous settlement, mismatched amounts, currency and
 institution, refusal, frozen commercial terms and separate product balances.
 Ruff passes. No real card was charged during development.
+
+## Collections console
+
+The Packages screen includes confirmed/manual totals, pending sums (not revenue),
+order state filters and pagination, customer names/phones, provider transaction
+IDs, refusal reasons, an issue queue and audited resolution notes. Customer lists
+and customer details include payment state and history. No payment on record
+does not imply a debt. No declined/pending order becomes a financial receipt.
+
+Signed refusal events are accepted at the same webhook URL; configure Type=Siruv
+as well as Type=Transaction in Nedarim. Provider messages are sanitized and long
+number strings removed. No card number or CVV is collected by the app.
+
+Admin POST /v1/admin/payments/reconcile reads GetHistoryJson and GetErrorLogsJson,
+advancing a persistent cursor for each source. Calls are limited to one per 3
+minutes per report, including failures. An unavailable provider appears in the
+panel and does not create a receipt. Mismatches/refunds/cancellations are flagged
+for review rather than silently altering income or customer entitlements.
+
+Package phone_enabled can hide a test package from callers independently of its
+active flag. Authenticated /v1/admin/payments/test-order creates a payment intent
+for a selected customer/package at up to ILS 1; it does not itself charge a card.
 
 References: supplied NedarimPlus-API.md (Callback, HMAC, Get/SetWebhook) and
 https://pbx.tlivr.com/apiModuleDocs.html#creditCard.

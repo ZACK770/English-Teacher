@@ -58,9 +58,51 @@ async function render(){
   bind();
  }catch(err){if(epoch===state.epoch)$("content").innerHTML=empty("לא ניתן לטעון כרגע",err.message)}
 }
+
+const paymentLabels={selected:"ממתין לאישור לקוח",issued:"נשלח לסליקה",awaiting_settlement:"ממתין לאישור הסולק",failed:"לא אושר",paid:"שולם ואומת",cancelled:"בוטל"};
+function paymentBadge(o){return badge(paymentLabels[o.state]||o.state,o.state==="paid"?"":o.state==="failed"?"warn":"neutral")+(o.pending_review?' '+badge("עיכוב באישור · לבדיקה","warn"):"")}
+function customerPayment(c){
+ if(!c)return badge("ללא תשלום רשום","neutral");
+ return badge(c.has_paid?"שילם · "+money(c.paid_ils):"ללא תשלום רשום",c.has_paid?"":"neutral")+
+ (c.latest_state==="failed"?' '+badge("ניסיון אחרון לא אושר","warn"):"")+
+ (c.open_issues?' '+badge(c.open_issues+" בעיות לטיפול","warn"):"");
+}
+function paymentOrdersTable(orders){
+ return orders.length?table(["מועד","לקוח","טלפון","מוצר וחבילה","סכום","מצב","עסקה בסולק"],
+ orders.map(o=>row([esc(date(o.created_at)),esc(o.customer_name),'<span dir="ltr">'+esc(o.customer_phone)+'</span>',
+ esc(productNames[o.product])+' · '+esc(o.package_name),money(o.amount_agorot/100),paymentBadge(o),esc(o.transaction_id||"—")]))):
+ empty("אין ניסיונות רכישה להצגה","ניסיונות מהטלפון יופיעו כאן, גם אם לא הושלמו.");
+}
+function collectionPanel(d){
+ const pending=(d.counts.issued||0)+(d.counts.awaiting_settlement||0);
+ const customerRows=Object.values(d.customer_summaries);
+ const open=d.issues.filter(i=>i.status==="open");
+ return '<section class="panel" style="margin-top:24px"><div class="panel-head"><div><h2>מעקב גבייה</h2><p>כל התקופות · תשלומים מאושרים, ניסיונות רכישה ובעיות לטיפול</p></div>'+
+ '<button class="ghost" data-action="syncPayments">בדיקת התאמה מול נדרים פלוס</button></div>'+
+ '<div class="notice">'+(d.configured?"נדרים פלוס מחובר":"חיבור הסליקה אינו פעיל")+
+ '. תקבולים מאומתים נכללים אוטומטית ברווחיות ובתיק הלקוח. סכומים ממתינים וסירובים אינם הכנסה. לקוח ללא תשלום רשום אינו בהכרח בעל חוב.</div>'+
+ '<section class="metrics">'+metric("תקבולי נדרים מאומתים",money(d.totals.verified_ils),"כל התקופות · נכללים בדוחות",true)+
+ metric("רישומים ידניים",money(d.totals.manual_ils),"נפרדים מאימות הסולק")+
+ metric("ממתינים לסולק",pending,money(d.totals.pending_ils)+" · לא נכלל בהכנסה")+
+ metric("בעיות פתוחות",d.open_issues,d.totals.pending_review+" בקשות עם עיכוב מעל 15 דקות")+'</section>'+
+ '<div class="toolbar"><label>סינון מצב <select id="paymentState"><option value="">כל המצבים</option>'+
+ Object.entries(paymentLabels).map(([k,v])=>'<option value="'+k+'" '+(state.paymentFilter===k?"selected":"")+'>'+v+'</option>').join("")+
+ '</select></label><label>שם או טלפון <input id="paymentSearch" value="'+esc(state.paymentSearch||"")+'"></label><button class="ghost" data-action="filterPayments">חיפוש</button></div>'+
+ paymentOrdersTable(d.orders)+'<div class="toolbar"><span>'+d.total+' ניסיונות · מציג '+(d.total?d.offset+1:0)+' עד '+Math.min(d.offset+d.orders.length,d.total)+'</span>'+
+ '<button class="ghost" data-action="prevPayments" '+(!d.offset?"disabled":"")+'>הקודם</button><button class="ghost" data-action="nextPayments" '+(d.offset+d.limit>=d.total?"disabled":"")+'>הבא</button></div>'+
+ '<h3>בעיות גבייה פתוחות</h3>'+ (open.length?table(["לקוח","טלפון","חבילה","סיבת הטיפול","מועד",""],open.map(i=>row([
+ esc(i.customer_name||i.customer_id),esc(i.customer_phone),esc(i.package_name),esc(i.message),date(i.created_at),
+ '<button class="ghost" data-payment-issue="'+esc(i.id)+'">תיעוד טיפול</button>']))):'<p>אין בעיות גבייה פתוחות.</p>')+
+ '<p>שולמו: '+customerRows.filter(c=>c.has_paid).length+' לקוחות · ללא תשלום רשום: '+customerRows.filter(c=>!c.has_paid).length+
+ ' לקוחות. החזרים והתאמות שסומנו לבדיקה דורשים טיפול לפני הסתמכות על הדוח הכספי.</p>'+
+ '<h3>בדיקות התאמה אחרונות</h3>'+ (d.sync.length?d.sync.map(r=>'<div class="progress-step"><span>'+
+ (r.action==="GetHistoryJson"?"עסקאות מאושרות":"סירובים")+'</span><span>'+esc(r.last_error||date(r.completed_at)||"טרם הושלם")+'</span></div>').join(""):'<p>טרם בוצעה בדיקת התאמה.</p>')+
+ '<p class="notice">בדיקת התאמה קוראת דוחות בלבד ואינה מנסה לחייב שוב. אפשר להריץ פעם בשלוש דקות לכל דוח.</p></section>';
+}
+
 const views={
  async overview(){
-  const s=await business("overview");
+  const [s,payments]=await Promise.all([business("overview"),api("/v1/admin/payments/status")]);
   return head("העסק, במבט אחד","תמונת מצב לחודש "+s.period+" · נתונים שנרשמו במערכת")
    +`<section class="metrics">${metric("תקבולים החודש",money(s.gross_receipts_ils),"כולל מע״מ · רישום תשלומים",true)}${metric("לקוחות משלמים",s.paying_customers_month,"עם תשלום רשום החודש")}${metric("עלות AI",money(s.ai_cost_ils),"אומדן שימוש · לא חשבונית ספק")}${metric("עודף לפי הוצאות ידועות",money(s.known_cash_surplus_ils),"לפני הוצאות שלא הוזנו")}</section>`
    +`<div class="grid2"><section class="panel"><div class="panel-head"><h2>מה תרצה לעשות היום?</h2>${badge("ניהול שוטף")}</div>
@@ -71,6 +113,7 @@ const views={
    <div class="progress-step"><span>CAC נמדד חלקית</span><b>${money(s.cac_ils)}</b></div>
    <div class="progress-step"><span>LTV בפועל</span>${badge("אין עדיין מדידת שימור","neutral")}</div>
    <a class="progress-step" href="#economics"><b>למודל הרווחיות ולתרחישים</b><span>←</span></a></section></div>`
+   +`<div class="notice"><a href="#packages">מעקב גבייה: ${payments.open_issues} בעיות פתוחות · ${payments.totals.pending_review} אישורים מעוכבים</a></div>`
    +`<div class="notice">${esc(s.notes[1])}${s.unattributed_sessions?` ${s.unattributed_sessions} שיחות ישנות אינן משויכות ללקוח.`:""}</div>`;
  },
  async bots(){
@@ -80,9 +123,9 @@ const views={
   +`<div class="cards">${state.bots.map(b=>`<article class="bot-card"><div class="card-top"><div class="bot-icon">◉</div>${badge(b.enabled?"פעיל":"מושהה",b.enabled?"":"neutral")}</div><div><h2>${esc(b.label)}</h2><small>${esc(roleNames[b.role]||b.role)} · גרסה ${b.active_version}</small></div><p>${esc(b.description||"הגדר את סגנון השיחה והמטרות של הבוט.")}</p><small>${b.channel_configured?"● ערוץ טלפוני מוגדר":"○ טרם הוגדר ערוץ טלפוני"}</small><a class="ghost" href="#bots/${encodeURIComponent(b.id)}">פתיחת הבוט ←</a></article>`).join("")}</div>`;
  },
  async customers(){
-  const items=(await business("customers")).items;state.items=items;
+  const [list,paymentData]=await Promise.all([business("customers"),api("/v1/admin/payments/status")]);const items=list.items;state.items=items;
   return head("לקוחות","חשבון נפרד לכל אדם, ללא תלות במורה שנבחר.",'<button class="primary" data-action="newCustomer">＋ הוספת לקוח</button>')
-  +`<section class="panel"><div class="toolbar"><input id="search" placeholder="חיפוש לפי שם או טלפון" aria-label="חיפוש לקוחות"></div>${items.length?table(["לקוח","טלפון","מקור הגעה","מורה מועדף","עודכן",""],items.map(c=>row([esc(c.name),`<span dir="ltr">${esc(c.phone)}</span>`,esc(c.source),esc(state.bots.find(b=>b.id===c.preferred_bot)?.label||"לא נבחר"),date(c.updated_at),`<button class="ghost" data-edit="customers" data-id="${esc(c.id)}">פתיחה</button>`]))):empty("הלקוח הראשון מתחיל כאן","מתקשרים מזוהים יתווספו אוטומטית; אפשר להוסיף גם ידנית.")}</section>`;
+  +`<section class="panel"><div class="toolbar"><input id="search" placeholder="חיפוש לפי שם או טלפון" aria-label="חיפוש לקוחות"></div>${items.length?table(["לקוח","טלפון","מצב תשלום","מקור הגעה","מורה מועדף","עודכן",""],items.map(c=>row([esc(c.name),`<span dir="ltr">${esc(c.phone)}</span>`,customerPayment(paymentData.customer_summaries[c.id]),esc(c.source),esc(state.bots.find(b=>b.id===c.preferred_bot)?.label||"לא נבחר"),date(c.updated_at),`<button class="ghost" data-edit="customers" data-id="${esc(c.id)}">פתיחה</button>`]))):empty("הלקוח הראשון מתחיל כאן","מתקשרים מזוהים יתווספו אוטומטית; אפשר להוסיף גם ידנית.")}</section>`;
  },
  async courses(){
   const [courses,enrollments,customers]=await Promise.all([business("courses"),business("enrollments"),business("customers")]);state.items=courses.items;state.enrollmentItems=enrollments.items;state.courseLists={courses:courses.items,customers:customers.items};
@@ -91,10 +134,10 @@ const views={
   +`<section class="panel" style="margin-top:24px"><div class="panel-head"><h2>רישום והתקדמות</h2><button class="ghost" data-action="newEnrollment">שיוך תלמיד למסלול</button></div>${enrollments.items.length?table(["תלמיד","מסלול","שיעור נוכחי","מצב",""],enrollments.items.map(e=>row([esc(customers.items.find(c=>c.id===e.customer_id)?.name||e.customer_id),esc(courses.items.find(c=>c.id===e.course_id)?.name||e.course_id),String(e.lesson_index+1),esc(({active:"בלמידה",completed:"הושלם",paused:"בהשהיה"})[e.status]),`<button class="ghost" data-enroll="${esc(e.id)}">עדכון התקדמות</button>`]))):empty("אין עדיין תלמידים רשומים למסלול","הוראות השיעור נטענות בשיחה הבאה של התלמיד.")}<p class="notice">קידום השיעור מנוהל ידנית. ניקוד המורה אינו מקדם תלמיד אוטומטית.</p></section>`;
  },
  async packages(){
-  const [packages,overview,customers]=await Promise.all([business("packages"),business("overview"),business("customers")]);state.items=packages.items;state.receiptLists={packages:packages.items,customers:customers.items};
+  const [packages,overview,customers,payments]=await Promise.all([business("packages"),business("overview"),business("customers"),api("/v1/admin/payments/status?offset="+(state.paymentOffset||0)+"&state="+encodeURIComponent(state.paymentFilter||"")+"&search="+encodeURIComponent(state.paymentSearch||""))]);state.paymentData=payments;state.items=packages.items;state.receiptLists={packages:packages.items,customers:customers.items};
   return head("חבילות ותשלומים","מחירים כוללים מע״מ. תשלום שנרשם יוצר זכאות עם דקות ותאריך תפוגה.",'<button class="primary" data-action="newPackage">＋ חבילה חדשה</button>')
   +`<div class="cards">${packages.items.map(p=>`<article class="bot-card"><div class="card-top">${badge(productNames[p.product])}${badge(p.active?"פעילה":"טיוטה",p.active?"":"neutral")}</div><h2>${esc(p.name)}</h2><h1>${money(p.price_ils)}</h1><p>${p.minutes} דקות · ${p.validity_days} ימים</p><button class="ghost" data-edit="packages" data-id="${esc(p.id)}">עריכת החבילה</button></article>`).join("")||empty("עדיין אין חבילות","הגדר את שתי משפחות המוצרים ואת המחירים שלך.")}</div>`
-  +`<section class="panel" style="margin-top:24px"><div class="panel-head"><h2>רישום תשלומים</h2><button class="ghost" data-action="newReceipt">רישום תשלום שהתקבל</button></div><div class="notice warn">זהו רישום ידני של תשלום שהתקבל מחוץ למערכת. הוא יוצר יתרה ותוקף. אכיפה מופעלת בכל בוט בלשונית דקות ומכסות; רישום כאן אינו מחייב כרטיס אשראי.</div>${overview.receipts.length?table(["אסמכתה","לקוח","מוצר","סכום כולל מע״מ","תוקף"],overview.receipts.map(r=>row([esc(r.reference),esc(customers.items.find(c=>c.id===r.customer_id)?.name||r.customer_id),productNames[r.product],money(r.amount_ils),date(r.expires_at)]))):empty("אין עדיין תשלומים רשומים","רישום תשלום יופיע גם בתמונת המצב העסקית.")}</section>`;
+  +`<section class="panel" style="margin-top:24px"><div class="panel-head"><h2>רישום תשלומים</h2><button class="ghost" data-action="newReceipt">רישום תשלום שהתקבל</button></div><div class="notice warn">תשלומי נדרים מאומתים מופיעים אוטומטית. הכפתור מיועד לתשלום שהתקבל מחוץ למערכת; רישום ידני אינו מחייב כרטיס. שתי הקבוצות נכללות בדוחות ומוצגות לפי מקור.</div>${overview.receipts.length?table(["אסמכתה","מקור","לקוח","מוצר","סכום כולל מע״מ","תוקף"],overview.receipts.map(r=>row([esc(r.reference),badge(r.reference.startsWith("nedarim:")?"נדרים · מאומת":"רישום ידני",r.reference.startsWith("nedarim:")?"":"neutral"),esc(customers.items.find(c=>c.id===r.customer_id)?.name||r.customer_id),productNames[r.product],money(r.amount_ils),date(r.expires_at)]))):empty("אין עדיין תשלומים רשומים","רישום תשלום יופיע גם בתמונת המצב העסקית.")}</section>`+collectionPanel(payments);
  },
  async narrations(){
   const items=(await business("narrations")).items;state.items=items;
@@ -171,6 +214,8 @@ function botControls(){
  return c;
 }
 function bind(){
+ $("content").querySelectorAll("[data-payment-issue]").forEach(b=>b.onclick=()=>dialog("תיעוד טיפול בבעיית גבייה",field("note","מה נעשה לטיפול?","","textarea","תיעוד הטיפול אינו משנה תשלום או יתרת לקוח."),v=>api("/v1/admin/payments/issues/"+encodeURIComponent(b.dataset.paymentIssue)+"/resolve","POST",v)));
+
  $("content").querySelectorAll("[data-stop-session]").forEach(b=>b.onclick=async()=>{b.disabled=true;try{await api(`/v1/admin/active-ai-sessions/${encodeURIComponent(b.dataset.stopSession)}/stop`,"POST");b.textContent="בתהליך סגירה";toast("נשלחה בקשת סגירה; רענן כדי לוודא שהסשן נעלם מהרשימה")}catch(e){toast(e.message);b.disabled=false}});
  if($("ivrCopyForm"))$("ivrCopyForm").onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{await api("/v1/admin/pbx/config","PUT",readFields(e.target));toast("הנוסחים נשמרו ויחולו בפנייה הבאה מהקו")}catch(err){toast(err.message)}finally{e.submitter.disabled=false}};
  $("search")?.addEventListener("input",e=>{const q=e.target.value.toLowerCase();$("content").querySelectorAll("tbody tr,.trace").forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(q))});
@@ -191,6 +236,11 @@ function bind(){
  if($("economicsForm"))$("economicsForm").onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{await business("economics","PUT",readFields($("economicsForm")));toast("ההנחות נשמרו");await render()}catch(err){toast(err.message)}finally{e.submitter.disabled=false}};
 }
 const actions={
+ async syncPayments(){try{toast("בודק עסקאות וסירובים מול נדרים פלוס…");const d=await api("/v1/admin/payments/reconcile","POST");await render();const failures=Object.values(d).filter(r=>r.error);toast(failures.length?failures.map(r=>r.error).join(" · "):Object.values(d).some(r=>r.limited)?"הבדיקה האחרונה בוצעה לאחרונה; יש להמתין עד שלוש דקות.":"בדיקת ההתאמה הושלמה; הנתונים עודכנו ללא חיוב נוסף.")}catch(e){toast(e.message)}},
+ filterPayments(){state.paymentFilter=$("paymentState").value;state.paymentSearch=$("paymentSearch").value;state.paymentOffset=0;render()},
+ prevPayments(){state.paymentOffset=Math.max(0,(state.paymentOffset||0)-50);render()},
+ nextPayments(){state.paymentOffset=(state.paymentOffset||0)+50;render()},
+
  async syncPbx(){try{toast("מסנכרן ומאמת את שלוחה 99…");const d=await api("/v1/admin/pbx/reconcile","POST");toast(`אומתו ${d.verified.length} שלוחות; התפריט הראשי לא השתנה`);await render()}catch(e){toast(e.message)}},
  publishNarration(){dialog("פרסום קריינות במערכת הטלפונית",field("narration_id","קריינות מאושרת","","text","יש לייצר אודיו ולאשר את הנוסח לפני הפרסום.",false,state.items.filter(n=>n.status==="approved").map(n=>[n.id,n.name]))+field("slot","מיקום בתפריט","welcome","text","הפרסום מעדכן גם את נוסח התפריט.",false,[["welcome","פתיחה"],["school","בית הספר"],["translator","תרגומון"],["languages","שפות"],["school_mode","סוג למידה"],["sales","מידע וחבילות"],["service","שירות"],["thanks","אישור הודעה"],["quota","סיום מכסה"]]),v=>api(`/v1/admin/narrations/${encodeURIComponent(v.narration_id)}/publish-to-ivr`,"POST",{slot:v.slot}))},
  duplicateBot(){const b=state.data.profile;dialog("שכפול הבוט",field("id","מזהה חדש באנגלית")+field("label","שם הבוט",b.label+" · עותק"),async v=>{const r=await api(`/v1/admin/bots/${encodeURIComponent(b.id)}/duplicate`,"POST",{...v,role:b.role,audience:b.audience,enabled:false});state.tab="prompt";location.hash="bots/"+r.bot.id})},
@@ -205,7 +255,7 @@ const actions={
 function editRecord(kind,item={}){
  let fields="",title="";
  if(kind==="customers"){title="פרטי לקוח";fields=field("name","שם",item.name)+field("phone","טלפון",item.phone)+field("source","מקור הגעה",item.source||"organic")+field("preferred_bot","מורה מועדף",item.preferred_bot||"","text","שמירת העדפה; ניתוב השלוחה אינו משתנה אוטומטית.",false,[["","לא נבחר"],...state.bots.map(b=>[b.id,b.label])])+field("notes","הערות",item.notes,"textarea")}
- if(kind==="packages"){title="הגדרת חבילה";fields=field("name","שם",item.name)+field("product","מוצר",item.product||"school","text","",false,Object.entries(productNames))+field("minutes","דקות בחבילה",item.minutes||100,"number")+field("price_ils","מחיר כולל מע״מ",item.price_ils||0,"number")+field("validity_days","תוקף בימים",item.validity_days||30,"number")+field("active","חבילה פעילה",item.active||false,"checkbox")}
+ if(kind==="packages"){title="הגדרת חבילה";fields=field("name","שם",item.name)+field("product","מוצר",item.product||"school","text","",false,Object.entries(productNames))+field("minutes","דקות בחבילה",item.minutes||100,"number")+field("price_ils","מחיר כולל מע״מ",item.price_ils||0,"number")+field("validity_days","תוקף בימים",item.validity_days||30,"number")+field("active","חבילה פעילה",item.active||false,"checkbox")+field("phone_enabled","מוצגת לרכישה בטלפון",item.phone_enabled??true,"checkbox")}
  if(kind==="narrations"){title="עריכת קריינות";fields=field("name","שם",item.name)+field("placement","מיקום בחוויה",item.placement||"welcome","text","",false,[["welcome","פתיחה"],["language_menu","בחירת שפה"],["quota","מכסה"],["upsell","הצעה לבית הספר"],["service","שירות"],["other","אחר"]])+field("text","הנוסח המלא",item.text,"textarea")+field("language","שפה",item.language||"he-IL")+field("technoline_extension","שלוחה בטכנוליין",item.technoline_extension)+field("status","מצב עריכה",item.status||"draft","text","אישור אינו מפרסם בטכנוליין.",false,[["draft","טיוטה"],["approved","נוסח מאושר"]])}
  if(kind==="courses"){
   title="מסלול ושיעורים";fields=field("name","שם המסלול",item.name)+field("level","רמה",item.level||"basic")+field("bot_id","מורה",item.bot_id||"","text","",false,[["","לא נבחר"],...state.bots.map(b=>[b.id,b.label])])+field("active","מסלול פעיל",item.active||false,"checkbox");
@@ -218,7 +268,7 @@ function editRecord(kind,item={}){
   await business(kind+(item.id?"/"+item.id:""),item.id?"PUT":"POST",v);
  });
  if(kind==="customers"&&item.id){
-  $("customerDetail").onclick=async()=>{try{const d=await business(`customers/${encodeURIComponent(item.id)}/detail`);$("customerExtra").innerHTML=`<h3>יתרות בחבילות</h3>${d.receipts.map(r=>`<div class="progress-step"><span>${productNames[r.product]} · ${new Date(r.expires_at)>new Date()?"בתוקף":"פג תוקף"}</span><b>${Math.max(0,r.minutes-r.spent_seconds/60).toFixed(1)} דקות</b></div>`).join("")||"אין חבילות"}<h3>שיחות אחרונות</h3>${d.calls.map(c=>`<div class="progress-step"><div><b>${esc(date(c.created_at))}</b><p>${esc(c.summary_he||"שיחה ללא סיכום")}</p></div><span>${esc(c.channel)}</span></div>`).join("")||"אין שיחות"}`}catch(e){$("editorError").textContent=e.message}};
+  $("customerDetail").onclick=async()=>{try{const [d,p]=await Promise.all([business(`customers/${encodeURIComponent(item.id)}/detail`),api("/v1/admin/payments/status?customer_id="+encodeURIComponent(item.id))]);$("customerExtra").innerHTML=customerPayment(p.customer_summaries[item.id])+paymentOrdersTable(p.orders)+p.issues.filter(i=>i.status==="open").map(i=>'<p class="notice warn">'+esc(i.message)+'</p>').join("")+`<h3>יתרות בחבילות</h3>${d.receipts.map(r=>`<div class="progress-step"><span>${productNames[r.product]} · ${new Date(r.expires_at)>new Date()?"בתוקף":"פג תוקף"}</span><b>${Math.max(0,r.minutes-r.spent_seconds/60).toFixed(1)} דקות</b></div>`).join("")||"אין חבילות"}<h3>שיחות אחרונות</h3>${d.calls.map(c=>`<div class="progress-step"><div><b>${esc(date(c.created_at))}</b><p>${esc(c.summary_he||"שיחה ללא סיכום")}</p></div><span>${esc(c.channel)}</span></div>`).join("")||"אין שיחות"}`}catch(e){$("editorError").textContent=e.message}};
   $("customerInvite").onclick=async()=>{try{const d=await business(`customers/${encodeURIComponent(item.id)}/invite`,"POST");const url=location.origin+"/learn#"+d.token;$("customerExtra").innerHTML=`<p class="notice">קישור אישי ל־7 ימים. יצירת קישור חדש מבטלת את הקודם. מסור אותו רק ללקוח הזה.</p><input readonly id="inviteUrl" dir="ltr" value="${esc(url)}"><a class="ghost" href="${esc(url)}" target="_blank" rel="noreferrer">פתיחת האזור האישי</a>`}catch(e){$("editorError").textContent=e.message}};
  }
  if(kind==="courses")$("addLesson").onclick=()=>$("lessonRows").insertAdjacentHTML("beforeend",lessonFields({title:"",goal:"",instructions:"",passing_score:3},$("lessonRows").children.length));
@@ -246,3 +296,4 @@ views.pbx=async()=>{
  +`<section class="panel"><h2>לוג תפריטים · קלט, פלט וזמן תגובה</h2>${events.length?table(["מועד","שלב","זמן טיפול","פירוט"],events.slice(0,100).map(x=>row([esc(date(x.at)),esc(x.route),esc(x.latency_ms)+" מ״ש",`<details><summary>קלט ופלט</summary><pre>${esc(JSON.stringify(x,null,2))}</pre></details>`]))):empty("אין שיחות עדיין","הלוג יתמלא לאחר כניסת מתקשרים לשלוחה.")}</section>`;
 };
 if(state.token)start().catch(e=>{$("loginError").textContent=e.message});
+

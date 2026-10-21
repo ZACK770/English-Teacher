@@ -30,6 +30,7 @@ class Package(BaseModel):
     price_ils: float = Field(ge=0, le=100000)
     validity_days: int = Field(default=30, ge=1, le=3650)
     active: bool = False
+    phone_enabled: bool = True
 
 
 class Receipt(BaseModel):

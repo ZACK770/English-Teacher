@@ -764,7 +764,8 @@ def install_pbx_api(app, require_admin):
             if package_ids is None:
                 packages = await asyncio.to_thread(business.list, "packages")
                 package_ids = [p["id"] for p in packages
-                               if p["active"] and p["price_ils"] > 0][:8]
+                               if p["active"] and p["price_ils"] > 0
+                               and p.get("phone_enabled", True)][:8]
                 await asyncio.to_thread(save_context, business, "payments:" + call_id,
                                         {"package_ids": package_ids})
             result = await asyncio.to_thread(payment_response, app.state.payments, s,

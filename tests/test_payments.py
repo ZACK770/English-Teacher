@@ -12,6 +12,8 @@ from app.config import Settings
 from app.main import create_app
 from app.payments import PREFIX, agorot, verify_signature
 
+ADMIN = {"Authorization": "Bearer " + "a" * 32}
+
 
 @pytest.fixture
 def client(tmp_path):
@@ -125,7 +127,7 @@ def test_mismatched_or_nonfinal_settlement_never_grants(client, changes):
 
 def test_refusal_and_unrelated_event_do_not_grant(client):
     _, order = purchase(client)
-    assert webhook(client, settlement(order, Status="Error")).json()["ignored"]
+    assert webhook(client, settlement(order, Status="Error")).json()["recorded"]
     assert webhook(client, settlement(order, Groupe="other")).json()["ignored"]
     phone(client, isaacPayStatus="DECLINE")
     assert client.app.state.payments.order_for_call("call")["state"] == "failed"
@@ -172,3 +174,123 @@ def test_signature_uses_exact_bytes_and_money_is_exact():
     for invalid in ("nan", "Infinity", "0", "1.001"):
         with pytest.raises(ValueError):
             agorot(invalid)
+
+
+def test_panel_tracks_signed_refusal_and_never_counts_it_as_income(client):
+    _, order = purchase(client)
+    error = settlement(order, Status="Error", Message="נדחה <br/> כרטיס 4580000000000000 CVV: 123")
+    assert webhook(client, error).json()["recorded"]
+    assert webhook(client, error).json()["recorded"]  # no duplicate issue
+    d = client.get("/v1/admin/payments/status", headers=ADMIN).json()
+    assert d["counts"]["failed"] == 1 and d["open_issues"] == 1
+    assert d["totals"]["verified_ils"] == 0
+    assert "4580000000000000" not in str(d) and "CVV: 123" not in str(d)
+    assert d["customer_summaries"][order["customer_id"]]["has_paid"] is False
+    assert client.app.state.business.summary()["gross_receipts_ils"] == 0
+    assert webhook(client, settlement(order)).json()["paid"]
+    d = client.get("/v1/admin/payments/status", headers=ADMIN).json()
+    assert d["open_issues"] == 0 and d["totals"]["verified_ils"] == 49
+    assert d["customer_summaries"][order["customer_id"]]["has_paid"]
+    assert client.app.state.business.summary()["gross_receipts_ils"] == 49
+
+
+def test_panel_filters_customer_search_and_state_without_leaking_credentials(client):
+    _, order = purchase(client)
+    endpoint = "/v1/admin/payments/status"
+    assert client.get(endpoint + "?search=1234567", headers=ADMIN).json()["total"] == 1
+    assert client.get(endpoint + "?state=paid", headers=ADMIN).json()["total"] == 0
+    assert client.get(endpoint + "?customer_id=another", headers=ADMIN).json()["orders"] == []
+    d = client.get(endpoint, headers=ADMIN).json()
+    assert d["orders"][0]["customer_phone"] == "0501234567"
+    assert d["orders"][0]["product"] == "school"
+    assert "test-secret" not in str(d) and "test-api" not in str(d)
+    phone(client, PBXcallStatus="HANGUP")
+    assert client.app.state.payments.order_for_call("call")["state"] == "issued"
+    assert d["customer_summaries"][order["customer_id"]]["has_paid"] is False
+
+
+def test_cancelled_selection_is_visible_but_not_a_debt(client):
+    client.app.state.business.save(
+        "packages",
+        Package(
+            name="Test",
+            product="school",
+            minutes=1,
+            price_ils=1,
+            active=True,
+        ).model_dump(),
+    )
+    phone(client)
+    phone(client, isaacPackage="1")
+    phone(client, isaacPayConfirm="0")
+    d = client.get("/v1/admin/payments/status", headers=ADMIN).json()
+    assert d["counts"]["cancelled"] == 1
+    assert d["totals"]["pending_ils"] == 0 and d["open_issues"] == 0
+
+
+def test_issue_resolution_is_audited_and_does_not_fake_payment(client):
+    _, order = purchase(client)
+    webhook(client, settlement(order, Amount="48"))
+    d = client.get("/v1/admin/payments/status", headers=ADMIN).json()
+    issue_id = d["issues"][0]["id"]
+    endpoint = f"/v1/admin/payments/issues/{issue_id}/resolve"
+    assert client.post(endpoint, json={"note": "טופל"}).status_code == 401
+    assert client.post(endpoint, headers=ADMIN, json={"note": ""}).status_code == 422
+    assert client.post(endpoint, headers=ADMIN, json={"note": "נבדק מול הסולק"}).json()["resolved"]
+    assert client.get("/v1/admin/payments/status", headers=ADMIN).json()["open_issues"] == 0
+    assert client.app.state.business.summary()["gross_receipts_ils"] == 0
+
+
+def test_reconciliation_recovers_a_lost_webhook_and_is_rate_limited(client, monkeypatch):
+    _, order = purchase(client)
+    calls = []
+
+    def provider(settings, action, last_id):
+        calls.append((action, last_id))
+        return [settlement(order)] if action == "GetHistoryJson" else []
+
+    monkeypatch.setattr("app.payments.provider_rows", provider)
+    assert client.post("/v1/admin/payments/reconcile").status_code == 401
+    result = client.post("/v1/admin/payments/reconcile", headers=ADMIN).json()
+    assert result["GetHistoryJson"]["received"] == 1
+    assert client.app.state.business.summary()["gross_receipts_ils"] == 49
+    result = client.post("/v1/admin/payments/reconcile", headers=ADMIN).json()
+    assert result["GetHistoryJson"]["limited"]
+    assert len(calls) == 2
+    d = client.get("/v1/admin/payments/status", headers=ADMIN).json()
+    assert d["sync"][0]["completed_at"]
+
+
+def test_failed_reconciliation_is_visible_without_invented_receipts(client, monkeypatch):
+    purchase(client)
+
+    def fail(*args):
+        raise ValueError("הספק אינו זמין")
+
+    monkeypatch.setattr("app.payments.provider_rows", fail)
+    result = client.post("/v1/admin/payments/reconcile", headers=ADMIN).json()
+    assert result["GetHistoryJson"]["error"] == "הספק אינו זמין"
+    assert client.app.state.business.summary()["gross_receipts_ils"] == 0
+
+
+def test_test_order_is_admin_only_and_limited_to_one_shekel(client):
+    package, order = purchase(client)
+    body = {"package_id": package["id"], "customer_id": order["customer_id"]}
+    endpoint = "/v1/admin/payments/test-order"
+    assert client.post(endpoint, json=body).status_code == 401
+    assert client.post(endpoint, headers=ADMIN, json=body).status_code == 422
+    low = client.app.state.business.save(
+        "packages",
+        Package(
+            name="בדיקת סליקה",
+            phone_enabled=False,
+            product="school",
+            minutes=1,
+            price_ils=1,
+            active=True,
+        ).model_dump(),
+    )
+    body["package_id"] = low["id"]
+    response = client.post(endpoint, headers=ADMIN, json=body)
+    assert response.status_code == 200 and response.json()["amount_ils"] == 1
+    assert client.app.state.business.summary()["gross_receipts_ils"] == 0

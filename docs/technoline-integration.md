@@ -106,9 +106,10 @@ or implement shared cancellation routing before scaling workers/instances.
 
 - Technoline Asterisk20 streaming does NOT deliver DTMF today. Key9 is before
   streaming; changing language during AI conversation is by voice.
-- getOptions2 creditCardId returned empty: no merchant terminal configured.
-  Automatic card payments and a paid trial must NOT be represented as working.
-  Verified manual receipts, shared minute balances and expiration already exist.
+- Nedarim Plus integration was added on 2026-10-21 for Dibura institution7019554.
+  See docs/nedarim-payments.md for signed settlement, refusal handling, package
+  purchasing, collections console, reconciliation and the live-test status.
+  Never equate a configured terminal or a passed API check with a verified phone call.
 - Translator pilot defaults:2free30-second conversations/person/month; paid
   balances preferred. Nonpaying usage is advertising expense.
 - School pilot:10-minute technical limit, no automatic billing gate. Final prices,
@@ -122,3 +123,4 @@ https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
 https://pbx.tlivr.com/streamingApiDocs.html
 https://app.tlivr.com/pbxDocsCenter.html
+

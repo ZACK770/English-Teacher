@@ -8,15 +8,49 @@ import hmac
 import json
 import re
 import secrets
+import sqlite3
 import time
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from html import unescape
 
-from fastapi import Header, HTTPException, Request
+from fastapi import Header, HTTPException, Query, Request
 
 from .business import Package, now
 
 PREFIX = "dibura-"
+
+
+def safe_message(value):
+    text = unescape(re.sub(r"<[^>]*>", " ", str(value)))
+    text = re.sub(r"(?:\d[ -]?){8,}", "[פרטים הוסתרו]", text)
+    text = re.sub(r"(?i)(cvv\s*[:=]?\s*)\d{3,4}", r"\1[הוסתר]", text)
+    return " ".join(text.split())[:500]
+
+
+def provider_rows(settings, action, last_id):
+    body = urllib.parse.urlencode(
+        {
+            "Action": action,
+            "MosadId": settings.nedarim_mosad_id,
+            "ApiPassword": settings.nedarim_api_key.get_secret_value(),
+            "LastId": last_id,
+            "MaxId": 2000,
+        }
+    ).encode()
+    request = urllib.request.Request(
+        "https://matara.pro/nedarimplus/Reports/Manage3.aspx", data=body
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.loads(response.read(4_000_001))
+        if not isinstance(data, list) or len(data) > 2000:
+            raise ValueError("Unexpected provider response")
+        return data
+    except Exception:
+        raise ValueError("לא ניתן לקרוא את דוח נדרים פלוס כרגע") from None
 
 
 def agorot(value):
@@ -68,14 +102,264 @@ class PaymentStore:
                     confirmation TEXT NOT NULL DEFAULT '',
                     transaction_id TEXT UNIQUE, receipt_id TEXT,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS payment_issues (
+                    id TEXT PRIMARY KEY, order_id TEXT NOT NULL,
+                    kind TEXT NOT NULL, message TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at TEXT NOT NULL, resolved_at TEXT,
+                    resolution TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS payment_sync (
+                    action TEXT PRIMARY KEY, last_id INTEGER NOT NULL DEFAULT 0,
+                    attempted_at REAL NOT NULL DEFAULT 0, completed_at TEXT,
+                    last_error TEXT NOT NULL DEFAULT '');
             """)
+
+    def issue_for_data(self, data, kind, message):
+        category = str(data.get("Groupe", ""))
+        order_id = category[len(PREFIX) :] if category.startswith(PREFIX) else ""
+        if not re.fullmatch(r"[0-9a-f]{32}", order_id):
+            return False
+        clean = (
+            safe_message(message)
+            if kind != "settlement_review"
+            else ("אי התאמה באישור התשלום, זיכוי או ביטול. יש לבדוק את העסקה מול נדרים פלוס.")
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                [order_id, kind, clean, str(data.get("TransactionId", ""))], ensure_ascii=False
+            ).encode()
+        ).hexdigest()
+        with self.business.connect() as db:
+            if not db.execute("SELECT 1 FROM payment_orders WHERE id=?", (order_id,)).fetchone():
+                return False
+            db.execute(
+                """INSERT OR IGNORE INTO payment_issues
+                (id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)""",
+                (fingerprint, order_id, kind, clean, now()),
+            )
+        return True
+
+    def refusal(self, data, mosad_id):
+        if str(data.get("MosadNumber", "")) != mosad_id:
+            raise ValueError("Wrong institution")
+        if str(data.get("Status", "")).lower() != "error":
+            raise ValueError("Invalid refusal")
+        if not self.issue_for_data(data, "refusal", data.get("Message", "החיוב סורב")):
+            return {"ignored": True}
+        order_id = str(data["Groupe"])[len(PREFIX) :]
+        with self.business.connect() as db:
+            # A late refusal must never erase a previously confirmed successful payment.
+            db.execute(
+                """UPDATE payment_orders SET state='failed',updated_at=? WHERE id=?
+                AND state IN ('issued','awaiting_settlement')""",
+                (now(), order_id),
+            )
+        return {"recorded": True}
+
+    def resolve_issue(self, issue_id, note):
+        note = safe_message(note)
+        if not note:
+            raise ValueError("יש לציין מה נעשה לטיפול בבעיה")
+        with self.business.connect() as db:
+            result = db.execute(
+                """UPDATE payment_issues SET status='resolved',resolved_at=?,resolution=?
+                WHERE id=? AND status='open'""",
+                (now(), note, issue_id),
+            )
+            if result.rowcount:
+                db.execute(
+                    "INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)",
+                    ("payment:issue_resolved", issue_id, now()),
+                )
+        return {"resolved": bool(result.rowcount)}
+
+    def reconcile(self, settings):
+        if not settings.nedarim_api_key:
+            raise ValueError("מפתח נדרים אינו מוגדר")
+        report = {}
+        for action, id_field in (("GetHistoryJson", "TransactionId"), ("GetErrorLogsJson", "ID")):
+            with self.business.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("INSERT OR IGNORE INTO payment_sync(action) VALUES (?)", (action,))
+                state = db.execute(
+                    "SELECT * FROM payment_sync WHERE action=?", (action,)
+                ).fetchone()
+                if time.time() - state["attempted_at"] < 180:
+                    report[action] = {"limited": True}
+                    continue
+                cursor = state["last_id"]
+                db.execute(
+                    "UPDATE payment_sync SET attempted_at=? WHERE action=?", (time.time(), action)
+                )
+            try:
+                rows = provider_rows(settings, action, cursor)
+                matched = 0
+                for row in rows:
+                    if not isinstance(row, dict) or not str(row.get(id_field, "")).isdigit():
+                        raise ValueError("מבנה דוח הספק אינו תקין")
+                    event = {**row, "MosadNumber": settings.nedarim_mosad_id}
+                    if action == "GetErrorLogsJson":
+                        event.update(Status="Error", Message=row.get("Error", "החיוב סורב"))
+                        result = self.refusal(event, settings.nedarim_mosad_id)
+                    else:
+                        try:
+                            result = self.settle(event, settings.nedarim_mosad_id)
+                        except (ValueError, sqlite3.IntegrityError) as exc:
+                            self.issue_for_data(event, "settlement_review", str(exc))
+                            result = {"review": True}
+                    matched += not result.get("ignored", False)
+                    cursor = max(cursor, int(row[id_field]))
+                    with self.business.connect() as db:
+                        db.execute(
+                            "UPDATE payment_sync SET last_id=? WHERE action=?", (cursor, action)
+                        )
+                with self.business.connect() as db:
+                    db.execute(
+                        "UPDATE payment_sync SET completed_at=?,last_error='' WHERE action=?",
+                        (now(), action),
+                    )
+                report[action] = {
+                    "received": len(rows),
+                    "matched": matched,
+                    "more": len(rows) == 2000,
+                }
+            except ValueError as exc:
+                message = safe_message(str(exc))
+                with self.business.connect() as db:
+                    db.execute(
+                        "UPDATE payment_sync SET last_error=? WHERE action=?", (message, action)
+                    )
+                report[action] = {"error": message}
+        return report
 
     def order_for_call(self, call_id):
         with self.business.connect() as db:
             row = db.execute("SELECT * FROM payment_orders WHERE call_id=?", (call_id,)).fetchone()
         return dict(row) if row else None
 
-    def create(self, call_id, customer_id, package_id):
+    def cancel_selection(self, call_id):
+        with self.business.connect() as db:
+            db.execute(
+                "UPDATE payment_orders SET state='cancelled',updated_at=? "
+                "WHERE call_id=? AND state='selected'",
+                (now(), call_id),
+            )
+
+    def overview(self, settings, offset=0, limit=50, customer_id="", state="", search=""):
+        customers = {c["id"]: c for c in self.business.list("customers")}
+        with self.business.connect() as db:
+            orders = [
+                dict(r)
+                for r in db.execute("SELECT * FROM payment_orders ORDER BY created_at DESC,id DESC")
+            ]
+            receipts = [dict(r) for r in db.execute("SELECT * FROM sales_receipts")]
+            issues = [
+                dict(r)
+                for r in db.execute("SELECT * FROM payment_issues ORDER BY created_at DESC,id DESC")
+            ]
+            sync = [dict(r) for r in db.execute("SELECT * FROM payment_sync ORDER BY action")]
+        summaries = {
+            key: {
+                "has_paid": False,
+                "paid_ils": 0,
+                "verified_ils": 0,
+                "manual_ils": 0,
+                "latest_state": "none",
+                "open_issues": 0,
+            }
+            for key in customers
+        }
+        verified_total = 0
+        manual_total = 0
+        for receipt in receipts:
+            verified = receipt["reference"].startswith("nedarim:")
+            amount = receipt["amount_ils"]
+            if verified:
+                verified_total += amount
+            else:
+                manual_total += amount
+            summary = summaries.get(receipt["customer_id"])
+            if summary is not None:
+                summary["paid_ils"] += amount
+                summary["verified_ils" if verified else "manual_ils"] += amount
+                summary["has_paid"] = summary["paid_ils"] > 0
+        by_order = {o["id"]: o for o in orders}
+        for issue in issues:
+            order = by_order.get(issue["order_id"], {})
+            customer = customers.get(order.get("customer_id"), {})
+            package = json.loads(order["snapshot"]) if order else {}
+            issue.update(
+                customer_id=order.get("customer_id"),
+                customer_name=customer.get("name"),
+                customer_phone=customer.get("phone"),
+                package_name=package.get("name"),
+            )
+            summary = summaries.get(order.get("customer_id"))
+            if summary is not None and issue["status"] == "open":
+                summary["open_issues"] += 1
+        counts = {}
+        pending = 0
+        stale = 0
+        for order in orders:
+            counts[order["state"]] = counts.get(order["state"], 0) + 1
+            package = json.loads(order.pop("snapshot"))
+            customer = customers.get(order["customer_id"], {})
+            order.update(
+                package_name=package["name"],
+                product=package["product"],
+                customer_name=customer.get("name", "לקוח לא זמין"),
+                customer_phone=customer.get("phone", ""),
+            )
+            summary = summaries.get(order["customer_id"])
+            if summary is not None and summary["latest_state"] == "none":
+                summary["latest_state"] = order["state"]
+            order["pending_review"] = (
+                order["state"] in ("issued", "awaiting_settlement")
+                and (
+                    datetime.now(UTC) - datetime.fromisoformat(order["updated_at"])
+                ).total_seconds()
+                > 900
+            )
+            stale += order["pending_review"]
+            if order["state"] in ("issued", "awaiting_settlement"):
+                pending += order["amount_agorot"] / 100
+            order.pop("call_id")
+        filtered = [
+            o
+            for o in orders
+            if (not customer_id or o["customer_id"] == customer_id)
+            and (not state or o["state"] == state)
+            and (
+                not search
+                or search.casefold()
+                in (o["customer_name"] + " " + o["customer_phone"] + " " + o["id"]).casefold()
+            )
+        ]
+        return {
+            "configured": configured(settings),
+            "mosad_id": settings.nedarim_mosad_id,
+            "phone_terminal": settings.nedarim_phone_terminal,
+            "orders": filtered[offset : offset + limit],
+            "total": len(filtered),
+            "offset": offset,
+            "limit": limit,
+            "counts": counts,
+            "issues": [i for i in issues if not customer_id or i["customer_id"] == customer_id][
+                :100
+            ],
+            "open_issues": sum(i["status"] == "open" for i in issues),
+            "customer_summaries": summaries,
+            "totals": {
+                "verified_ils": round(verified_total, 2),
+                "manual_ils": round(manual_total, 2),
+                "pending_ils": round(pending, 2),
+                "pending_review": stale,
+            },
+            "sync": sync,
+            "settlement": "signed_webhook_or_authenticated_history",
+        }
+
+    def create(self, call_id, customer_id, package_id, allow_hidden=False):
         if customer_id.startswith("anonymous-"):
             raise ValueError("A recognized caller is required")
         with self.business.connect() as db:
@@ -96,7 +380,7 @@ class PaymentStore:
             if not row or not customer:
                 raise ValueError("Unknown customer or package")
             package = Package.model_validate_json(row[0])
-            if not package.active:
+            if not package.active or (not allow_hidden and not package.phone_enabled):
                 raise ValueError("Inactive package")
             amount = agorot(package.price_ils)
             order_id = secrets.token_hex(16)
@@ -143,6 +427,15 @@ class PaymentStore:
                     now(),
                     call_id,
                 ),
+            )
+            order = db.execute(
+                "SELECT id FROM payment_orders WHERE call_id=?", (call_id,)
+            ).fetchone()
+        if order and status != "OK":
+            self.issue_for_data(
+                {"Groupe": PREFIX + order["id"]},
+                "pbx_failure",
+                "הפעולה בקו הסתיימה ללא אישור: ביטול, סירוב או תקלה.",
             )
 
     def settle(self, data, mosad_id):
@@ -208,6 +501,12 @@ class PaymentStore:
                 (transaction_id, confirmation, receipt_id, now(), order_id),
             )
             db.execute(
+                """UPDATE payment_issues SET status='resolved',resolved_at=?,
+                resolution='התשלום אושר מול הסולק' WHERE order_id=? AND status='open'
+                AND kind IN ('refusal','pbx_failure')""",
+                (now(), order_id),
+            )
+            db.execute(
                 "INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)",
                 ("payment:nedarim_verified", order_id, now()),
             )
@@ -238,6 +537,7 @@ def payment_response(store, settings, params, customer_id, package_ids):
         )
         order = store.order_for_call(call_id)
     if params.get("PBXcallStatus") == "HANGUP":
+        store.cancel_selection(call_id)
         return {"type": "hangup"}
     if params.get("isaacPayExit") in ("0", "9", "ERROR"):
         return {
@@ -261,13 +561,14 @@ def payment_response(store, settings, params, customer_id, package_ids):
             )
         if state != "selected":
             message = (
-                "התשלום לא אושר."
-                if state == "failed"
+                "התשלום לא אושר או שהרכישה בוטלה."
+                if state in ("failed", "cancelled")
                 else "ממתינים לאישור חברת הסליקה. "
                 "החבילה תיפתח אוטומטית לאחר קבלת האישור. אין לבצע תשלום נוסף."
             )
             return selection_menu("isaacPayExit", message + " לחזרה הקישו 0. לשירות הקישו 9.")
         if params.get("isaacPayConfirm") in ("0", "ERROR"):
+            store.cancel_selection(call_id)
             return {
                 "type": "goTo",
                 "goTo": settings.tlivr_project_path,
@@ -320,7 +621,12 @@ def payment_response(store, settings, params, customer_id, package_ids):
     lines = []
     for index, package_id in enumerate(package_ids, 1):
         package = packages.get(package_id)
-        if package and package["active"] and package["price_ils"] > 0:
+        if (
+            package
+            and package["active"]
+            and package["price_ils"] > 0
+            and package.get("phone_enabled", True)
+        ):
             product = "בית הספר" if package["product"] == "school" else "התרגומון"
             lines.append(
                 f"לחבילת {product}, {package['name']}, "
@@ -338,6 +644,34 @@ def payment_response(store, settings, params, customer_id, package_ids):
 
 
 def install_payment_api(app, require_admin):
+    @app.post("/v1/admin/payments/test-order")
+    async def test_order(body: dict, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        if not configured(app.state.settings):
+            raise HTTPException(409, "חיבור הסליקה אינו פעיל")
+        business = app.state.business
+        package_id = str(body.get("package_id", ""))
+        customer_id = str(body.get("customer_id", ""))
+        packages = await asyncio.to_thread(business.list, "packages")
+        package = next((p for p in packages if p["id"] == package_id), None)
+        if not package or not package["active"] or agorot(package["price_ils"]) > 100:
+            raise HTTPException(422, "בדיקת סליקה מוגבלת לחבילה פעילה עד שקל אחד")
+        call_id = "admin-test-" + secrets.token_hex(16)
+        try:
+            order = await asyncio.to_thread(
+                app.state.payments.create, call_id, customer_id, package_id, True
+            )
+            if not await asyncio.to_thread(app.state.payments.issue, call_id):
+                raise ValueError("לא ניתן לפתוח בקשת בדיקה")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        return {
+            "order_id": order["id"],
+            "category": PREFIX + order["id"],
+            "amount_ils": order["amount_agorot"] / 100,
+            "mosad_id": app.state.settings.nedarim_mosad_id,
+        }
+
     @app.post("/v1/payments/nedarim/webhook")
     async def webhook(request: Request):
         settings = app.state.settings
@@ -356,29 +690,52 @@ def install_payment_api(app, require_admin):
             data = json.loads(raw)
             if not isinstance(data, dict):
                 raise ValueError("Invalid settlement")
-            return await asyncio.to_thread(
-                app.state.payments.settle, data, settings.nedarim_mosad_id
-            )
-        except (ValueError, TypeError):
+            if str(data.get("Status", "")).lower() == "error":
+                return await asyncio.to_thread(
+                    app.state.payments.refusal, data, settings.nedarim_mosad_id
+                )
+            try:
+                return await asyncio.to_thread(
+                    app.state.payments.settle, data, settings.nedarim_mosad_id
+                )
+            except (ValueError, sqlite3.IntegrityError):
+                if str(data.get("MosadNumber", "")) == settings.nedarim_mosad_id:
+                    await asyncio.to_thread(
+                        app.state.payments.issue_for_data, data, "settlement_review", ""
+                    )
+                raise
+        except (ValueError, TypeError, sqlite3.IntegrityError):
             raise HTTPException(400, "Settlement requires review") from None
 
     @app.get("/v1/admin/payments/status")
-    async def payment_status(authorization: str | None = Header(default=None)):
+    async def payment_status(
+        authorization: str | None = Header(default=None),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        customer_id: str = "",
+        state: str = "",
+        search: str = "",
+    ):
         require_admin(authorization)
         s = app.state.settings
-        with app.state.business.connect() as db:
-            orders = [
-                dict(row)
-                for row in db.execute(
-                    """SELECT id,customer_id,package_id,amount_agorot,state,
-                transaction_id,receipt_id,created_at FROM payment_orders
-                ORDER BY created_at DESC LIMIT 100"""
-                )
-            ]
-        return {
-            "configured": configured(s),
-            "mosad_id": s.nedarim_mosad_id,
-            "phone_terminal": s.nedarim_phone_terminal,
-            "orders": orders,
-            "settlement": "signed_webhook_only",
-        }
+        return await asyncio.to_thread(
+            app.state.payments.overview, s, offset, limit, customer_id, state, search
+        )
+
+    @app.post("/v1/admin/payments/reconcile")
+    async def reconcile(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            return await asyncio.to_thread(app.state.payments.reconcile, app.state.settings)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.post("/v1/admin/payments/issues/{issue_id}/resolve")
+    async def resolve(issue_id: str, body: dict, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            return await asyncio.to_thread(
+                app.state.payments.resolve_issue, issue_id, str(body.get("note", ""))[:1000]
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
