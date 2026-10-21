@@ -65,7 +65,13 @@ extensions are untouched; the current `/99/3` API extension needs no tree change
 76 tests pass, including payment cases for signature/replay rejection,
 duplicate delivery, simultaneous settlement, mismatched amounts, currency and
 institution, refusal, frozen commercial terms and separate product balances.
-Ruff passes. No real card was charged during development.
+Ruff passes. A user-authorized live test charged ILS 1 on 2026-10-21 through
+the Nedarim administration form (transaction 81374766, confirmation 0764209).
+The signed callback created one receipt and one minute for the test customer;
+history reconciliation matched it without creating another receipt or minute.
+The hidden test package was then deactivated. No card data is stored here.
+This validates settlement and accounting; a live telephone audio/DTMF purchase
+has not yet been exercised.
 
 ## Collections console
 
