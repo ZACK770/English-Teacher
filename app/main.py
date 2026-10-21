@@ -9,8 +9,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from .auth import bearer_value, ip_is_allowed, secure_equal
 from .bots import BotCreate, BotUpdate
@@ -117,6 +118,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_portal_api(app, static_path)
     install_pbx_api(app, require_admin)
     install_payment_api(app, require_admin)
+
+    @app.get("/v1/admin/backup/db")
+    async def backup_database(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        source = Path(app.state.settings.database_path)
+        target = source.with_name(f"backup-{secrets.token_hex(8)}.db")
+
+        def snapshot():
+            with sqlite3.connect(source, timeout=15) as src, sqlite3.connect(target) as dst:
+                src.backup(dst)
+
+        await asyncio.to_thread(snapshot)
+        return FileResponse(
+            target,
+            media_type="application/vnd.sqlite3",
+            filename="progress.db",
+            background=BackgroundTask(target.unlink, missing_ok=True),
+        )
 
     @app.get("/v1/admin/active-ai-sessions")
     async def active_ai_sessions(authorization: str | None = Header(default=None)):
