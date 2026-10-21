@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN addgroup --system tutor && adduser --system --ingroup tutor tutor
+RUN addgroup --system tutor && adduser --system --ingroup tutor --shell /bin/sh tutor
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
