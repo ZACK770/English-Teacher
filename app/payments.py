@@ -1,0 +1,384 @@
+"""Telephone purchases: PBX collects cards; only signed settlement grants minutes."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import json
+import re
+import secrets
+import time
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
+
+from fastapi import Header, HTTPException, Request
+
+from .business import Package, now
+
+PREFIX = "dibura-"
+
+
+def agorot(value):
+    try:
+        number = Decimal(str(value))
+        if not number.is_finite() or number <= 0 or number * 100 != (number * 100).to_integral():
+            raise ValueError("Invalid payment amount")
+        return int(number * 100)
+    except (InvalidOperation, TypeError):
+        raise ValueError("Invalid payment amount") from None
+
+
+def configured(settings):
+    return bool(
+        settings.nedarim_phone_enabled
+        and re.fullmatch(r"[0-9]{7}", settings.nedarim_mosad_id)
+        and settings.nedarim_api_key
+        and settings.nedarim_webhook_secret
+        and settings.nedarim_phone_terminal
+    )
+
+
+def verify_signature(raw, headers, secret, current_time=None):
+    timestamp = headers.get("x-nedarim-timestamp", "")
+    signature = headers.get("x-nedarim-signature", "")
+    if not re.fullmatch(r"[0-9]{1,12}", timestamp):
+        return False
+    if abs((time.time() if current_time is None else current_time) - int(timestamp)) > 300:
+        return False
+    expected = (
+        "v1="
+        + hmac.new(secret.encode(), timestamp.encode() + b"." + raw, hashlib.sha256).hexdigest()
+    )
+    return hmac.compare_digest(expected, signature)
+
+
+class PaymentStore:
+    def __init__(self, business):
+        self.business = business
+
+    def initialize(self):
+        with self.business.connect() as db:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS payment_orders (
+                    id TEXT PRIMARY KEY, call_id TEXT NOT NULL UNIQUE,
+                    customer_id TEXT NOT NULL, package_id TEXT NOT NULL,
+                    snapshot TEXT NOT NULL, amount_agorot INTEGER NOT NULL,
+                    vat_rate REAL NOT NULL, state TEXT NOT NULL,
+                    confirmation TEXT NOT NULL DEFAULT '',
+                    transaction_id TEXT UNIQUE, receipt_id TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            """)
+
+    def order_for_call(self, call_id):
+        with self.business.connect() as db:
+            row = db.execute("SELECT * FROM payment_orders WHERE call_id=?", (call_id,)).fetchone()
+        return dict(row) if row else None
+
+    def create(self, call_id, customer_id, package_id):
+        if customer_id.startswith("anonymous-"):
+            raise ValueError("A recognized caller is required")
+        with self.business.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM payment_orders WHERE call_id=?", (call_id,)
+            ).fetchone()
+            if existing:
+                if existing["customer_id"] != customer_id:
+                    raise ValueError("Customer mismatch")
+                return dict(existing)
+            row = db.execute(
+                "SELECT body FROM console_records WHERE kind='packages' AND id=?", (package_id,)
+            ).fetchone()
+            customer = db.execute(
+                "SELECT 1 FROM console_records WHERE kind='customers' AND id=?", (customer_id,)
+            ).fetchone()
+            if not row or not customer:
+                raise ValueError("Unknown customer or package")
+            package = Package.model_validate_json(row[0])
+            if not package.active:
+                raise ValueError("Inactive package")
+            amount = agorot(package.price_ils)
+            order_id = secrets.token_hex(16)
+            db.execute(
+                """INSERT INTO payment_orders
+                (id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,
+                 state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'selected',?,?)""",
+                (
+                    order_id,
+                    call_id,
+                    customer_id,
+                    package_id,
+                    package.model_dump_json(),
+                    amount,
+                    self.business.economics().vat_rate,
+                    now(),
+                    now(),
+                ),
+            )
+            return dict(
+                db.execute("SELECT * FROM payment_orders WHERE id=?", (order_id,)).fetchone()
+            )
+
+    def issue(self, call_id):
+        """Only the first confirmed callback may issue a charge instruction."""
+        with self.business.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            result = db.execute(
+                """UPDATE payment_orders SET state='issued',updated_at=?
+                WHERE call_id=? AND state='selected' AND created_at>?""",
+                (now(), call_id, (datetime.now(UTC) - timedelta(minutes=30)).isoformat()),
+            )
+            return result.rowcount == 1
+
+    def record_pbx_result(self, call_id, status, confirmation):
+        # A PBX OK is informational; it never creates a receipt or grants access.
+        with self.business.connect() as db:
+            db.execute(
+                """UPDATE payment_orders SET state=?,confirmation=?,updated_at=?
+                WHERE call_id=? AND state='issued'""",
+                (
+                    "awaiting_settlement" if status == "OK" else "failed",
+                    str(confirmation)[:100],
+                    now(),
+                    call_id,
+                ),
+            )
+
+    def settle(self, data, mosad_id):
+        """Caller MUST authenticate the provider before calling this method."""
+        if str(data.get("MosadNumber", "")) != mosad_id:
+            raise ValueError("Wrong institution")
+        if data.get("Status") not in (None, "", "OK"):
+            return {"ignored": True}
+        category = str(data.get("Groupe", ""))
+        if not category.startswith(PREFIX):
+            return {"ignored": True}
+        order_id = category[len(PREFIX) :]
+        if not re.fullmatch(r"[0-9a-f]{32}", order_id):
+            return {"ignored": True}
+        transaction_id = str(data.get("TransactionId", ""))
+        confirmation = str(data.get("Confirmation", ""))
+        if (
+            not re.fullmatch(r"[0-9]{1,30}", transaction_id)
+            or not confirmation
+            or len(confirmation) > 100
+            or str(data.get("Currency", "")) != "1"
+            or str(data.get("KevaId", "")) not in ("", "0")
+        ):
+            raise ValueError("Invalid settlement")
+        amount = agorot(data.get("Amount"))
+        with self.business.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            order = db.execute("SELECT * FROM payment_orders WHERE id=?", (order_id,)).fetchone()
+            if not order:
+                return {"ignored": True}
+            if amount != order["amount_agorot"]:
+                raise ValueError("Payment amount mismatch")
+            if order["state"] == "paid":
+                if order["transaction_id"] != transaction_id:
+                    raise ValueError("Additional transaction requires review")
+                return {"paid": True, "receipt_id": order["receipt_id"], "duplicate": True}
+            if order["state"] not in ("issued", "awaiting_settlement", "failed"):
+                raise ValueError("Order was not confirmed")
+            if order["confirmation"] and confirmation != order["confirmation"]:
+                raise ValueError("Confirmation mismatch")
+            package = Package.model_validate_json(order["snapshot"])
+            receipt_id = secrets.token_hex(10)
+            expires = (datetime.now(UTC) + timedelta(days=package.validity_days)).isoformat()
+            reference = "nedarim:" + mosad_id + ":" + transaction_id
+            db.execute(
+                "INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    receipt_id,
+                    order["customer_id"],
+                    order["package_id"],
+                    package.product,
+                    reference,
+                    amount / 100,
+                    order["vat_rate"],
+                    package.minutes,
+                    expires,
+                    now(),
+                ),
+            )
+            db.execute(
+                """UPDATE payment_orders SET state='paid',transaction_id=?,
+                confirmation=?,receipt_id=?,updated_at=? WHERE id=?""",
+                (transaction_id, confirmation, receipt_id, now(), order_id),
+            )
+            db.execute(
+                "INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)",
+                ("payment:nedarim_verified", order_id, now()),
+            )
+            return {"paid": True, "receipt_id": receipt_id}
+
+
+def selection_menu(name, text, keys="0,9"):
+    return {
+        "type": "simpleMenu",
+        "name": name,
+        "enabledKeys": keys,
+        "times": 2,
+        "timeout": 10,
+        "errorReturn": "ERROR",
+        "post": True,
+        "files": [{"text": text}],
+    }
+
+
+def payment_response(store, settings, params, customer_id, package_ids):
+    """Called only after PBX callback authentication and project-path verification."""
+    call_id = params["PBXcallId"]
+    order = store.order_for_call(call_id)
+    # Process a success result even when the caller disconnected immediately afterward.
+    if order and params.get("isaacPayStatus"):
+        store.record_pbx_result(
+            call_id, params["isaacPayStatus"], params.get("CONFIRM_isaacPayStatus", "")
+        )
+        order = store.order_for_call(call_id)
+    if params.get("PBXcallStatus") == "HANGUP":
+        return {"type": "hangup"}
+    if params.get("isaacPayExit") in ("0", "9", "ERROR"):
+        return {
+            "type": "goTo",
+            "goTo": settings.tlivr_project_path + ("/4" if params["isaacPayExit"] == "9" else ""),
+            "removeParams": ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"],
+        }
+    if not configured(settings):
+        return selection_menu(
+            "isaacPayExit", "התשלום הטלפוני אינו זמין כרגע. לשירות הקישו 9. לחזרה הקישו 0."
+        )
+    if customer_id.startswith("anonymous-"):
+        return selection_menu(
+            "isaacPayExit", "לרכישת חבילה יש להתקשר ממספר גלוי. לשירות הקישו 9. לחזרה הקישו 0."
+        )
+    if order:
+        state = order["state"]
+        if state == "paid":
+            return selection_menu(
+                "isaacPayExit", "התשלום אושר והחבילה נפתחה עבורכם. לחזרה הקישו 0. לשירות הקישו 9."
+            )
+        if state != "selected":
+            message = (
+                "התשלום לא אושר."
+                if state == "failed"
+                else "ממתינים לאישור חברת הסליקה. "
+                "החבילה תיפתח אוטומטית לאחר קבלת האישור. אין לבצע תשלום נוסף."
+            )
+            return selection_menu("isaacPayExit", message + " לחזרה הקישו 0. לשירות הקישו 9.")
+        if params.get("isaacPayConfirm") in ("0", "ERROR"):
+            return {
+                "type": "goTo",
+                "goTo": settings.tlivr_project_path,
+                "removeParams": ["isaacPackage", "isaacPayConfirm", "isaacSales"],
+            }
+        package = Package.model_validate_json(order["snapshot"])
+        if params.get("isaacPayConfirm") == "1":
+            if not store.issue(call_id):
+                return selection_menu(
+                    "isaacPayExit", "הבקשה כבר בטיפול או פג תוקפה. לחזרה הקישו 0. לשירות הקישו 9."
+                )
+            return {
+                "type": "creditCard",
+                "name": "isaacPayStatus",
+                "post": True,
+                "sum": order["amount_agorot"] / 100,
+                "sumChangeable": "no",
+                "payments": 1,
+                "paymentsMode": "regular",
+                "cvv": "yes",
+                "tz": "yes",
+                "terminal": settings.nedarim_phone_terminal,
+                "category": PREFIX + order["id"],
+                "noFailExit": "no",
+                "noSuccess": "yes",
+                "noConfirmation": "yes",
+            }
+        text = (
+            f"בחרתם {package.name}. החבילה כוללת {package.minutes} דקות, "
+            f"בתוקף ל-{package.validity_days} ימים, במחיר {order['amount_agorot'] / 100:g} שקלים. "
+            "לתשלום חד פעמי באשראי הקישו 1. לביטול הקישו 0."
+        )
+        return selection_menu("isaacPayConfirm", text, "0,1")
+    choice = params.get("isaacPackage", "")
+    if choice in ("0", "9", "ERROR"):
+        return {
+            "type": "goTo",
+            "goTo": settings.tlivr_project_path + ("/4" if choice == "9" else ""),
+            "removeParams": ["isaacPackage", "isaacSales"],
+        }
+    if choice.isdigit() and 1 <= int(choice) <= len(package_ids):
+        try:
+            store.create(call_id, customer_id, package_ids[int(choice) - 1])
+        except ValueError:
+            return selection_menu(
+                "isaacPayExit", "החבילה אינה זמינה לרכישה. לחזרה הקישו 0. לשירות הקישו 9."
+            )
+        return payment_response(store, settings, params, customer_id, package_ids)
+    packages = {p["id"]: p for p in store.business.list("packages")}
+    lines = []
+    for index, package_id in enumerate(package_ids, 1):
+        package = packages.get(package_id)
+        if package and package["active"] and package["price_ils"] > 0:
+            product = "בית הספר" if package["product"] == "school" else "התרגומון"
+            lines.append(
+                f"לחבילת {product}, {package['name']}, "
+                f"במחיר {package['price_ils']:g} שקלים, הקישו {index}."
+            )
+    if not lines:
+        return selection_menu(
+            "isaacPayExit", "החבילות עדיין אינן פתוחות לרכישה. לשירות הקישו 9. לחזרה הקישו 0."
+        )
+    return selection_menu(
+        "isaacPackage",
+        " ".join(lines) + " לשירות הקישו 9. לחזרה הקישו 0.",
+        ",".join(["0", "9"] + [str(i) for i in range(1, len(package_ids) + 1)]),
+    )
+
+
+def install_payment_api(app, require_admin):
+    @app.post("/v1/payments/nedarim/webhook")
+    async def webhook(request: Request):
+        settings = app.state.settings
+        if not settings.nedarim_webhook_secret:
+            raise HTTPException(503, "Payments unavailable")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 65536:
+                raise HTTPException(413, "Webhook too large")
+        if not verify_signature(
+            bytes(raw), request.headers, settings.nedarim_webhook_secret.get_secret_value()
+        ):
+            raise HTTPException(401, "Invalid signature")
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("Invalid settlement")
+            return await asyncio.to_thread(
+                app.state.payments.settle, data, settings.nedarim_mosad_id
+            )
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Settlement requires review") from None
+
+    @app.get("/v1/admin/payments/status")
+    async def payment_status(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        s = app.state.settings
+        with app.state.business.connect() as db:
+            orders = [
+                dict(row)
+                for row in db.execute(
+                    """SELECT id,customer_id,package_id,amount_agorot,state,
+                transaction_id,receipt_id,created_at FROM payment_orders
+                ORDER BY created_at DESC LIMIT 100"""
+                )
+            ]
+        return {
+            "configured": configured(s),
+            "mosad_id": s.nedarim_mosad_id,
+            "phone_terminal": s.nedarim_phone_terminal,
+            "orders": orders,
+            "settlement": "signed_webhook_only",
+        }

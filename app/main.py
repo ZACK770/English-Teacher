@@ -19,6 +19,7 @@ from .config import Settings, get_settings
 from .controls import VOICE_OPTIONS, TutorControls
 from .dashboard import dashboard_html
 from .narration import install_narration_api
+from .payments import PaymentStore, install_payment_api
 from .pbx import install_pbx_api, load_context, seed_project
 from .portal import install_portal_api
 from .progress import ProgressStore
@@ -46,6 +47,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.initialize()
         app.state.business = BusinessStore(active_settings.database_path)
         await asyncio.to_thread(app.state.business.initialize)
+        app.state.payments = PaymentStore(app.state.business)
+        await asyncio.to_thread(app.state.payments.initialize)
         await store.seed_bot(
             bot_id=active_settings.student_id,
             label="המורה של הבת",
@@ -113,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_narration_api(app, require_admin)
     install_portal_api(app, static_path)
     install_pbx_api(app, require_admin)
+    install_payment_api(app, require_admin)
 
     @app.get("/v1/admin/active-ai-sessions")
     async def active_ai_sessions(authorization: str | None = Header(default=None)):
@@ -603,3 +607,4 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
+

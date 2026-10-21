@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     tlivr_advanced_channel: str | None = None
     tlivr_translator_channel: str | None = None
     tlivr_router_channel: str | None = None
+    nedarim_mosad_id: str = ""
+    nedarim_api_key: SecretStr | None = None
+    nedarim_webhook_secret: SecretStr | None = None
+    nedarim_phone_terminal: str = ""
+    nedarim_phone_enabled: bool = False
 
     admin_bearer_secret: SecretStr
     student_id: str = "student"
@@ -183,3 +188,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
+

@@ -19,6 +19,8 @@ from .auth import secure_equal
 from .bots import BotCreate
 from .business import AccessPolicy, now
 from .controls import TutorControls
+from .payments import configured as payment_configured
+from .payments import payment_response
 
 
 class CallbackLogFilter(logging.Filter):
@@ -601,7 +603,7 @@ def install_pbx_api(app, require_admin):
             "enabled": s.tlivr_project_enabled,
             "api_configured": bool(s.tlivr_system_api_key),
             "callback_configured": bool(s.tlivr_callback_secret),
-            "payment_configured": False,
+            "payment_configured": payment_configured(s),
             "live_dtmf_supported": False,
             "managed_channel_configured": bool(s.tlivr_router_channel),
             "audio_bindings": await asyncio.to_thread(
@@ -756,7 +758,18 @@ def install_pbx_api(app, require_admin):
             await asyncio.to_thread(save_context, business, call_id, values)
             await asyncio.to_thread(save_preference, business, customer_id, values)
         copy = await asyncio.to_thread(get_copy, business)
-        if (
+        if route == "sales":
+            context = await asyncio.to_thread(load_context, business, "payments:" + call_id)
+            package_ids = context.get("package_ids")
+            if package_ids is None:
+                packages = await asyncio.to_thread(business.list, "packages")
+                package_ids = [p["id"] for p in packages
+                               if p["active"] and p["price_ils"] > 0][:8]
+                await asyncio.to_thread(save_context, business, "payments:" + call_id,
+                                        {"package_ids": package_ids})
+            result = await asyncio.to_thread(payment_response, app.state.payments, s,
+                                             params, customer_id, package_ids)
+        elif (
             route == "school"
             and params.get("isaacTeacher") == "1"
             and params.get("PBXcallStatus") != "HANGUP"
@@ -860,3 +873,4 @@ def install_pbx_api(app, require_admin):
         event_id = secrets.token_hex(16)
         await asyncio.to_thread(business.save, "ivr-events", details, event_id)
         return result
+

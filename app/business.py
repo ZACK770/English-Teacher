@@ -570,7 +570,7 @@ class BusinessStore:
             "products": products,
             "unattributed_sessions": sum(not r["customer_id"] for r in monthly_usage),
             "notes": [
-                "תקבולים הם רישום תשלומים ידני, לא אימות מול סולק ולא הכרה חשבונאית בהכנסה.",
+                "תקבולים כוללים רישום ידני ותשלומי נדרים מאומתים (אסמכתה nedarim:); אינם דוח חשבונאי.",
                 "עלות AI משוערת; יתר ההוצאות מוזנות ידנית. אין כאן דוח רווח חשבונאי.",
                 "CAC כולל פרסום מוזן ותרגום חינם; אינו כולל זמן עבודה שלא תומחר.",
                 "תחזיות מבוססות על הנחות המנהל, לא על נתוני שימור שנמדדו.",
@@ -659,3 +659,4 @@ def install_business_api(app, require_admin):
             raise HTTPException(422, "נתונים לא תקינים או מספר טלפון שכבר רשום") from exc
 
     app.include_router(router)
+
