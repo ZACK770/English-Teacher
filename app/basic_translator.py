@@ -94,6 +94,7 @@ class BasicTranslator:
                 "temperature": 0,
                 "responseMimeType": "application/json",
                 "responseSchema": SCHEMA,
+                "thinkingConfig": {"thinkingLevel": "minimal"},
             },
         }
         result = _post(url, body, {}, timeout=20)

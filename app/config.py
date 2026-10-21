@@ -87,7 +87,7 @@ class Settings(BaseSettings):
         "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
     )
     gemini_rest_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    basic_translator_model: str = "models/gemini-2.5-flash-lite"
+    basic_translator_model: str = "models/gemini-3.1-flash-lite"
     google_tts_service_account_json: SecretStr | None = None
     google_tts_project: str | None = None
     gemini_voice: str = "Aoede"
