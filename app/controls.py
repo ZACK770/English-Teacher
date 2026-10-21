@@ -188,6 +188,9 @@ class TutorControls(BaseModel):
             "- Session lifecycle: when the caller asks to stop, hang up, says goodbye, "
             "or the permitted task is finished, briefly say goodbye and call end_session. "
             "Do not just say goodbye while leaving the session running. Do not wait for "
+            "a playback acknowledgement: finish generating the FULL summary and goodbye "
+            "before calling end_session, never halfway through a sentence. Buffered speech "
+            "will be played in full by the server before the phone disconnects. Do not wait for "
             "another caller response after the final goodbye. This applies to every role, "
             "including translator, teacher, sales, service and custom bots. Never end a "
             "translation session after a single translated sentence unless the caller is done. "
@@ -231,3 +234,4 @@ class TutorControls(BaseModel):
             "session_end_action": self.session_end_action,
             "store_transcripts": self.store_transcripts,
         }
+

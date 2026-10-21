@@ -480,6 +480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         owner_id: str | None = None
         active_call_id: str | None = None
         heartbeat: asyncio.Task[None] | None = None
+        slot_released = False
         try:
             first = first_frame or await asyncio.wait_for(websocket.receive_text(), timeout=10)
             start = parse_start_frame(first, str(expected_channel_id))
@@ -529,18 +530,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 context = await asyncio.to_thread(load_context, app.state.business, start.call_id)
                 await asyncio.to_thread(save_context, app.state.business, segment_id, context)
                 session_start = replace(start, call_id=segment_id)
+            async def release_for_transfer():
+                nonlocal heartbeat, slot_released
+                if heartbeat is not None:
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
+                    heartbeat = None
+                await app.state.progress.release_call(start.call_id, owner_id)
+                if app.state.live_ai_sessions.get(start.call_id) is session:
+                    app.state.live_ai_sessions.pop(start.call_id, None)
+                if not slot_released:
+                    slots.release()
+                    slot_released = True
+
             session = TutorSession(
                 pbx=websocket,
                 start=session_start,
                 settings=session_settings,
                 progress=app.state.progress,
                 business=app.state.business,
+                before_transfer=release_for_transfer,
             )
             app.state.live_ai_sessions[start.call_id] = session
             try:
                 await session.run()
             finally:
-                app.state.live_ai_sessions.pop(start.call_id, None)
+                if app.state.live_ai_sessions.get(start.call_id) is session:
+                    app.state.live_ai_sessions.pop(start.call_id, None)
         except (ProtocolError, TimeoutError) as exc:
             LOGGER.warning("Rejected Technoline stream: %s", exc)
             await websocket.close(code=1008, reason="Invalid start frame")
@@ -565,7 +581,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await asyncio.gather(heartbeat, return_exceptions=True)
             if owner_id is not None and active_call_id is not None:
                 await app.state.progress.release_call(active_call_id, owner_id)
-            slots.release()
+            if not slot_released:
+                slots.release()
 
     @app.websocket("/v1/technoline/stream")
     async def technoline_stream(websocket: WebSocket) -> None:

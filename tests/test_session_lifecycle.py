@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import json
+import sqlite3
 import struct
 import time
 
@@ -47,11 +49,83 @@ def test_every_prompt_and_setup_contains_the_same_end_session_tool(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_model_end_closes_google_before_phone_and_leaves_no_bridge_tasks(
-    tmp_path, monkeypatch
+async def test_goodbye_longer_than_two_seconds_and_partial_frame_play_before_hangup(
+    tmp_path, monkeypatch,
 ):
     session = make_session(tmp_path)
     await session.progress.initialize()
+    frames = [struct.pack("<160h", *([i + 1] * 160)) for i in range(160)]
+    partial = b"\x33\x01" * 79
+    session._out.extend((1, frame) for frame in frames)
+    session._partial = partial
+    session._end_reason = "model:caller_requested"
+    sent = []
+    waits = []
+
+    class PBX:
+        async def send_bytes(self, frame):
+            sent.append(frame)
+
+        async def send_text(self, command):
+            assert sent[:160] == frames
+            assert sent[160] == partial.ljust(320, b"\0")
+            assert sum(waits) > 3.2
+            sent.append(json.loads(command))
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr("app.session.asyncio.sleep", fake_sleep)
+    session.pbx = PBX()
+    await session._finish_pbx()
+    await session._finish_pbx()
+    assert len(sent) == 172  # 160 full frames + partial + 10 tail frames + one hangup.
+    assert sent[-1] == {"type": "hangup"}
+    assert not session._out and session._partial == b""
+
+
+@pytest.mark.asyncio
+async def test_audio_and_transcript_in_terminal_tool_packet_are_delivered_first(tmp_path):
+    session = make_session(tmp_path)
+    ai = GeminiLive(session.settings)
+
+    class Socket:
+        def __aiter__(self):
+            return self.messages()
+
+        async def messages(self):
+            yield json.dumps({
+                "toolCall": {"functionCalls": [{"name": "end_session", "args": {}}]},
+                "serverContent": {
+                    "outputTranscription": {"text": "ביי, להתראות"},
+                    "modelTurn": {"parts": [{"inlineData": {
+                        "data": base64.b64encode(b"final goodbye audio").decode(),
+                    }}]},
+                    "turnComplete": True,
+                },
+            })
+
+    ai.socket = Socket()
+    events = [event async for event in ai.events()]
+    assert [event["type"] for event in events] == [
+        "transcript", "audio", "turn_complete", "tool_call",
+    ]
+    assert events[1]["pcm24k"] == b"final goodbye audio"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination", [None, "main", "school", "translator", "options"])
+async def test_model_end_closes_google_before_phone_and_leaves_no_bridge_tasks(
+    tmp_path, monkeypatch, destination
+):
+    session = make_session(tmp_path)
+    await session.progress.initialize()
+    if destination:
+        from app.business import BusinessStore
+
+        session.business = BusinessStore(session.settings.database_path)
+        session.business.initialize()
+        session.start = StartFrame("parent~segment", "", "channel", 8000, 1)
     order = []
 
     class PBX:
@@ -62,6 +136,8 @@ async def test_model_end_closes_google_before_phone_and_leaves_no_bridge_tasks(
             pass
 
         async def send_text(self, text):
+            with sqlite3.connect(session.settings.database_path) as db:
+                assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
             order.append(json.loads(text)["type"])
 
     class AI:
@@ -84,7 +160,10 @@ async def test_model_end_closes_google_before_phone_and_leaves_no_bridge_tasks(
             yield {
                 "type": "tool_call",
                 "calls": [
-                    {"name": "end_session", "id": "end", "args": {"reason": "caller_requested"}}
+                    {"name": "end_session", "id": "end", "args": {
+                        "reason": "caller_requested",
+                        **({"destination": destination} if destination else {}),
+                    }}
                 ],
             }
             pytest.fail("Must not keep reading Google after end_session")
@@ -92,7 +171,11 @@ async def test_model_end_closes_google_before_phone_and_leaves_no_bridge_tasks(
     session.pbx = PBX()
     monkeypatch.setattr("app.session.GeminiLive", AI)
     await asyncio.wait_for(session.run(), timeout=2)
-    assert order == ["google_closed", "hangup"]
+    assert order == ["google_closed", "transfer_extension" if destination else "hangup"]
+    if destination:
+        assert session._return_path == "/99" + {
+            "main": "", "school": "/1", "translator": "/2", "options": "/9",
+        }[destination]
     assert session._end_reason == "model:caller_requested"
     assert not any(
         t.get_name()
@@ -296,3 +379,4 @@ def test_web_turn_end_session_exits_google_without_waiting_for_another_event(tmp
             == 200
         )
     assert closed == [True]
+

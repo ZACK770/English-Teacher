@@ -65,8 +65,9 @@ LESSON_SUMMARY_TOOL = {
 END_SESSION_TOOL = {
     "name": "end_session",
     "description": (
-        "Immediately end this AI session and release its connection. Call after saying "
-        "a brief final goodbye when the caller asks to stop or the permitted task is done. "
+        "Finish generating the entire spoken summary and final goodbye BEFORE calling. "
+        "Then end this AI session when the caller asks to stop or the permitted task is done. "
+        "The server will play all buffered speech before hanging up or transferring. "
         "Do not leave a finished conversation running. The server controls phone disposition."
     ),
     "parameters": {
@@ -79,9 +80,33 @@ END_SESSION_TOOL = {
                     "task_completed",
                     "no_response",
                 ],
-            }
+            },
+            "destination": {
+                "type": "string",
+                "enum": ["main", "school", "translator", "options"],
+                "description": (
+                    "Explicit Dibura telephone navigation only; omit to end normally."
+                ),
+            },
         },
         "required": ["reason"],
+    },
+}
+
+
+TRANSLATION_LANGUAGE_TOOL = {
+    "name": "save_translation_language",
+    "description": (
+        "Remember an explicitly requested target language for this and future translation calls."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"language": {
+            "type": "string",
+            "enum": ["", "English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"],
+            "description": "Empty string restores automatic Hebrew/English translation.",
+        }},
+        "required": ["language"],
     },
 }
 
@@ -113,7 +138,8 @@ def build_setup_payload(settings: Settings) -> dict[str, Any]:
             "inputAudioTranscription": input_transcription,
             "outputAudioTranscription": {},
             "tools": [
-                {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL]}
+                {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL,
+                                          TRANSLATION_LANGUAGE_TOOL]}
             ],
             "contextWindowCompression": {
                 "triggerTokens": settings.gemini_context_trigger_tokens,
@@ -242,9 +268,6 @@ class GeminiLive:
             usage = event.get("usageMetadata")
             if usage:
                 yield {"type": "usage", "usage": usage}
-            calls = (event.get("toolCall") or {}).get("functionCalls")
-            if calls:
-                yield {"type": "tool_call", "calls": calls}
             server = event.get("serverContent") or {}
             if server.get("interrupted"):
                 yield {"type": "interrupted"}
@@ -258,5 +281,10 @@ class GeminiLive:
                     yield {"type": "audio", "pcm24k": base64.b64decode(inline["data"])}
             if server.get("turnComplete"):
                 yield {"type": "turn_complete"}
+            # Deliver all audio/transcript parts before a terminal tool in the same packet.
+            calls = (event.get("toolCall") or {}).get("functionCalls")
+            if calls:
+                yield {"type": "tool_call", "calls": calls}
             if "goAway" in event:
                 yield {"type": "go_away", "detail": event["goAway"]}
+

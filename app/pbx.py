@@ -39,31 +39,28 @@ class CallbackLogFilter(logging.Filter):
 class IVRCopy(BaseModel):
     welcome: str = Field(
         default=(
-            "שלום וברוכים הבאים לשיטת אייזיק. לבית הספר לאנגלית הקישו 1. "
-            "לתרגומון הקישו 2. למידע וחבילות הקישו 3. לשירות לקוחות הקישו 4."
+            "דיבורא. ללמידה הקישו 1. לתרגום הקישו 2. לאפשרויות נוספות הקישו 9."
         ),
         min_length=10,
         max_length=2000,
     )
     school: str = Field(
         default=(
-            "שלום וברוכים הבאים לבית הספר. לכניסה ללמידה הקישו 1. "
-            "למידע ומכירות הקישו 2. לשירות לקוחות הקישו 3. לחזרה הקישו 0."
+            "אין מורה זמין כרגע. לאפשרויות נוספות הקישו 9. לחזרה הקישו 0."
         ),
         min_length=10,
         max_length=2000,
     )
     translator: str = Field(
         default=(
-            "שלום, הגעתם לתרגומון של שיטת אייזיק. לתרגום לשפה אחרת הקישו כעת 9. "
-            "ללמוד לדבר אנגלית בעצמכם? לבית הספר לאנגלית הקישו 2."
+            "התרגומון אינו זמין כרגע. לשינוי שפה הקישו 9. לחזרה הקישו 0."
         ),
         min_length=10,
         max_length=2000,
     )
     languages: str = Field(
         default=(
-            "לבחירת שפת יעד: לאנגלית הקישו 1. לעברית 2. ליידיש 3. "
+            "לאנגלית הקישו 1. לעברית 2. ליידיש 3. "
             "לערבית 4. לרוסית 5. לצרפתית 6. לזיהוי אוטומטי ותרגום עברית אנגלית הקישו 7. "
             "לחזרה הקישו 0."
         ),
@@ -72,33 +69,39 @@ class IVRCopy(BaseModel):
     )
     sales: str = Field(
         default=(
-            "ללמוד לדבר אנגלית בעצמכם? בבית הספר תוכלו לתרגל עם מורה אישי, "
-            "בקורס מובנה או בשיחה חופשית. החבילות והמחירים עדיין בהכנה, "
-            "ואין חיוב אוטומטי בקו. להשארת הודעה הקישו 1. לחזרה הקישו 0."
+            "לחבילות ותשלום הקישו 1. לשירות לקוחות הקישו 4. לחזרה הקישו 0."
         ),
         min_length=10,
         max_length=2000,
     )
     service: str = Field(
-        default="לשירות לקוחות, השאירו הודעה לאחר הצליל. לסיום ההקלטה הקישו סולמית.",
+        default="השאירו הודעה לאחר הצליל. לסיום הקישו סולמית.",
         min_length=10,
         max_length=2000,
     )
     thanks: str = Field(
-        default="תודה, הודעתכם נשמרה. לחזרה לתפריט הקישו 0. לסיום הקישו 1.",
+        default="ההודעה נשמרה, תודה. לחזרה הקישו 0. לסיום הקישו 1.",
         min_length=10,
         max_length=2000,
     )
     quota: str = Field(
         default=(
-            "מכסת השימוש הזמינה הסתיימה. למידע על חבילות הקישו 1. "
-            "לבית הספר לאנגלית הקישו 2. לחזרה הקישו 0."
+            "יתרת השימוש הסתיימה. לרכישת חבילה הקישו 1. "
+            "ללמידה הקישו 2. לחזרה הקישו 0."
         ),
         min_length=10,
         max_length=2000,
     )
     school_mode: str = Field(
-        default="לקורס מובנה לפי ההתקדמות שלכם הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0.",
+        default="להמשך הקורס הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0.",
+        min_length=10,
+        max_length=2000,
+    )
+    options: str = Field(
+        default=(
+            "לבחירת מורה הקישו 1. לקורס או שיחה חופשית 2. לשפת תרגום 3. "
+            "לחבילות ותשלום 4. לשירות לקוחות 5. לחזרה 0."
+        ),
         min_length=10,
         max_length=2000,
     )
@@ -160,7 +163,7 @@ def reconcile_project(settings, business):
         return next((v for v in children.values() if str(v.get("extension")) == digit), None)
 
     current = child(root_node, "99")
-    if current and not current.get("name", "").startswith("אייזיק ·"):
+    if current and not current.get("name", "").startswith(("אייזיק ·", "דיבורא ·")):
         raise PBXError("שלוחה 99 תפוסה ואינה מזוהה כשייכת למיזם; לא תידרס")
     manifest = [
         ("", "כניסה", "main"),
@@ -175,6 +178,7 @@ def reconcile_project(settings, business):
         ("/6", "בוטים נוספים", "bots"),
         ("/7", "נתב בוטים", None),
         ("/8", "סיום מכסה", "quota"),
+        ("/9", "אפשרויות נוספות", "options"),
     ]
     nodes = {"/": str(root["id"])}
     changes = []
@@ -202,6 +206,7 @@ def reconcile_project(settings, business):
         different = (
             not existing
             or existing.get("type") != kind
+            or existing.get("name") != "דיבורא · " + label
             or any(str(old_settings.get(k, "")) != str(v) for k, v in wanted.items())
         )
         if different:
@@ -215,7 +220,7 @@ def reconcile_project(settings, business):
             fields = {
                 "extensionId": str(existing["id"]) if existing else "NEW",
                 "belowExtension": parent_id,
-                "name": "אייזיק · " + label,
+                "name": "דיבורא · " + label,
                 "extension": digit,
                 "type": kind,
                 **{"settings[" + k + "]": v for k, v in wanted.items()},
@@ -224,7 +229,7 @@ def reconcile_project(settings, business):
             changes.append(path)
         check = client.request("folderSettings", {"path": path})
         actual = check.get("settings") or {}
-        if check.get("type") != kind or any(
+        if check.get("name") != "דיבורא · " + label or check.get("type") != kind or any(
             str(actual.get(k, "")) != str(v) for k, v in wanted.items()
         ):
             raise PBXError("אימות הגדרות השלוחה נכשל. יש לבדוק את דוח הסנכרון")
@@ -273,8 +278,19 @@ def load_context(business, call_id):
 
 
 def save_preference(business, customer_id, values):
+    values = dict(values)
+    if values.get("mode") in {"course", "free"}:
+        values["school_mode"] = values["mode"]
+    # The translator must never replace the customer's preferred TEACHER.
+    with business.connect() as db:
+        bot = db.execute(
+            "SELECT role FROM bots WHERE id=?", (values.get("selected_bot"),),
+        ).fetchone()
+    is_teacher = bot is not None and bot[0] == "teacher"
+    if is_teacher:
+        values["teacher_bot"] = values["selected_bot"]
     save_context(business, "preferences:" + customer_id, values)
-    if values.get("selected_bot"):
+    if is_teacher:
         with business.connect() as db:
             row = db.execute(
                 "SELECT body FROM console_records WHERE kind='customers' AND id=?",
@@ -288,6 +304,61 @@ def save_preference(business, customer_id, values):
                     "WHERE kind='customers' AND id=?",
                     (json.dumps(body, ensure_ascii=False), now(), customer_id),
                 )
+
+
+def stream_target(base):
+    return {
+        "type": "goTo", "goTo": base + "/7",
+        "removeParams": ["isaacMain", "isaacTeacher", "isaacTranslation", "isaacLanguage",
+                         "isaacOptions", "isaacBotChoice", "isaacMode"],
+    }
+
+
+async def start_school(app, call_id, customer_id, *, selected=None, mode=None):
+    """Resume without collecting more keys; never reserve minutes until streaming."""
+    business = app.state.business
+    base = app.state.settings.tlivr_project_path
+    bots = {b["id"]: b for b in await app.state.progress.list_bots()
+            if b["enabled"] and b["phone_enabled"] and b["role"] == "teacher"}
+    if not bots:
+        return menu("isaacTeacher", get_copy(business).school, "0,9")
+    saved = await asyncio.to_thread(load_context, business, "preferences:" + customer_id)
+    customers = await asyncio.to_thread(business.list, "customers")
+    customer = next((c for c in customers if c["id"] == customer_id), {})
+    courses = {c["id"]: c for c in await asyncio.to_thread(business.list, "courses")
+               if c["active"]}
+    enrollments = await asyncio.to_thread(business.list, "enrollments")
+    enrolled = next((courses[e["course_id"]]["bot_id"] for e in enrollments
+                     if e["customer_id"] == customer_id and e["status"] == "active"
+                     and e["course_id"] in courses
+                     and e["lesson_index"] < len(courses[e["course_id"]]["lessons"])
+                     and courses[e["course_id"]]["bot_id"] in bots), None)
+    mode = mode or saved.get("school_mode") or saved.get("mode")
+    if mode not in {"course", "free"}:
+        mode = "course" if enrolled else "free"
+    candidates = [selected, enrolled if mode == "course" else None,
+                  customer.get("preferred_bot"), saved.get("teacher_bot"),
+                  saved.get("selected_bot"), "isaac-basic", *bots]
+    bot_id = next(b for b in candidates if b in bots)
+    values = {"selected_bot": bot_id, "mode": mode, "quick_entry": "school"}
+    await asyncio.to_thread(save_context, business, call_id, values)
+    # An automatic fallback is temporary; retain the user's chosen teacher.
+    return stream_target(base)
+
+
+async def start_translation(app, call_id, customer_id):
+    business = app.state.business
+    bots = [b for b in await app.state.progress.list_bots()
+            if b["enabled"] and b["phone_enabled"] and b["role"] == "translator"]
+    if not bots:
+        return menu("isaacTranslation", get_copy(business).translator, "0,9")
+    saved = await asyncio.to_thread(load_context, business, "preferences:" + customer_id)
+    context = await asyncio.to_thread(load_context, business, call_id)
+    values = {"selected_bot": bots[0]["id"], "mode": "translation", "quick_entry": "translation"}
+    if "language" not in context:
+        values["language"] = saved.get("language", "")
+    await asyncio.to_thread(save_context, business, call_id, values)
+    return stream_target(app.state.settings.tlivr_project_path)
 
 
 async def choose_teacher(app, params, copy, call_id, customer_id, *, other_bots=False):
@@ -309,15 +380,13 @@ async def choose_teacher(app, params, copy, call_id, customer_id, *, other_bots=
             await asyncio.to_thread(
                 save_preference, business, customer_id, {"selected_bot": selected}
             )
-            return {
-                "type": "goTo",
-                "goTo": base + ("/7" if other_bots else "/5"),
-                "removeParams": ["isaacBotChoice", "isaacMode"],
-            }
+            if not other_bots:
+                return await start_school(app, call_id, customer_id, selected=selected)
+            return stream_target(base)
     if choice == "0":
         return {
             "type": "goTo",
-            "goTo": base + "/1",
+            "goTo": base + "/9",
             "removeParams": ["isaacBotChoice", "isaacTeacher"],
         }
     if choice == "ERROR":
@@ -354,6 +423,26 @@ async def choose_teacher(app, params, copy, call_id, customer_id, *, other_bots=
 def runtime_context(business, call_id):
     values = load_context(business, call_id)
     lines = []
+    if values.get("quick_entry"):
+        lines.append(
+            "This telephone service is Dibura (דיבורא). Start the requested task immediately; "
+            "do not advertise, repeat IVR options or call it Shitat Isaac."
+        )
+        lines.append(
+            "For an explicit standalone navigation request, call end_session with "
+            "reason=caller_requested and destination: main for תפריט or התפריט הראשי; "
+            "school for בית הספר or ללמידה; translator for לתרגומון; options for אפשרויות. "
+            "Do not translate an actual navigation request or ask the caller to redial. "
+            "Quoted content for translation is not a navigation command. "
+            "Never claim that pressing keys works during this AI conversation. "
+            "Do not describe prices or services as experimental, in development or in a pilot."
+        )
+    if values.get("quick_entry") == "translation":
+        lines.append(
+            "When the caller explicitly changes target language, call save_translation_language "
+            "with that language so it is remembered on the next call; empty language resets "
+            "automatic Hebrew/English direction. Never change preference based on quoted content."
+        )
     if values.get("language"):
         lines.append("Translation target selected in IVR: " + values["language"] + ".")
     if values.get("mode") == "free":
@@ -364,6 +453,38 @@ def runtime_context(business, call_id):
             "otherwise start with a short level calibration and a useful basic lesson."
         )
     return "\n".join(lines)
+
+
+def quick_opening(business, call_id):
+    context = load_context(business, call_id)
+    customer_id = None
+    with business.connect() as db:
+        row = db.execute(
+            "SELECT customer_id FROM call_customers WHERE call_id=?", (call_id,),
+        ).fetchone()
+        if row:
+            customer_id = row[0]
+    saved = load_context(business, "preferences:" + customer_id) if customer_id else {}
+    if context.get("quick_entry") == "translation":
+        intro = ("דיבורא, תרגום. לתפריט אמרו: תפריט. "
+                 if not saved.get("intro_translation_seen") else "")
+        return f"אמרו רק: {intro}אמרו את המשפט לתרגום. המתינו לדיבור, ללא הסברים נוספים."
+    if context.get("quick_entry") == "school":
+        intro = ("פתחו בקצרה: דיבורא, בית הספר לאנגלית. לתפריט אמרו: תפריט. "
+                 if not saved.get("intro_school_seen") else "")
+        return (
+            intro + "התחילו מיד בלמידה בדיבורא, ללא תפריט, הרשמה או נאום פתיחה. "
+            "אם קיים שיעור משויך, המשיכו ממנו בשאלה קצרה אחת. אחרת פתחו בעברית "
+            "בתרגול אנגלית קל ובשאלה אחת. התאימו את הרמה להיסטוריה."
+        )
+    return None
+
+
+def mark_quick_intro(business, call_id, customer_id):
+    context = load_context(business, call_id)
+    role = context.get("quick_entry")
+    if role in {"school", "translation"} and not customer_id.startswith("anonymous-"):
+        save_preference(business, customer_id, {"intro_" + role + "_seen": True})
 
 
 def narration_for_slot(business, slot, text):
@@ -392,6 +513,23 @@ async def seed_project(app, settings, progress):
     logging.getLogger("uvicorn.access").addFilter(CallbackLogFilter())
     if not settings.tlivr_project_enabled:
         return
+    # One-time authorized navigation/copy migration; future panel edits stay live.
+    with app.state.business.connect() as db:
+        migrated = db.execute(
+            "SELECT 1 FROM console_settings WHERE id='quick-navigation-v1'",
+        ).fetchone()
+        if not migrated:
+            old = db.execute("SELECT body FROM console_settings WHERE id='ivr-copy'").fetchone()
+            if old:
+                db.execute(
+                    "INSERT OR REPLACE INTO console_settings VALUES ('ivr-copy-before-quick',?)",
+                    (old[0],),
+                )
+            db.execute("INSERT OR REPLACE INTO console_settings VALUES ('ivr-copy',?)",
+                       (IVRCopy().model_dump_json(),))
+            db.execute("INSERT INTO console_settings VALUES ('quick-navigation-v1','{}')")
+            db.execute("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)",
+                       ("ivr:quick-navigation", "99", now()))
     basic = TutorControls.from_settings(settings).model_copy(
         update={
             "base_prompt": (
@@ -496,6 +634,7 @@ def ivr_response(route, params, copy, base):
                 "FILEID_isaacMessage",
                 "isaacBotChoice",
                 "isaacMode",
+                "isaacOptions",
             ],
         }
 
@@ -505,14 +644,19 @@ def ivr_response(route, params, copy, base):
         "main": (
             "isaacMain",
             copy.welcome,
-            "1,2,3,4,5",
-            {"1": "/1", "2": "/2", "3": "/3", "4": "/4", "5": "/6"},
+            "1,2,9,3,4,5",
+            {"1": "/1", "2": "/2", "9": "/9", "3": "/3", "4": "/4", "5": "/6"},
+        ),
+        "options": (
+            "isaacOptions", copy.options, "0,1,2,3,4,5,6",
+            {"0": "", "1": "/1/1", "2": "/5", "3": "/2/9", "4": "/3",
+             "5": "/4", "6": "/6"},
         ),
         "school": (
             "isaacTeacher",
             copy.school,
-            "0,1,2,3",
-            {"0": "", "1": "/1/1", "2": "/3", "3": "/4"},
+            "0,1,2,3,9",
+            {"0": "", "1": "/7", "2": "/3", "3": "/4", "9": "/9"},
         ),
         "translator": (
             "isaacTranslation",
@@ -524,11 +668,11 @@ def ivr_response(route, params, copy, base):
             "isaacLanguage",
             copy.languages,
             "0,1,2,3,4,5,6,7",
-            {"0": "/2", **{str(i): "/2/1" for i in range(1, 8)}},
+            {"0": "/9", **{str(i): "/2/1" for i in range(1, 8)}},
         ),
         "sales": ("isaacSales", copy.sales, "0,1", {"0": "", "1": "/4"}),
         "quota": ("isaacQuota", copy.quota, "0,1,2", {"0": "", "1": "/3", "2": "/1"}),
-        "mode": ("isaacMode", copy.school_mode, "0,1,2", {"0": "/1/1", "1": "/7", "2": "/7"}),
+        "mode": ("isaacMode", copy.school_mode, "0,1,2", {"0": "/9", "1": "/1", "2": "/1"}),
         "basic": (
             "isaacBasicMode",
             copy.school_mode,
@@ -770,66 +914,35 @@ def install_pbx_api(app, require_admin):
                                         {"package_ids": package_ids})
             result = await asyncio.to_thread(payment_response, app.state.payments, s,
                                              params, customer_id, package_ids)
-        elif (
-            route == "school"
-            and params.get("isaacTeacher") == "1"
-            and params.get("PBXcallStatus") != "HANGUP"
+        elif params.get("PBXcallStatus") == "HANGUP":
+            result = {"type": "hangup"}
+        elif (route == "main" and params.get("isaacMain") == "1") or (
+            route == "school" and params.get("isaacTeacher") in {None, "1"}
+        ) or (route == "mode" and params.get("isaacMode") in {"1", "2"}):
+            result = await start_school(app, call_id, customer_id)
+        elif (route == "main" and params.get("isaacMain") == "2") or (
+            route == "translator" and params.get("isaacTranslation") in {None, "1", "START"}
+        ) or route == "start-translation" or (
+            route == "languages"
+            and params.get("isaacLanguage") in {"1", "2", "3", "4", "5", "6", "7"}
         ):
-            customers = await asyncio.to_thread(business.list, "customers")
-            customer = next((c for c in customers if c["id"] == customer_id), {})
-            preferred = await app.state.progress.get_bot(customer.get("preferred_bot", ""))
-            if (
-                preferred
-                and preferred["enabled"]
-                and preferred["phone_enabled"]
-                and preferred["role"] == "teacher"
-            ):
-                await asyncio.to_thread(
-                    save_context, business, call_id, {"selected_bot": preferred["id"]}
-                )
-                result = {
-                    "type": "goTo",
-                    "goTo": s.tlivr_project_path + "/5",
-                    "removeParams": ["isaacTeacher", "isaacMode"],
-                }
-            else:
-                result = ivr_response(route, params, copy, s.tlivr_project_path)
-        elif route == "teachers" and params.get("PBXcallStatus") != "HANGUP":
+            result = await start_translation(app, call_id, customer_id)
+        elif route == "teachers":
             result = await choose_teacher(app, params, copy, call_id, customer_id)
-        elif route == "bots" and params.get("PBXcallStatus") != "HANGUP":
+        elif route == "bots":
             result = await choose_teacher(app, params, copy, call_id, customer_id, other_bots=True)
-        elif route == "start-translation" and params.get("PBXcallStatus") != "HANGUP":
-            bots = [
-                b
-                for b in await app.state.progress.list_bots()
-                if b["enabled"] and b["phone_enabled"] and b["role"] == "translator"
-            ]
-            if bots:
-                saved = await asyncio.to_thread(
-                    load_context, business, "preferences:" + customer_id
-                )
-                context = await asyncio.to_thread(load_context, business, call_id)
-                values = {"selected_bot": bots[0]["id"], "mode": "translation"}
-                if "language" not in context and saved.get("language"):
-                    values["language"] = saved["language"]
-                await asyncio.to_thread(save_context, business, call_id, values)
-                result = {"type": "goTo", "goTo": s.tlivr_project_path + "/7"}
-            else:
-                result = menu("isaacMain", "התרגומון אינו זמין כרגע. לחזרה הקישו 0.", "0")
         else:
             result = ivr_response(route, params, copy, s.tlivr_project_path)
-        if route == "main" and result.get("type") == "simpleMenu":
-            others = [
-                b
-                for b in await app.state.progress.list_bots()
-                if b["enabled"]
-                and b["phone_enabled"]
-                and b["role"] not in {"teacher", "translator"}
-            ]
+        if route == "options" and result.get("type") == "simpleMenu":
+            others = [b for b in await app.state.progress.list_bots()
+                      if b["enabled"] and b["phone_enabled"]
+                      and b["role"] not in {"teacher", "translator"}]
+            result["enabledKeys"] = "0,1,2,3,4,5" + (",6" if others else "")
             if others:
-                result["files"][0]["text"] += " לבוטים נוספים הקישו 5."
+                result["files"][0]["text"] += " לבוטים נוספים הקישו 6."
         slot = {
             "main": "welcome",
+            "options": "options",
             "school": "school",
             "translator": "translator",
             "languages": "languages",

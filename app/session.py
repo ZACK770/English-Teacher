@@ -41,6 +41,7 @@ class TutorSession:
         settings: Settings,
         progress: ProgressStore,
         business: BusinessStore | None = None,
+        before_transfer=None,
     ) -> None:
         self.pbx = pbx
         self.start = start
@@ -78,6 +79,9 @@ class TutorSession:
         self._end_reason: str | None = None
         self._pbx_disconnected = False
         self._pbx_finish_sent = False
+        self._return_path = None
+        self._final_audio_drained = False
+        self.before_transfer = before_transfer
         self._gemini_entered = False
         self._ai_connection_closed = False
         self._stop_requested = asyncio.Event()
@@ -114,7 +118,11 @@ class TutorSession:
                     self.customer_id,
                     self.settings.student_id,
                 )
-                from .pbx import runtime_context
+                from .pbx import quick_opening, runtime_context
+
+                opening = await asyncio.to_thread(quick_opening, self.business, self.start.call_id)
+                if opening:
+                    controls = controls.model_copy(update={"opening_message": opening})
 
                 history += "\n" + await asyncio.to_thread(
                     runtime_context,
@@ -140,8 +148,7 @@ class TutorSession:
                 allowed_seconds = allowance["seconds"]
                 await self._latency("access_checked", {"mode": allowance["mode"]})
                 if not allowed_seconds:
-                    await self.pbx.send_text(transfer_command(allowance["extension"]))
-                    self._pbx_finish_sent = True
+                    self._return_path = allowance["extension"]
                     return
             await self.progress.save_prompt_snapshot(
                 profile_id=self.settings.student_id,
@@ -179,19 +186,12 @@ class TutorSession:
         except TimeoutError:
             self._end_reason = "hard_time_limit"
             if self.settings.student_id.startswith("isaac-"):
-                try:
-                    await self.pbx.send_text(
-                        transfer_command(self.settings.tlivr_project_path + "/8")
-                    )
-                    self._pbx_finish_sent = True
-                except (RuntimeError, WebSocketDisconnect):
-                    pass
+                self._return_path = self.settings.tlivr_project_path + "/8"
         except (CallEnded, WebSocketDisconnect):
             pass
         finally:
             # The Gemini context has exited BEFORE any phone drain, database save or transfer.
             self._ai_connection_closed = True
-            meter_ended = time.monotonic()
             if self._gemini_entered:
                 await self._latency(
                     "ai_connection_closed",
@@ -199,35 +199,44 @@ class TutorSession:
                         "reason": self._end_reason or "transport_ended",
                     },
                 )
-            await self._finish_pbx()
-            if self.business:
-                billed = (meter_ended - self._meter_started) if self._meter_started else 0
-                await asyncio.to_thread(self.business.settle_call, self.start.call_id, billed)
-            await self.progress.save_session(
-                student_id=self.customer_id,
-                call_id=self.start.call_id,
-                started_at=self.started_at,
-                learner_turns=self.learner_turns,
-                tutor_turns=self.tutor_turns,
-                observations=self.observations,
-                transcript=self.transcript if self.settings.store_transcripts else None,
-                summary=self.lesson_summary or self._fallback_summary(),
-                usage=self._usage_totals(),
-                model=self.settings.gemini_live_model,
-            )
-            await self.progress.log_diagnostic(
-                profile_id=self.settings.student_id,
-                call_id=self.start.call_id,
-                event_type="session_saved",
-                details={
-                    "learner_turns": self.learner_turns,
-                    "tutor_turns": self.tutor_turns,
-                    "duration_seconds": max(
-                        0, int((datetime.now(UTC) - self.started_at).total_seconds())
-                    ),
-                },
-            )
-            await self._latency("session_saved")
+            await self._drain_final_audio()
+            meter_ended = time.monotonic()
+            try:
+                if self.business:
+                    billed = (meter_ended - self._meter_started) if self._meter_started else 0
+                    await asyncio.to_thread(self.business.settle_call, self.start.call_id, billed)
+                await self.progress.save_session(
+                    student_id=self.customer_id,
+                    call_id=self.start.call_id,
+                    started_at=self.started_at,
+                    learner_turns=self.learner_turns,
+                    tutor_turns=self.tutor_turns,
+                    observations=self.observations,
+                    transcript=self.transcript if self.settings.store_transcripts else None,
+                    summary=self.lesson_summary or self._fallback_summary(),
+                    usage=self._usage_totals(),
+                    model=self.settings.gemini_live_model,
+                )
+                await self.progress.log_diagnostic(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    event_type="session_saved",
+                    details={
+                        "learner_turns": self.learner_turns,
+                        "tutor_turns": self.tutor_turns,
+                        "duration_seconds": max(
+                            0, int((datetime.now(UTC) - self.started_at).total_seconds())
+                        ),
+                    },
+                )
+                await self._latency("session_saved")
+            except Exception:
+                # Do not start another segment with uncertain balances or history.
+                self._return_path = None
+                self.settings.session_end_action = "hangup"
+                raise
+            finally:
+                await self._finish_pbx()
 
     async def _bridge(self, ai: GeminiLive) -> None:
         tasks = {
@@ -435,29 +444,54 @@ class TutorSession:
                 raise CallEnded
             await asyncio.sleep(min(1, remaining))
 
-    async def _finish_pbx(self) -> None:
-        if self.pbx is None or self._pbx_disconnected or self._pbx_finish_sent:
+    async def _drain_final_audio(self) -> None:
+        if (self._final_audio_drained or self.pbx is None or self._pbx_disconnected
+                or not self._end_reason or not self._end_reason.startswith("model:")):
             return
+        self._final_audio_drained = True
+        # Producers are stopped and Google is closed: drain a finite snapshot, not a 2s slice.
+        if self._partial:
+            self._out.append((self.tutor_turns + 1, self._partial.ljust(FRAME_BYTES, b"\0")))
+            self._partial = b""
+        frames = len(self._out)
         try:
-            # Play only audio already generated; never keep Google open waiting for playback.
-            if self._end_reason and self._end_reason.startswith("model:"):
-                async with asyncio.timeout(2):
-                    while self._out:
-                        _, frame = self._out.popleft()
-                        await self.pbx.send_bytes(frame)
-                        await asyncio.sleep(FRAME_SECONDS)
+            for _ in range(frames):
+                if self._stop_requested.is_set():
+                    break
+                _, frame = self._out.popleft()
+                async with asyncio.timeout(3):
+                    await self.pbx.send_bytes(frame)
+                await asyncio.sleep(FRAME_SECONDS)
+            # Pace the last frame and leave a small PCM tail for the PBX playback buffer.
+            if (frames or self.output_audio_bytes) and not self._stop_requested.is_set():
+                for _ in range(10):
+                    async with asyncio.timeout(3):
+                        await self.pbx.send_bytes(SILENCE_FRAME)
+                    await asyncio.sleep(FRAME_SECONDS)
         except (TimeoutError, RuntimeError, WebSocketDisconnect):
             pass
         self._out.clear()
+
+    async def _finish_pbx(self) -> None:
+        if self.pbx is None or self._pbx_disconnected or self._pbx_finish_sent:
+            return
+        await self._drain_final_audio()
+        self._out.clear()
         try:
             command = hangup_command()
-            if self.settings.session_end_action == "return_to_menu":
+            if self._return_path:
+                command = transfer_command(self._return_path)
+            elif self.settings.session_end_action == "return_to_menu":
                 path = (
                     self.settings.tlivr_project_path
                     if "~" in self.start.call_id
                     else self.settings.technoline_return_extension
                 )
                 command = transfer_command(path)
+            if (self._return_path or self.settings.session_end_action == "return_to_menu"):
+                if self.before_transfer:
+                    await self.before_transfer()
+                    self.before_transfer = None
             async with asyncio.timeout(3):
                 await self.pbx.send_text(command)
             self._pbx_finish_sent = True
@@ -465,7 +499,8 @@ class TutorSession:
                 "phone_session_ended",
                 {
                     "reason": self._end_reason or "transport_ended",
-                    "action": self.settings.session_end_action,
+                    "action": "navigate" if self._return_path else self.settings.session_end_action,
+                    **({"target": self._return_path} if self._return_path else {}),
                 },
             )
         except (TimeoutError, RuntimeError, WebSocketDisconnect):
@@ -494,6 +529,12 @@ class TutorSession:
             await self.pbx.send_bytes(frame)
             if had_audio and turn not in self._sent_audio_turns:
                 self._sent_audio_turns.add(turn)
+                if turn == 1 and self.business:
+                    from .pbx import mark_quick_intro
+
+                    await asyncio.to_thread(
+                        mark_quick_intro, self.business, self.start.call_id, self.customer_id,
+                    )
                 await self._latency(
                     "first_audio_sent_to_phone",
                     {
@@ -512,10 +553,33 @@ class TutorSession:
 
     def _record_tool_call(self, call: dict) -> bool:
         if call.get("name") == "end_session":
-            reason = (call.get("args") or {}).get("reason", "task_completed")
-            if reason not in {"caller_requested", "task_completed", "no_response"}:
+            args = call.get("args") or {}
+            reason = args.get("reason", "task_completed")
+            destination = args.get("destination")
+            targets = {"main": "", "school": "/1", "translator": "/2", "options": "/9"}
+            if (reason == "caller_requested" and isinstance(destination, str)
+                    and destination in targets and self.business and "~" in self.start.call_id):
+                self._return_path = self.settings.tlivr_project_path + targets[destination]
+            if (not isinstance(reason, str)
+                    or reason not in {"caller_requested", "task_completed", "no_response"}):
                 reason = "task_completed"
             self._end_reason = "model:" + reason
+            return True
+        if call.get("name") == "save_translation_language":
+            from .pbx import load_context, save_context, save_preference
+
+            language = (call.get("args") or {}).get("language")
+            languages = {"", "English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"}
+            if (not self.business or "~" not in self.start.call_id or not isinstance(language, str)
+                    or language not in languages):
+                return False
+            if load_context(self.business, self.start.call_id).get("quick_entry") != "translation":
+                return False
+            # Update both the current segment and parent call for later transfers.
+            values = {"language": language}
+            save_context(self.business, self.start.call_id, values)
+            save_context(self.business, self.start.call_id.rsplit("~", 1)[0], values)
+            save_preference(self.business, self.customer_id, values)
             return True
         if call.get("name") == "record_lesson_summary":
             return self._record_summary(call)
@@ -637,3 +701,4 @@ class TutorSession:
             estimated_cost_usd=round(cost, 8),
             cost_basis=basis,
         )
+

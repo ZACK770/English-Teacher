@@ -1,6 +1,6 @@
 # Technoline integration — operational handoff
 
-Updated 2026-10-20. No credential values belong in this file.
+Updated 2026-10-21. No credential values belong in this file.
 
 ## Deployment and current scope
 
@@ -54,15 +54,26 @@ several bots in one PBX call do not overwrite traces or collide in reservations.
 
 ## Telephone tree
 
-- /99 entry, /99/1 school, /99/1/1 dynamic teacher selection.
+- /99 entry: 1 starts learning, 2 starts translation, 9 opens options.
+- /99/1 direct school entry; /99/1/1 optional dynamic teacher selection.
 - /99/2 translator, /99/2/1 select translator, /99/2/9 language choice.
 - /99/3 information/packages; /99/4 customer voice messages.
 - /99/5 course/free mode; /99/6 other bot roles.
 - /99/7 shared streaming; /99/8 quota and school promotion.
+- /99/9 options: teacher, course/free mode, language, packages, service.
 
-School choices follow user copy:1learning,2information/sales,3service.
-Translator key9 works before streaming and starts translation automatically after
-the menu; key7 in language menu resets automatic Hebrew/English direction.
+School and translator entries now start immediately, without secondary menus.
+Dedicated inbound numbers can target /99/1 or /99/2; number assignment and root
+routing are unchanged. All managed extension names now use Dibura; reconciliation
+recognizes the previous Isaac prefix for migration and verifies the new names.
+Language key7 resets automatic Hebrew/English direction. Main key9 opens options;
+the streaming bridge has no live DTMF. During AI, explicit spoken requests can
+return to main/options or switch school/translator using a whitelisted end_session
+destination. Google closes before transfer; each AI segment retains usage isolation.
+First-service guidance is remembered only after audio is sent. Teacher, school
+mode and translation language are separate persistent preferences, shared with web.
+Voice language changes use save_translation_language; quoted content never implies
+a settings or navigation request. See telephone-experience.md for final Hebrew copy.
 Customer identity, preferred teacher/language, minutes and history are shared
 between website and phone. Hidden callers remain isolated.
 
@@ -82,8 +93,12 @@ handling by dialing99 after the owner enables routing.
 ## AI lifecycle and cost guards (2026-10-20)
 
 Every bot's compiled prompt and Google tool schema include end_session. Model
-termination closes the Google context BEFORE draining up to2seconds of already
-generated audio and sending the PBX final hangup/return command. Default action
+termination closes the Google context BEFORE draining ALL already-generated
+audio at real-time PCM cadence, including a padded last partial frame and a short
+playback-buffer tail. There is no two-second speech cutoff. Audio/transcript parts
+in the same provider packet are delivered before a terminal tool. Usage and history
+are settled before a transfer; the old lease and capacity are released before the
+next segment can connect. Default action
 is hangup; each bot can instead return to the menu with NO AI connection left.
 The phone idle watchdog defaults to60seconds, configurable15–300. It measures
 human input activity (PCM RMS or learner transcription), not mere arrival of
