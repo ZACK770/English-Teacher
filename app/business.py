@@ -78,6 +78,11 @@ class AccessPolicy(BaseModel):
     free_calls_month: int = Field(default=0, ge=0, le=100)
     free_call_seconds: int = Field(default=60, ge=10, le=600)
     blocked_extension: str = Field(default="/", max_length=150)
+    basic_enabled: bool = False
+    basic_calls_day: int = Field(default=3, ge=0, le=50)
+    basic_call_seconds: int = Field(default=120, ge=30, le=900)
+    basic_month_seconds: int = Field(default=3000, ge=0, le=500000)
+    basic_intro_text: str = Field(default="", max_length=400)
 
     @field_validator("blocked_extension")
     @classmethod
@@ -359,6 +364,28 @@ class BusinessStore:
                     (call_id, customer_id, policy.product, seconds, now()),
                 )
                 return {"seconds": seconds, "mode": "free"}
+            if policy.basic_enabled and not customer_id.startswith("anonymous-"):
+                product = policy.product + "-basic"
+                today = datetime.now(UTC).strftime("%Y-%m-%d")
+                calls_today = db.execute(
+                    """SELECT COUNT(*) FROM usage_allocations WHERE customer_id=?
+                    AND product=? AND created_at LIKE ?""",
+                    (customer_id, product, today + "%"),
+                ).fetchone()[0]
+                used = db.execute(
+                    """SELECT COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)
+                    FROM usage_allocations WHERE product=? AND created_at LIKE ?""",
+                    (product, month + "%"),
+                ).fetchone()[0]
+                left = policy.basic_month_seconds - used
+                if calls_today < policy.basic_calls_day and left >= 10:
+                    seconds = min(max_seconds, policy.basic_call_seconds, left)
+                    db.execute(
+                        "INSERT INTO usage_allocations VALUES (?,?,?,NULL,?,NULL,?)",
+                        (call_id, customer_id, product, seconds, now()),
+                    )
+                    return {"seconds": seconds, "mode": "basic",
+                            "intro": policy.basic_intro_text}
             return {"seconds": 0, "mode": "blocked", "extension": policy.blocked_extension}
 
     def settle_call(self, call_id, seconds):

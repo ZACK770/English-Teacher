@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .audio import downsample_24k_to_8k, upsample_8k_to_16k
+from .basic_translator import BasicTranslator
 from .business import BusinessStore
 from .config import Settings
 from .controls import TutorControls
@@ -150,6 +151,14 @@ class TutorSession:
                 if not allowed_seconds:
                     self._return_path = allowance["extension"]
                     return
+                if allowance["mode"] == "basic":
+                    self.settings = self.settings.model_copy(
+                        update={"gemini_live_model": self.settings.basic_translator_model}
+                    )
+                    self._meter_started = time.monotonic()
+                    async with asyncio.timeout(allowed_seconds):
+                        await self._run_basic(allowance.get("intro") or "")
+                    return
             await self.progress.save_prompt_snapshot(
                 profile_id=self.settings.student_id,
                 call_id=self.start.call_id,
@@ -246,6 +255,9 @@ class TutorSession:
             asyncio.create_task(self._idle_watchdog(), name="session-idle-watchdog"),
             asyncio.create_task(self._stop_watchdog(), name="session-stop-watchdog"),
         }
+        await self._run_tasks(tasks)
+
+    async def _run_tasks(self, tasks: set[asyncio.Task]) -> None:
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
@@ -258,48 +270,128 @@ class TutorSession:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def _receive_pbx_audio(self) -> bytes | None:
+        try:
+            message = await asyncio.wait_for(self.pbx.receive(), timeout=15)
+        except TimeoutError:
+            self._end_reason = "pbx_input_timeout"
+            raise CallEnded from None
+        if message.get("type") == "websocket.disconnect":
+            self._pbx_disconnected = True
+            self._end_reason = "caller_disconnected"
+            raise CallEnded
+        audio = message.get("bytes")
+        if audio is not None:
+            if len(audio) > 128 * 1024:
+                raise CallEnded("oversized audio frame")
+            if len(audio) % 2:
+                LOGGER.warning("Dropping odd-length PCM frame for call %s", self.start.call_id)
+                return None
+            if not self._first_pbx_audio_seen:
+                self._first_pbx_audio_seen = True
+                await self._latency("first_pbx_audio")
+            return audio
+        text = message.get("text")
+        if not text:
+            return None
+        try:
+            control = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if str(control.get("type", "")).lower() in {"stop", "hangup", "end"}:
+            self._pbx_disconnected = True
+            self._end_reason = "caller_disconnected"
+            raise CallEnded
+        return None
+
     async def _pbx_to_ai(self, ai: GeminiLive) -> None:
         batch: list[bytes] = []
         while True:
+            audio = await self._receive_pbx_audio()
+            if audio is None:
+                continue
+            if self._has_voice_activity(audio):
+                self._last_human_activity = time.monotonic()
+            batch.append(audio)
+            if len(batch) >= self.settings.gemini_input_batch_frames:
+                pcm16k = upsample_8k_to_16k(b"".join(batch))
+                self.input_audio_bytes += len(pcm16k)
+                await ai.send_audio(pcm16k)
+                batch.clear()
+
+    async def _run_basic(self, intro: str) -> None:
+        language = ""
+        if self.business and "~" in self.start.call_id:
+            from .pbx import load_context
+
+            language = load_context(self.business, self.start.call_id).get("language") or ""
+        translator = BasicTranslator(self.settings, language)
+        self._last_human_activity = time.monotonic()
+        await self._latency("basic_translator_started", {"language": language})
+        await self._run_tasks({
+            asyncio.create_task(self._basic_listen(translator, intro), name="basic-translator"),
+            asyncio.create_task(self._paced_output(), name="paced-pbx-output"),
+            asyncio.create_task(self._idle_watchdog(), name="session-idle-watchdog"),
+            asyncio.create_task(self._stop_watchdog(), name="session-stop-watchdog"),
+        })
+
+    async def _basic_say(self, translator: BasicTranslator, text: str, language: str) -> None:
+        pcm8 = await translator.speak(text, language)
+        self.output_audio_bytes += len(pcm8) * 3
+        self._enqueue(pcm8)
+        if self._partial:
+            self._enqueue(b"\0" * (FRAME_BYTES - len(self._partial)))
+        self.tutor_turns += 1
+
+    async def _basic_listen(self, translator: BasicTranslator, intro: str) -> None:
+        bytes_per_second = 16000
+        if intro:
+            await self._basic_say(translator, intro, "he-IL")
+        speech = bytearray()
+        voiced = silent = 0
+        while True:
+            audio = await self._receive_pbx_audio()
+            if audio is None:
+                continue
+            if self._out:
+                # Half duplex: ignore the line while the translation is still playing.
+                speech.clear()
+                voiced = silent = 0
+                self._last_human_activity = time.monotonic()
+                continue
+            if self._has_voice_activity(audio):
+                self._last_human_activity = time.monotonic()
+                speech += audio
+                voiced += len(audio)
+                silent = 0
+            elif speech:
+                speech += audio
+                silent += len(audio)
+            ended = silent >= bytes_per_second * 0.8 or len(speech) >= bytes_per_second * 15
+            if not (speech and ended):
+                continue
+            utterance = bytes(speech)
+            speech.clear()
+            enough = voiced >= bytes_per_second * 0.3
+            voiced = silent = 0
+            if not enough:
+                continue
+            self.learner_turns += 1
+            self.input_audio_bytes += len(utterance) * 2
             try:
-                message = await asyncio.wait_for(self.pbx.receive(), timeout=15)
-            except TimeoutError:
-                self._end_reason = "pbx_input_timeout"
-                raise CallEnded from None
-            if message.get("type") == "websocket.disconnect":
-                self._pbx_disconnected = True
-                self._end_reason = "caller_disconnected"
-                raise CallEnded
-            audio = message.get("bytes")
-            if audio is not None:
-                if len(audio) > 128 * 1024:
-                    raise CallEnded("oversized audio frame")
-                if len(audio) % 2:
-                    LOGGER.warning("Dropping odd-length PCM frame for call %s", self.start.call_id)
-                    continue
-                if self._has_voice_activity(audio):
-                    self._last_human_activity = time.monotonic()
-                if not self._first_pbx_audio_seen:
-                    self._first_pbx_audio_seen = True
-                    await self._latency("first_pbx_audio")
-                batch.append(audio)
-                if len(batch) >= self.settings.gemini_input_batch_frames:
-                    pcm16k = upsample_8k_to_16k(b"".join(batch))
-                    self.input_audio_bytes += len(pcm16k)
-                    await ai.send_audio(pcm16k)
-                    batch.clear()
-                continue
-            text = message.get("text")
-            if not text:
-                continue
-            try:
-                control = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if str(control.get("type", "")).lower() in {"stop", "hangup", "end"}:
-                self._pbx_disconnected = True
-                self._end_reason = "caller_disconnected"
-                raise CallEnded
+                result = await translator.translate(utterance)
+                await self._latency("basic_translated", {"chars": len(result.text)})
+                if result.text:
+                    self.transcript.append({"role": "learner", "text": result.heard})
+                    self.transcript.append({"role": "tutor", "text": result.text})
+                    await self._basic_say(translator, result.text, result.language)
+            except Exception:
+                LOGGER.exception("Basic translation failed for call %s", self.start.call_id)
+                await self.progress.log_diagnostic(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    event_type="basic_translation_failed",
+                )
 
     async def _ai_to_queue(self, ai: GeminiLive) -> None:
         async for event in ai.events():

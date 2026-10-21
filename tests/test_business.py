@@ -197,3 +197,34 @@ def test_preview_does_not_publish_and_restore_publishes_new_version(tmp_path):
         restored = client.post("/v1/admin/bots/student/restore/1", headers=headers)
         assert restored.json()["profile"]["active_version"] == 3
         assert restored.json()["controls"]["language_code"] == "he-IL"
+
+
+def test_basic_translator_after_free_quota(tmp_path):
+    store = make_store(tmp_path)
+    store.save("policies", AccessPolicy(
+        enabled=True, product="translator", free_calls_month=1, free_call_seconds=30,
+        basic_enabled=True, basic_calls_day=2, basic_call_seconds=60, basic_month_seconds=100,
+        basic_intro_text="hi", blocked_extension="/sales",
+    ).model_dump(), "translator-a")
+    assert store.reserve_call("customer-a", "translator-a", "free", 120)["mode"] == "free"
+    store.settle_call("free", 30)
+    first = store.reserve_call("customer-a", "translator-a", "b1", 120)
+    assert first == {"seconds": 60, "mode": "basic", "intro": "hi"}
+    store.settle_call("b1", 60)
+    assert store.reserve_call("customer-a", "translator-a", "b2", 120)["seconds"] == 40
+    store.settle_call("b2", 40)
+    assert store.reserve_call("customer-b", "translator-a", "b3", 120)["mode"] == "free"
+    store.settle_call("b3", 30)
+    assert store.reserve_call("customer-b", "translator-a", "b4", 120)["mode"] == "blocked"
+    assert store.reserve_call("anonymous-1", "translator-a", "b4", 120)["mode"] == "blocked"
+
+
+def test_basic_translator_daily_cap(tmp_path):
+    store = make_store(tmp_path)
+    store.save("policies", AccessPolicy(
+        enabled=True, product="translator", basic_enabled=True, basic_calls_day=1,
+    ).model_dump(), "translator-a")
+    assert store.reserve_call("customer-a", "translator-a", "b1", 120)["mode"] == "basic"
+    store.settle_call("b1", 20)
+    assert store.reserve_call("customer-a", "translator-a", "b2", 120)["mode"] == "blocked"
+    assert store.reserve_call("customer-b", "translator-a", "b3", 120)["mode"] == "basic"
