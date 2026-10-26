@@ -111,6 +111,26 @@ TRANSLATION_LANGUAGE_TOOL = {
 }
 
 
+ROUTE_TOOL = {
+    "name": "get_driving_route",
+    "description": (
+        "Get a live, traffic-aware driving route from Google Maps between two places in Israel. "
+        "Call it when the destination is known and again after the driver reports a new "
+        "location or a missed turn. Returns distance, minutes with traffic and turn steps."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "origin": {"type": "string", "description": "Driver's current location as an "
+                       "address, junction or landmark with city, in Hebrew."},
+            "destination": {"type": "string", "description": "Destination address or place "
+                            "with city, in Hebrew."},
+        },
+        "required": ["origin", "destination"],
+    },
+}
+
+
 def build_setup_payload(settings: Settings) -> dict[str, Any]:
     generation_config: dict[str, Any] = {
         "responseModalities": ["AUDIO"],
@@ -139,7 +159,8 @@ def build_setup_payload(settings: Settings) -> dict[str, Any]:
             "outputAudioTranscription": {},
             "tools": [
                 {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL,
-                                          TRANSLATION_LANGUAGE_TOOL]}
+                                          TRANSLATION_LANGUAGE_TOOL]
+                 + ([ROUTE_TOOL] if settings.student_id in settings.navigation_bot_ids else [])}
             ],
             "contextWindowCompression": {
                 "triggerTokens": settings.gemini_context_trigger_tokens,
@@ -247,11 +268,13 @@ class GeminiLive:
             }
         )
 
-    async def submit_tool_result(self, call: dict[str, Any], saved: bool) -> None:
+    async def submit_tool_result(
+        self, call: dict[str, Any], saved: bool, result: dict[str, Any] | None = None,
+    ) -> None:
         response = {
             "id": call.get("id"),
             "name": call.get("name"),
-            "response": {"saved": saved},
+            "response": result if result is not None else {"saved": saved},
         }
         await self._send({"toolResponse": {"functionResponses": [response]}})
 

@@ -499,6 +499,9 @@ class TutorSession:
                     details={"names": [str(call.get("name", "")) for call in event["calls"]]},
                 )
                 for call in event["calls"]:
+                    if call.get("name") == "get_driving_route":
+                        await ai.submit_tool_result(call, True, await self._route_tool(call))
+                        continue
                     saved = self._record_tool_call(call)
                     await ai.submit_tool_result(call, saved)
                     if call.get("name") == "end_session":
@@ -642,6 +645,27 @@ class TutorSession:
         for offset in range(0, whole, FRAME_BYTES):
             self._out.append((self.tutor_turns + 1, data[offset : offset + FRAME_BYTES]))
         self._partial = data[whole:]
+
+    async def _route_tool(self, call: dict) -> dict:
+        from .routes_api import compute_route
+
+        args = call.get("args") or {}
+        origin, destination = str(args.get("origin", "")), str(args.get("destination", ""))
+        if (self.settings.student_id not in self.settings.navigation_bot_ids
+                or not origin or not destination):
+            return {"found": False, "error": "origin and destination are required"}
+        if self.business and not await asyncio.to_thread(
+            self.business.consume_monthly_quota, "routes", self.settings.routes_monthly_limit,
+        ):
+            return {"found": False, "error": "monthly live-route quota reached; navigate "
+                    "from general knowledge and say live traffic is unavailable"}
+        try:
+            result = await compute_route(self.settings, origin, destination)
+        except Exception:
+            LOGGER.exception("Route lookup failed for call %s", self.start.call_id)
+            return {"found": False, "error": "live route lookup failed"}
+        await self._latency("route_lookup", {"found": result.get("found", False)})
+        return result
 
     def _record_tool_call(self, call: dict) -> bool:
         if call.get("name") == "end_session":

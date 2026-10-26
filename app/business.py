@@ -147,6 +147,9 @@ class BusinessStore:
     def initialize(self):
         with self.connect() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS api_quota (
+                    month TEXT NOT NULL, api TEXT NOT NULL, used INTEGER NOT NULL,
+                    PRIMARY KEY (month, api));
                 CREATE TABLE IF NOT EXISTS console_records (
                     kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -321,6 +324,23 @@ class BusinessStore:
                 (call_id, customer_id, bot_id, "phone", now()),
             )
         return customer_id
+
+    def consume_monthly_quota(self, api, limit):
+        month = datetime.now(UTC).strftime("%Y-%m")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT used FROM api_quota WHERE month=? AND api=?", (month, api)
+            ).fetchone()
+            used = row["used"] if row else 0
+            if used >= limit:
+                return False
+            db.execute(
+                """INSERT INTO api_quota VALUES (?,?,1) ON CONFLICT(month,api)
+                DO UPDATE SET used=used+1""",
+                (month, api),
+            )
+            return True
 
     def reserve_call(self, customer_id, bot_id, call_id, max_seconds):
         with self.connect() as db:

@@ -228,3 +228,21 @@ def test_basic_translator_daily_cap(tmp_path):
     store.settle_call("b1", 20)
     assert store.reserve_call("customer-a", "translator-a", "b2", 120)["mode"] == "blocked"
     assert store.reserve_call("customer-b", "translator-a", "b3", 120)["mode"] == "basic"
+
+
+def test_monthly_api_quota(tmp_path):
+    store = make_store(tmp_path)
+    assert store.consume_monthly_quota("routes", 2)
+    assert store.consume_monthly_quota("routes", 2)
+    assert not store.consume_monthly_quota("routes", 2)
+
+
+def test_route_tool_only_for_navigation_bots():
+    from app.gemini_live import build_setup_payload
+
+    base = Settings(gemini_api_key=SecretStr("k"), admin_bearer_secret=SecretStr("x" * 40))
+    def names(profile):
+        setup = build_setup_payload(base.model_copy(update={"student_id": profile}))
+        return [t["name"] for t in setup["setup"]["tools"][0]["functionDeclarations"]]
+    assert "get_driving_route" in names("voice-navigator-live")
+    assert "get_driving_route" not in names("isaac-translator")
