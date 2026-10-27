@@ -49,7 +49,25 @@ db.executescript("""DROP TABLE IF EXISTS node; DROP TABLE IF EXISTS branch;
 CREATE TABLE node(id INTEGER PRIMARY KEY, lat REAL, lon REAL);
 CREATE TABLE branch(
     node INTEGER, way INTEGER, bearing REAL, highway TEXT, name TEXT, oneway TEXT);""")
-nodes, branches = {}, []
+db.executescript("""DROP TABLE IF EXISTS way; DROP TABLE IF EXISTS way_idx;
+CREATE TABLE way(id INTEGER PRIMARY KEY, highway TEXT, name TEXT, ref TEXT, oneway TEXT,
+    dest TEXT, poly TEXT);
+CREATE VIRTUAL TABLE way_idx USING rtree(id, minlat, maxlat, minlon, maxlon);""")
+nodes, branches, ways, boxes = {}, [], [], []
+
+
+def encode(points):
+    out, prev = [], (0, 0)
+    for lat, lon in points:
+        cur = (round(lat * 1e5), round(lon * 1e5))
+        for delta in (cur[0] - prev[0], cur[1] - prev[1]):
+            v = ~(delta << 1) if delta < 0 else delta << 1
+            while v >= 0x20:
+                out.append(chr((0x20 | (v & 0x1F)) + 63))
+                v >>= 5
+            out.append(chr(v + 63))
+        prev = cur
+    return "".join(out)
 
 
 class Collect(osmium.SimpleHandler):
@@ -63,6 +81,14 @@ class Collect(osmium.SimpleHandler):
             "oneway",
             "yes" if hw.startswith("motorway") or w.tags.get("junction") == "roundabout" else "no",
         )
+        pts = [(n.location.lat, n.location.lon) for n in ns if n.location.valid()]
+        if len(pts) >= 2:
+            tags = w.tags
+            dest = tags.get("destination:he") or tags.get("destination") or ""
+            kind = hw + ("|rb" if tags.get("junction") == "roundabout" else "")
+            ways.append((w.id, kind, name, tags.get("ref", ""), ow, dest, encode(pts)))
+            lats, lons = [p[0] for p in pts], [p[1] for p in pts]
+            boxes.append((w.id, min(lats), max(lats), min(lons), max(lons)))
         for i, n in enumerate(ns):
             if n.ref not in junction or not n.location.valid():
                 continue
@@ -84,6 +110,8 @@ class Collect(osmium.SimpleHandler):
 Collect().apply_file(SRC, locations=True)
 db.executemany("INSERT INTO node VALUES(?,?,?)", ((k, *v) for k, v in nodes.items()))
 db.executemany("INSERT INTO branch VALUES(?,?,?,?,?,?)", branches)
+db.executemany("INSERT INTO way VALUES(?,?,?,?,?,?,?)", ways)
+db.executemany("INSERT INTO way_idx VALUES(?,?,?,?,?)", boxes)
 db.executescript("CREATE INDEX b_node ON branch(node); CREATE INDEX n_ll ON node(lat, lon);")
 db.commit()
 print(len(nodes), "junctions", len(branches), "branches")

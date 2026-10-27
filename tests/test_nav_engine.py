@@ -124,7 +124,7 @@ def test_reported_street_is_matched_on_route_and_learns_heading(tmp_path, monkey
     state.update(place="התחלה", destination="יעד")
     result = state.update(place="בית")
     assert result["status"] == "on_route"
-    assert any("צפונה" in note for note in result["notes"])
+    assert nav_engine.compass_he(state.heading) == "צפונה"
     assert "השנייה שמאלה" in result["say"]  # דלת then הא
 
 

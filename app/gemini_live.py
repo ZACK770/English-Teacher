@@ -134,27 +134,38 @@ ROUTE_TOOL = {
 NAV_TOOL = {
     "name": "navigation_update",
     "description": (
-        "The navigation engine. Call it EVERY time the driver gives the destination, says where "
-        "he is, names a street/house number/junction/landmark/sign he sees, reads the trip "
-        "odometer, or answers a direction question. The server remembers the route, last "
-        "position and heading, so never ask again for the origin. Read the returned 'say' (and "
-        "'then') to the driver as is: never change left/right, ordinals or distances. If the "
-        "result has 'ask', ask the driver exactly that before giving directions."
+        "The navigation engine; it remembers the whole trip (route, position, heading, what "
+        "the driver reported). Call it EVERY time the driver gives a destination, reports "
+        "where he is, what he sees, a turn he made (also a mistaken one), the road he is on, "
+        "the odometer, answers a direction question, or asks for the full route. Classify "
+        "the report correctly and never invent facts the driver did not say. Say the "
+        "returned 'say' (and 'then') exactly; never change left/right, ordinals, exits or "
+        "distances. If 'ask' is returned, ask exactly that and give no other directions."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "place": {"type": "string", "description": "What the driver reported, in Hebrew with "
-                      "city, e.g. 'רבי עקיבא 22, בני ברק', 'בית כנסת קרלין, בני ברק', "
-                      "'רבי עקיבא פינת ז׳בוטינסקי, בני ברק', or a street name seen on a sign."},
-            "destination": {"type": "string", "description": "Destination with city, in Hebrew. "
-                            "Send only when given or changed."},
-            "seen_sign": {"type": "boolean", "description": "True when the driver only SEES a "
-                          "sign or street ahead and has not reached it yet."},
-            "odometer_km": {"type": "number", "description": "Current trip-odometer reading "
-                            "in km, if the driver said it."},
+            "report": {"type": "string", "enum": ["at", "see", "passed", "turned", "on_road"],
+                       "description": "at=I am at/next to; see=I see a sign/street ahead "
+                       "(not reached); passed=I just passed it and continue; turned=I made a "
+                       "turn onto a street/road; on_road=I am on road X toward Y."},
+            "place": {"type": "string", "description": "Place/street/landmark the driver "
+                      "named, in Hebrew with city, e.g. 'רבי עקיבא 22, בני ברק'."},
+            "turn": {"type": "string", "enum": ["left", "right", "uturn", "straight"],
+                     "description": "For report=turned: the side the driver said."},
+            "road": {"type": "string", "description": "For turned/on_road: street name or "
+                     "road number the driver is now on, e.g. 'כביש 1' or 'ז׳בוטינסקי'."},
+            "toward": {"type": "string", "description": "Direction city on the sign, e.g. "
+                       "'תל אביב', when the driver said it."},
+            "destination": {"type": "string", "description":
+                            "Destination with city, in Hebrew. Only when given or changed."},
+            "odometer_km": {"type": "number", "description": "Trip-odometer reading in km."},
             "direction": {"type": "string", "enum": ["confirmed", "opposite"], "description":
-                          "Driver's answer to a direction question from 'ask'."},
+                          "Only when the driver himself answered a direction question."},
+            "driver_words": {"type": "string", "description": "The driver's exact words in "
+                             "this turn, in Hebrew."},
+            "full_route": {"type": "boolean", "description": "True when the driver asks for "
+                           "all remaining turns; read them from 'full_route'."},
         },
     },
 }
