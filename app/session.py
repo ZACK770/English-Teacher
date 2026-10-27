@@ -98,6 +98,10 @@ class TutorSession:
     async def run(self) -> None:
         try:
             await self._latency("session_started")
+            radio_url = self.settings.radio_streams.get(self.settings.student_id)
+            if radio_url:
+                await self._run_radio(radio_url)
+                return
             if self.business:
                 self.customer_id = await asyncio.to_thread(
                     self.business.identify_call,
@@ -318,6 +322,42 @@ class TutorSession:
                 self.input_audio_bytes += len(pcm16k)
                 await ai.send_audio(pcm16k)
                 batch.clear()
+
+    async def _run_radio(self, url: str) -> None:
+        await self._latency("radio_started")
+        reconnect = (
+            ["-reconnect", "1", "-reconnect_streamed", "1"] if url.startswith("http") else []
+        )
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-loglevel", "error", *reconnect,
+            "-i", url, "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "pipe:1",
+            stdout=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL,
+        )
+
+        async def relay() -> None:
+            while chunk := await process.stdout.read(FRAME_BYTES * 25):
+                self._enqueue(chunk)
+                while len(self._out) > 150:  # keep at most ~3 s of backlog
+                    self._out.popleft()
+            while self._out:  # noqa: ASYNC110 - drain paced output
+                await asyncio.sleep(FRAME_SECONDS)
+            self._end_reason = "radio_stream_ended"
+
+        async def listen() -> None:
+            while True:
+                await self._receive_pbx_audio()
+
+        try:
+            await self._run_tasks({
+                asyncio.create_task(relay(), name="radio-relay"),
+                asyncio.create_task(listen(), name="radio-listen"),
+                asyncio.create_task(self._paced_output(), name="paced-pbx-output"),
+                asyncio.create_task(self._stop_watchdog(), name="session-stop-watchdog"),
+            })
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
 
     async def _run_basic(self, intro: str) -> None:
         language = ""

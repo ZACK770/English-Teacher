@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     google_tts_service_account_json: SecretStr | None = None
     google_tts_project: str | None = None
     navigation_bot_ids: list[str] = Field(default_factory=lambda: ["voice-navigator-live"])
+    radio_streams: dict[str, str] = Field(default_factory=lambda: {
+        "voice-navigator":
+            "https://n-121-7.il.cdn-redge.media/livehls/oil/ch14/live/ch14/live.livx/playlist.m3u8",
+    })
     routes_monthly_limit: int = Field(default=4500, ge=0, le=1000000)
     gemini_voice: str = "Aoede"
     gemini_language_code: str = "he-IL"

@@ -104,3 +104,35 @@ async def test_expired_call_cancels_every_bridge_task(tmp_path, monkeypatch):
         async with asyncio.timeout(.03):
             await session._bridge(None)
     assert len(finished) == 3
+
+
+def test_radio_profile_relays_stream_audio(tmp_path) -> None:
+    import shutil
+    import wave
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not installed")
+    source = tmp_path / "tone.wav"
+    with wave.open(str(source), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(8000)
+        out.writeframes(b"\x10\x00" * 8000)
+
+    class FakePbx:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        async def send_bytes(self, data: bytes) -> None:
+            self.sent.append(data)
+
+        async def receive(self) -> dict:
+            await asyncio.sleep(0.5)
+            return {"type": "websocket.disconnect"}
+
+    session = make_session(tmp_path)
+    session.settings = session.settings.model_copy(update={"student_id": "radio-test"})
+    session.pbx = FakePbx()  # type: ignore[assignment]
+    asyncio.run(session.progress.initialize())
+    asyncio.run(session._run_radio(str(source)))
+    assert any(frame.strip(b"\x00") for frame in session.pbx.sent)
