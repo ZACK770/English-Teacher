@@ -131,6 +131,35 @@ ROUTE_TOOL = {
 }
 
 
+NAV_TOOL = {
+    "name": "navigation_update",
+    "description": (
+        "The navigation engine. Call it EVERY time the driver gives the destination, says where "
+        "he is, names a street/house number/junction/landmark/sign he sees, reads the trip "
+        "odometer, or answers a direction question. The server remembers the route, last "
+        "position and heading, so never ask again for the origin. Read the returned 'say' (and "
+        "'then') to the driver as is: never change left/right, ordinals or distances. If the "
+        "result has 'ask', ask the driver exactly that before giving directions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "place": {"type": "string", "description": "What the driver reported, in Hebrew with "
+                      "city, e.g. 'רבי עקיבא 22, בני ברק', 'בית כנסת קרלין, בני ברק', "
+                      "'רבי עקיבא פינת ז׳בוטינסקי, בני ברק', or a street name seen on a sign."},
+            "destination": {"type": "string", "description": "Destination with city, in Hebrew. "
+                            "Send only when given or changed."},
+            "seen_sign": {"type": "boolean", "description": "True when the driver only SEES a "
+                          "sign or street ahead and has not reached it yet."},
+            "odometer_km": {"type": "number", "description": "Current trip-odometer reading "
+                            "in km, if the driver said it."},
+            "direction": {"type": "string", "enum": ["confirmed", "opposite"], "description":
+                          "Driver's answer to a direction question from 'ask'."},
+        },
+    },
+}
+
+
 def build_setup_payload(settings: Settings) -> dict[str, Any]:
     generation_config: dict[str, Any] = {
         "responseModalities": ["AUDIO"],
@@ -160,7 +189,8 @@ def build_setup_payload(settings: Settings) -> dict[str, Any]:
             "tools": [
                 {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL,
                                           TRANSLATION_LANGUAGE_TOOL]
-                 + ([ROUTE_TOOL] if settings.student_id in settings.navigation_bot_ids else [])}
+                 + ([ROUTE_TOOL, NAV_TOOL] if settings.student_id in settings.navigation_bot_ids
+                    else [])}
             ],
             "contextWindowCompression": {
                 "triggerTokens": settings.gemini_context_trigger_tokens,

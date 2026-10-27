@@ -542,6 +542,9 @@ class TutorSession:
                     if call.get("name") == "get_driving_route":
                         await ai.submit_tool_result(call, True, await self._route_tool(call))
                         continue
+                    if call.get("name") == "navigation_update":
+                        await ai.submit_tool_result(call, True, await self._nav_tool(call))
+                        continue
                     saved = self._record_tool_call(call)
                     await ai.submit_tool_result(call, saved)
                     if call.get("name") == "end_session":
@@ -705,6 +708,29 @@ class TutorSession:
             LOGGER.exception("Route lookup failed for call %s", self.start.call_id)
             return {"found": False, "error": "live route lookup failed"}
         await self._latency("route_lookup", {"found": result.get("found", False)})
+        return result
+
+    async def _nav_tool(self, call: dict) -> dict:
+        from .nav_engine import new_state, run_update
+
+        if self.settings.student_id not in self.settings.navigation_bot_ids:
+            return {"status": "error", "error": "navigation is not enabled for this bot"}
+        if self.business and not await asyncio.to_thread(
+            self.business.consume_monthly_quota, "places", self.settings.places_monthly_limit,
+        ):
+            return {"status": "error", "error": "monthly map quota reached; navigate from "
+                    "general knowledge and say live maps are unavailable"}
+        if getattr(self, "_nav", None) is None:
+            self._nav = new_state(self.settings)
+        args = call.get("args") or {}
+        try:
+            result = await run_update(self._nav, args)
+        except Exception:
+            LOGGER.exception("Navigation update failed for call %s", self.start.call_id)
+            result = {"status": "error", "error": "map lookup failed; ask the driver to repeat"}
+        self.transcript.append({"role": "navigation", "text": json.dumps(
+            {"args": args, "result": result}, ensure_ascii=False)[:1500]})
+        await self._latency("nav_update", {"status": result.get("status")})
         return result
 
     def _record_tool_call(self, call: dict) -> bool:

@@ -96,6 +96,8 @@ class Settings(BaseSettings):
             "https://n-121-7.il.cdn-redge.media/livehls/oil/ch14/live/ch14/live.livx/playlist.m3u8",
     })
     routes_monthly_limit: int = Field(default=4500, ge=0, le=1000000)
+    places_monthly_limit: int = Field(default=4500, ge=0, le=1000000)
+    nav_junctions_path: Path = Path("navdata/junctions.db")
     gemini_voice: str = "Aoede"
     gemini_language_code: str = "he-IL"
     gemini_vad_start_sensitivity: Literal[
