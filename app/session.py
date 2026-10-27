@@ -25,6 +25,8 @@ LOGGER = logging.getLogger(__name__)
 FRAME_BYTES = 320
 FRAME_SECONDS = 0.02
 SILENCE_FRAME = b"\x00" * FRAME_BYTES
+RADIO_PREBUFFER_FRAMES = 250  # 5 s
+RADIO_MAX_BACKLOG_FRAMES = 1500  # 30 s
 
 
 class CallEnded(Exception):
@@ -335,10 +337,19 @@ class TutorSession:
         )
 
         async def relay() -> None:
+            # HLS arrives in multi-second bursts: pre-buffer, then keep a deep backlog.
+            pending = b""
             while chunk := await process.stdout.read(FRAME_BYTES * 25):
+                if pending is not None:
+                    pending += chunk
+                    if len(pending) < FRAME_BYTES * RADIO_PREBUFFER_FRAMES:
+                        continue
+                    chunk, pending = pending, None
                 self._enqueue(chunk)
-                while len(self._out) > 150:  # keep at most ~3 s of backlog
+                while len(self._out) > RADIO_MAX_BACKLOG_FRAMES:
                     self._out.popleft()
+            if pending:
+                self._enqueue(pending)
             while self._out:  # noqa: ASYNC110 - drain paced output
                 await asyncio.sleep(FRAME_SECONDS)
             self._end_reason = "radio_stream_ended"
