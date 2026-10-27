@@ -49,6 +49,11 @@ def _junction_db(path):
         db.execute(
             "INSERT INTO branch VALUES(?,?,?,?,?,?)", (nid, 99, 0, "tertiary", "ראשי", "no:out")
         )
+    # Opposite (southbound) carriageway of a divided road, with a left street that is unreachable.
+    db.execute("INSERT INTO node VALUES(6, 32.0025, 34.80008)")
+    db.execute("INSERT INTO branch VALUES(6, 6, 270, 'residential', 'נגדי', 'no:out')")
+    db.execute("INSERT INTO branch VALUES(6, 98, 0, 'tertiary', 'ראשי', 'yes:in')")
+    db.execute("INSERT INTO branch VALUES(6, 98, 180, 'tertiary', 'ראשי', 'yes:out')")
     db.commit()
 
 

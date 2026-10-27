@@ -187,6 +187,24 @@ def parse_route(payload: dict, destination: str) -> Route | None:
     )
 
 
+def _on_our_carriageway(rows, fwd: float) -> bool:
+    """False when the node sits on the opposite carriageway of a divided road."""
+    parallel = False
+    for b, _, _, ow in rows:
+        rel = abs(angle_diff(b, fwd))
+        if 35 <= rel <= 145:
+            continue
+        parallel = True
+        flag, _, end = ow.partition(":")
+        if flag in ("-1", "reverse"):
+            end = "in" if end == "out" else "out"
+        elif flag not in ("yes", "1", "true"):
+            return True
+        if (rel < 35) == (end == "out"):
+            return True
+    return not parallel
+
+
 class Junctions:
     """Side streets along a polyline from the OSM junction table."""
 
@@ -220,10 +238,13 @@ class Junctions:
     def side_streets(self, points, near: float = 12.0) -> list[dict]:
         found: list[dict] = []
         for along, fwd, nid, _ in self._hits(points, near):
-            for b, hw, name, ow in self.db.execute(
+            rows = self.db.execute(
                 "SELECT bearing, highway, name, oneway FROM branch WHERE node=?",
                 (nid,),
-            ):
+            ).fetchall()
+            if not _on_our_carriageway(rows, fwd):
+                continue
+            for b, hw, name, ow in rows:
                 rel = angle_diff(b, fwd)
                 if abs(rel) < 35 or abs(rel) > 145 or "|rb" in hw:
                     continue
