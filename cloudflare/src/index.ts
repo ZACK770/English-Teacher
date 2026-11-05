@@ -12,7 +12,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const s = settings(env);
   const path = url.pathname.replace(/^\/english(\/|$)/, "/") || "/";
   if (path === "/healthz") return Response.json({ status: "ok", service: "english-engine" });
-  if (path === "/") return Response.json({ service: "English school voice engine", health: "/healthz", websocket: "/v1/technoline/stream", status: "test deployment" });
+  if (path === "/status" || path === "/api/status") return Response.json({ service: "English school voice engine", health: "/healthz", websocket: "/v1/technoline/stream", status: "production" });
   if (path === "/readyz") {
     const configured = !!env.GEMINI_API_KEY && !!env.ADMIN_BEARER_SECRET;
     const db = await env.DB.prepare("SELECT COUNT(*) AS n FROM bots").first<{ n: number }>();
@@ -49,6 +49,21 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (path === "/v1/public/callback" && request.method === "POST") return submitCallback(request, env);
   const turn = path.match(/^\/v1\/bots\/([a-z][a-z0-9-]{1,62})\/turn$/);
   if (turn && request.method === "POST") return webTurn(request, env, s, turn[1]);
+  if (env.ASSETS) {
+    const assetResp = await env.ASSETS.fetch(request);
+    if (assetResp.status < 400) return assetResp;
+    if (request.method === "GET" && !path.startsWith("/v1/")) {
+      const indexResp = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
+      if (indexResp.ok) {
+        return new Response(indexResp.body, {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-cache",
+          },
+        });
+      }
+    }
+  }
   const portal = await handlePortal(request, env, path);
   if (portal) return portal;
   const asset = await handleStatic(request, env, path);
