@@ -73,7 +73,9 @@ export const CampaignsView: React.FC = () => {
               }`}>
                 גרסה {camp.version}
               </span>
-              <span className="text-xs text-[#718087]">המרה: {Math.round((camp.conversions_count / camp.clicks_count) * 100)}%</span>
+              <span className="text-xs text-[#718087]">
+                המרה: {camp.clicks_count > 0 ? Math.round((camp.conversions_count / camp.clicks_count) * 100) : 0}%
+              </span>
             </div>
             <h3 className="font-bold text-sm text-[#172b35] mb-1">{camp.name}</h3>
             <p className="text-xs text-[#718087] line-clamp-1">{camp.subject}</p>

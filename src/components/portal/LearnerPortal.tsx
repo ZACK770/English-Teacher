@@ -78,11 +78,11 @@ export const LearnerPortal: React.FC = () => {
   // Customer receipts & minutes
   const myReceipts = receipts.filter(r => r.customer_id === currentCustomer.id);
   const totalMinutes = myReceipts.reduce((acc, r) => acc + (r.minutes - r.spent_seconds / 60), 0);
-  const totalPoints = gameScores.filter(g => g.customer_id === currentCustomer.id).reduce((acc, g) => acc + g.points_earned, 140);
+  const totalPoints = gameScores.filter(g => g.customer_id === currentCustomer.id).reduce((acc, g) => acc + g.points_earned, 0);
 
   // Habit loop state
-  const dailyStreak = 5;
-  const dailyFreeCallsRemaining = 0; // Trigger desire/urgency: 0 left today, upgrade or wait
+  const dailyStreak = gameScores.filter(g => g.customer_id === currentCustomer.id).length > 0 ? 1 : 0;
+  const dailyFreeCallsRemaining = currentCustomer.has_paid ? 0 : 1;
 
   const PRESET_TRACKS = [
     {

@@ -154,6 +154,24 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Clear any legacy mock data from browser localStorage on launch
+  if (typeof window !== 'undefined') {
+    const CLEAN_KEY = 'dibura_clean_launch_v1';
+    if (!localStorage.getItem(CLEAN_KEY)) {
+      [
+        'dibura_customers',
+        'dibura_receipts',
+        'dibura_payment_orders',
+        'dibura_payment_issues',
+        'dibura_callbacks',
+        'dibura_detailed_calls',
+        'dibura_game_scores',
+        'dibura_call_traces'
+      ].forEach(k => localStorage.removeItem(k));
+      localStorage.setItem(CLEAN_KEY, 'true');
+    }
+  }
+
   // Load state from localStorage or initial defaults
   const [bots, setBots] = useState<BotProfile[]>(() => {
     const saved = localStorage.getItem('dibura_bots');
@@ -223,15 +241,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [pbxEvents, setPbxEvents] = useState<PbxEvent[]>(INITIAL_PBX_EVENTS);
   const [callTraces, setCallTraces] = useState<CallTrace[]>(INITIAL_CALL_TRACES);
   const [diagnostics, setDiagnostics] = useState<DiagnosticEvent[]>(INITIAL_DIAGNOSTICS);
-  const [activeAiSessions, setActiveAiSessions] = useState<ActiveAiSession[]>([
-    {
-      call_id: 'call_99812_01',
-      bot_id: 'maya-child',
-      customer_id: 'cust_02',
-      started_at: new Date(Date.now() - 4 * 60000).toISOString(),
-      channel: 'phone_079'
-    }
-  ]);
+  const [activeAiSessions, setActiveAiSessions] = useState<ActiveAiSession[]>([]);
 
   const [callbacks, setCallbacks] = useState<CallbackRequest[]>(() => {
     const saved = localStorage.getItem('dibura_callbacks');

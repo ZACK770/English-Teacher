@@ -232,59 +232,17 @@ Use English for roughly 85-90 percent of the conversation. Speak natural English
 export const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'cust_01',
-    name: 'יוסי כהן',
+    name: 'משתמש בדיקה',
     phone: '052-7698420',
-    source: 'web_campaign',
-    preferred_bot: 'alex-adult',
-    notes: 'מעוניין באנגלית למשא ומתן בנדל״ן מול לקוחות בארה״ב. מתקשר בבקרים.',
-    created_at: '2026-10-12T09:20:00Z',
-    updated_at: '2026-11-04T16:45:00Z',
-    has_paid: true,
-    paid_ils: 450,
-    open_issues: 0,
-    latest_state: 'paid'
-  },
-  {
-    id: 'cust_02',
-    name: 'שירה לוי',
-    phone: '050-1234567',
-    source: 'referral',
-    preferred_bot: 'maya-child',
-    notes: 'תלמידת כיתה ח׳. התחילה מרמה בסיסית מאוד. מתקדמת יפה במשפטי יום-יום.',
-    created_at: '2026-10-18T14:10:00Z',
-    updated_at: '2026-11-03T11:00:00Z',
-    has_paid: true,
-    paid_ils: 220,
-    open_issues: 0,
-    latest_state: 'paid'
-  },
-  {
-    id: 'cust_03',
-    name: 'מנחם פרידמן',
-    phone: '054-9876543',
-    source: 'organic_phone',
-    preferred_bot: 'translator-live',
-    notes: 'משתמש בעיקר בתרגומון לשיחות מול ספקים בינלאומיים.',
-    created_at: '2026-10-25T18:00:00Z',
-    updated_at: '2026-11-02T19:30:00Z',
-    has_paid: true,
-    paid_ils: 180,
-    open_issues: 0,
-    latest_state: 'paid'
-  },
-  {
-    id: 'cust_04',
-    name: 'דבורה גולדברג',
-    phone: '058-4567890',
-    source: 'callback_form',
-    preferred_bot: 'maya-child',
-    notes: 'נרשמה לשיחת היכרות עבור הבת שלה. ביקשה שיתקשרו בשעות הערב.',
-    created_at: '2026-11-04T20:15:00Z',
-    updated_at: '2026-11-04T20:15:00Z',
+    source: 'direct',
+    preferred_bot: 'shochi-robot',
+    notes: 'חשבון ברירת מחדל לבדיקות טלפוניה והתנסות עצמית. זכאי לחבילת היכרות 20 דקות.',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     has_paid: false,
     paid_ils: 0,
-    open_issues: 1,
-    latest_state: 'selected'
+    open_issues: 0,
+    latest_state: 'lead'
   }
 ];
 
@@ -355,18 +313,10 @@ export const INITIAL_ENROLLMENTS: Enrollment[] = [
   {
     id: 'enr_01',
     customer_id: 'cust_01',
-    course_id: 'course_02',
-    lesson_index: 1,
-    status: 'active',
-    updated_at: '2026-11-04T12:00:00Z'
-  },
-  {
-    id: 'enr_02',
-    customer_id: 'cust_02',
     course_id: 'course_01',
-    lesson_index: 2,
+    lesson_index: 0,
     status: 'active',
-    updated_at: '2026-11-03T18:20:00Z'
+    updated_at: new Date().toISOString()
   }
 ];
 
@@ -403,99 +353,14 @@ export const INITIAL_PACKAGES: Package[] = [
   }
 ];
 
-export const INITIAL_RECEIPTS: Receipt[] = [
-  {
-    id: 'rec_01',
-    customer_id: 'cust_01',
-    package_id: 'pkg_standard',
-    product: 'school',
-    reference: 'nedarim:TX-9988221',
-    amount_ils: 550,
-    minutes: 300,
-    spent_seconds: 3600, // 60 minutes used
-    created_at: '2026-10-15T11:00:00Z',
-    expires_at: '2026-12-15T11:00:00Z'
-  },
-  {
-    id: 'rec_02',
-    customer_id: 'cust_02',
-    package_id: 'pkg_starter',
-    product: 'school',
-    reference: 'nedarim:TX-1144778',
-    amount_ils: 220,
-    minutes: 100,
-    spent_seconds: 1800, // 30 minutes used
-    created_at: '2026-10-20T16:30:00Z',
-    expires_at: '2026-11-20T16:30:00Z'
-  },
-  {
-    id: 'rec_03',
-    customer_id: 'cust_03',
-    package_id: 'pkg_translator_free',
-    product: 'translator',
-    reference: 'manual:PAY-BANK-77',
-    amount_ils: 420,
-    minutes: 600,
-    spent_seconds: 2400,
-    created_at: '2026-10-28T09:15:00Z',
-    expires_at: '2027-01-28T09:15:00Z'
-  }
-];
+// Clean launch state: no fake financial transactions or mock receipts
+export const INITIAL_RECEIPTS: Receipt[] = [];
 
-export const INITIAL_PAYMENT_ORDERS: PaymentOrder[] = [
-  {
-    id: 'ord_101',
-    customer_id: 'cust_01',
-    customer_name: 'יוסי כהן',
-    customer_phone: '052-7698420',
-    package_name: 'מסלול מקיף · 300 דקות',
-    product: 'school',
-    amount_agorot: 55000,
-    state: 'paid',
-    pending_review: false,
-    transaction_id: 'NEDARIM-887123',
-    created_at: '2026-10-15T10:58:00Z'
-  },
-  {
-    id: 'ord_102',
-    customer_id: 'cust_02',
-    customer_name: 'שירה לוי',
-    customer_phone: '050-1234567',
-    package_name: 'חבילת היכרות · 100 דקות',
-    product: 'school',
-    amount_agorot: 22000,
-    state: 'paid',
-    pending_review: false,
-    transaction_id: 'NEDARIM-445109',
-    created_at: '2026-10-20T16:25:00Z'
-  },
-  {
-    id: 'ord_103',
-    customer_id: 'cust_04',
-    customer_name: 'דבורה גולדברג',
-    customer_phone: '058-4567890',
-    package_name: 'חבילת היכרות · 100 דקות',
-    product: 'school',
-    amount_agorot: 22000,
-    state: 'awaiting_settlement',
-    pending_review: true,
-    transaction_id: '',
-    created_at: '2026-11-04T18:30:00Z'
-  }
-];
+// Clean launch state: no fake payment orders
+export const INITIAL_PAYMENT_ORDERS: PaymentOrder[] = [];
 
-export const INITIAL_PAYMENT_ISSUES: PaymentIssue[] = [
-  {
-    id: 'iss_01',
-    customer_id: 'cust_04',
-    customer_name: 'דבורה גולדברג',
-    customer_phone: '058-4567890',
-    package_name: 'חבילת היכרות · 100 דקות',
-    message: 'עסקה בבדיקה מעל 15 דקות. הלקוחה דיווחה על תקלת תקשורת במסך הסליקה.',
-    status: 'open',
-    created_at: '2026-11-04T18:45:00Z'
-  }
-];
+// Clean launch state: no fake payment issues
+export const INITIAL_PAYMENT_ISSUES: PaymentIssue[] = [];
 
 export const INITIAL_NARRATIONS: Narration[] = [
   {
@@ -608,321 +473,50 @@ export const INITIAL_PBX_CONFIG: PbxConfig = {
   }
 };
 
-export const INITIAL_PBX_EVENTS: PbxEvent[] = [
-  {
-    id: 'evt_1',
-    at: '2026-11-05T04:12:00Z',
-    route: '/99',
-    latency_ms: 12,
-    caller: '0527698420',
-    digits: '1',
-    response: 'route -> /99/1 (Maya Child Tutor)'
-  },
-  {
-    id: 'evt_2',
-    at: '2026-11-05T03:40:00Z',
-    route: '/99',
-    latency_ms: 15,
-    caller: '0549876543',
-    digits: '2',
-    response: 'route -> /99/2 (Translator Live)'
-  },
-  {
-    id: 'evt_3',
-    at: '2026-11-04T22:15:00Z',
-    route: '/99/9',
-    latency_ms: 19,
-    caller: '0584567890',
-    digits: '3',
-    response: 'route -> /99/3 (Packages & Sales)'
-  }
-];
+// Clean launch state: event logs recorded dynamically from Technoline PBX
+export const INITIAL_PBX_EVENTS: PbxEvent[] = [];
 
-export const INITIAL_DIAGNOSTICS: DiagnosticEvent[] = [
-  {
-    id: 'diag_1',
-    bot_id: 'maya-child',
-    call_id: 'call_99812_01',
-    event_type: 'gemini_connected',
-    created_at: '2026-11-05T04:12:02Z',
-    details: { model: 'gemini-2.0-flash-exp', latency_ms: 220, session_type: 'telephone_live' }
-  },
-  {
-    id: 'diag_2',
-    bot_id: 'maya-child',
-    call_id: 'call_99812_01',
-    event_type: 'first_audio_sent_to_phone',
-    created_at: '2026-11-05T04:12:04Z',
-    details: { elapsed_ms: 840, format: 'pcm_8k_mono' }
-  },
-  {
-    id: 'diag_3',
-    bot_id: 'alex-adult',
-    call_id: 'call_88192_02',
-    event_type: 'turn_complete',
-    created_at: '2026-11-04T16:45:00Z',
-    details: { words_generated: 48, speed_wpm: 145, latency_ms: 310 }
-  }
-];
+// Clean launch state: live connection diagnostics populated during active calls
+export const INITIAL_DIAGNOSTICS: DiagnosticEvent[] = [];
 
-export const INITIAL_CALL_TRACES: CallTrace[] = [
-  {
-    call_id: 'call_99812_01',
-    bot_id: 'maya-child',
-    bot_version: 3,
-    created_at: '2026-11-05T04:12:00Z',
-    summary_he: 'תרגול ברכות והיכרות עצמית. התלמידה אמרה את שמה בהצלחה ושאלה לשלום המורה.',
-    points: 85,
-    system_instruction: 'You are Maya, a warm English tutor for an Israeli eighth-grade girl...',
-    setup_message: {
-      model: 'models/gemini-2.0-flash-exp',
-      generationConfig: { responseModalities: ['AUDIO'] }
-    },
-    latency: [
-      { event_name: 'session_started', since_call_start_ms: 0, since_previous_ms: 0 },
-      { event_name: 'gemini_connected', since_call_start_ms: 220, since_previous_ms: 220 },
-      { event_name: 'first_gemini_audio', since_call_start_ms: 710, since_previous_ms: 490 },
-      { event_name: 'first_audio_sent_to_phone', since_call_start_ms: 840, since_previous_ms: 130 },
-      { event_name: 'tutor_turn_complete', since_call_start_ms: 3400, since_previous_ms: 2560 }
-    ],
-    turns: [
-      { direction: 'output', text: 'שלום שירה! איזה כיף לשמוע אותך היום. נתחיל עם ברכה קצרה באנגלית?', timestamp_ms: 900 },
-      { direction: 'input', text: 'Hello Maya! I am fine.', timestamp_ms: 4800 },
-      { direction: 'output', text: 'כל הכבוד! אמרת את זה מצוין ובביטחון רב: Hello Maya, I am fine! בואי נשאל עכשיו: How are you?', timestamp_ms: 8200 }
-    ]
-  }
-];
+// Clean launch state: call traces populated during phone sessions
+export const INITIAL_CALL_TRACES: CallTrace[] = [];
 
-export const INITIAL_CALLBACKS: CallbackRequest[] = [
-  {
-    id: 'cb_01',
-    name: 'דבורה גולדברג',
-    phone: '058-4567890',
-    for_whom: 'daughter',
-    goal: 'הכנה למבחן באנגלית לכיתה ח׳ ורכישת ביטחון בדיבור',
-    timing: 'scheduled',
-    preferred_time: 'הערב בסביבות 19:30',
-    created_at: '2026-11-04T20:15:00Z',
-    status: 'pending'
-  },
-  {
-    id: 'cb_02',
-    name: 'אביגיל כרמי',
-    phone: '050-8889911',
-    for_whom: 'self',
-    goal: 'ראיון עבודה בחברת הייטק באנגלית',
-    timing: 'now',
-    created_at: '2026-11-05T01:10:00Z',
-    status: 'pending'
-  }
-];
+// Clean launch state: incoming callback leads from web intake
+export const INITIAL_CALLBACKS: CallbackRequest[] = [];
 
-// Rich Study Materials with phone lesson synchronization
+// Clean starter study material available for testing and onboarding
 export const INITIAL_STUDY_MATERIALS: StudyMaterial[] = [
   {
-    id: 'mat_01',
+    id: 'mat_starter',
     customer_id: 'cust_01',
-    title: 'משא ומתן ועסקאות נדל״ן בארה״ב',
-    topic: 'נדל״ן ועסקים',
-    level: 'advanced',
-    raw_text: `Commercial real estate negotiations require precision. Key concepts include capitalization rate (Cap Rate), Net Operating Income (NOI), due diligence period, and escrow agreements.
-When discussing contracts, focus on inspection contingencies, title clearance, and closing costs distribution.`,
-    vocabulary: [
-      { english: 'Cap Rate', hebrew: 'שיעור תשואה מהוון', example: 'The property has an attractive 7.5% Cap Rate.' },
-      { english: 'Due Diligence', hebrew: 'בדיקת נאותות', example: 'We have a 30-day due diligence window.' },
-      { english: 'Contingency', hebrew: 'תנאי מתלה בהסכם', example: 'The deal is subject to financing contingency.' },
-      { english: 'Title Clearance', hebrew: 'טיהור ואימות זכויות הבעלות', example: 'Title clearance was completed yesterday.' },
-      { english: 'Closing Costs', hebrew: 'הוצאות סגירת עסקה', example: 'The buyer and seller agreed to split closing costs.' }
-    ],
-    key_phrases: [
-      { english: 'What is the projected net operating income for year one?', hebrew: 'מהו הרווח התפעולי הנקי החזוי לשנה הראשונה?' },
-      { english: 'We need to amend the inspection clause before signing.', hebrew: 'עלינו לתקן את סעיף הבדיקה לפני החתימה.' },
-      { english: 'The buyer is requesting an extension on the loan commitment.', hebrew: 'הקונה מבקש הארכה להתחייבות ההלוואה.' }
-    ],
-    pedagogical_instructions: 'התמקד בשימוש במונחים המדויקים, תיקון עדין של מילות יחס (in/at/on), ושאל שאלות מאתגרות על תנאי העסקה.',
-    is_active_for_phone: true,
-    created_at: '2026-11-02T10:00:00Z'
-  },
-  {
-    id: 'mat_02',
-    customer_id: 'cust_02',
-    title: 'אוצר מילים: בית ספר ופעילויות יום-יום',
-    topic: 'שגרה ובית ספר',
+    title: 'שיחת היכרות ושגרה יומיומית (First Conversation & Daily Life)',
+    topic: 'היכרות ושגרה',
     level: 'beginner',
-    raw_text: `School daily life: classroom, notebook, homework, teacher, recess, lunchbox.
-Every morning I prepare my backpack and go to school with friends.`,
+    raw_text: `Everyday spoken English: Greetings, introducing yourself, your job, and your daily goals.
+Key phrases: Nice to meet you, I want to improve my spoken English, Could you please repeat that?`,
     vocabulary: [
-      { english: 'Notebook', hebrew: 'מחברת', example: 'Open your notebook on page ten.' },
-      { english: 'Homework', hebrew: 'שיעורי בית', example: 'I finished my English homework early.' },
-      { english: 'Recess', hebrew: 'הפסקה בין שיעורים', example: 'We play in the yard during recess.' },
-      { english: 'Backpack', hebrew: 'ילקוט / תיק בית ספר', example: 'My backpack is green and blue.' },
-      { english: 'Schedule', hebrew: 'מערכת שעות / לוח זמנים', example: 'Check our lesson schedule for tomorrow.' }
+      { english: 'Introduction', hebrew: 'הצגה עצמית / היכרות', example: 'Let us start with a short introduction.' },
+      { english: 'Confidence', hebrew: 'ביטחון בדיבור', example: 'Speaking daily builds confidence.' },
+      { english: 'Fluency', hebrew: 'שטף דיבור', example: 'Practice leads to real conversational fluency.' }
     ],
     key_phrases: [
-      { english: 'May I borrow a pencil, please?', hebrew: 'האם אפשר לשאול עיפרון בבקשה?' },
-      { english: 'Today we have four different subjects.', hebrew: 'היום יש לנו ארבעה מקצועות שונים.' }
+      { english: 'Hello, nice to meet you. I am ready to practice.', hebrew: 'שלום, נעים להכיר. אני מוכן לתרגל.' },
+      { english: 'Could you please explain that in simple words?', hebrew: 'האם תוכל להסביר זאת במילים פשוטות, בבקשה?' }
     ],
-    pedagogical_instructions: 'תרגלי חזרה על מילים בעברית ואנגלית, בקשי ממנה לבנות משפט פשוט עם כל מילה חדשה.',
+    pedagogical_instructions: 'נהל שיחה סבלנית ומעודדת, תקן שגיאות בטוב טעם בעברית, ובקש מהתלמיד לחזור על המשפט הנכון.',
     is_active_for_phone: true,
-    created_at: '2026-11-03T14:30:00Z'
+    created_at: new Date().toISOString()
   }
 ];
 
-// Detailed call records with turn-by-turn analysis, pronunciation, grammar feedback, and audio
-export const INITIAL_DETAILED_CALLS: DetailedCallRecord[] = [
-  {
-    call_id: 'call_live_77102',
-    customer_id: 'cust_01',
-    bot_id: 'alex-adult',
-    bot_name: 'אלכס (המורה שלי)',
-    created_at: '2026-11-04T16:20:00Z',
-    duration_seconds: 780, // 13 minutes
-    points: 92,
-    topic: 'נדל״ן: בדיקת נאותות ומשא ומתן על מחיר',
-    summary_he: 'שיחה מקצועית מצוינת בנושא בדיקת נאותות לנכס מסחרי. יוסי השתמש בביטויים Cap Rate ו-Due diligence באופן טבעי ומדויק.',
-    success_he: 'שליטה טובה במונחים מקצועיים ושטף דיבור מרשים ללא היסוס.',
-    next_step_he: 'להמשיך לתרגל שימוש בצורת העתיד המורכבת (Future Perfect) בסיכום פגישות.',
-    grammar_score: 88,
-    vocabulary_score: 95,
-    fluency_score: 92,
-    turns: [
-      {
-        id: 'turn_1',
-        speaker: 'tutor',
-        text: 'Good afternoon, Yossi! Today we are looking into the commercial property in Miami. Could you tell me what you noticed in the inspection report?',
-        translation_he: 'צהריים טובים, יוסי! היום אנו בודקים את הנכס המסחרי במיאמי. האם תוכל לספר לי מה שמת לב בדוח הבדיקה?',
-        vocab_highlights: ['commercial property', 'inspection report'],
-        timestamp: '16:20:05'
-      },
-      {
-        id: 'turn_2',
-        speaker: 'learner',
-        text: 'Hello Alex. Yes, the report show some problems with the air condition system, so we want discount in the price.',
-        translation_he: 'שלום אלכס. כן, הדוח מראה כמה בעיות עם מערכת המיזוג, לכן אנו רוצים הנחה במחיר.',
-        corrections: [
-          {
-            original: 'the report show',
-            correction: 'the report shows',
-            explanation_he: 'גוף שלישי יחיד (It/The report) מקבל תוספת s בהווה פשוט.'
-          },
-          {
-            original: 'discount in the price',
-            correction: 'a discount on the price / a price concession',
-            explanation_he: 'באנגלית עסקית משתמשים במילת היחס on (discount on), או בביטוי price concession.'
-          }
-        ],
-        timestamp: '16:20:38'
-      },
-      {
-        id: 'turn_3',
-        speaker: 'tutor',
-        text: 'Excellent observation. Exactly right. In business English, you can say: "The report shows several HVAC defects, so we are asking for a price reduction or a seller credit." Try saying that sentence once.',
-        translation_he: 'הבחנה מעולה. בדיוק כך. באנגלית עסקית תוכל לומר: "הדוח מראה מספר פגמי מיזוג, לכן אנו מבקשים הפחתת מחיר או זיכוי מהמוכר". נסה לומר את המשפט הזה פעם אחת.',
-        vocab_highlights: ['HVAC defects', 'price reduction', 'seller credit'],
-        timestamp: '16:21:05'
-      },
-      {
-        id: 'turn_4',
-        speaker: 'learner',
-        text: 'The report shows several HVAC defects, so we are asking for a seller credit during closing.',
-        translation_he: 'הדוח מראה מספר פגמי מיזוג, לכן אנו מבקשים זיכוי מהמוכר בעת סגירת העסקה.',
-        timestamp: '16:21:30'
-      },
-      {
-        id: 'turn_5',
-        speaker: 'tutor',
-        text: 'Outstanding! That sounded completely natural and professional. You have earned 92 points for this round.',
-        translation_he: 'יוצא מן הכלל! זה נשמע טבעי ומקצועי לחלוטין. צברת 92 נקודות לסיבוב זה.',
-        timestamp: '16:21:55'
-      }
-    ]
-  },
-  {
-    call_id: 'call_live_77045',
-    customer_id: 'cust_02',
-    bot_id: 'maya-child',
-    bot_name: 'מאיה (המורה של הבת)',
-    created_at: '2026-11-03T18:00:00Z',
-    duration_seconds: 540, // 9 minutes
-    points: 85,
-    topic: 'שגרה וציוד בית ספר',
-    summary_he: 'שירה תרגלה שמות של ציוד בית ספר ומשפטים פשוטים. זיהתה את כל המילים החדשות במחברת שלה.',
-    success_he: 'ביטחון עצמי מצוין, חזרה על מילים בקול רם ללא חשש.',
-    next_step_he: 'לתרגל משפטי שאלה עם המילה Where (איפה נמצא החפץ).',
-    grammar_score: 82,
-    vocabulary_score: 90,
-    fluency_score: 84,
-    turns: [
-      {
-        id: 'turn_m1',
-        speaker: 'tutor',
-        text: 'שלום שירה המתוקה! איזה כיף לדבר איתך. נפתח את הספר בעמוד עשר?',
-        translation_he: 'Hello sweet Shira! So nice to speak with you. Shall we open the book on page ten?',
-        timestamp: '18:00:05'
-      },
-      {
-        id: 'turn_m2',
-        speaker: 'learner',
-        text: 'Hello Maya! Yes, I have my notebook and my blue pencil.',
-        translation_he: 'שלום מאיה! כן, יש לי את המחברת שלי והעיפרון הכחול שלי.',
-        timestamp: '18:00:25'
-      },
-      {
-        id: 'turn_m3',
-        speaker: 'tutor',
-        text: 'וואו, כל הכבוד! אמרת את זה מושלם: I have my notebook and my blue pencil! ואיך נגיד: "הספר שלי בתוך התיק"? נסי לומר: My book is in the backpack.',
-        translation_he: 'Wow, well done! You said that perfectly! And how do we say "My book is inside the bag"? Try saying: My book is in the backpack.',
-        vocab_highlights: ['backpack', 'in the backpack'],
-        timestamp: '18:00:50'
-      },
-      {
-        id: 'turn_m4',
-        speaker: 'learner',
-        text: 'My book is in the backpack!',
-        translation_he: 'הספר שלי בתוך הילקוט!',
-        timestamp: '18:01:10'
-      }
-    ]
-  }
-];
+// Clean launch state: call recordings and transcripts populated on live calls
+export const INITIAL_DETAILED_CALLS: DetailedCallRecord[] = [];
 
-export const INITIAL_GAME_SCORES: GameScoreRecord[] = [
-  {
-    id: 'score_01',
-    customer_id: 'cust_01',
-    game_type: 'word_match',
-    game_title: 'התאמת מונחי נדל״ן ועסקים',
-    score: 5,
-    total_questions: 5,
-    points_earned: 50,
-    accuracy_pct: 100,
-    completed_at: '2026-11-04T15:30:00Z'
-  },
-  {
-    id: 'score_02',
-    customer_id: 'cust_01',
-    game_type: 'sentence_builder',
-    game_title: 'בניית משפט עסקי: פתיחת משא ומתן',
-    score: 4,
-    total_questions: 4,
-    points_earned: 40,
-    accuracy_pct: 100,
-    completed_at: '2026-11-04T15:45:00Z'
-  },
-  {
-    id: 'score_03',
-    customer_id: 'cust_02',
-    game_type: 'listening_quiz',
-    game_title: 'אתגר שמיעה: פעולות יום-יום',
-    score: 4,
-    total_questions: 5,
-    points_earned: 40,
-    accuracy_pct: 80,
-    completed_at: '2026-11-03T17:15:00Z'
-  }
-];
+// Clean launch state: game scores populated when student practices interactively
+export const INITIAL_GAME_SCORES: GameScoreRecord[] = [];
 
-// Marketing A/B Campaigns from User Brief
+// Marketing Copy Templates (Metrics reset to 0 for launch)
 export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
   {
     id: 'camp_01',
@@ -942,24 +536,23 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
 אז בשביל זה אני כאן!
 אין כמו לדבר בפועל בשביל לדעת. זה בדיוק הדרך שבה קלטת עברית בגיל 3, פשוט דיברת אותה. וזה הקסם שקורה אצלנו.
 
-אני או מורה אחר מהצוות שלנו (נביא לך את הכי טוב, אל תדאג) מדבר איתך כל יום, על נושאים שתבחר: עבודה, תיירות, נדל״ן, או סתם שיח יומיומי. בודק איפה אתה כבר יודע ואיפה לא - ומאפשר לך להתחיל מאפס למאה! תוך פרק זמן קצר! אלפי בוגרים שלנו כבר שולטים באנגלית ברמה מטורפת.
+אני או מורה אחר מהצוות שלנו (נביא לך את הכי טוב, אל תדאג) מדבר איתך בטלפון, על נושאים שתבחר: עבודה, תיירות, נדל״ן, או סתם שיח יומיומי. בודק איפה אתה כבר יודע ואיפה לא - ומאפשר לך להתקדם בדיבור בקצב שלך!
 
 אתה מקבל תכלס:
-1. מורה אישי סבלני.
-2. אפשרות להעלות חומרי לימוד או ספרים שנסרקים למאגר ידע ועליהם נעבוד בטלפון.
-3. פלטפורמת מעקב למידה מדהימה עם משחקונים ותמלילים, עד להצלחה שלך!
+1. מורה אישי סבלני בטלפון ללא צורך במסך.
+2. אפשרות להעלות חומרי לימוד או טקסטים אישיים שעליהם נעבוד בשיחה.
+3. פלטפורמת מעקב למידה מתקדמת עם משחקונים ותמלילים, עד להצלחה שלך!
 
-כמה זה עולה? מה נראה לך, כלום, נכון?!
-מה כ׳פת לי, הרי אני רובוט...
-סתם, באמת שהייתי רוצה, אבל בסוף בסוף יש לי שרת ודברים שעולים כסף. אבל בשביל ההתחלה וההיכרות בינינו:
+כמה זה עולה?
+בשביל ההתחלה וההיכרות בינינו:
 
 קיבלת חבילה בשווי 20 דקות לחודש - מתנה!
 רוצה לדבר איתי? יאללה נתחיל! שלח את המספר שלך ואני כבר מחייג!`,
     cta_label: 'שליחת מספר ושיחה מיידית עם שוכי ←',
-    sent_count: 1450,
-    opened_count: 812,
-    clicks_count: 384,
-    conversions_count: 89
+    sent_count: 0,
+    opened_count: 0,
+    clicks_count: 0,
+    conversions_count: 0
   },
   {
     id: 'camp_02',
@@ -975,20 +568,19 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
 בבית הספר 'לישנא אחרינא' פיתחנו מורות וירטואליות סבלניות בטלפון (כמו מאיה). 
 המורה מתקשרת לבת שלך, משוחחת איתה בעברית רגועה ומלמדת אותה אנגלית צעד-אחר-צעד, בלי לחץ ובלי שיפוטיות.
 
-למה זה עובד בצורה כל כך מדהימה?
+למה זה עובד בצורה כל כך טובה?
 • היא מדברת מהיום הראשון – בדיוק כמו שלמדה עברית כשהייתה פעוטה.
 • את והיא מקבלות גישה לאזור אישי באתר: רואות את כל התמלילים, הציונים והמחמאות.
 • אפשר להעלות את עמודי הספר או שיעורי הבית מבית הספר – והמורה בטלפון תתרגל בדיוק את החומר הזה!
 
-בשל מגבלת משאבי שרת, פתחנו 50 חבילות היכרות לחודש הקרוב במתנה מוחלטת (שווי 20 דק׳ תרגול).
-כל הקודם זוכה.
+פתחנו 50 חבילות היכרות לחודש הקרוב במתנה מוחלטת (שווי 20 דק׳ תרגול).
 
 השאירי עכשיו את מספר הטלפון והמורה תחייג אליכם להכיר.`,
     cta_label: 'שריון חבילת מתנה ושיחת היכרות ←',
-    sent_count: 1200,
-    opened_count: 730,
-    clicks_count: 410,
-    conversions_count: 112
+    sent_count: 0,
+    opened_count: 0,
+    clicks_count: 0,
+    conversions_count: 0
   }
 ];
 

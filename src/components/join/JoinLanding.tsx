@@ -105,8 +105,9 @@ export const JoinLanding: React.FC = () => {
                     <Bot className="w-4 h-4" />
                     <span>הכר את שוכי · מורה ה-AI האישי שלך בטלפון</span>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-full text-xs font-bold animate-pulse">
-                    <span>🔥 נותרו 7 חבילות מתנה בלבד להיום (מתוך 50)!</span>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-emerald-400 border border-slate-800 rounded-full text-xs font-mono">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>קו טלפוני 079-5000-880 · שלוחה 99</span>
                   </div>
                 </div>
 
@@ -116,7 +117,7 @@ export const JoinLanding: React.FC = () => {
                 </h1>
 
                 {/* Interactive Live Shochi Voice Tester Widget */}
-                <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-emerald-500/10 border-2 border-indigo-300 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 text-slate-100 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
@@ -131,22 +132,22 @@ export const JoinLanding: React.FC = () => {
                           }
                         } catch (e) {}
                       }}
-                      className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition shadow-md shrink-0 active:scale-95"
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition shadow-md shrink-0 active:scale-95"
                     >
-                      <Volume2 className="w-4 h-4 animate-bounce" />
-                      <span>השמע דגימת קול של שוכי (5 שניות) 🔊</span>
+                      <Volume2 className="w-4 h-4 text-emerald-100" />
+                      <span>השמע דגימת קול של שוכי (דפדפן)</span>
                     </button>
                     <div>
-                      <div className="font-extrabold text-xs text-slate-800">דגימת דיבור חיה בדפדפן</div>
-                      <div className="text-[11px] text-slate-500">שמע בעצמך איך המורה נשמע בשיחת טלפון אמיתית</div>
+                      <div className="font-extrabold text-xs text-slate-100">דגימת דיבור מקומית בדפדפן</div>
+                      <div className="text-[11px] text-slate-400">איכות שמע ודיבור מבוסס בינה מלאכותית לקראת שיחת הטלפון</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="h-4 w-1 bg-indigo-500 rounded-full animate-pulse"></span>
-                    <span className="h-6 w-1 bg-purple-500 rounded-full animate-pulse delay-75"></span>
-                    <span className="h-3 w-1 bg-emerald-500 rounded-full animate-pulse delay-150"></span>
-                    <span className="h-7 w-1 bg-indigo-600 rounded-full animate-pulse delay-100"></span>
-                    <span className="h-4 w-1 bg-purple-600 rounded-full animate-pulse delay-200"></span>
+                    <span className="h-4 w-1 bg-emerald-400 rounded-full animate-pulse"></span>
+                    <span className="h-6 w-1 bg-emerald-500 rounded-full animate-pulse delay-75"></span>
+                    <span className="h-3 w-1 bg-emerald-300 rounded-full animate-pulse delay-150"></span>
+                    <span className="h-7 w-1 bg-emerald-400 rounded-full animate-pulse delay-100"></span>
+                    <span className="h-4 w-1 bg-emerald-500 rounded-full animate-pulse delay-200"></span>
                   </div>
                 </div>
 
@@ -233,15 +234,17 @@ export const JoinLanding: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Urgency Counter */}
-                <div className="p-4 rounded-2xl bg-[#fff0ee] border border-[#efc8c3] flex items-center gap-4 text-xs text-[#b83b49]">
-                  <Clock className="w-8 h-8 shrink-0 text-[#b83b49]" />
+                {/* Benefit Box */}
+                <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 text-slate-100 flex items-center gap-4 text-xs">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-950 border border-emerald-700/50 text-emerald-400 flex items-center justify-center shrink-0">
+                    <Gift className="w-5 h-5" />
+                  </div>
                   <div>
-                    <h4 className="font-extrabold text-sm text-[#b83b49]">
-                      נותרו 50 חבילות היכרות ומתנה לחודש הקרוב (כל הקודם זוכה)
+                    <h4 className="font-extrabold text-sm text-slate-100">
+                      20 דקות שיעור ראשונות במתנה מלאה
                     </h4>
-                    <p className="text-slate-600 mt-0.5">
-                      עקב מגבלת מכסות שרת שיחה, אנו מעניקים 20 דקות שיחה מתנה ל-50 הנרשמים הראשונים בלבד.
+                    <p className="text-slate-400 mt-0.5">
+                      התנסות טלפונית ישירה עם המורה מאיה, ללא עלות וללא צורך בהזנת כרטיס אשראי.
                     </p>
                   </div>
                 </div>

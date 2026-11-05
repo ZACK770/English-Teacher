@@ -40,19 +40,19 @@ export const OverviewView: React.FC<{ onNavigate: (page: string) => void }> = ({
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-[#e3e8eb] shadow-2xs">
-          <span className="text-xs text-[#718087] block">עלות AI משוערת</span>
+          <span className="text-xs text-[#718087] block">דקות שיחה מתועדות</span>
           <span className="text-3xl font-black text-[#172b35] tabular-nums block mt-1.5">
-            ₪84.50
+            0
           </span>
-          <span className="text-[11px] text-[#718087] block mt-1">אומדן שימוש • Gemini 2.0 Live</span>
+          <span className="text-[11px] text-[#718087] block mt-1">מתועד בשרת טכנוליין</span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-[#e3e8eb] shadow-2xs">
-          <span className="text-xs text-[#718087] block">עודף כספי ידוע</span>
+          <span className="text-xs text-[#718087] block">עודף כספי רשום</span>
           <span className="text-3xl font-black text-[#137c69] tabular-nums block mt-1.5">
-            ₪{(totalReceiptsIls - 84.5 - 350).toLocaleString()}
+            ₪{totalReceiptsIls.toLocaleString()}
           </span>
-          <span className="text-[11px] text-[#137c69] font-bold block mt-1">לפני הוצאות שלא הוזנו</span>
+          <span className="text-[11px] text-[#137c69] font-bold block mt-1">סך הכנסות מקבלות</span>
         </div>
       </div>
 
