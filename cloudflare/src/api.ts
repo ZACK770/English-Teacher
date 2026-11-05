@@ -7,6 +7,7 @@ import { IVRCopySchema, getCopy, narrationForSlot } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
 import { renderNarration } from "./learn";
+import { syncCrm } from "./crm";
 
 const ROLES = ["teacher", "translator", "sales", "service", "custom"] as const;
 const channel = z.string().max(200).nullable().optional().transform((v) => (v ?? "").trim() || null);
@@ -129,6 +130,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   const payments = new PaymentStore(b);
   const seg = path.split("/").slice(1).map(decodeURIComponent);
   const ok = (v: unknown, status = 200) => Response.json(v, { status });
+  if (path === "/v1/admin/crm/sync" && method === "POST") return ok(await syncCrm(env));
 
   if (path === "/v1/admin/profiles" && method === "GET") return ok({ profiles: await progress.listBots() });
 

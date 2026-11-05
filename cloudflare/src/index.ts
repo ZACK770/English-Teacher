@@ -3,6 +3,7 @@ import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
 import { webTurn } from "./learn";
+import { syncCrm } from "./crm";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -60,5 +61,8 @@ export default {
       if (error instanceof HttpError) return Response.json({ detail: error.detail }, { status: error.status });
       return Response.json({ detail: "Request failed" }, { status: 500 });
     }
+  },
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(syncCrm(env).catch(() => undefined));
   },
 };
