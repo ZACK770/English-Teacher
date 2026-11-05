@@ -2,7 +2,7 @@ const PREFIX = "/english";
 const UPSTREAM = "https://english-engine.a0527698420.workers.dev";
 export function rewriteText(text) {
   return text.replaceAll(UPSTREAM, PREFIX)
-    .replace(/(["'`])\/(?!\/|english(?:\/|["'`]))/g, "$1" + PREFIX + "/")
+    .replace(/(["'`])\/(?=(?:v1|console-assets)(?:\/|["'`])|(?:dashboard|learn|join|healthz|readyz)(?:[/?#"'`]))/g, "$1" + PREFIX + "/")
     .replace(/url\(\s*\/(?!\/|english\/)/g, "url(" + PREFIX + "/");
 }
 export default {
