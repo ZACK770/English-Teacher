@@ -18,7 +18,10 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
-  Play
+  Play,
+  Share2,
+  Camera,
+  FileCheck
 } from 'lucide-react';
 import { WordMatchGame } from '../games/WordMatchGame';
 import { SentenceBuilderGame } from '../games/SentenceBuilderGame';
@@ -80,6 +83,83 @@ export const LearnerPortal: React.FC = () => {
   // Habit loop state
   const dailyStreak = 5;
   const dailyFreeCallsRemaining = 0; // Trigger desire/urgency: 0 left today, upgrade or wait
+
+  const PRESET_TRACKS = [
+    {
+      id: 'job-interview',
+      title: 'הכנה לראיון הייטק ושיווק (Job Interview)',
+      topic: 'קריירה ועבודה',
+      level: 'advanced' as const,
+      desc: 'שאלות STAR, תיאור פרויקטים ומשא ומתן על שכר מול מראיין אמריקאי',
+      icon: '💼',
+      sampleText: `Core Competencies:
+Stakeholder management - ניהול בעלי עניין
+Scalability - יכולת הרחבה וגידול
+Trade-off - פשרה או ויתור מחושב
+Compensation expectations - ציפיות שכר ותגמול
+Key Phrases:
+Could you walk me through your previous experience?
+I led a cross-functional team that scaled our user base by forty percent.`
+    },
+    {
+      id: 'travel-airport',
+      title: 'אנגלית לחו״ל: טיסות, מלונות והשכרת רכב',
+      topic: 'תיירות וטיסות',
+      level: 'beginner' as const,
+      desc: 'צ׳ק אין, בידוק דרכונים, הזמנה במסעדה, מוניות והתמצאות',
+      icon: '✈️',
+      sampleText: `Travel Vocabulary:
+Boarding pass - כרטיס עלייה למטוס
+Baggage claim - איסוף מזוודות
+Reservation - הזמנה מראש
+Could we get the check, please? - אפשר בבקשה חשבון?
+Key Phrases:
+Excuse me, which gate is for flight three forty two?
+We would like to request a late check-out tomorrow morning.`
+    },
+    {
+      id: 'real-estate',
+      title: 'עסקאות נדל״ן, מכירות ומשא ומתן',
+      topic: 'עסקים ונדל״ן',
+      level: 'intermediate' as const,
+      desc: 'שיחת מכירה, תנאי חוזה, תשואה ולוחות זמנים עם משקיעים',
+      icon: '🏢',
+      sampleText: `Real Estate Vocabulary:
+Property appraisal - שמאות והערכת שווי נכס
+Yield / ROI - תשואה על ההשקעה
+Closing conditions - תנאי סגירת עסקה
+Down payment - מקדמה ראשונית
+Key Phrases:
+What is the projected net yield for this residential asset?
+Let us review the binding clause before signing the contract.`
+    },
+    {
+      id: 'small-talk',
+      title: 'שיחה חופשית וביטחון עצמי (Small Talk)',
+      topic: 'שיחה יומיומית',
+      level: 'beginner' as const,
+      desc: 'שבירת הקרח, שיחה על תחביבים ומזג אוויר בלי פחד מטעות',
+      icon: '☕',
+      sampleText: `Daily Vocabulary:
+In my spare time - בזמני הפנוי
+To be honest - למען האמת
+What do you do for a living? - במה אתה עוסק?
+Key Phrases:
+It is wonderful to meet you.
+I have been working on improving my spoken English recently.`
+    }
+  ];
+
+  const handleActivatePresetTrack = (track: typeof PRESET_TRACKS[0]) => {
+    const mat = addStudyMaterial({
+      title: track.title,
+      topic: track.topic,
+      level: track.level,
+      rawText: track.sampleText
+    });
+    toggleMaterialActiveForPhone(mat.id);
+    showToast(`מסלול "${track.title}" הופעל וסונכרן לשיחת הטלפון הבאה מול שוכי!`);
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -351,6 +431,39 @@ Please ensure all deliverables are reviewed before Friday.`);
               </div>
             )}
 
+            {/* Preset Accelerator Tracks */}
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-extrabold text-sm text-[#172b35] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <span>מסלולי שיחה מוכנים בלחיצת כפתור (הפעל לשיחה הטלפונית הבאה)</span>
+                </h3>
+                <span className="text-xs text-[#718087]">תבניות תרגול מובנות לשיחה עם שוכי</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {PRESET_TRACKS.map(track => (
+                  <div
+                    key={track.id}
+                    className="p-4 bg-white border border-[#e3e8eb] hover:border-indigo-400 hover:shadow-sm rounded-xl transition flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="text-2xl mb-1.5">{track.icon}</div>
+                      <h4 className="font-bold text-xs text-[#172b35] line-clamp-1">{track.title}</h4>
+                      <p className="text-[11px] text-[#718087] mt-1 line-clamp-2 leading-relaxed">{track.desc}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleActivatePresetTrack(track)}
+                      className="mt-3 w-full py-1.5 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1"
+                    >
+                      <PhoneCall className="w-3 h-3" />
+                      <span>הפעל לשיחה הבאה</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Materials Grid */}
             {myMaterials.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-[#e3e8eb] rounded-2xl">
@@ -579,6 +692,28 @@ Please ensure all deliverables are reviewed before Friday.`);
                               <strong>בשיעור הבא:</strong> {call.next_step_he}
                             </p>
                           </div>
+                        </div>
+
+                        {/* WhatsApp / SMS Habit Summary Trigger */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs">
+                          <div className="text-emerald-900">
+                            <strong>סגירת מעגל ההרגל:</strong> שלחו לתלמיד סיכום קצר של נקודות המפתח וקישור ישיר למשחקון 60 שניות.
+                          </div>
+                          <a
+                            href={`https://wa.me/?text=${encodeURIComponent(
+                              `*סיכום שיחת אנגלית עם שוכי 🤖*\n` +
+                              `משך השיחה: ${call.duration_seconds} שניות | ציון דקדוק: ${call.grammar_score}%\n\n` +
+                              `💡 *מה הצלחנו היום:* ${call.success_he}\n` +
+                              `🎯 *בשיעור הבא נתרגל:* ${call.next_step_he}\n\n` +
+                              `🔗 לחץ כאן למשחקון קצרצר של 60 שניות לבדוק שהמילים נחרטו בזיכרון: https://the-impact.net/english/learn#games`
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition shadow-xs"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            <span>שליחת סיכום ומשחקון בוואטסאפ 📱</span>
+                          </a>
                         </div>
 
                         {/* Turn-by-Turn Bubbles */}

@@ -115,9 +115,14 @@ export const CustomersView: React.FC = () => {
                           שולם • ₪{c.paid_ils}
                         </span>
                       ) : (
-                        <span className="bg-[#f5f6f8] text-[#718087] px-2 py-0.5 rounded text-[11px]">
-                          ללא תשלום רשום
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className="bg-[#f5f6f8] text-[#718087] px-2 py-0.5 rounded text-[11px]">
+                            חבילת מתנה 20 דק'
+                          </span>
+                          <span className="bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px]">
+                            🔥 ליד חם לשדרוג
+                          </span>
+                        </div>
                       )}
                     </td>
                     <td className="py-3.5 px-4 text-[#718087]">{c.source}</td>
@@ -183,6 +188,38 @@ export const CustomersView: React.FC = () => {
                   <Copy className="w-3.5 h-3.5" />
                   <span>העתק קישור אישי</span>
                 </button>
+              </div>
+
+              {/* Hot Lead Upsell Action Box */}
+              <div className="p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="font-extrabold text-amber-900 block">
+                    🔥 מנוע המרה ושדרוג (Nedarim Plus + CRM מרחב)
+                  </span>
+                  <p className="text-amber-800 mt-0.5 text-[11px]">
+                    הלקוח זכאי להצעה: חבילת 100 דקות ב-220 ₪ או 300 דקות ב-550 ₪.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`https://nedar.im/pay/school?customer=${selectedCustomer.id}&phone=${selectedCustomer.phone}&pkg=pkg_school_100`);
+                      showToast('קישור סליקת נדרים פלוס הועתק ללוח!');
+                    }}
+                    className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-xl font-bold transition text-[11px]"
+                  >
+                    העתק קישור סליקה
+                  </button>
+                  <button
+                    onClick={() => {
+                      showToast(`הופעלה שיחת מכירה משוכי (שלוחה 99/3) למספר ${selectedCustomer.phone}!`);
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1 text-[11px]"
+                  >
+                    <PhoneCall className="w-3 h-3" />
+                    <span>שיחת מכירה משוכי</span>
+                  </button>
+                </div>
               </div>
 
               {/* Balances */}

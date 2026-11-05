@@ -21,8 +21,19 @@ export async function syncCrm(env: Env): Promise<Record<string, unknown>> {
   for (const id of customerIds) {
     const phone = await env.DB.prepare("SELECT phone FROM customer_phones WHERE customer_id=?").bind(id).first<{ phone: string }>();
     const record = await b.record("customers", id);
-    const name = record?.name && record.name !== "לקוח מהטלפון" ? String(record.name).slice(0, 200) : "";
-    events.push({ type: "customer", customer_id: id, phone: phone?.phone ?? "", name });
+    const freeSecondsUsed = calls
+      .filter((c) => c.student_id === id && !c.receipt_id)
+      .reduce((acc, c) => acc + (Number(c.duration_seconds) || 0), 0);
+    const isTrialExhausted = freeSecondsUsed >= 1200;
+    events.push({
+      type: "customer",
+      customer_id: id,
+      phone: phone?.phone ?? "",
+      name,
+      trial_exhausted: isTrialExhausted,
+      lead_status: isTrialExhausted ? "TRIAL_EXHAUSTED_HOT_LEAD" : (freeSecondsUsed > 0 ? "IN_TRIAL" : "NEW_LEAD"),
+      free_minutes_used: Math.round(freeSecondsUsed / 60)
+    });
   }
   for (const c of calls) {
     events.push({

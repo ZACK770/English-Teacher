@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/AppContext';
-import { PhoneCall, Bot, Gift, CheckCircle, ShieldCheck, Clock, Sparkles, Star, Users } from 'lucide-react';
+import { PhoneCall, Bot, Gift, CheckCircle, ShieldCheck, Clock, Sparkles, Star, Users, Volume2 } from 'lucide-react';
 
 export const JoinLanding: React.FC = () => {
   const { submitCallbackRequest } = useApp();
@@ -100,15 +100,55 @@ export const JoinLanding: React.FC = () => {
             {variation === 'A' ? (
               /* VARIATION A: Shochi Robot Direct Pitch */
               <>
-                <div className="inline-flex items-center gap-2 bg-[#e9f5f0] text-[#137c69] px-3.5 py-1.5 rounded-full text-xs font-bold">
-                  <Bot className="w-4 h-4" />
-                  <span>הכר את שוכי · מורה ה-AI האישי שלך בטלפון</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-2 bg-[#e9f5f0] text-[#137c69] px-3.5 py-1.5 rounded-full text-xs font-bold">
+                    <Bot className="w-4 h-4" />
+                    <span>הכר את שוכי · מורה ה-AI האישי שלך בטלפון</span>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-full text-xs font-bold animate-pulse">
+                    <span>🔥 נותרו 7 חבילות מתנה בלבד להיום (מתוך 50)!</span>
+                  </div>
                 </div>
 
                 <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-[#172b35] leading-tight tracking-tight">
                   ״היי, אני שוכי. אני לא בן אדם.<br />
                   <span className="text-[#137c69]">כן, אני רובוט...</span> אבל גם רובוטים צריכים להתפרנס!״
                 </h1>
+
+                {/* Interactive Live Shochi Voice Tester Widget */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-emerald-500/10 border-2 border-indigo-300 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          if ('speechSynthesis' in window) {
+                            window.speechSynthesis.cancel();
+                            const u = new SpeechSynthesisUtterance("Hey there! Yes, it's me, Shochi the robot teacher. See how natural and clear I sound? Put your phone number below and let's start your free 20-minute gift lesson right now!");
+                            u.lang = 'en-US';
+                            u.rate = 1.0;
+                            window.speechSynthesis.speak(u);
+                          }
+                        } catch (e) {}
+                      }}
+                      className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition shadow-md shrink-0 active:scale-95"
+                    >
+                      <Volume2 className="w-4 h-4 animate-bounce" />
+                      <span>השמע דגימת קול של שוכי (5 שניות) 🔊</span>
+                    </button>
+                    <div>
+                      <div className="font-extrabold text-xs text-slate-800">דגימת דיבור חיה בדפדפן</div>
+                      <div className="text-[11px] text-slate-500">שמע בעצמך איך המורה נשמע בשיחת טלפון אמיתית</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-4 w-1 bg-indigo-500 rounded-full animate-pulse"></span>
+                    <span className="h-6 w-1 bg-purple-500 rounded-full animate-pulse delay-75"></span>
+                    <span className="h-3 w-1 bg-emerald-500 rounded-full animate-pulse delay-150"></span>
+                    <span className="h-7 w-1 bg-indigo-600 rounded-full animate-pulse delay-100"></span>
+                    <span className="h-4 w-1 bg-purple-600 rounded-full animate-pulse delay-200"></span>
+                  </div>
+                </div>
 
                 <div className="p-5 rounded-2xl bg-white border border-[#e3e8eb] shadow-xs text-sm leading-relaxed text-[#2c3e50] space-y-3.5">
                   <p>
@@ -320,7 +360,28 @@ export const JoinLanding: React.FC = () => {
                 )}
 
                 <div>
-                  <label className="font-bold text-[#172033] block mb-1">מה המטרה המרכזית שלך באנגלית? (לא חובה)</label>
+                  <label className="font-bold text-[#172033] block mb-1">מה המטרה המרכזית שלך באנגלית? (בחר נושא או כתוב):</label>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {[
+                      { label: '💼 ראיון עבודה בהייטק', val: 'הכנה לראיון עבודה באנגלית' },
+                      { label: '✈️ שדות תעופה ומלון', val: 'אנגלית לחו״ל, טיסות ומלונות' },
+                      { label: '🏢 עסקאות ונדל״ן', val: 'אנגלית עסקית, מכירות ונדל״ן' },
+                      { label: '💬 שיחה יומיומית שוטפת', val: 'ביטחון עצמי ושיחה שוטפת' },
+                    ].map(chip => (
+                      <button
+                        key={chip.val}
+                        type="button"
+                        onClick={() => setGoal(chip.val)}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-medium border transition ${
+                          goal === chip.val
+                            ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
                   <input
                     type="text"
                     value={goal}
