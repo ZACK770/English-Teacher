@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node -e \"const fs=require('fs'); fs.mkdirSync('cloudflare/dist', {recursive:true}); fs.cpSync('dist', 'cloudflare/dist', {recursive:true});\"",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },
