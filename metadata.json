@@ -1,6 +1,6 @@
 {
-  "name": "דיבורא · English Voice School & Management Console",
-  "description": "Interactive Hebrew/English AI voice school management console, student learning portal, and PBX telephony routing system.",
+  "name": "לישנא אחרינא · בית ספר לאנגלית מדוברת בטלפון ובמחשב",
+  "description": "בית ספר ללימוד אנגלית מדוברת בזמן אמת בטלפון ובמחשב. מורה פרטי אישי (שוכי), אימון קולי ישיר, העלאת חומרי לימוד וסנכרון מרכזיית טכנוליין.",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ],

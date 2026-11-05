@@ -51,32 +51,32 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
   ];
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-slate-50">
+    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-[#0b0f17]">
       {/* Sidebar */}
       <aside
         className={`${
           sidebarOpen ? 'w-64' : 'w-20'
-        } bg-white border-l border-slate-200 flex flex-col transition-all duration-300 shrink-0 shadow-xs z-10`}
+        } bg-slate-900 border-l border-slate-800 flex flex-col transition-all duration-300 shrink-0 shadow-xl z-10`}
       >
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           {sidebarOpen ? (
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-sm">
                 ד
               </div>
               <div>
-                <div className="text-xs font-bold text-slate-800">קונסולת ניהול עסקית</div>
-                <div className="text-[10px] text-slate-400">לישנא אחרינא · 079-5000-880</div>
+                <div className="text-xs font-bold text-slate-100">קונסולת ניהול עסקית</div>
+                <div className="text-[10px] text-emerald-400 font-mono">076-567-3575 #99</div>
               </div>
             </div>
           ) : (
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm mx-auto">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-sm mx-auto">
               ד
             </div>
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition hidden sm:block"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition hidden sm:block"
           >
             <ChevronLeft className={`w-4 h-4 transition-transform ${sidebarOpen ? '' : 'rotate-180'}`} />
           </button>
@@ -91,10 +91,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
               <button
                 key={item.id}
                 onClick={() => onSelectTab(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition ${
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition cursor-pointer ${
                   isActive
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
                 }`}
                 title={!sidebarOpen ? item.label : undefined}
               >
@@ -107,7 +107,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
                         className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
                           isActive
                             ? 'bg-white/20 text-white'
-                            : 'bg-indigo-50 text-indigo-700'
+                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                         }`}
                       >
                         {item.badge}
@@ -128,15 +128,15 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
 
         {/* Footer info in sidebar */}
         {sidebarOpen && (
-          <div className="p-3 border-t border-slate-100 bg-slate-50/50 m-2 rounded-xl text-[11px] text-slate-500">
-            <div className="font-semibold text-slate-700 mb-0.5">גרסת מערכת v3.4.0</div>
-            <div>סנכרון פעיל: טכנוליין + נדרים</div>
+          <div className="p-3 border-t border-slate-800 bg-slate-950/60 m-2 rounded-xl text-[11px] text-slate-400">
+            <div className="font-semibold text-slate-200 mb-0.5">גרסת מערכת v3.4.0</div>
+            <div className="text-emerald-400 font-mono text-[10px]">טכנוליין 0765673575 #99</div>
           </div>
         )}
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-6 bg-slate-50">
+      <main className="flex-1 overflow-y-auto p-6 bg-[#0b0f17]">
         <div className="max-w-7xl mx-auto">
           {currentTab === 'overview' && <OverviewView onNavigate={onSelectTab} />}
           {currentTab === 'campaigns' && <CampaignsView />}

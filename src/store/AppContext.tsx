@@ -124,6 +124,7 @@ interface AppContextType {
   toggleMaterialActiveForPhone: (materialId: string) => void;
   deleteStudyMaterial: (materialId: string) => void;
   recordGameResult: (result: { game_type: GameType; game_title: string; score: number; total_questions: number; points_earned: number; accuracy_pct: number }) => void;
+  recordDetailedCall: (call: DetailedCallRecord) => void;
   sendLearnerMessage: (text: string, botId: string, mode: 'course' | 'free' | 'translation', targetLang?: string) => Promise<{ replyText: string; translationHe: string; audioUrl?: string; corrections?: Array<{ original: string; correction: string; explanation_he: string }>; pointsEarned: number }>;
 
   // Convenience & Telephony Helpers
@@ -673,6 +674,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast(`מעולה! הרווחת ${result.points_earned} נקודות במשחק.`);
   };
 
+  const recordDetailedCall = (call: DetailedCallRecord) => {
+    setDetailedCalls(prev => [call, ...prev]);
+    showToast(`השיחה נשמרה ביומן האישי! צברת ${call.points} נקודות.`);
+  };
+
   const sendLearnerMessage = async (
     text: string,
     botId: string,
@@ -948,6 +954,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toggleMaterialActiveForPhone,
         deleteStudyMaterial,
         recordGameResult,
+        recordDetailedCall,
         sendLearnerMessage,
         currentCustomer,
         streak,

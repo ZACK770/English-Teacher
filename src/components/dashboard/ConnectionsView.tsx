@@ -34,19 +34,19 @@ export const ConnectionsView: React.FC = () => {
 
           <div className="space-y-3 text-xs">
             <div>
-              <label className="font-semibold text-slate-600 block mb-1">WebSocket Audio Stream URL</label>
+              <label className="font-semibold text-slate-600 block mb-1">WebSocket Audio Stream URL (WSS)</label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   readOnly
-                  value="wss://english-teacher-live.onrender.com/api/technoline/stream"
+                  value="wss://english.the-impact.net/v1/technoline/stream"
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px]"
                 />
                 <button
                   onClick={() =>
                     copyToClipboard(
                       'ws',
-                      'wss://english-teacher-live.onrender.com/api/technoline/stream'
+                      'wss://english.the-impact.net/v1/technoline/stream'
                     )
                   }
                   className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50"
@@ -57,9 +57,32 @@ export const ConnectionsView: React.FC = () => {
             </div>
 
             <div>
-              <label className="font-semibold text-slate-600 block mb-1">Technoline Channel ID</label>
+              <label className="font-semibold text-slate-600 block mb-1">IVR Routing Callback Webhook (HTTPS POST)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value="https://english.the-impact.net/v1/technoline/ivr/school"
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px]"
+                />
+                <button
+                  onClick={() =>
+                    copyToClipboard(
+                      'webhook',
+                      'https://english.the-impact.net/v1/technoline/ivr/school'
+                    )
+                  }
+                  className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50"
+                >
+                  {copied === 'webhook' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="font-semibold text-slate-600 block mb-1">Technoline Authorized System Phone</label>
               <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px] text-slate-700">
-                TECH-ISRAEL-CH-99-PROD
+                0765673575 (Subtree /99 ONLY)
               </div>
             </div>
 
@@ -91,14 +114,14 @@ export const ConnectionsView: React.FC = () => {
                 <input
                   type="text"
                   readOnly
-                  value="https://english-teacher-live.onrender.com/api/payments/nedarim/callback"
+                  value="https://english.the-impact.net/v1/payments/nedarim/callback"
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px]"
                 />
                 <button
                   onClick={() =>
                     copyToClipboard(
                       'nedarim',
-                      'https://english-teacher-live.onrender.com/api/payments/nedarim/callback'
+                      'https://english.the-impact.net/v1/payments/nedarim/callback'
                     )
                   }
                   className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50"
@@ -113,9 +136,9 @@ export const ConnectionsView: React.FC = () => {
             </div>
 
             <div>
-              <label className="font-semibold text-slate-600 block mb-1">קוד מוסד (Mosad ID)</label>
+              <label className="font-semibold text-slate-600 block mb-1">קוד מוסד (Mosad ID - docs/technoline-integration.md)</label>
               <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px] text-slate-700">
-                NED-770-ENGLISH-SCH
+                7019554 (Dibura)
               </div>
             </div>
 
