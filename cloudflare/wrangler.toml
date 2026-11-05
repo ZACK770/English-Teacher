@@ -1,0 +1,30 @@
+name = "english-engine"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[assets]
+directory = "../app/static"
+binding = "ASSETS"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "english-engine"
+database_id = "240c0754-3fc2-4da9-8d6e-72df75faa3a1"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "CALLS"
+class_name = "CallSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CallSession"]
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+[observability]
+enabled = true
