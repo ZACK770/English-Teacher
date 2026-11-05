@@ -10,7 +10,7 @@ export { CallSession } from "./call";
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const s = settings(env);
-  const path = url.pathname;
+  const path = url.pathname.replace(/^\/english(\/|$)/, "/") || "/";
   if (path === "/healthz") return Response.json({ status: "ok", service: "english-engine" });
   if (path === "/") return Response.json({ service: "English school voice engine", health: "/healthz", websocket: "/v1/technoline/stream", status: "test deployment" });
   if (path === "/readyz") {
