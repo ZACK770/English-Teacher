@@ -57,10 +57,21 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const assetPath = rawPath.includes("/assets/")
         ? rawPath.slice(rawPath.indexOf("/assets/"))
         : "/" + rawPath.split("/").pop();
-      const assetReq = new Request(new URL(assetPath, request.url), request);
-      const resp = await env.ASSETS.fetch(assetReq);
-      if (resp.status < 400) return resp;
-      return new Response("Asset not found", { status: 404 });
+      const assetUrl = new URL(assetPath, request.url);
+      const resp = await env.ASSETS.fetch(new Request(assetUrl));
+      if (resp.status < 400) {
+        const headers = new Headers(resp.headers);
+        if (assetPath.endsWith(".js")) {
+          headers.set("Content-Type", "application/javascript; charset=utf-8");
+        } else if (assetPath.endsWith(".css")) {
+          headers.set("Content-Type", "text/css; charset=utf-8");
+        }
+        return new Response(resp.body, { status: resp.status, headers });
+      }
+      return new Response("/* asset not found */", {
+        status: 404,
+        headers: { "Content-Type": assetPath.endsWith(".js") ? "application/javascript" : "text/plain" }
+      });
     }
 
     const exactResp = await env.ASSETS.fetch(request);
@@ -72,7 +83,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
         return new Response(indexResp.body, {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
           },
         });
       }
