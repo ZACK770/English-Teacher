@@ -50,8 +50,22 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const turn = path.match(/^\/v1\/bots\/([a-z][a-z0-9-]{1,62})\/turn$/);
   if (turn && request.method === "POST") return webTurn(request, env, s, turn[1]);
   if (env.ASSETS) {
-    const assetResp = await env.ASSETS.fetch(request);
-    if (assetResp.status < 400) return assetResp;
+    const rawPath = url.pathname;
+    const isAsset = rawPath.includes("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|map)$/i.test(rawPath);
+
+    if (isAsset) {
+      const assetPath = rawPath.includes("/assets/")
+        ? rawPath.slice(rawPath.indexOf("/assets/"))
+        : "/" + rawPath.split("/").pop();
+      const assetReq = new Request(new URL(assetPath, request.url), request);
+      const resp = await env.ASSETS.fetch(assetReq);
+      if (resp.status < 400) return resp;
+      return new Response("Asset not found", { status: 404 });
+    }
+
+    const exactResp = await env.ASSETS.fetch(request);
+    if (exactResp.status < 400) return exactResp;
+
     if (request.method === "GET" && !path.startsWith("/v1/")) {
       const indexResp = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
       if (indexResp.ok) {
