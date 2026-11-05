@@ -8,6 +8,7 @@ import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
 import { renderNarration } from "./learn";
 import { syncCrm } from "./crm";
+import { dispatchCallbacks, listCallbacks } from "./callbacks";
 
 const ROLES = ["teacher", "translator", "sales", "service", "custom"] as const;
 const channel = z.string().max(200).nullable().optional().transform((v) => (v ?? "").trim() || null);
@@ -51,6 +52,9 @@ export async function handleStatic(request: Request, env: Env, path: string): Pr
   }
   if (path === "/learn") {
     return staticHtml(env, request, "portal.html", "default-src 'self'; media-src blob:; script-src 'self'; style-src 'self'; frame-ancestors 'none'");
+  }
+  if (path === "/join") {
+    return staticHtml(env, request, "join.html", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   }
   if (path.startsWith("/console-assets/")) {
     const name = path.slice("/console-assets/".length);
@@ -131,6 +135,8 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   const seg = path.split("/").slice(1).map(decodeURIComponent);
   const ok = (v: unknown, status = 200) => Response.json(v, { status });
   if (path === "/v1/admin/crm/sync" && method === "POST") return ok(await syncCrm(env));
+  if (path === "/v1/admin/callbacks" && method === "GET") return ok(await listCallbacks(env));
+  if (path === "/v1/admin/callbacks/dispatch" && method === "POST") return ok(await dispatchCallbacks(env));
 
   if (path === "/v1/admin/profiles" && method === "GET") return ok({ profiles: await progress.listBots() });
 

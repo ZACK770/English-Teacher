@@ -29,6 +29,8 @@ export interface Env {
   NEDARIM_PHONE_TERMINAL?: string;
   NEDARIM_PHONE_ENABLED?: string;
   CRM_EVENTS_URL?: string;
+  CALLBACK_RELAY_URL?: string;
+  CALLBACK_RELAY_SECRET?: string;
   CRM_INGEST_SECRET?: string;
 }
 

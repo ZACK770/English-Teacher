@@ -4,6 +4,7 @@ import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api"
 import { handleWebhook } from "./payments";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
+import { dispatchCallbacks, submitCallback } from "./callbacks";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -45,6 +46,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const response = await handleAdmin(request, env, s, path);
     if (response) return response;
   }
+  if (path === "/v1/public/callback" && request.method === "POST") return submitCallback(request, env);
   const turn = path.match(/^\/v1\/bots\/([a-z][a-z0-9-]{1,62})\/turn$/);
   if (turn && request.method === "POST") return webTurn(request, env, s, turn[1]);
   const portal = await handlePortal(request, env, path);
@@ -64,5 +66,6 @@ export default {
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
+    ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
   },
 };
