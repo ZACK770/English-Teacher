@@ -1,0 +1,8 @@
+{
+  "name": "דיבורא · English Voice School & Management Console",
+  "description": "Interactive Hebrew/English AI voice school management console, student learning portal, and PBX telephony routing system.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "permissions": []
+}

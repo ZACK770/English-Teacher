@@ -1,0 +1,55 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f5f6f8;
+  --ink: #172b35;
+  --muted: #718087;
+  --line: #e3e8eb;
+  --green: #137c69;
+  --green-soft: #e9f5f0;
+  --nav: #102d32;
+  --accent: #dceab7;
+  --white: #ffffff;
+  --red: #b83b49;
+  --radius: 16px;
+}
+
+body {
+  font-family: 'Assistant', 'Rubik', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg);
+  color: var(--ink);
+  direction: rtl;
+  margin: 0;
+  padding: 0;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Sound bars animation */
+@keyframes soundBarPulse {
+  0%, 100% { height: 18px; }
+  50% { height: 75px; }
+}
+
+.sound-bar-1 { animation: soundBarPulse 1.2s infinite ease-in-out; }
+.sound-bar-2 { animation: soundBarPulse 0.9s infinite ease-in-out 0.2s; }
+.sound-bar-3 { animation: soundBarPulse 1.4s infinite ease-in-out 0.4s; }
+.sound-bar-4 { animation: soundBarPulse 0.8s infinite ease-in-out 0.1s; }
+.sound-bar-5 { animation: soundBarPulse 1.1s infinite ease-in-out 0.3s; }
+.sound-bar-6 { animation: soundBarPulse 1.3s infinite ease-in-out 0.5s; }
+.sound-bar-7 { animation: soundBarPulse 0.7s infinite ease-in-out 0.2s; }
