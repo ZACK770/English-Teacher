@@ -87,7 +87,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
     result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000);
   } catch (error) {
-    await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error" });
+    await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");
   } finally {
     const elapsed = result?.startedAt ? (Date.now() - result.startedAt) / 1000 : 0;
@@ -121,7 +121,7 @@ export async function renderNarration(env: Env, s: Settings, narrationId: string
     result = await runLive(s, progress, profileId, callId, artifact.setup_message, record.text, 120, 120_000);
     if (!result.audio.byteLength) throw new Error("No audio received");
   } catch (error) {
-    await progress.logDiagnostic(profileId, callId, "narration_failed", { error_type: error instanceof Error ? error.name : "Error" });
+    await progress.logDiagnostic(profileId, callId, "narration_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "לא ניתן לייצר קריינות כרגע; בדוק את לוג הבוט");
   }
   const [pcm8] = downsample24kTo8k(result.audio);
