@@ -6,6 +6,7 @@ import { PaymentStore, PREFIX, agorot } from "./payments";
 import { IVRCopySchema, getCopy, narrationForSlot } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
+import { renderNarration } from "./learn";
 
 const ROLES = ["teacher", "translator", "sales", "service", "custom"] as const;
 const channel = z.string().max(200).nullable().optional().transform((v) => (v ?? "").trim() || null);
@@ -292,6 +293,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
 
   if (seg[2] === "narrations" && seg[3]) {
     const id = seg[3];
+    if (seg[4] === "audio" && method === "POST") return renderNarration(env, s, id);
     if (seg[4] === "audio" && method === "GET") {
       const { record, audio } = await narrationAudio(b, id);
       if (!record || !audio) throw new HttpError(404, "No generated narration");

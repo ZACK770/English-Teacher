@@ -2,6 +2,7 @@ import { type Env, bearer, secureEqual, settings, HttpError } from "./env";
 import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
+import { webTurn } from "./learn";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -43,6 +44,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const response = await handleAdmin(request, env, s, path);
     if (response) return response;
   }
+  const turn = path.match(/^\/v1\/bots\/([a-z][a-z0-9-]{1,62})\/turn$/);
+  if (turn && request.method === "POST") return webTurn(request, env, s, turn[1]);
   const portal = await handlePortal(request, env, path);
   if (portal) return portal;
   const asset = await handleStatic(request, env, path);
