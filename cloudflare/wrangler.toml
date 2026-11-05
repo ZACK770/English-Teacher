@@ -4,8 +4,9 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+# Release: v1.1.0 - Shochi AI Robot Teacher, Learning Games, Excel Unit Economics & Merhav CRM Sync
 [assets]
-directory = "../app/static"
+directory = "../dist"
 binding = "ASSETS"
 run_worker_first = true
 
