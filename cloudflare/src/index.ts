@@ -1,7 +1,7 @@
 import { type Env, bearer, secureEqual, settings, HttpError } from "./env";
 import { handleCallback } from "./pbx";
-import { ProgressStore } from "./progress";
-import { adultControls, controlsFromSettings } from "./controls";
+import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
+import { handleWebhook } from "./payments";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -35,21 +35,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (path.startsWith("/v1/technoline/ivr/")) {
     return Response.json(await handleCallback(request, env, s, path.slice("/v1/technoline/ivr/".length)));
   }
+  const narration = path.match(/^\/v1\/technoline\/narrations\/([^/]+)\/([a-f0-9]{64})\.wav$/);
+  if (narration && request.method === "GET") return publicNarration(env, decodeURIComponent(narration[1]), narration[2]);
+  if (path === "/v1/payments/nedarim/webhook" && request.method === "POST") return Response.json(await handleWebhook(request, env));
   if (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/")) {
     if (!secureEqual(bearer(request.headers.get("Authorization")), env.ADMIN_BEARER_SECRET)) throw new HttpError(401, "Unauthorized");
-    const progress = new ProgressStore(env.DB);
-    if (path === "/v1/admin/profiles") return Response.json({ profiles: await progress.listBots() });
-    if (path.startsWith("/v1/admin/config/")) {
-      const profileId = decodeURIComponent(path.slice("/v1/admin/config/".length));
-      const profile = await progress.getBot(profileId);
-      if (!profile) throw new HttpError(404, "Tutor profile not found");
-      const defaults = profileId === s.adultStudentId ? adultControls(s.storeTranscripts) : controlsFromSettings(s.storeTranscripts);
-      return Response.json({ profile, controls: await progress.loadControls(profileId, defaults) });
-    }
-    if (path.startsWith("/v1/admin/diagnostics/")) return Response.json({ events: await progress.recentDiagnostics(decodeURIComponent(path.slice("/v1/admin/diagnostics/".length))) });
-    if (path.startsWith("/v1/admin/traces/")) return Response.json({ traces: await progress.recentTraces(decodeURIComponent(path.slice("/v1/admin/traces/".length))) });
-    if (path.startsWith("/v1/progress/")) return Response.json(await progress.report(decodeURIComponent(path.slice("/v1/progress/".length))));
+    const response = await handleAdmin(request, env, s, path);
+    if (response) return response;
   }
+  const portal = await handlePortal(request, env, path);
+  if (portal) return portal;
+  const asset = await handleStatic(request, env, path);
+  if (asset) return asset;
   return Response.json({ detail: "Not found" }, { status: 404 });
 }
 

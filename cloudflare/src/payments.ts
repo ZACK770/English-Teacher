@@ -1,5 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
-import { type Env, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
+import { type Env, HttpError, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
 export const PREFIX = "dibura-";
 
@@ -358,4 +358,26 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   });
   if (!lines.length) return selectionMenu("isaacPayExit", "החבילות עדיין אינן פתוחות לרכישה. לשירות הקישו 9. לחזרה הקישו 0.");
   return selectionMenu("isaacPackage", lines.join(" ") + " לשירות הקישו 9. לחזרה הקישו 0.", ["0", "9", ...packageIds.map((_, i) => String(i + 1))].join(","));
+}
+
+export async function handleWebhook(request: Request, env: Env): Promise<Record<string, unknown>> {
+  const secret = env.NEDARIM_WEBHOOK_SECRET;
+  if (!secret) throw new HttpError(503, "Payments unavailable");
+  const raw = new Uint8Array(await request.arrayBuffer());
+  if (raw.byteLength > 65536) throw new HttpError(413, "Webhook too large");
+  if (!(await verifySignature(raw, request.headers, secret))) throw new HttpError(401, "Invalid signature");
+  const mosadId = env.NEDARIM_MOSAD_ID ?? "";
+  const store = new PaymentStore(new BusinessStore(env.DB));
+  let data: Record<string, any>;
+  try {
+    data = JSON.parse(new TextDecoder().decode(raw));
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid settlement");
+  } catch { throw new HttpError(400, "Settlement requires review"); }
+  try {
+    if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
+    return await store.settle(data, mosadId);
+  } catch {
+    if (String(data.MosadNumber ?? "") === mosadId) await store.issueForData(data, "settlement_review", "").catch(() => false);
+    throw new HttpError(400, "Settlement requires review");
+  }
 }
