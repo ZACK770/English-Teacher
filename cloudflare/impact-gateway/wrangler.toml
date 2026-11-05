@@ -1,0 +1,12 @@
+name = "english-impact-gateway"
+main = "worker.mjs"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+[[services]]
+binding = "ENGINE"
+service = "english-engine"
+
+[[routes]]
+pattern = "the-impact.net/english*"
+zone_name = "the-impact.net"
