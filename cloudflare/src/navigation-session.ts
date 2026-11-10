@@ -116,6 +116,7 @@ export class NavigationSession {
       // The greeting finishing is not the end of the call.
       await Promise.race(tasks.slice(0, -1));
     } catch (error) {
+      if (this.abort.signal.aborted && this.reason) return;
       this.reason ||= "navigation_failed";
       const code = error instanceof Error && /^navigation_[a-z_]+$/.test(error.message) ? error.message : "navigation_setup_failed";
       if (profileId && this.s.navigationBotIds.includes(profileId)) await progress.logDiagnostic(profileId, callId, "navigation_failed", { code }).catch(() => {});
