@@ -97,6 +97,30 @@ export async function computeNavigationRoute(env: Env, fix: NavigationFix, desti
   return parseRoute(data);
 }
 
+export interface PlaceMatch { label: string; address: string }
+
+/** Resolves a spoken (possibly mis-transcribed) destination to real Google Places candidates near the driver. */
+export async function findPlaces(env: Env, text: string, near: NavigationFix | null): Promise<PlaceMatch[]> {
+  const { token, project } = await googleToken(env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON, env.GOOGLE_TTS_PROJECT);
+  if (!await new BusinessStore(env.DB).consumeMonthlyQuota("places", settings(env).placesMonthlyLimit)) throw new Error("Places allowance unavailable");
+  const body: Record<string, unknown> = { textQuery: text, languageCode: "he", regionCode: "IL", pageSize: 3 };
+  if (near) body.locationBias = { circle: { center: { latitude: near.latitude, longitude: near.longitude }, radius: 30000 } };
+  const data = await postJson("https://places.googleapis.com/v1/places:searchText", body, {
+    Authorization: "Bearer " + token,
+    ...(project ? { "x-goog-user-project": project } : {}),
+    "X-Goog-FieldMask": "places.formattedAddress,places.displayName",
+  }, 8_000);
+  const seen = new Set<string>(), out: PlaceMatch[] = [];
+  for (const p of (data?.places ?? []) as { formattedAddress?: string; displayName?: { text?: string } }[]) {
+    const address = String(p.formattedAddress ?? "").replace(/,?\s*ישראל$/, "").trim();
+    if (!address || seen.has(address)) continue;
+    seen.add(address);
+    const name = String(p.displayName?.text ?? "").trim();
+    out.push({ address, label: name && !address.startsWith(name) ? `${name}, ${address}` : address });
+  }
+  return out;
+}
+
 export function usableFix(fix: NavigationFix | null): fix is NavigationFix {
   if (!fix) return false;
   const age = Date.now() - fix.fix_at_ms;
