@@ -49,6 +49,105 @@ interface PositionReport {
   } | null;
 }
 const API = "/v1/admin/navigation";
+
+interface CallTrace {
+  call_id: string;
+  created_at: string;
+  system_instruction: string;
+  opening_message: string;
+  setup_message: unknown;
+  turns: { created_at: string; direction: string; text: string; metadata: Record<string, unknown> }[];
+  events: { created_at: string; event_type: string; details: Record<string, unknown> }[];
+}
+
+const TURN_LABELS: Record<string, string> = {
+  driver: "🗣 הנהג אמר (תמלול)",
+  tool_call: "🧠 ה-AI הבין (קריאה למנוע)",
+  tool_result: "↩ תשובה שנשלחה ל-AI",
+  engine: "🔊 המערכת השמיעה לנהג",
+  ai_input: "➡ הודעה שנשלחה ל-AI",
+  ai_audio_dropped: "⚠ ה-AI דיבר בעצמו (לא הושמע)",
+  error: "❌ שגיאה",
+  ended: "■ סיום שיחה",
+};
+
+function gpsText(meta: Record<string, unknown>) {
+  const g = meta.gps as Record<string, unknown> | null | undefined;
+  if (!g) return "";
+  if (g.lat == null) return g.fresh ? "GPS: אין מיקום" : "GPS: לא עדכני";
+  return `GPS ${g.fresh ? "עדכני" : "ישן"} · ${Number(g.lat).toFixed(5)},${Number(g.lng).toFixed(5)} · גיל ${g.age_s} ש׳ · ${g.speed_kmh} קמ״ש · כיוון ${g.heading ?? "לא ידוע"}`;
+}
+
+function CallLog({ token }: { token: string }) {
+  const [calls, setCalls] = useState<CallTrace[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failure, setFailure] = useState("");
+  async function load() {
+    setLoading(true);
+    try {
+      setCalls(await api<CallTrace[]>(`${API}/calls?limit=20`, token));
+      setFailure("");
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : "טעינת השיחות נכשלה");
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <section className="nav-panel nav-calls">
+      <div className="nav-map-heading">
+        <h3>
+          <Navigation size={18} /> לוג שיחות ניווט מלא ופרומפט יוצא
+        </h3>
+        <button className="nav-primary" onClick={load} disabled={loading}>
+          <RefreshCw size={15} /> {calls ? "רענן" : "טען שיחות אחרונות"}
+        </button>
+      </div>
+      {failure && <p className="nav-error">{failure}</p>}
+      {calls && !calls.length && <p>עדיין אין שיחות מתועדות. התיעוד פעיל משיחות שבוצעו אחרי עדכון זה.</p>}
+      {calls?.map((c) => (
+        <details key={c.call_id} className="nav-call">
+          <summary>
+            {new Date(c.created_at).toLocaleString("he-IL")} · {c.turns.filter((t) => t.direction === "driver").length} פניות נהג ·{" "}
+            {c.turns.filter((t) => t.direction === "engine").length} הודעות מערכת
+            {c.events.some((e) => e.event_type === "navigation_failed") ? " · ❌ נכשלה" : ""}
+          </summary>
+          <details>
+            <summary>הפרומפט וההגדרות שנשלחו ל-AI בפועל</summary>
+            <pre dir="ltr">{c.system_instruction}</pre>
+            <pre dir="ltr">{JSON.stringify(c.setup_message, null, 2)}</pre>
+          </details>
+          <table className="nav-call-table">
+            <thead>
+              <tr><th>שעה</th><th>שלב</th><th>תוכן</th><th>פרטים</th></tr>
+            </thead>
+            <tbody>
+              {c.turns.map((t, i) => (
+                <tr key={i} className={`nav-turn-${t.direction}`}>
+                  <td>{new Date(t.created_at).toLocaleTimeString("he-IL")}</td>
+                  <td>{TURN_LABELS[t.direction] ?? t.direction}</td>
+                  <td dir="auto">{t.text}</td>
+                  <td>
+                    {[t.metadata.status ? `סטטוס: ${t.metadata.status}` : "", t.metadata.source ? `מקור: ${t.metadata.source}` : "", gpsText(t.metadata)]
+                      .filter(Boolean).join(" · ")}
+                  </td>
+                </tr>
+              ))}
+              {c.events.map((e, i) => (
+                <tr key={`e${i}`} className="nav-turn-event">
+                  <td>{new Date(e.created_at).toLocaleTimeString("he-IL")}</td>
+                  <td>אירוע מערכת</td>
+                  <td>{e.event_type}</td>
+                  <td dir="ltr">{JSON.stringify(e.details)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ))}
+    </section>
+  );
+}
 const time = (ms: number | null | undefined) =>
   ms == null
     ? "טרם התקבל דיווח"
@@ -696,6 +795,7 @@ export function NavigationConsole() {
                 )}
               </section>
             </div>
+            <CallLog token={token} />
             <details className="nav-panel">
               <summary>ניהול קליטה ורישום מכשירים</summary>
               <p>

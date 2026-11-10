@@ -425,3 +425,13 @@
     height: 330px;
   }
 }
+
+.nav-calls { margin-top: 18px; }
+.nav-call { border-top: 1px solid rgba(127,127,127,.25); padding: 10px 0; }
+.nav-call > summary { cursor: pointer; font-weight: 600; }
+.nav-call pre { white-space: pre-wrap; max-height: 320px; overflow: auto; font-size: 12px; background: rgba(127,127,127,.08); padding: 8px; border-radius: 6px; }
+.nav-call-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.nav-call-table th, .nav-call-table td { border-bottom: 1px solid rgba(127,127,127,.18); padding: 5px 6px; text-align: start; vertical-align: top; }
+.nav-turn-driver td { background: rgba(37,99,235,.07); }
+.nav-turn-engine td { background: rgba(22,163,74,.07); }
+.nav-turn-error td, .nav-turn-ai_audio_dropped td { background: rgba(220,38,38,.08); }

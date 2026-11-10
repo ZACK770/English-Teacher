@@ -25,13 +25,27 @@ export class NavigationCall {
   private pending: { kind: "destination"; address: string } | { kind: "resume" } | { kind: "completed" } | { kind: "cancelled" } | null = null;
   private linked = false;
   private driverConflict = false;
+  private lastLocation: Awaited<ReturnType<typeof customerPosition>> = null;
 
   constructor(private env: Env, private customerId: string, private callId: string) { this.trips = new NavigationTrips(env); }
 
   private async fix(): Promise<NavigationFix | null> {
     const location = await customerPosition(this.env, this.customerId);
+    this.lastLocation = location;
     if (!location?.fresh || (this.trip && location.device_id !== this.trip.device_id)) return null;
     return usableFix(location.position) ? location.position : null;
+  }
+
+  gps() {
+    const location = this.lastLocation, p = location?.position;
+    if (!location) return null;
+    return { fresh: location.fresh, device_id: location.device_id, ...(p ? { lat: p.latitude, lng: p.longitude,
+      age_s: Math.round((Date.now() - p.fix_at_ms) / 100) / 10, speed_kmh: Math.round(p.speed_mps * 36) / 10, heading: p.heading, accuracy_m: p.accuracy_m } : {}) };
+  }
+
+  private async route(fix: NavigationFix, address: string) {
+    try { return await computeNavigationRoute(this.env, fix, address); }
+    catch { return null; }
   }
 
   async open(): Promise<Guidance> {
@@ -59,7 +73,8 @@ export class NavigationCall {
     this.engine = null;
     const fix = await this.fix();
     if (!fix || !this.trip) return { status: "gps_unavailable", say: "אין מיקום מדויק מהשניות האחרונות. ההנחיות מושהות עד לקבלת מיקום אמין." };
-    const route = await computeNavigationRoute(this.env, fix, this.trip.destination_address);
+    const route = await this.route(fix, this.trip.destination_address);
+    if (!route) return { status: "route_unavailable", say: `לא הצלחתי לחשב מסלול אל ${this.trip.destination_label}. נסה לומר שוב את הכתובת המלאה עם שם העיר.` };
     const current = await this.fix();
     if (!current) return { status: "gps_unavailable", say: "המיקום התיישן בזמן חישוב המסלול. ההנחיות מושהות." };
     this.engine = new RouteGuidance(route);
@@ -94,7 +109,8 @@ export class NavigationCall {
       const fix = await this.fix();
       if (!fix) return { status: "gps_unavailable", say: "אין מיקום עדכני מספיק להתחלת ניווט. ממתין למכשיר האיתור." };
       if (this.trip && !this.linked) return { status: "confirmation_required", say: "קיימת נסיעה קודמת. יש לאשר את המשכה או לבטל אותה לפני פתיחת נסיעה חדשה." };
-      const route = await computeNavigationRoute(this.env, fix, pending.address);
+      const route = await this.route(fix, pending.address);
+      if (!route) { this.pending = null; return { status: "route_unavailable", say: `לא מצאתי מסלול אל ${pending.address}. אמור שוב את הכתובת עם שם העיר.` }; }
       if (this.trip) await this.trips.finish(this.customerId, this.trip.id, "cancelled", this.callId);
       this.trip = await this.trips.start(this.customerId, { destination_label: pending.address.slice(0, 80), destination_address: pending.address });
       const connected = await this.trips.connect(this.customerId, this.trip.id, this.callId, true);
@@ -110,8 +126,9 @@ export class NavigationCall {
     }
     if (command.intent === "see") return this.engine?.reportSeen() ?? { status: "seen", say: "ראיית שלט אינה מעידה שכבר הגעת אליו או פנית." };
     if (command.intent === "report") {
-      this.driverConflict = true;
-      return this.engine?.reportConflict() ?? { status: "manual_confirmation", say: "עצרתי את ההנחיות הישנות. באיזה רחוב וצומת אתה נמצא כעת?" };
+      // A spoken position cannot be geolocated reliably; recompute from the current GPS fix instead of freezing guidance.
+      const result = await this.refreshRoute(true);
+      return { ...result, say: result.status === "guidance" || result.status === "depart" ? `מחשב מחדש לפי המיקום הנוכחי. ${result.say}` : result.say };
     }
     if (this.driverConflict) return { status: "manual_confirmation", say: "צריך לאמת את המיקום שמסרת לפני הנחיות נוספות. אפשר לאשר יעד חדש לחישוב מחדש." };
     if (!this.engine) return this.refreshRoute(true);

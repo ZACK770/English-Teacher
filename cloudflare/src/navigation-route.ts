@@ -17,7 +17,8 @@ interface Step { along: number; instruction: string; maneuver: string }
 export interface Route { points: Point[]; cumulative: number[]; steps: Step[]; seconds: number }
 export interface Guidance { status: string; say: string; then?: string }
 const R = Math.PI / 180;
-export const GUIDANCE_MAX_AGE_MS = 15_000;
+// The tracker reports every ~10 s and delivery adds ~4 s, so 15 s caused constant "stale GPS" warnings.
+export const GUIDANCE_MAX_AGE_MS = 25_000;
 const coordinate = z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) });
 const resultSchema = z.object({ routes: z.array(z.object({
   duration: z.string().regex(/^\d+(\.\d+)?s$/),
@@ -158,9 +159,14 @@ export class RouteGuidance {
     if (this.deviations >= 3) return { status: "reroute", say: "זוהתה סטייה מהמסלול. מחשב מסלול מחדש." };
     if (projected.off > 35 || wrongWay) return { status: "position_uncertain", say: "המיקום או הכיוון אינם תואמים למסלול. ממתין לאימות לפני הנחיה." };
     this.along = Math.max(this.along, projected.along);
-    if (!this.heading || fix.fix_at_ms - this.heading.at > 90_000) return { status: "orientation_required", say: "כיוון היציאה עדיין לא ידוע. לאיזה רחוב או כיוון הרכב פונה?" };
     const remaining = this.route.cumulative.at(-1)! - this.along;
     if (remaining < 25 && distance(p, this.route.points.at(-1)!) < 25 && fix.speed_mps < 1.5) return { status: "arrival_confirmation", say: "נראה שאתה ליד היעד. האם הגעת?" };
+    const depart = this.route.steps.find((s) => s.maneuver === "DEPART");
+    if (!this.heading && depart && this.along < 50) {
+      if (!force && this.spoken === "depart") return { status: "silent", say: "" };
+      this.spoken = "depart";
+      return { status: "depart", say: depart.instruction };
+    }
     const steps = this.route.steps.filter((s) => s.along >= this.along - 8 && !["DEPART", "STRAIGHT", "NAME_CHANGE", "MANEUVER_UNSPECIFIED"].includes(s.maneuver));
     if (overview) return { status: "overview", say: steps.map((s) => s.instruction).join(". ") || "אין פניות נוספות במסלול המאומת." };
     const next = steps[0];

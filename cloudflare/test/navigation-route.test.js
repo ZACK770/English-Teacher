@@ -47,9 +47,10 @@ describe("safe route guidance", () => {
     expect(nav.reportSeen().status).toBe("seen");
     expect(nav.update(fix(), true)).toEqual(before);
   });
-  it("asks rather than inventing a stationary heading", () => {
+  it("speaks the provider departure instruction instead of a dead-end heading question while stationary", () => {
     const nav = new RouteGuidance(route());
-    expect(nav.update(fix({ speed_mps: 0, heading: 90 }), true).status).toBe("orientation_required");
+    expect(nav.update(fix({ speed_mps: 0, heading: 90 }), true)).toEqual({ status: "depart", say: "התחל מזרחה" });
+    expect(nav.update(fix({ speed_mps: 0, heading: 90 })).status).toBe("silent");
   });
   it("retains a recent trusted movement heading while stopped, not a stationary course", () => {
     const nav = new RouteGuidance(route());
@@ -67,7 +68,7 @@ describe("safe route guidance", () => {
     }
   });
   it("does not let stale or future GPS generate directions, even on explicit request", () => {
-    for (const f of [null, fix({ fix_at_ms: NOW - 16000 }), fix({ fix_at_ms: NOW + 1000 })]) {
+    for (const f of [null, fix({ fix_at_ms: NOW - GUIDANCE_MAX_AGE_MS - 1000 }), fix({ fix_at_ms: NOW + 1000 })]) {
       expect(new RouteGuidance(route()).update(f, true).status).toBe("gps_unavailable");
     }
   });

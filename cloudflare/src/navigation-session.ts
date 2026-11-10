@@ -12,7 +12,7 @@ import { ProgressStore } from "./progress";
 import { buildSetupPayload } from "./prompt";
 import { parseStartFrame } from "./technoline";
 
-const SYSTEM = `You understand Hebrew driver speech. Call navigation_request for EVERY utterance, extracting only what the driver actually said. Never give directions, calculate routes, invent turns, infer a completed turn from a sign, or invent confirmations. The deterministic navigation engine is the sole source of directions and questions; its output is spoken separately. Use destination only when the driver named a destination, confirm/decline only for an explicit answer to the last question. When location or heading is uncertain, never guess. Do not read tool results aloud or produce conversational audio. You have no access to GPS coordinates.`;
+const SYSTEM = `You understand Hebrew driver speech on a car phone line. Call navigation_request once for each complete request the driver addresses to the navigator, extracting only what the driver actually said. Ignore background noise, radio, passengers, echoes of the navigator's own voice and unintelligible fragments: do not call the tool for them. Every tool response contains spoken_to_driver: the exact sentence the driver heard last. Interpret the next utterance in that context: "כן/נכון/סע" after a yes/no question is confirm, "לא" is decline, a street name in answer to a location question is report, "מה עכשיו/לאן לפנות/כמה נשאר" is status. Never give directions, calculate routes, invent turns, infer a completed turn from a sign, or invent confirmations. The deterministic navigation engine is the sole source of directions and questions; its output is spoken separately. Use destination only when the driver named a destination, confirm/decline only for an explicit answer to the last question. When location or heading is uncertain, never guess. Do not read tool results aloud or produce conversational audio. You have no access to GPS coordinates.`;
 
 export function navigationStart(raw: string, channel: string, secret: string, authorization: string | null) {
   if (!secureEqual(bearer(authorization), secret)) throw new Error("navigation_auth_failed");
@@ -33,6 +33,9 @@ export class NavigationSession {
   private generation = 0;
   private lastMessage = "";
   private commands: Promise<void> = Promise.resolve();
+  private logs: Promise<void> = Promise.resolve();
+  private trace: ((direction: string, text: string, meta?: Record<string, unknown>) => void) = () => {};
+  private heard = { learner: "", tutor: "" };
 
   constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null) {}
 
@@ -53,11 +56,12 @@ export class NavigationSession {
 
   private clearSpeech() { this.generation++; this.output = []; }
 
-  private async speak(result: Guidance, speech: BasicTranslator, force = false) {
+  private async speak(result: Guidance, speech: BasicTranslator, force = false, source = "reply") {
     if (!result.say || this.abort.signal.aborted) return;
     const text = [result.say, result.then].filter(Boolean).join(". ");
     if (!force && text === this.lastMessage) return;
     this.lastMessage = text;
+    this.trace("engine", text, { status: result.status, source, gps: this.controller?.gps() ?? null });
     this.clearSpeech();
     const generation = this.generation;
     for (const chunk of text.match(/[\s\S]{1,500}/g) ?? []) {
@@ -96,22 +100,29 @@ export class NavigationSession {
       this.controller = new NavigationCall(this.env, customerId, await sha256Hex(callId));
       const controls = await progress.loadControls(profileId, controlsFromSettings(false));
       model = controls.model;
+      this.trace = (direction, text, meta = {}) => {
+        this.logs = this.logs.then(() => progress.logTurn(profileId, callId, direction, text, meta)).catch(() => {});
+      };
       const allowance = await business.reserveCall(customerId, profileId, callId, controls.max_call_minutes * 60);
       if (!allowance.seconds || allowance.mode === "basic") throw new Error("navigation_access_unavailable");
       timer = setTimeout(() => this.stop("hard_time_limit"), allowance.seconds * 1000);
       const setup = buildSetupPayload(controls, SYSTEM, profileId, this.s);
       setup.setup.tools = [{ functionDeclarations: [NAVIGATION_REQUEST_TOOL] }];
       this.ai = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
+      const greeting = "The call has started. Wait for the driver's destination or response; the navigation engine speaks its own greeting.";
+      await progress.savePromptSnapshot(profileId, callId, { system_instruction: SYSTEM, opening_message: greeting, history_context: "",
+        setup_message: setup, fingerprint: await sha256Hex(JSON.stringify(setup)), controls }).catch(() => {});
       const speech = new BasicTranslator(this.env, this.s);
       tasks = [this.pacedOutput(), this.watchdog()];
       await Promise.race([this.ai.connect(), ...tasks]);
       if (this.abort.signal.aborted) return;
       meteredAt = Date.now();
       await progress.logDiagnostic(profileId, callId, "navigation_connected");
-      this.ai.startGreeting("The call has started. Wait for the driver's destination or response; the navigation engine speaks its own greeting.");
+      this.ai.startGreeting(greeting);
+      this.trace("ai_input", greeting, { kind: "clientContent" });
       tasks.push(this.sendInput(), this.readAi(speech), this.poll(speech, progress, callId));
       const opening = await this.controller.open();
-      this.commands = this.speak(opening, speech, true).catch(() => this.stop("navigation_speech_failed"));
+      this.commands = this.speak(opening, speech, true, "opening").catch(() => this.stop("navigation_speech_failed"));
       tasks.push(this.commands);
       // The greeting finishing is not the end of the call.
       await Promise.race(tasks.slice(0, -1));
@@ -119,11 +130,16 @@ export class NavigationSession {
       if (this.abort.signal.aborted && this.reason) return;
       this.reason ||= "navigation_failed";
       const code = error instanceof Error && /^navigation_[a-z_]+$/.test(error.message) ? error.message : "navigation_setup_failed";
-      if (profileId && this.s.navigationBotIds.includes(profileId)) await progress.logDiagnostic(profileId, callId, "navigation_failed", { code }).catch(() => {});
+      const message = error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300);
+      this.trace("error", message, { code });
+      if (profileId && this.s.navigationBotIds.includes(profileId)) await progress.logDiagnostic(profileId, callId, "navigation_failed", { code, message }).catch(() => {});
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       this.stop(this.reason || "transport_ended", this.disconnected);
       await Promise.allSettled([...tasks, this.commands]);
+      this.flushHeard();
+      this.trace("ended", this.reason || "transport_ended");
+      await this.logs;
       await this.controller?.close().catch(() => {});
       if (customerId && meteredAt !== null) {
         await business.settleCall(callId, (Date.now() - meteredAt) / 1000).catch(() => {});
@@ -135,6 +151,12 @@ export class NavigationSession {
       if (profileId && this.s.navigationBotIds.includes(profileId)) await progress.logDiagnostic(profileId, callId, "navigation_ended", { reason: this.reason }).catch(() => {});
       try { if (!this.disconnected) this.pbx.send(JSON.stringify({ type: "hangup" })); this.pbx.close(1000, "session ended"); } catch { /* Peer closed. */ }
     }
+  }
+
+  private flushHeard() {
+    if (this.heard.learner.trim()) this.trace("driver", this.heard.learner, { source: "gemini_input_transcription" });
+    if (this.heard.tutor.trim()) this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
+    this.heard = { learner: "", tutor: "" };
   }
 
   private async pacedOutput() {
@@ -155,16 +177,22 @@ export class NavigationSession {
       const event = await this.ai!.next();
       if (event.type === "closed" || event.type === "go_away") return;
       if (event.type === "usage") this.meter.recordUsage(event.usage);
-      if (event.type === "interrupted" || (event.type === "transcript" && event.role === "learner")) this.clearSpeech();
+      // Engine speech is replaced only by a newer engine reply; line echo and noise must not cut it off.
+      if (event.type === "transcript") this.heard[event.role] += event.text;
+      if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard();
+      if (event.type === "tool_call") this.flushHeard();
       if (event.type === "tool_call") for (const call of event.calls) {
         this.commands = this.commands.then(async () => {
           if (this.abort.signal.aborted) return;
+          this.trace("tool_call", JSON.stringify({ name: call.name, args: call.args ?? {} }));
           if (call.name !== NAVIGATION_REQUEST_TOOL.name) { this.ai!.submitToolResult(call, false); return; }
           this.meter.learnerTurns++;
           let result: Guidance;
           try { result = await this.controller!.request(call.args); }
           catch { result = { status: "navigation_unavailable", say: "לא ניתן לעדכן את הניווט כרגע. אל תסתמך על ההנחיה הקודמת." }; }
-          this.ai!.submitToolResult(call, true, { status: result.status, question: result.status === "confirmation_required" ? result.say : undefined });
+          const response = { status: result.status, spoken_to_driver: [result.say, result.then].filter(Boolean).join(". ") };
+          this.ai!.submitToolResult(call, true, response);
+          this.trace("tool_result", JSON.stringify(response));
           await this.speak(result, speech, true);
         }).catch(() => this.stop("navigation_speech_failed"));
       }
@@ -178,7 +206,7 @@ export class NavigationSession {
       if (warning) this.clearSpeech();
       this.commands = this.commands.then(async () => {
         if (this.abort.signal.aborted) return;
-        try { await this.speak(warning ?? await this.controller!.poll(), speech); }
+        try { await this.speak(warning ?? await this.controller!.poll(), speech, false, warning ? "gps_warning" : "poll"); }
         catch { this.clearSpeech(); this.stop("navigation_poll_failed"); }
       }).catch(() => this.stop("navigation_poll_failed"));
     }

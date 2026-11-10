@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { bearer, type Env, HttpError, nowIso, secureEqual } from "./env";
+import { bearer, type Env, HttpError, nowIso, secureEqual, settings } from "./env";
+import { ProgressStore } from "./progress";
 
 export const GPS_MAX_AGE_MS = 120_000;
 const MAX_BODY_BYTES = 32_768;
@@ -148,6 +149,16 @@ export async function customerPosition(env: Env, customerId: string) {
 }
 
 export async function navigationAdmin(request: Request, env: Env, path: string): Promise<Response> {
+  if (path === "/v1/admin/navigation/calls" && request.method === "GET") {
+    const progress = new ProgressStore(env.DB);
+    const limit = Math.max(1, Math.min(Number(new URL(request.url).searchParams.get("limit")) || 15, 50));
+    const calls = [];
+    for (const id of settings(env).navigationBotIds) calls.push(...(await progress.recentTraces(id, limit)).map((t) => ({ ...t, profile_id: id })));
+    const ids = calls.map((c) => c.call_id);
+    const { results } = ids.length ? await env.DB.prepare(`SELECT call_id,event_type,details_json,created_at FROM diagnostic_events WHERE call_id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).bind(...ids).all<Record<string, string>>() : { results: [] };
+    return json(calls.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit).map((c) => ({ ...c,
+      events: results.filter((e) => e.call_id === c.call_id).map((e) => ({ created_at: e.created_at, event_type: e.event_type, details: JSON.parse(e.details_json) })) })));
+  }
   if (path === "/v1/admin/navigation/customers" && request.method === "GET") {
     const { results } = await env.DB.prepare(`SELECT p.customer_id,p.phone,
       COALESCE(json_extract(c.body,'$.name'),'') AS name,a.device_id
