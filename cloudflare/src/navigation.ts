@@ -9,7 +9,8 @@ const timestamp = z.string().datetime({ offset: true });
 const ForwardSchema = z.object({
   device: z.object({ id: positiveId, uniqueId: deviceId }),
   position: z.object({
-    id: positiveId,
+    // Traccar forwards positions before assigning their database ID.
+    id: z.number().int().nonnegative().safe(),
     deviceId: positiveId,
     valid: z.boolean(),
     fixTime: timestamp,

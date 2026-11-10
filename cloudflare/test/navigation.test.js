@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { customerPosition, GPS_MAX_AGE_MS } from "../src/navigation";
+import { BusinessStore } from "../src/business";
 
 const NOW = Date.parse("2026-11-10T14:10:00Z");
 const SECRET = "test-forward-token-with-at-least-32-characters";
@@ -96,7 +97,7 @@ describe("GPS ingestion boundary", () => {
   });
   it.each([
     { latitude: 91 }, { longitude: -181 }, { speed: -1 }, { valid: "true" },
-    { fixTime: "yesterday" }, { fixTime: "2026-11-10T14:09:55" }, { id: 0 }, { course: 361 }, { accuracy: -1 },
+    { fixTime: "yesterday" }, { fixTime: "2026-11-10T14:09:55" }, { id: -1 }, { course: 361 }, { accuracy: -1 },
   ])("validates coordinates, units and timestamps: %j", async (bad) => {
     expect((await send(payload(bad))).status).toBe(422);
     expect(stored()).toHaveLength(0);
@@ -104,6 +105,13 @@ describe("GPS ingestion boundary", () => {
 });
 
 describe("latest safe GPS fix", () => {
+  it("accepts pre-database Traccar positions with ID zero, deduplicating by fix time", async () => {
+    expect((await (await send(payload({ id: 0 }))).json()).accepted).toBe(true);
+    expect((await (await send(payload({ id: 0 }))).json()).accepted).toBe(false);
+    await send(payload({ id: 0, fixTime: new Date(NOW - 1_000).toISOString() }));
+    expect(stored()).toHaveLength(1);
+    expect(stored()[0].fix_at_ms).toBe(NOW - 1_000);
+  });
   it("accepts Traccar JSON, converts knots and keeps zero accuracy as unknown", async () => {
     const response = await send();
     expect(await response.json()).toEqual({ accepted: true });
@@ -185,6 +193,14 @@ describe("private device management and customer isolation", () => {
     await send();
     expect((await customerPosition(env, "customer-a")).fresh).toBe(true);
     expect(await customerPosition(env, "customer-b")).toBeNull();
+  });
+  it("preserves assignments when the existing customer console edits a phone", async () => {
+    const business = new BusinessStore(env.DB);
+    await business.save("customers", { name: "Test", phone: "0500000000" }, "customer-a");
+    await call("/v1/admin/navigation/assignments", { customer_id: "customer-a", device_id: "test-device" });
+    await business.save("customers", { name: "Updated", phone: "0500000001" }, "customer-a");
+    expect(sql.prepare("SELECT phone FROM customer_phones WHERE customer_id='customer-a'").get().phone).toBe("0500000001");
+    expect(sql.prepare("SELECT device_id FROM navigation_assignments WHERE customer_id='customer-a'").get().device_id).toBe("test-device");
   });
   it("leaves health and unauthenticated teacher endpoints unchanged", async () => {
     expect(await (await call("/healthz", undefined, "")).json()).toEqual({ status: "ok", service: "english-engine" });

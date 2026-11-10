@@ -133,10 +133,7 @@ export class BusinessStore {
       body.phone = normalizedPhone(body.phone);
       const other = await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(body.phone).first<{ customer_id: string }>();
       if (other && other.customer_id !== id) throw new Error("מספר טלפון שכבר רשום");
-      stmts.push(
-        this.db.prepare("DELETE FROM customer_phones WHERE customer_id=?").bind(id),
-        this.db.prepare("INSERT INTO customer_phones VALUES (?,?)").bind(body.phone, id),
-      );
+      stmts.push(this.db.prepare("INSERT INTO customer_phones(phone,customer_id) VALUES (?,?) ON CONFLICT(customer_id) DO UPDATE SET phone=excluded.phone").bind(body.phone, id));
     }
     if (kind === "courses" && body.active) {
       const teacher = await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(body.bot_id).first();
