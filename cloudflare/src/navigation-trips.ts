@@ -146,13 +146,15 @@ export class NavigationTrips {
     return this.get(customerId, tripId);
   }
 
-  async finish(customerId: string, tripId: string, status: "completed" | "cancelled"): Promise<Trip> {
+  async finish(customerId: string, tripId: string, status: "completed" | "cancelled", callId?: string): Promise<Trip> {
     const trip = await this.get(customerId, tripId);
     if (trip.status === status) return trip;
     if (trip.status !== "active") throw new HttpError(409, "Trip already ended");
     const now = Date.now();
     const update = await this.env.DB.prepare(`UPDATE navigation_trips SET status=?,ended_at_ms=?,call_lease_until_ms=NULL,updated_at_ms=?,revision=revision+1
-      WHERE id=? AND customer_id=? AND status='active' AND revision=?`).bind(status, now, now, tripId, customerId, trip.revision).run();
+      WHERE id=? AND customer_id=? AND status='active' AND revision=?
+        AND (? IS NULL OR (last_call_id=? AND disconnected_at_ms IS NULL))`)
+      .bind(status, now, now, tripId, customerId, trip.revision, callId ?? null, callId ?? null).run();
     if (!update.meta.changes) throw new HttpError(409, "Trip changed; check state again");
     return this.get(customerId, tripId);
   }

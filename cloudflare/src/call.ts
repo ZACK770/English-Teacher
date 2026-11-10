@@ -1,8 +1,9 @@
 import { TutorSession } from "./session";
+import { NavigationSession } from "./navigation-session";
 import { type Env, settings } from "./env";
 
 export class CallSession {
-  private session: TutorSession | null = null;
+  private session: TutorSession | NavigationSession | null = null;
 
   constructor(private ctx: DurableObjectState, private env: Env) {}
 
@@ -34,7 +35,8 @@ export class CallSession {
       started = true;
       clearTimeout(timeout);
       if (typeof event.data !== "string" || event.data.length > 16384) { server.close(1008, "Invalid start frame"); return; }
-      const session = new TutorSession(server, this.env, s, this.ctx.id.toString(), request.headers.get("Authorization"));
+      const Session = profile && s.navigationBotIds.includes(profile) ? NavigationSession : TutorSession;
+      const session = new Session(server, this.env, s, this.ctx.id.toString(), request.headers.get("Authorization"));
       this.session = session;
       this.ctx.waitUntil(session.run(event.data, profile, shared).catch(() => {
         try { server.close(1011, "Call failed"); } catch { /* peer closed */ }
