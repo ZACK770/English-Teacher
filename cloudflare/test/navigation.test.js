@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(NOW);
   sql = new DatabaseSync(":memory:");
   sql.exec("PRAGMA foreign_keys=ON");
-  for (const name of ["0001_init.sql", "0002_callback_requests.sql", "0003_navigation_gps.sql"]) {
+  for (const name of ["0001_init.sql", "0002_callback_requests.sql", "0003_navigation_gps.sql", "0004_navigation_console.sql"]) {
     sql.exec(readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8"));
   }
   sql.prepare("INSERT INTO navigation_devices(device_id,traccar_device_id,label,created_at) VALUES(?,?,?,?)")
@@ -177,6 +177,55 @@ describe("latest safe GPS fix", () => {
 });
 
 describe("private device management and customer isolation", () => {
+  it("lists real customer phone assignments, and supports removing a mapping", async () => {
+    const business = new BusinessStore(env.DB);
+    await business.save("customers", { name: "Driver", phone: "0500000000" }, "customer-a");
+    await call("/v1/admin/navigation/assignments", { customer_id: "customer-a", device_id: "test-device" });
+    const customers = await (await call("/v1/admin/navigation/customers")).json();
+    expect(customers).toEqual([{ customer_id: "customer-a", phone: "0500000000", name: "Driver", device_id: "test-device" }]);
+    await call("/v1/admin/navigation/assignments", { customer_id: "customer-a" }, ADMIN, "DELETE");
+    expect(await customerPosition(env, "customer-a")).toBeNull();
+  });
+  it("keeps customer destinations separate and prevents cross-customer deletion", async () => {
+    sql.exec("INSERT INTO customer_phones VALUES('0500000000','customer-a'),('0500000001','customer-b')");
+    const base = "/v1/admin/navigation/customers/";
+    const a = base + "customer-a/destinations";
+    const b = base + "customer-b/destinations";
+    expect((await call(base + "missing/destinations")).status).toBe(404);
+    const response = await call(a, { label: "Home", address: "Test street, Test city" });
+    expect(response.status).toBe(201);
+    const destination = await response.json();
+    expect(await (await call(a)).json()).toHaveLength(1);
+    expect(await (await call(b)).json()).toEqual([]);
+    expect((await call(b + "/" + destination.id, undefined, ADMIN, "DELETE")).status).toBe(404);
+    expect((await call(a + "/" + destination.id, undefined, ADMIN, "DELETE")).status).toBe(200);
+    expect(await (await call(a)).json()).toEqual([]);
+  });
+  it("requires authentication for all console data and validates destination payloads", async () => {
+    sql.exec("INSERT INTO customer_phones VALUES('0500000000','customer-a')");
+    const path = "/v1/admin/navigation/customers/customer-a/destinations";
+    for (const p of ["/v1/admin/navigation/customers", path]) {
+      expect((await call(p, undefined, "")).status).toBe(401);
+      expect((await call(p, undefined, SECRET)).status).toBe(401);
+    }
+    expect((await call(path, { label: " ", address: "x" })).status).toBe(422);
+    const response = await call(path);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+  it("serves a protected console shell without embedding GPS or credentials", async () => {
+    env.ASSETS = { fetch: async () => new Response('<html><title>School</title><link href="https://fonts.googleapis.com/font"><div id="root"></div></html>') };
+    const response = await call("/navigation");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect(response.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+    const html = await response.text();
+    expect(html).not.toContain(SECRET);
+    expect(html).not.toContain('fonts.googleapis');
+    expect(html).toContain('וייז כשר');
+    expect((await call('/navigation', {}, ADMIN)).status).toBe(405);
+  });
   it("can register and disable devices, but rejects identifier reassignment", async () => {
     const path = "/v1/admin/navigation/devices";
     expect((await call(path, { device_id: "second", traccar_device_id: 2, label: "Second car" })).status).toBe(200);
@@ -206,5 +255,30 @@ describe("private device management and customer isolation", () => {
     expect(await (await call("/healthz", undefined, "")).json()).toEqual({ status: "ok", service: "english-engine" });
     expect((await call("/v1/technoline/stream", undefined, "")).status).toBe(426);
     expect((await call("/v1/admin/navigation/devices", undefined, "")).status).toBe(401);
+  });
+});
+
+describe("reported battery status", () => {
+  it("does not invent a battery percentage when the tracker does not report one", async () => {
+    await send();
+    expect((await position()).battery).toEqual({ level_percent: null, reported_at_ms: null, charging: null });
+  });
+  it("accepts explicit percentages including zero and reports the measurement time", async () => {
+    await send(payload({ attributes: { batteryLevel: 0, charge: true } }));
+    expect((await position()).battery).toEqual({ level_percent: 0, reported_at_ms: NOW - 5000, charging: true });
+  });
+  it("does not mistake voltage or invalid values for a percentage", async () => {
+    for (const [i, batteryLevel] of [-1, 101, "80", null].entries()) {
+      await send(payload({ fixTime: new Date(NOW - 4000 + i * 1000).toISOString(), attributes: { batteryLevel, battery: 4.2 } }));
+      expect((await position()).battery.level_percent).toBeNull();
+    }
+    expect((await position()).fresh).toBe(true);
+  });
+  it("does not let an old battery report overwrite the latest report", async () => {
+    await send(payload({ attributes: { batteryLevel: 70 } }));
+    await send(payload({ fixTime: new Date(NOW - 60_000).toISOString(), attributes: { batteryLevel: 95 } }));
+    expect((await position()).battery.level_percent).toBe(70);
+    await send(payload({ fixTime: new Date(NOW - 1000).toISOString() }));
+    expect((await position()).battery.level_percent).toBeNull();
   });
 });

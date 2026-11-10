@@ -19,6 +19,7 @@ const ForwardSchema = z.object({
     speed: z.number().finite().min(0).max(400),
     course: z.number().finite().min(0).max(360).nullable().optional(),
     accuracy: z.number().finite().min(0).nullable().optional(),
+    attributes: z.object({ batteryLevel: z.unknown().optional(), charge: z.unknown().optional() }).optional(),
   }),
 });
 const DeviceSchema = z.object({
@@ -28,6 +29,8 @@ const DeviceSchema = z.object({
   enabled: z.boolean().default(true),
 });
 const AssignmentSchema = z.object({ customer_id: z.string().min(1).max(100), device_id: deviceId });
+const CustomerIdSchema = z.object({ customer_id: z.string().min(1).max(100) });
+const DestinationSchema = z.object({ label: z.string().trim().min(1).max(80), address: z.string().trim().min(3).max(300) });
 
 interface Device {
   device_id: string;
@@ -37,6 +40,9 @@ interface Device {
   last_received_at_ms: number | null;
   last_report_at_ms: number | null;
   last_report_valid: number | null;
+  battery_level_pct: number | null;
+  battery_at_ms: number | null;
+  charging: number | null;
 }
 interface Position {
   source_position_id: number;
@@ -95,11 +101,18 @@ export async function receivePosition(request: Request, env: Env): Promise<Respo
   const fix = Date.parse(p.fixTime);
   if (fix > now + 30_000) return json({ accepted: false, reason: "future_fix" }, 202);
   const reason = !p.valid ? "invalid_fix" : now - fix > GPS_MAX_AGE_MS ? "stale_fix" : (p.accuracy ?? 0) > 100 ? "inaccurate_fix" : null;
+  const level = z.number().finite().min(0).max(100).safeParse(p.attributes?.batteryLevel);
+  const batteryLevel = level.success ? level.data : null;
+  const charging = typeof p.attributes?.charge === "boolean" ? (p.attributes.charge ? 1 : 0) : null;
   const report = env.DB.prepare(`UPDATE navigation_devices SET
     last_received_at_ms=MAX(COALESCE(last_received_at_ms,0),?),
+    battery_level_pct=CASE WHEN last_report_at_ms IS NULL OR ? > last_report_at_ms THEN ? ELSE battery_level_pct END,
+    battery_at_ms=CASE WHEN last_report_at_ms IS NULL OR ? > last_report_at_ms THEN ? ELSE battery_at_ms END,
+    charging=CASE WHEN last_report_at_ms IS NULL OR ? > last_report_at_ms THEN ? ELSE charging END,
     last_report_valid=CASE WHEN last_report_at_ms IS NULL OR ? > last_report_at_ms THEN ? ELSE last_report_valid END,
     last_report_at_ms=MAX(COALESCE(last_report_at_ms,0),?)
-    WHERE device_id=? AND enabled=1`).bind(now, fix, reason ? 0 : 1, fix, device.uniqueId);
+    WHERE device_id=? AND enabled=1`).bind(now, fix, batteryLevel, fix, batteryLevel !== null || charging !== null ? fix : null,
+      fix, charging, fix, reason ? 0 : 1, fix, device.uniqueId);
   if (reason) { await report.run(); return json({ accepted: false, reason }, 202); }
   const speed = p.speed * 1852 / 3600;
   const heading = speed >= 1.5 ? p.course ?? null : null;
@@ -125,6 +138,7 @@ export async function latestPosition(env: Env, id: string) {
   const fresh = !!device.enabled && device.last_report_valid === 1 && age !== null && age >= -30_000 && age <= GPS_MAX_AGE_MS;
   return { device_id: id, label: device.label, enabled: !!device.enabled, last_received_at_ms: device.last_received_at_ms,
     last_report_valid: device.last_report_valid === 1, last_valid_fix_at_ms: position?.fix_at_ms ?? null,
+    battery: { level_percent: device.battery_level_pct, reported_at_ms: device.battery_at_ms, charging: device.charging === null ? null : device.charging === 1 },
     fresh, position: fresh ? position : null };
 }
 
@@ -134,6 +148,38 @@ export async function customerPosition(env: Env, customerId: string) {
 }
 
 export async function navigationAdmin(request: Request, env: Env, path: string): Promise<Response> {
+  if (path === "/v1/admin/navigation/customers" && request.method === "GET") {
+    const { results } = await env.DB.prepare(`SELECT p.customer_id,p.phone,
+      COALESCE(json_extract(c.body,'$.name'),'') AS name,a.device_id
+      FROM customer_phones p LEFT JOIN console_records c ON c.kind='customers' AND c.id=p.customer_id
+      LEFT JOIN navigation_assignments a ON a.customer_id=p.customer_id ORDER BY p.customer_id`).all();
+    return json(results);
+  }
+  const destinationPath = path.match(/^\/v1\/admin\/navigation\/customers\/([a-zA-Z0-9_-]{1,100})\/destinations(?:\/([a-zA-Z0-9_-]{1,80}))?$/);
+  if (destinationPath) {
+    const [, customerId, destinationId] = destinationPath;
+    const customer = await env.DB.prepare("SELECT customer_id FROM customer_phones WHERE customer_id=?").bind(customerId).first();
+    if (!customer) throw new HttpError(404, "Customer not found");
+    if (!destinationId && request.method === "GET") {
+      const { results } = await env.DB.prepare("SELECT id,label,address,updated_at FROM navigation_destinations WHERE customer_id=? ORDER BY updated_at DESC")
+        .bind(customerId).all();
+      return json(results);
+    }
+    if (!destinationId && request.method === "POST") {
+      const d = await body(request, DestinationSchema);
+      const id = crypto.randomUUID();
+      const now = nowIso();
+      await env.DB.prepare("INSERT INTO navigation_destinations(id,customer_id,label,address,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+        .bind(id, customerId, d.label, d.address, now, now).run();
+      return json({ id, ...d }, 201);
+    }
+    if (destinationId && request.method === "DELETE") {
+      const result = await env.DB.prepare("DELETE FROM navigation_destinations WHERE id=? AND customer_id=?").bind(destinationId, customerId).run();
+      if (!result.meta.changes) throw new HttpError(404, "Destination not found");
+      return json({ deleted: true });
+    }
+    return new Response(null, { status: 405, headers: { Allow: destinationId ? "DELETE" : "GET, POST" } });
+  }
   if (path === "/v1/admin/navigation/devices") {
     if (request.method === "GET") {
       const { results } = await env.DB.prepare("SELECT device_id,traccar_device_id,label,enabled,last_received_at_ms,last_report_valid FROM navigation_devices ORDER BY device_id").all<Device>();
@@ -161,6 +207,11 @@ export async function navigationAdmin(request: Request, env: Env, path: string):
       ON CONFLICT(customer_id) DO UPDATE SET device_id=excluded.device_id,updated_at=excluded.updated_at`)
       .bind(a.customer_id, a.device_id, nowIso()).run();
     return json({ assigned: true });
+  }
+  if (path === "/v1/admin/navigation/assignments" && request.method === "DELETE") {
+    const a = await body(request, CustomerIdSchema);
+    await env.DB.prepare("DELETE FROM navigation_assignments WHERE customer_id=?").bind(a.customer_id).run();
+    return json({ assigned: false });
   }
   const match = path.match(/^\/v1\/admin\/navigation\/devices\/([a-zA-Z0-9_-]{1,80})\/position$/);
   if (match && request.method === "GET") return json(await latestPosition(env, match[1]));

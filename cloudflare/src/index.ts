@@ -12,6 +12,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const s = settings(env);
   const path = url.pathname.replace(/^\/english(\/|$)/, "/") || "/";
+  if (path === "/navigation" || path === "/navigation/") {
+    if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
+    const asset = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
+    const html = (await asset.text()).replace(/<title>[^<]*<\/title>/, "<title>וייז כשר · מיקום ומכשירים</title>")
+      .replace(/<link\b[^>]*https:\/\/fonts\.(?:googleapis|gstatic)\.com[^>]*>/g, "");
+    return new Response(request.method === "HEAD" ? null : html, { status: asset.status, headers: {
+      "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src https://www.openstreetmap.org; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    } });
+  }
   if (path === "/healthz") return Response.json({ status: "ok", service: "english-engine" });
   if (path === "/v1/navigation/positions") return receivePosition(request, env);
   if (path === "/status" || path === "/api/status") return Response.json({ service: "English school voice engine", health: "/healthz", websocket: "/v1/technoline/stream", status: "production" });
