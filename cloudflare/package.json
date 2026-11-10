@@ -6,6 +6,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
+    "build:check": "wrangler deploy --dry-run --assets ../app/static --outdir .wrangler/build",
     "test": "vitest run"
   },
   "devDependencies": {

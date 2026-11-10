@@ -29,7 +29,7 @@ export async function syncCrm(env: Env): Promise<Record<string, unknown>> {
       type: "customer",
       customer_id: id,
       phone: phone?.phone ?? "",
-      name,
+      name: record?.name ?? "",
       trial_exhausted: isTrialExhausted,
       lead_status: isTrialExhausted ? "TRIAL_EXHAUSTED_HOT_LEAD" : (freeSecondsUsed > 0 ? "IN_TRIAL" : "NEW_LEAD"),
       free_minutes_used: Math.round(freeSecondsUsed / 60)
