@@ -59,7 +59,7 @@ function json(value: unknown, status = 200) {
   return Response.json(value, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 }
 
-async function body<T extends z.ZodTypeAny>(request: Request, schema: T): Promise<z.output<T>> {
+export async function navigationBody<T extends z.ZodTypeAny>(request: Request, schema: T): Promise<z.output<T>> {
   if (request.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new HttpError(415, "Expected application/json");
   if (Number(request.headers.get("Content-Length")) > MAX_BODY_BYTES) throw new HttpError(413, "Payload too large");
   if (!request.body) throw new HttpError(422, "Missing JSON body");
@@ -92,7 +92,7 @@ export async function receivePosition(request: Request, env: Env): Promise<Respo
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
   if (!env.TRACCAR_FORWARD_SECRET || env.TRACCAR_FORWARD_SECRET.length < 32) throw new HttpError(503, "GPS ingestion not configured");
   if (!secureEqual(bearer(request.headers.get("Authorization")), env.TRACCAR_FORWARD_SECRET)) throw new HttpError(401, "Unauthorized");
-  const { device, position: p } = await body(request, ForwardSchema);
+  const { device, position: p } = await navigationBody(request, ForwardSchema);
   if (device.id !== p.deviceId) throw new HttpError(422, "Device identity mismatch");
   const registered = await env.DB.prepare("SELECT device_id FROM navigation_devices WHERE device_id=? AND traccar_device_id=? AND enabled=1")
     .bind(device.uniqueId, device.id).first();
@@ -166,7 +166,7 @@ export async function navigationAdmin(request: Request, env: Env, path: string):
       return json(results);
     }
     if (!destinationId && request.method === "POST") {
-      const d = await body(request, DestinationSchema);
+      const d = await navigationBody(request, DestinationSchema);
       const id = crypto.randomUUID();
       const now = nowIso();
       await env.DB.prepare("INSERT INTO navigation_destinations(id,customer_id,label,address,created_at,updated_at) VALUES(?,?,?,?,?,?)")
@@ -186,7 +186,7 @@ export async function navigationAdmin(request: Request, env: Env, path: string):
       return json(results);
     }
     if (request.method === "POST") {
-      const d = await body(request, DeviceSchema);
+      const d = await navigationBody(request, DeviceSchema);
       const other = await env.DB.prepare("SELECT device_id FROM navigation_devices WHERE traccar_device_id=? AND device_id<>?").bind(d.traccar_device_id, d.device_id).first();
       if (other) throw new HttpError(409, "Traccar identifier already registered");
       const existing = await env.DB.prepare("SELECT traccar_device_id FROM navigation_devices WHERE device_id=?").bind(d.device_id).first<Device>();
@@ -199,7 +199,7 @@ export async function navigationAdmin(request: Request, env: Env, path: string):
     return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
   }
   if (path === "/v1/admin/navigation/assignments" && request.method === "POST") {
-    const a = await body(request, AssignmentSchema);
+    const a = await navigationBody(request, AssignmentSchema);
     const customer = await env.DB.prepare("SELECT customer_id FROM customer_phones WHERE customer_id=?").bind(a.customer_id).first();
     if (!customer) throw new HttpError(404, "Customer not found");
     await latestPosition(env, a.device_id);
@@ -209,7 +209,7 @@ export async function navigationAdmin(request: Request, env: Env, path: string):
     return json({ assigned: true });
   }
   if (path === "/v1/admin/navigation/assignments" && request.method === "DELETE") {
-    const a = await body(request, CustomerIdSchema);
+    const a = await navigationBody(request, CustomerIdSchema);
     await env.DB.prepare("DELETE FROM navigation_assignments WHERE customer_id=?").bind(a.customer_id).run();
     return json({ assigned: false });
   }
