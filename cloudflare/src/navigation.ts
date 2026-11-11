@@ -20,7 +20,8 @@ const ForwardSchema = z.object({
     speed: z.number().finite().min(0).max(400),
     course: z.number().finite().min(0).max(360).nullable().optional(),
     accuracy: z.number().finite().min(0).nullable().optional(),
-    attributes: z.object({ batteryLevel: z.unknown().optional(), charge: z.unknown().optional() }).optional(),
+    protocol: z.string().optional(),
+    attributes: z.object({ batteryLevel: z.unknown().optional(), charge: z.unknown().optional(), io8: z.unknown().optional() }).optional(),
   }),
 });
 const DeviceSchema = z.object({
@@ -103,7 +104,7 @@ export async function receivePosition(request: Request, env: Env): Promise<Respo
   if (fix > now + 30_000) return json({ accepted: false, reason: "future_fix" }, 202);
   const reason = !p.valid ? "invalid_fix" : now - fix > GPS_MAX_AGE_MS ? "stale_fix" : (p.accuracy ?? 0) > 100 ? "inaccurate_fix" : null;
   const level = z.number().finite().min(0).max(100).safeParse(p.attributes?.batteryLevel);
-  const batteryLevel = level.success ? level.data : null;
+  const batteryLevel = level.success ? level.data : h02Battery(p.protocol, p.attributes?.io8);
   const charging = typeof p.attributes?.charge === "boolean" ? (p.attributes.charge ? 1 : 0) : null;
   const report = env.DB.prepare(`UPDATE navigation_devices SET
     last_received_at_ms=MAX(COALESCE(last_received_at_ms,0),?),
@@ -148,16 +149,50 @@ export async function customerPosition(env: Env, customerId: string) {
   return assignment ? latestPosition(env, assignment.device_id) : null;
 }
 
+/** SinoTrack V8 reports append satellites, GSM signal, an unverified field and the battery percentage, which Traccar stores as io5..io8. */
+export function h02Battery(protocol: string | undefined, value: unknown): number | null {
+  if (protocol !== "h02" || typeof value !== "string" || !/^\d{1,3}$/.test(value.trim())) return null;
+  const level = Number(value);
+  return level <= 100 ? level : null;
+}
+
+const parse = (text: string | null | undefined) => { try { return text ? JSON.parse(text) : {}; } catch { return {}; } };
+
+/** Every navigation call, newest first, including calls recorded before full tracing existed. */
+export async function navigationCalls(env: Env, bots: string[], limit: number, offset: number) {
+  if (!bots.length) return [];
+  const ph = bots.map(() => "?").join(",");
+  const { results: calls } = await env.DB.prepare(`SELECT call_id, MIN(created_at) AS created_at, MIN(profile_id) AS profile_id FROM (
+    SELECT call_id, created_at, profile_id FROM prompt_snapshots WHERE profile_id IN (${ph})
+    UNION ALL SELECT call_id, created_at, profile_id FROM diagnostic_events WHERE profile_id IN (${ph})
+    UNION ALL SELECT call_id, created_at, profile_id FROM conversation_turns WHERE profile_id IN (${ph}))
+    GROUP BY call_id ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(...bots, ...bots, ...bots, limit, offset).all<Record<string, string>>();
+  const out = [];
+  for (const c of calls) {
+    const [snapshot, turns, events, latency, session] = await Promise.all([
+      env.DB.prepare("SELECT system_instruction, opening_message, setup_json, bot_version FROM prompt_snapshots WHERE call_id=?").bind(c.call_id).all<Record<string, any>>(),
+      env.DB.prepare("SELECT created_at, direction, text, metadata_json FROM conversation_turns WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
+      env.DB.prepare("SELECT created_at, event_type, details_json FROM diagnostic_events WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
+      env.DB.prepare("SELECT created_at, event_name, since_call_start_ms, details_json FROM latency_events WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
+      env.DB.prepare("SELECT started_at, ended_at, duration_seconds, learner_turns, tutor_turns, estimated_cost_usd, model FROM sessions WHERE call_id=?").bind(c.call_id).all<Record<string, any>>(),
+    ]);
+    const s = snapshot.results[0];
+    out.push({ call_id: c.call_id, created_at: c.created_at, profile_id: c.profile_id, has_prompt: !!s,
+      system_instruction: s?.system_instruction ?? "", opening_message: s?.opening_message ?? "", bot_version: s ? Number(s.bot_version) : null,
+      setup_message: s ? parse(s.setup_json) : null, session: session.results[0] ?? null,
+      turns: turns.results.map((r) => ({ created_at: r.created_at, direction: r.direction, text: r.text, metadata: parse(r.metadata_json) })),
+      events: events.results.map((r) => ({ created_at: r.created_at, event_type: r.event_type, details: parse(r.details_json) })),
+      latency: latency.results.map((r) => ({ created_at: r.created_at, event_name: r.event_name, since_call_start_ms: r.since_call_start_ms, details: parse(r.details_json) })) });
+  }
+  return out;
+}
+
 export async function navigationAdmin(request: Request, env: Env, path: string): Promise<Response> {
   if (path === "/v1/admin/navigation/calls" && request.method === "GET") {
-    const progress = new ProgressStore(env.DB);
-    const limit = Math.max(1, Math.min(Number(new URL(request.url).searchParams.get("limit")) || 15, 50));
-    const calls = [];
-    for (const id of settings(env).navigationBotIds) calls.push(...(await progress.recentTraces(id, limit)).map((t) => ({ ...t, profile_id: id })));
-    const ids = calls.map((c) => c.call_id);
-    const { results } = ids.length ? await env.DB.prepare(`SELECT call_id,event_type,details_json,created_at FROM diagnostic_events WHERE call_id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).bind(...ids).all<Record<string, string>>() : { results: [] };
-    return json(calls.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit).map((c) => ({ ...c,
-      events: results.filter((e) => e.call_id === c.call_id).map((e) => ({ created_at: e.created_at, event_type: e.event_type, details: JSON.parse(e.details_json) })) })));
+    const params = new URL(request.url).searchParams;
+    const limit = Math.max(1, Math.min(Number(params.get("limit")) || 15, 50));
+    const offset = Math.max(0, Math.floor(Number(params.get("offset")) || 0));
+    return json(await navigationCalls(env, settings(env).navigationBotIds, limit, offset));
   }
   if (path === "/v1/admin/navigation/customers" && request.method === "GET") {
     const { results } = await env.DB.prepare(`SELECT p.customer_id,p.phone,

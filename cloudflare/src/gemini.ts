@@ -156,6 +156,10 @@ export class GeminiLive {
     this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } });
   }
 
+  addContext(text: string) {
+    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: false } });
+  }
+
   submitToolResult(call: ToolCall, saved: boolean, result?: Record<string, unknown>) {
     this.send({
       toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: result ?? { saved } }] },

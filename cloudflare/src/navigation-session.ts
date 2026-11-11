@@ -14,6 +14,18 @@ import { parseStartFrame } from "./technoline";
 
 const SYSTEM = `You understand Hebrew driver speech on a car phone line. Call navigation_request once for each complete request the driver addresses to the navigator, extracting only what the driver actually said. Ignore background noise, radio, passengers, echoes of the navigator's own voice and unintelligible fragments: do not call the tool for them. Every tool response contains spoken_to_driver: the exact sentence the driver heard last. Interpret the next utterance in that context: "כן/נכון/סע" after a yes/no question is confirm, "לא" is decline, a street name in answer to a location question is report, "מה עכשיו/לאן לפנות/כמה נשאר" is status. Never give directions, calculate routes, invent turns, infer a completed turn from a sign, or invent confirmations. The deterministic navigation engine is the sole source of directions and questions; its output is spoken separately. Use destination only when the driver named a destination, passing the words exactly as heard even if they look misheard: the engine checks them against Google Maps and asks the driver "התכוונת ל...?". If the driver spells a name letter by letter, join the letters into the name. confirm/decline only for an explicit answer to the last question. When location or heading is uncertain, never guess. Do not read tool results aloud or produce conversational audio. You have no access to GPS coordinates.`;
 
+const YES = new Set(["כן", "נכון", "בטח", "סע", "יאללה", "אישור", "מאשר", "בדיוק", "אוקיי"]);
+const NO = new Set(["לא", "ממש"]);
+
+/** A bare yes/no answer, used when the AI hears it but does not call the tool. */
+export function shortAnswer(text: string): "confirm" | "decline" | null {
+  const words = text.replace(/[^\u0590-\u05FF\s]/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 4) return null;
+  if (words.every((w) => YES.has(w))) return "confirm";
+  if (words.includes("לא") && words.every((w) => NO.has(w) || w === "נכון")) return "decline";
+  return null;
+}
+
 export function navigationStart(raw: string, channel: string, secret: string, authorization: string | null) {
   if (!secureEqual(bearer(authorization), secret)) throw new Error("navigation_auth_failed");
   return parseStartFrame(raw, channel);
@@ -36,6 +48,9 @@ export class NavigationSession {
   private logs: Promise<void> = Promise.resolve();
   private trace: ((direction: string, text: string, meta?: Record<string, unknown>) => void) = () => {};
   private heard = { learner: "", tutor: "" };
+  private lastStatus = "";
+  private aiCalls = 0;
+  private speech: BasicTranslator | null = null;
 
   constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null) {}
 
@@ -61,7 +76,14 @@ export class NavigationSession {
     const text = [result.say, result.then].filter(Boolean).join(". ");
     if (!force && text === this.lastMessage) return;
     this.lastMessage = text;
+    this.lastStatus = result.status;
     this.trace("engine", text, { status: result.status, source, gps: this.controller?.gps() ?? null });
+    if (source !== "reply" && this.ai) {
+      // Tool responses already carry spoken_to_driver; other engine speech must reach the AI too, or the reply has no context.
+      const context = `spoken_to_driver (status ${result.status}): ${text}`;
+      this.ai.addContext(context);
+      this.trace("ai_input", context, { kind: "context" });
+    }
     this.clearSpeech();
     const generation = this.generation;
     for (const chunk of text.match(/[\s\S]{1,500}/g) ?? []) {
@@ -113,13 +135,14 @@ export class NavigationSession {
       await progress.savePromptSnapshot(profileId, callId, { system_instruction: SYSTEM, opening_message: greeting, history_context: "",
         setup_message: setup, fingerprint: await sha256Hex(JSON.stringify(setup)), controls }).catch(() => {});
       const speech = new BasicTranslator(this.env, this.s);
+      this.speech = speech;
       tasks = [this.pacedOutput(), this.watchdog()];
       await Promise.race([this.ai.connect(), ...tasks]);
       if (this.abort.signal.aborted) return;
       meteredAt = Date.now();
       await progress.logDiagnostic(profileId, callId, "navigation_connected");
-      this.ai.startGreeting(greeting);
-      this.trace("ai_input", greeting, { kind: "clientContent" });
+      this.ai.addContext(greeting);
+      this.trace("ai_input", greeting, { kind: "context" });
       tasks.push(this.sendInput(), this.readAi(speech), this.poll(speech, progress, callId));
       const opening = await this.controller.open();
       this.commands = this.speak(opening, speech, true, "opening").catch(() => this.stop("navigation_speech_failed"));
@@ -154,7 +177,8 @@ export class NavigationSession {
   }
 
   private flushHeard() {
-    if (this.heard.learner.trim()) this.trace("driver", this.heard.learner, { source: "gemini_input_transcription" });
+    const said = this.heard.learner.trim();
+    if (said) { this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
     if (this.heard.tutor.trim()) this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
     this.heard = { learner: "", tutor: "" };
   }
@@ -182,21 +206,43 @@ export class NavigationSession {
       if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard();
       if (event.type === "tool_call") this.flushHeard();
       if (event.type === "tool_call") for (const call of event.calls) {
+        this.aiCalls++;
         this.commands = this.commands.then(async () => {
           if (this.abort.signal.aborted) return;
           this.trace("tool_call", JSON.stringify({ name: call.name, args: call.args ?? {} }));
           if (call.name !== NAVIGATION_REQUEST_TOOL.name) { this.ai!.submitToolResult(call, false); return; }
-          this.meter.learnerTurns++;
-          let result: Guidance;
-          try { result = await this.controller!.request(call.args); }
-          catch { result = { status: "navigation_unavailable", say: "לא ניתן לעדכן את הניווט כרגע. אל תסתמך על ההנחיה הקודמת." }; }
-          const response = { status: result.status, spoken_to_driver: [result.say, result.then].filter(Boolean).join(". ") };
-          this.ai!.submitToolResult(call, true, response);
+          const response = await this.handle(call.args, speech, (r) => this.ai!.submitToolResult(call, true, r));
           this.trace("tool_result", JSON.stringify(response));
-          await this.speak(result, speech, true);
         }).catch(() => this.stop("navigation_speech_failed"));
       }
     }
+  }
+
+  private async handle(args: unknown, speech: BasicTranslator, reply: (r: Record<string, unknown>) => void) {
+    this.meter.learnerTurns++;
+    let result: Guidance;
+    try { result = await this.controller!.request(args); }
+    catch { result = { status: "navigation_unavailable", say: "לא ניתן לעדכן את הניווט כרגע. אל תסתמך על ההנחיה הקודמת." }; }
+    const response = { status: result.status, spoken_to_driver: [result.say, result.then].filter(Boolean).join(". ") };
+    reply(response);
+    await this.speak(result, speech, true);
+    return response;
+  }
+
+  private fallback(said: string) {
+    const intent = this.lastStatus === "confirmation_required" ? shortAnswer(said) : null;
+    if (!intent) return;
+    const calls = this.aiCalls;
+    void sleep(2000, this.abort.signal).then(() => {
+      if (this.abort.signal.aborted || this.aiCalls !== calls || this.lastStatus !== "confirmation_required" || !this.speech) return;
+      const speech = this.speech;
+      this.commands = this.commands.then(async () => {
+        if (this.abort.signal.aborted) return;
+        this.trace("engine_fallback", JSON.stringify({ intent }), { note: "AI did not call the tool for a bare yes/no answer" });
+        const response = await this.handle({ intent }, speech, (r) => this.ai?.addContext(`Handled the driver's answer as ${intent}. spoken_to_driver: ${r.spoken_to_driver}`));
+        this.trace("tool_result", JSON.stringify(response), { source: "engine_fallback" });
+      }).catch(() => this.stop("navigation_speech_failed"));
+    }).catch(() => {});
   }
   private async poll(speech: BasicTranslator, progress: ProgressStore, callId: string) {
     while (!this.abort.signal.aborted) {

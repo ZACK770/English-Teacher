@@ -100,3 +100,16 @@ describe("spoken destination → Google Places → confirmation → traffic-awar
     expect(callBody("computeRoutes").destination).toEqual({ address: "מירון" });
   });
 });
+
+import { shortAnswer } from "../src/navigation-session";
+describe("bare yes/no fallback", () => {
+  it("classifies only bare Hebrew answers", () => {
+    expect(shortAnswer("לא לא.")).toBe("decline");
+    expect(shortAnswer("לא נכון")).toBe("decline");
+    expect(shortAnswer("כן, נכון!")).toBe("confirm");
+    expect(shortAnswer("סע")).toBe("confirm");
+    expect(shortAnswer("לא, לרחוב רבי עקיבא")).toBeNull();
+    expect(shortAnswer("כן לא")).toBeNull();
+    expect(shortAnswer("")).toBeNull();
+  });
+});

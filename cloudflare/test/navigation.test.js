@@ -282,3 +282,37 @@ describe("reported battery status", () => {
     expect((await position()).battery.level_percent).toBeNull();
   });
 });
+
+describe("SinoTrack H02 battery", () => {
+  it("reads the V8 battery field forwarded by Traccar as io8", async () => {
+    await send(payload({ protocol: "h02", attributes: { io5: "9", io6: "26", io7: "38", io8: "80" } }));
+    expect((await position()).battery.level_percent).toBe(80);
+  });
+  it("ignores io8 from other protocols or out of range", async () => {
+    await send(payload({ protocol: "teltonika", attributes: { io8: "80" } }));
+    expect((await position()).battery.level_percent).toBeNull();
+    await send(payload({ fixTime: new Date(NOW - 1000).toISOString(), protocol: "h02", attributes: { io8: "180" } }));
+    expect((await position()).battery.level_percent).toBeNull();
+  });
+});
+
+describe("navigation call log", () => {
+  it("lists calls without a prompt snapshot or transcript, newest first, with paging", async () => {
+    const ins = (t, call, type) => sql.prepare("INSERT INTO diagnostic_events (created_at, profile_id, call_id, event_type, details_json) VALUES (?,?,?,?,?)")
+      .run(t, "voice-navigator-live", call, type, JSON.stringify(type === "navigation_ended" ? { reason: "caller_disconnected" } : {}));
+    ins("2026-11-10T19:20:16Z", "old-call", "navigation_connected");
+    ins("2026-11-10T19:23:25Z", "old-call", "navigation_ended");
+    ins("2026-11-11T11:49:01Z", "new-call", "navigation_connected");
+    sql.prepare("INSERT INTO conversation_turns (created_at, profile_id, call_id, direction, text, metadata_json) VALUES (?,?,?,?,?,?)")
+      .run("2026-11-11T11:49:09Z", "voice-navigator-live", "new-call", "driver", "לא לא.", "{}");
+    ins("2026-11-11T12:00:00Z", "tutor-call", "navigation_connected");
+    sql.prepare("UPDATE diagnostic_events SET profile_id='student' WHERE call_id='tutor-call'").run();
+    const calls = await (await call("/v1/admin/navigation/calls?limit=1")).json();
+    expect(calls.map((c) => c.call_id)).toEqual(["new-call"]);
+    expect(calls[0].turns[0].text).toBe("לא לא.");
+    const older = await (await call("/v1/admin/navigation/calls?limit=5&offset=1")).json();
+    expect(older.map((c) => c.call_id)).toEqual(["old-call"]);
+    expect(older[0]).toMatchObject({ has_prompt: false, turns: [], setup_message: null });
+    expect(older[0].events.at(-1).details).toEqual({ reason: "caller_disconnected" });
+  });
+});

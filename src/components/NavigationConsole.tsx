@@ -56,6 +56,8 @@ interface CallTrace {
   system_instruction: string;
   opening_message: string;
   setup_message: unknown;
+  has_prompt: boolean;
+  session: { duration_seconds: number; ended_at: string } | null;
   turns: { created_at: string; direction: string; text: string; metadata: Record<string, unknown> }[];
   events: { created_at: string; event_type: string; details: Record<string, unknown> }[];
 }
@@ -67,6 +69,7 @@ const TURN_LABELS: Record<string, string> = {
   engine: "🔊 המערכת השמיעה לנהג",
   ai_input: "➡ הודעה שנשלחה ל-AI",
   ai_audio_dropped: "⚠ ה-AI דיבר בעצמו (לא הושמע)",
+  engine_fallback: "🛟 המנוע זיהה כן/לא בעצמו (ה-AI לא הגיב)",
   error: "❌ שגיאה",
   ended: "■ סיום שיחה",
 };
@@ -82,10 +85,13 @@ function CallLog({ token }: { token: string }) {
   const [calls, setCalls] = useState<CallTrace[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
-  async function load() {
+  const [more, setMore] = useState(true);
+  async function load(append = false) {
     setLoading(true);
     try {
-      setCalls(await api<CallTrace[]>(`${API}/calls?limit=20`, token));
+      const page = await api<CallTrace[]>(`${API}/calls?limit=20&offset=${append ? calls?.length ?? 0 : 0}`, token);
+      setCalls(append ? [...(calls ?? []), ...page] : page);
+      setMore(page.length === 20);
       setFailure("");
     } catch (e) {
       setFailure(e instanceof Error ? e.message : "טעינת השיחות נכשלה");
@@ -99,24 +105,28 @@ function CallLog({ token }: { token: string }) {
         <h3>
           <Navigation size={18} /> לוג שיחות ניווט מלא ופרומפט יוצא
         </h3>
-        <button className="nav-primary" onClick={load} disabled={loading}>
+        <button className="nav-primary" onClick={() => load()} disabled={loading}>
           <RefreshCw size={15} /> {calls ? "רענן" : "טען שיחות אחרונות"}
         </button>
       </div>
       {failure && <p className="nav-error">{failure}</p>}
-      {calls && !calls.length && <p>עדיין אין שיחות מתועדות. התיעוד פעיל משיחות שבוצעו אחרי עדכון זה.</p>}
+      {calls && !calls.length && <p>עדיין אין שיחות ניווט.</p>}
       {calls?.map((c) => (
         <details key={c.call_id} className="nav-call">
           <summary>
             {new Date(c.created_at).toLocaleString("he-IL")} · {c.turns.filter((t) => t.direction === "driver").length} פניות נהג ·{" "}
             {c.turns.filter((t) => t.direction === "engine").length} הודעות מערכת
+            {c.session ? ` · ${c.session.duration_seconds} ש׳` : ""}
+            {(() => { const end = c.events.find((e) => e.event_type === "navigation_ended")?.details.reason; return end ? ` · סיום: ${String(end)}` : ""; })()}
             {c.events.some((e) => e.event_type === "navigation_failed") ? " · ❌ נכשלה" : ""}
+            {!c.turns.length ? " · ללא תמליל" : ""}
           </summary>
-          <details>
+          {!c.turns.length && <p>לשיחה זו לא נשמר תמליל (בוצעה לפני הפעלת התיעוד המלא). מוצגים רק אירועי המערכת.</p>}
+          {c.has_prompt && <details>
             <summary>הפרומפט וההגדרות שנשלחו ל-AI בפועל</summary>
             <pre dir="ltr">{c.system_instruction}</pre>
             <pre dir="ltr">{JSON.stringify(c.setup_message, null, 2)}</pre>
-          </details>
+          </details>}
           <table className="nav-call-table">
             <thead>
               <tr><th>שעה</th><th>שלב</th><th>תוכן</th><th>פרטים</th></tr>
@@ -145,6 +155,9 @@ function CallLog({ token }: { token: string }) {
           </table>
         </details>
       ))}
+      {calls && more && (
+        <button className="nav-primary" onClick={() => load(true)} disabled={loading}>טען שיחות ישנות יותר</button>
+      )}
     </section>
   );
 }
