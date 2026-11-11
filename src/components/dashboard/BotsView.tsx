@@ -469,7 +469,7 @@ export const BotsView: React.FC = () => {
                     className="w-full p-2.5 rounded-xl border border-[#e3e8eb] text-xs"
                   >
                     <option value="engine">מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</option>
-                    <option value="gemini">Gemini מדבר: שיחה טבעית, העובדות מהמנוע</option>
+                    <option value="gemini">Gemini מדבר: Gemini מנהל את השיחה ומקבל נתונים חיים</option>
                   </select>
                 </div>
 

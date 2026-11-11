@@ -70,7 +70,6 @@ const TURN_LABELS: Record<string, string> = {
   ai_input: "➡ הודעה שנשלחה ל-AI",
   ai_audio_dropped: "⚠ ה-AI דיבר בעצמו (לא הושמע)",
   ai_spoke: "🗣 Gemini אמר לנהג",
-  guard_blocked: "⛔ נחסם: Gemini סתר את המנוע, הושמעה הוראת המנוע",
   engine_fallback: "🛟 המנוע זיהה כן/לא בעצמו (ה-AI לא הגיב)",
   error: "❌ שגיאה",
   ended: "■ סיום שיחה",
@@ -107,7 +106,7 @@ function VoiceMode({ token }: { token: string }) {
       <h2>מצב הקול בשיחת ניווט</h2>
       <label><input type="radio" checked={voice === "engine"} disabled={!controls} onChange={() => choose("engine")} /> מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</label>
       <br />
-      <label><input type="radio" checked={voice === "gemini"} disabled={!controls} onChange={() => choose("gemini")} /> Gemini מדבר: שיחה טבעית, ההוראות והפקקים מהמנוע ו-Google, וחסימה אוטומטית של כיוון או מספר שסותרים את המנוע</label>
+      <label><input type="radio" checked={voice === "gemini"} disabled={!controls} onChange={() => choose("gemini")} /> Gemini מדבר: Gemini מנהל את השיחה בעצמו ומקבל נתונים חיים (GPS, Google Maps, פקקים)</label>
       {state && <p>{state}</p>}
     </section>
   );
