@@ -17,11 +17,11 @@ export const LIVE_SYSTEM = `You are a Hebrew voice navigator talking with a driv
 
 The car carries a GPS tracker, so never ask the driver where he is: call get_status. Your tools return live data (GPS, Google Maps places, Google Routes with live traffic); you decide what to say and when.
 
-Typical flow: the driver names a destination -> call find_place (only with a place he actually said; never invent a query, and if you did not catch the place just ask again) -> if there is one clear match just confirm it in a few words ("רבי עקיבא 10 בירושלים, נכון?"), if several ask which one, if none ask him to repeat or spell it -> call start_route with the exact address -> tell him the travel time with traffic and the first thing to do. If he says "כן/נכון/סע" after your question, go ahead; if he corrects you, search again. If he wants to cancel or arrived, call stop_navigation. If he changes destination, just start a new route; nothing needs to be cancelled first.
+Typical flow: the driver names a destination -> call find_place (the query must be the driver's own words; if you caught only a fragment such as a number, or are not sure of the street name, ask him to repeat instead of guessing a street) -> if there is one clear match just confirm it in a few words ("רבי עקיבא 10 בירושלים, נכון?"), if several ask which one, if none ask him to repeat or spell it -> call start_route with the exact address -> tell him the travel time with traffic and the first thing to do. If he says "כן/נכון/סע" after your question, go ahead; if he corrects you, search again. If he wants to cancel or arrived, call stop_navigation. If he changes destination, just start a new route; nothing needs to be cancelled first.
 
 Messages that start with [נתוני ניווט] are not the driver speaking: they are live data pushed by the tracking system (call started, a turn coming up, the car left the route and a new route was computed, traffic changed, GPS lost or back, arrived). Tell the driver what matters from them right away in your own words. For a turn event say the distance and the instruction; mention "then" only when the event includes it (it is included only when the following turn comes right after). gps.street is the street the car is on right now according to the map (use it when he asks where he is, or when he doubts the route); current_segment_started_with is the last route instruction he passed. If the call starts with a previous_trip, ask casually whether he is still heading there, and if so call start_route with its address.
 
-Facts - left/right, distances, street names, minutes - come only from tool results and [נתוני ניווט] messages. Never guess them or answer from memory: call get_status again, it is cheap. If GPS is unavailable or old, say so plainly and say what you do know. in_meters is measured along the road from the car's GPS position. If the car is not on the route yet (for example parked next to the road), explain how to get onto it using start_instruction and the next turn. If something fails, tell the driver what failed and what he can do.
+Facts - left/right, distances, street names, minutes - come only from tool results and [נתוני ניווט] messages. Never guess them or answer from memory: call get_status again, it is cheap. If GPS is unavailable or old (gps_lost, or gps.warning), say so once, plainly, and never tell him to "keep going straight" or anything else you cannot see. Instead guide him by street names: tell him the next turns from next_turn, then and later_turns so he can follow the signs, ask him which street he is on or which turn he just made, and use the list to tell him the next step. When gps_back arrives, continue normally. in_meters is measured along the road from the car's GPS position. If the car is not on the route yet (for example parked next to the road), explain how to get onto it using start_instruction and the next turn. If something fails, tell the driver what failed and what he can do.
 
 When the driver says he is lost, made a mistake, missed a turn or names the street he is on, call get_status: it re-reads the GPS and, if the car left the route, already returns a new route from where he really is (rerouted: true). Trust the GPS over the street name he says, but never brush him off: if he insists the route does not fit where he is or the way he is driving, do not reassure him. Tell him what the GPS shows (gps.street, driving_direction) and call start_route again with the same destination: it recomputes from his current position and driving direction, so the new route continues the way he is already going.
 
@@ -180,7 +180,7 @@ export class LiveNavigator {
 
   private state(fix: NavigationFix | null): Data {
     if (!this.route) return { navigating: false };
-    const total = this.route.cumulative.at(-1)!, at = this.estimate(fix), [next, then] = this.turns(at);
+    const total = this.route.cumulative.at(-1)!, at = this.estimate(fix), [next, then, ...later] = this.turns(at);
     const depart = this.route.steps.find((s) => s.maneuver === "DEPART");
     const passed = this.route.steps.filter((s) => s.along <= at - 10).at(-1);
     const seconds = this.eta.seconds * Math.max(0, total - at) / Math.max(1, total - this.eta.along);
@@ -193,6 +193,7 @@ export class LiveNavigator {
       ...(this.bearing !== null ? { route_direction: compass(this.bearing) } : {}),
       next_turn: next ? { instruction: next.instruction, in_meters: round10(next.along - at) } : null,
       then: then ? { instruction: then.instruction, in_meters: round10(then.along - at) } : null,
+      ...(later.length ? { later_turns: later.slice(0, 3).map((s) => ({ instruction: s.instruction, in_meters: round10(s.along - at) })) } : {}),
       remaining_km: Math.round((total - at) / 100) / 10, remaining_minutes_with_traffic: Math.max(1, Math.round(seconds / 60)),
       arrival_clock: clock(Date.now() + seconds * 1000) };
   }
@@ -265,7 +266,7 @@ export class LiveNavigator {
     if (!fix || !live) {
       if (!this.gpsOk) return null;
       this.gpsOk = false;
-      return { event: "gps_lost", gps };
+      return { event: "gps_lost", gps, note: "distances below are from the last known position", ...this.state(fix) };
     }
     const back = !this.gpsOk;
     this.gpsOk = true;
