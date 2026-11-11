@@ -23,7 +23,7 @@ Messages that start with [נתוני ניווט] are not the driver speaking: th
 
 Facts - left/right, distances, street names, minutes - come only from tool results and [נתוני ניווט] messages. Never guess them or answer from memory: call get_status again, it is cheap. If GPS is unavailable or old, say so plainly and say what you do know. in_meters is measured along the road from the car's GPS position. If the car is not on the route yet (for example parked next to the road), explain how to get onto it using start_instruction and the next turn. If something fails, tell the driver what failed and what he can do.
 
-When the driver says he is lost, made a mistake, missed a turn or names the street he is on, call get_status: it re-reads the GPS and, if the car left the route, already returns a new route from where he really is (rerouted: true). Trust the GPS over the street name he says. If driving_direction and route_direction are opposite, tell him to turn around when possible.
+When the driver says he is lost, made a mistake, missed a turn or names the street he is on, call get_status: it re-reads the GPS and, if the car left the route, already returns a new route from where he really is (rerouted: true). Trust the GPS over the street name he says, but never brush him off: if he insists the route does not fit where he is or the way he is driving, do not reassure him. Tell him what the GPS shows (gps.street, driving_direction) and call start_route again with the same destination: it recomputes from his current position and driving direction, so the new route continues the way he is already going.
 
 Do not repeat yourself. After a short acknowledgement ("אוקיי", "טוב", "תודה", "הבנתי") say nothing, or at most one word. Repeat an instruction only when he asks. Talk to him in the singular ("פנה שמאלה", "תמשיך ישר") even though Google's instructions are written in the plural. Say travel time from the data exactly or rounded to five minutes (109 minutes is "בערך שעה וחמישים", not "שעה וארבעים וחמש"); arrival_clock is the expected arrival time in Israel. gps.tracker_battery_percent is the battery of the GPS tracker in the car, if he asks.
 
@@ -69,6 +69,7 @@ export class LiveNavigator {
   private street: { key: string; name: string | null } = { key: "", name: null };
   private last: NavigationFix | null = null;
   private motion: { speed: number; heading: number; at: number } | null = null;
+  private course: { deg: number; at: number } | null = null;
   private trafficAt = 0;
 
   constructor(private env: Env, private customerId: string, private callId: string) { this.trips = new NavigationTrips(env); }
@@ -91,6 +92,7 @@ export class LiveNavigator {
       }
       if (!last || fix.fix_at_ms > last.fix_at_ms) this.last = fix;
       if (this.motion?.at === fix.fix_at_ms) fix = { ...fix, speed_mps: Math.max(fix.speed_mps, this.motion.speed), heading: fix.heading ?? this.motion.heading };
+      if (fix.speed_mps >= 1.5 && fix.heading !== null) this.course = { deg: fix.heading, at: fix.fix_at_ms };
     }
     const battery = location?.battery.level_percent ?? null;
     const heard = location?.last_received_at_ms ? Math.round((Date.now() - location.last_received_at_ms) / 1000) : null;
@@ -127,11 +129,15 @@ export class LiveNavigator {
     const at = project(this.route, [fix.latitude, fix.longitude], Math.max(0, this.along - 50), this.along + Math.max(300, dt * 45 + 100));
     this.off = at.off;
     this.bearing = Number.isFinite(at.off) ? at.bearing : null;
-    // Driving against the route's direction means a missed turn even while still close to the route line.
-    this.wrongWay = fix.speed_mps >= 2 && fix.heading !== null && this.bearing !== null && Math.abs(((fix.heading - this.bearing + 540) % 360) - 180) > 120;
+    // Driving against or across the route's direction means a missed turn even while still close to the route line.
+    const course = this.heading(), turned = course === null || this.bearing === null ? 0 : Math.abs(((course - this.bearing + 540) % 360) - 180);
+    this.wrongWay = turned > 120 || (turned > 60 && at.off > 15);
     if (this.onRoute()) { this.along = Math.max(this.along, at.along); this.offCount = 0; }
     else this.offCount++;
   }
+
+  /** Direction the car was last seen driving, kept for a short while so a stop at a junction does not erase it. */
+  private heading() { return this.course && Date.now() - this.course.at <= 45_000 ? this.course.deg : null; }
 
   private onRoute() { return this.off <= OFF_ROUTE_M && !this.wrongWay; }
 
@@ -154,7 +160,7 @@ export class LiveNavigator {
   private async reroute(fix: NavigationFix) {
     this.offCount = 0;
     try {
-      this.use(await computeNavigationRoute(this.env, fix, this.destination, false), this.destination, fix);
+      this.use(await computeNavigationRoute(this.env, fix, this.destination, false, this.heading()), this.destination, fix);
       this.track(fix);
       return true;
     } catch {
@@ -183,7 +189,7 @@ export class LiveNavigator {
       ...(this.wrongWay ? { wrong_way: true } : {}),
       ...(passed ? { current_segment_started_with: passed.instruction } : {}),
       ...(at < 80 && depart ? { start_instruction: depart.instruction } : {}),
-      ...(fix && fix.speed_mps >= 1.5 && fix.heading !== null ? { driving_direction: compass(fix.heading) } : {}),
+      ...(this.heading() !== null ? { driving_direction: compass(this.heading()!) } : {}),
       ...(this.bearing !== null ? { route_direction: compass(this.bearing) } : {}),
       next_turn: next ? { instruction: next.instruction, in_meters: round10(next.along - at) } : null,
       then: then ? { instruction: then.instruction, in_meters: round10(then.along - at) } : null,
@@ -221,7 +227,7 @@ export class LiveNavigator {
       if (!destination) return { ok: false, error: "destination is required" };
       if (!fix) return { ok: false, error: "no usable GPS position, so a route cannot start yet", gps };
       let route: Route;
-      try { route = await computeNavigationRoute(this.env, fix, destination, false); }
+      try { route = await computeNavigationRoute(this.env, fix, destination, false, this.heading()); }
       catch (error) { return { ok: false, error: "Google found no driving route to this destination", detail: error instanceof Error ? error.message.slice(0, 120) : "" }; }
       await this.endTrip("cancelled");
       try {
@@ -289,7 +295,7 @@ export class LiveNavigator {
     }
     if (Date.now() - this.trafficAt >= TRAFFIC_CHECK_MS && this.onRoute()) {
       this.trafficAt = Date.now();
-      const fresh = await computeNavigationRoute(this.env, fix, this.destination, false).catch(() => null);
+      const fresh = await computeNavigationRoute(this.env, fix, this.destination, false, this.heading()).catch(() => null);
       if (fresh) {
         const current = this.eta.seconds * Math.max(0, total - at) / Math.max(1, total - this.eta.along);
         if (overlap(this.route, fresh) < 0.9) {

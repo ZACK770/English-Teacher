@@ -79,13 +79,14 @@ export function parseRoute(data: unknown): Route {
   return route;
 }
 
-export async function computeNavigationRoute(env: Env, fix: NavigationFix, destination: string, strict = true): Promise<Route> {
+export async function computeNavigationRoute(env: Env, fix: NavigationFix, destination: string, strict = true, heading: number | null = null): Promise<Route> {
   if (strict && !usableFix(fix)) throw new Error("Fresh GPS required");
   if (!destination.trim() || destination.length > 300) throw new Error("Invalid destination");
   const { token, project } = await googleToken(env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON, env.GOOGLE_TTS_PROJECT);
   if (!await new BusinessStore(env.DB).consumeMonthlyQuota("routes", settings(env).routesMonthlyLimit)) throw new Error("Route allowance unavailable");
   const body = {
-    origin: { location: { latLng: { latitude: fix.latitude, longitude: fix.longitude } } },
+    // The driving direction keeps Google from routing against the way the car is already moving.
+    origin: { location: { latLng: { latitude: fix.latitude, longitude: fix.longitude }, ...(heading === null ? {} : { heading: Math.round(heading) % 360 }) } },
     destination: { address: destination }, travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE",
     languageCode: "he", regionCode: "IL", units: "METRIC", polylineQuality: "HIGH_QUALITY",
   };

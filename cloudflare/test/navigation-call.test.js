@@ -209,7 +209,7 @@ describe("Gemini-led navigator tools return data", () => {
     const before = requests.filter((r) => r.url.includes("computeRoutes")).length;
     expect(await nav.tool("get_status", {})).toMatchObject({ rerouted: true, navigating: true });
     expect(requests.filter((r) => r.url.includes("computeRoutes")).length).toBe(before + 1);
-    expect(JSON.parse(requests.filter((r) => r.url.includes("computeRoutes")).at(-1).body).origin.location.latLng).toEqual({ latitude: 32.003, longitude: 34.008 });
+    expect(JSON.parse(requests.filter((r) => r.url.includes("computeRoutes")).at(-1).body).origin.location).toEqual({ latLng: { latitude: 32.003, longitude: 34.008 }, heading: 90 });
     db.prepare("UPDATE navigation_positions SET latitude=32, longitude=34.008 WHERE device_id=?").run("device-a");
     // The tracker loses its satellite fix: Gemini is told once, and the last known position still serves status and new routes.
     vi.setSystemTime(t + 150_000);
