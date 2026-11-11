@@ -165,3 +165,32 @@ describe("live traffic re-check", () => {
     expect((await nav.request({ intent: "status" })).then).toMatch(/זמן משוער ליעד: כ-20 דקות/);
   });
 });
+
+describe("previous trip on a new call", () => {
+  async function previous() {
+    const first = new NavigationCall(env, "a", "call-1");
+    await first.open();
+    await first.request({ intent: "destination", destination: "חיד\"א 3 בני ברק" });
+    expect((await first.request({ intent: "confirm" })).status).toBe("depart");
+    await first.close();
+    vi.setSystemTime(NOW + 10 * 60_000);
+    db.prepare("UPDATE navigation_positions SET fix_at_ms=?, received_at_ms=?").run(NOW + 10 * 60_000, NOW + 10 * 60_000);
+    const nav = new NavigationCall(env, "a", "call-2");
+    return { nav, opening: await nav.open() };
+  }
+
+  it("starts the new destination after the old trip is declined", async () => {
+    const { nav, opening } = await previous();
+    expect(opening.status).toBe("confirmation_required");
+    expect((await nav.request({ intent: "decline" })).say).toBe("בסדר, לא ממשיכים לשם. לאן תרצה להגיע?");
+    await nav.request({ intent: "destination", destination: "רבי עקיבא 10 ירושלים" });
+    expect((await nav.request({ intent: "confirm" })).status).toBe("depart");
+    expect(db.prepare("SELECT status FROM navigation_trips ORDER BY created_at_ms, rowid").all().map((r) => r.status)).toEqual(["cancelled", "active"]);
+  });
+
+  it("cancels the old trip when asked", async () => {
+    const { nav } = await previous();
+    expect(await nav.request({ intent: "cancel" })).toEqual({ status: "destination_required", say: "הנסיעה הקודמת בוטלה. לאן תרצה להגיע?" });
+    expect(db.prepare("SELECT status FROM navigation_trips").get().status).toBe("cancelled");
+  });
+});

@@ -12,9 +12,9 @@ import { ProgressStore } from "./progress";
 import { buildSetupPayload } from "./prompt";
 import { parseStartFrame } from "./technoline";
 
-const SYSTEM = `You understand Hebrew driver speech on a car phone line. Call navigation_request once for each complete request the driver addresses to the navigator, extracting only what the driver actually said. Ignore background noise, radio, passengers, echoes of the navigator's own voice and unintelligible fragments: do not call the tool for them. Every tool response contains spoken_to_driver: the exact sentence the driver heard last. Interpret the next utterance in that context: "כן/נכון/סע" after a yes/no question is confirm, "לא" is decline, a street name in answer to a location question is report, "מה עכשיו/לאן לפנות/כמה נשאר" is status. Never give directions, calculate routes, invent turns, infer a completed turn from a sign, or invent confirmations. The deterministic navigation engine is the sole source of directions and questions; its output is spoken separately. Use destination only when the driver named a destination, passing the words exactly as heard even if they look misheard: the engine checks them against Google Maps and asks the driver "התכוונת ל...?". If the driver spells a name letter by letter, join the letters into the name. confirm/decline only for an explicit answer to the last question. When location or heading is uncertain, never guess. Do not read tool results aloud or produce conversational audio. You have no access to GPS coordinates.`;
+const SYSTEM = `You understand Hebrew driver speech on a car phone line. Call navigation_request once for each complete request the driver addresses to the navigator, extracting only what the driver actually said. Ignore background noise, radio, passengers, echoes of the navigator's own voice and unintelligible fragments: do not call the tool for them. Every tool response contains spoken_to_driver: the exact sentence the driver heard last. Interpret the next utterance in that context: "כן/נכון/סע" after a yes/no question is confirm, "לא" is decline, "בטל/תבטל/לבטל/למחוק" (the trip) is cancel, also when answering a question; a new destination is destination. A street name in answer to a location question is report, "מה עכשיו/לאן לפנות/כמה נשאר" is status. Never give directions, calculate routes, invent turns, infer a completed turn from a sign, or invent confirmations. The deterministic navigation engine is the sole source of directions and questions; its output is spoken separately. Use destination only when the driver named a destination, passing the words exactly as heard even if they look misheard: the engine checks them against Google Maps and asks the driver "התכוונת ל...?". If the driver spells a name letter by letter, join the letters into the name. confirm/decline only for an explicit answer to the last question. When location or heading is uncertain, never guess. Do not read tool results aloud or produce conversational audio. You have no access to GPS coordinates.`;
 
-const LIVE_SYSTEM = `You are a calm, friendly Hebrew voice navigator on a car phone line, like a good co-driver. Speak short, natural Hebrew: one or two sentences, never lecture. All routing comes from the navigation_request tool, which uses the car's live GPS, Google Maps and live Google traffic. Call it for every destination, yes/no answer to its question, "what now / where do I turn / how long is left" question, sign the driver sees, position report, completion or cancellation. Its response contains spoken_to_driver: tell the driver exactly that content in your own natural words, but keep every direction (right/left/U-turn/exit), distance, street name, place name and number exactly as given, and never add a turn, distance, street, arrival time or confirmation that is not in it. Messages that start with [מנוע הניווט] are live updates from the engine (next turn, reroute, traffic, GPS problem): say them to the driver right away in the same way and add nothing. For any navigation question call the tool instead of answering from memory. You may answer a brief non-navigation remark briefly, but never guess where the car is, which way to turn or how long is left. Ignore background noise, radio, passengers and echoes of your own voice: stay silent and do not call the tool for them. Pass destinations exactly as heard even if they look misheard: the engine checks them against Google Maps and asks "התכוונת ל...?". If the driver spells a name letter by letter, join the letters. "כן/נכון/סע" after a yes/no question is confirm and "לא" is decline. You have no GPS coordinates except through the tool.`;
+const LIVE_SYSTEM = `You are a calm, friendly Hebrew voice navigator on a car phone line, like a good co-driver. Speak short, natural Hebrew: one or two sentences, never lecture. All routing comes from the navigation_request tool, which uses the car's live GPS, Google Maps and live Google traffic. Call it for every destination, yes/no answer to its question, "what now / where do I turn / how long is left" question, sign the driver sees, position report, completion or cancellation. Its response contains spoken_to_driver: tell the driver exactly that content in your own natural words, but keep every direction (right/left/U-turn/exit), distance, street name, place name and number exactly as given, and never add a turn, distance, street, arrival time or confirmation that is not in it. Messages that start with [מנוע הניווט] are live updates from the engine (next turn, reroute, traffic, GPS problem): say them to the driver right away in the same way and add nothing. For any navigation question call the tool instead of answering from memory. You may answer a brief non-navigation remark briefly, but never guess where the car is, which way to turn or how long is left. Ignore background noise, radio, passengers and echoes of your own voice: stay silent and do not call the tool for them. Pass destinations exactly as heard even if they look misheard: the engine checks them against Google Maps and asks "התכוונת ל...?". If the driver spells a name letter by letter, join the letters. "כן/נכון/סע" after a yes/no question is confirm and "לא" is decline. "בטל/תבטל/לבטל/למחוק" (the trip) is cancel, also when answering a question; a new destination is destination. You have no GPS coordinates except through the tool.`;
 
 const DIRECTIONS = [["ימינה", "ימין"], ["שמאלה", "שמאל"], ["פרסה"]];
 /** True when spoken text gives a direction or number that the engine's last instruction does not contain. */
@@ -62,6 +62,8 @@ export class NavigationSession {
   private aiCalls = 0;
   private speech: BasicTranslator | null = null;
   private live = false;
+  private utterances = 0;
+  private lastCall = { key: "", utterances: -1, response: {} as Record<string, unknown> };
   private engineText = "";
   private muted = false;
   private carry: Uint8Array = new Uint8Array();
@@ -211,7 +213,7 @@ export class NavigationSession {
 
   private flushHeard() {
     const said = this.heard.learner.trim();
-    if (said) { this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
+    if (said) { this.utterances++; this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
     if (this.heard.tutor.trim()) {
       if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, { engine: this.engineText }); }
       else this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
@@ -248,7 +250,16 @@ export class NavigationSession {
           if (this.abort.signal.aborted) return;
           this.trace("tool_call", JSON.stringify({ name: call.name, args: call.args ?? {} }));
           if (call.name !== NAVIGATION_REQUEST_TOOL.name) { this.ai!.submitToolResult(call, false); return; }
+          const key = JSON.stringify(call.args ?? {});
+          if (key === this.lastCall.key && this.utterances === this.lastCall.utterances) {
+            // Gemini repeated the same request without the driver saying anything new.
+            this.ai!.submitToolResult(call, true, this.lastCall.response);
+            this.trace("tool_result", JSON.stringify(this.lastCall.response), { note: "duplicate call ignored" });
+            return;
+          }
+          const utterances = this.utterances;
           const response = await this.handle(call.args, speech, (r) => this.ai!.submitToolResult(call, true, r), "reply");
+          this.lastCall = { key, utterances, response };
           this.trace("tool_result", JSON.stringify(response));
         }).catch(() => this.stop("navigation_speech_failed"));
       }

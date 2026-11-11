@@ -112,7 +112,7 @@ export class NavigationCall {
       }
       this.pending = null;
       if (pending?.kind === "destination") return { status: "destination_required", say: "אז מה הכתובת המדויקת? אפשר לאיית את שם הרחוב." };
-      return { status: "destination_required", say: this.trip ? "הנסיעה הקודמת לא נמחקה. לאן תרצה להגיע?" : "לאן תרצה להגיע?" };
+      return { status: "destination_required", say: pending?.kind === "resume" ? "בסדר, לא ממשיכים לשם. לאן תרצה להגיע?" : "לאן תרצה להגיע?" };
     }
     if (command.intent === "confirm") {
       const pending = this.pending;
@@ -131,17 +131,25 @@ export class NavigationCall {
       }
       const fix = await this.fix();
       if (!fix) return { status: "gps_unavailable", say: "אין מיקום עדכני מספיק להתחלת ניווט. ממתין למכשיר האיתור." };
-      if (this.trip && !this.linked) return { status: "confirmation_required", say: "קיימת נסיעה קודמת. יש לאשר את המשכה או לבטל אותה לפני פתיחת נסיעה חדשה." };
       const route = await this.route(fix, pending.address);
       if (!route) { this.pending = null; return { status: "route_unavailable", say: `לא מצאתי מסלול אל ${pending.label}. אמור שוב את הכתובת עם שם העיר.` }; }
-      if (this.trip) await this.trips.finish(this.customerId, this.trip.id, "cancelled", this.callId);
+      // Confirming a new destination replaces any earlier trip.
+      const blocked = await this.dropPrevious();
+      if (blocked) return blocked;
       this.trip = await this.trips.start(this.customerId, { destination_label: pending.label.slice(0, 80), destination_address: pending.address });
       const connected = await this.trips.connect(this.customerId, this.trip.id, this.callId, true);
       if (connected.action !== "resume") return { status: connected.reason, say: connected.prompt };
       this.trip = connected.trip; this.linked = true; this.pending = null; this.driverConflict = false;
       return this.useRoute(route).update(await this.fix(), true);
     }
-    if (!this.trip || !this.linked) return { status: "confirmation_required", say: this.trip ? "האם להמשיך ליעד של הנסיעה הקודמת?" : "לאן תרצה להגיע?" };
+    if (command.intent === "cancel" && this.trip && !this.linked) {
+      this.pending = null;
+      return await this.dropPrevious() ?? { status: "destination_required", say: "הנסיעה הקודמת בוטלה. לאן תרצה להגיע?" };
+    }
+    if (!this.trip || !this.linked) {
+      if (this.trip) this.pending = { kind: "resume" };
+      return this.trip ? { status: "confirmation_required", say: `להמשיך בנסיעה הקודמת אל ${this.trip.destination_label}? אפשר לומר כן, לבטל, או יעד חדש.` } : { status: "destination_required", say: "לאן תרצה להגיע?" };
+    }
     if (command.intent === "complete" || command.intent === "cancel") {
       this.pending = { kind: command.intent === "complete" ? "completed" : "cancelled" };
       return { status: "confirmation_required", say: command.intent === "complete" ? "לסיים את הנסיעה כי הגעת ליעד?" : "לבטל את הנסיעה?" };
@@ -165,6 +173,20 @@ export class NavigationCall {
   /** Minutes left by Google's traffic-aware estimate, when a route is active. */
   eta(): number | null { return this.engine ? Math.max(1, Math.round(this.engine.remainingSeconds() / 60)) : null; }
   destination(): string | null { return this.trip?.destination_label ?? null; }
+
+  /** Ends the earlier trip of this customer (taking it over from the old call first). Returns guidance only on failure. */
+  private async dropPrevious(): Promise<Guidance | null> {
+    if (!this.trip) return null;
+    if (!this.linked) {
+      const connected = await this.trips.connect(this.customerId, this.trip.id, this.callId, true);
+      if (connected.action !== "resume") return { status: connected.reason, say: connected.prompt };
+      this.trip = connected.trip; this.linked = true;
+    }
+    const trip = this.trip;
+    if (trip) await this.trips.finish(this.customerId, trip.id, "cancelled", this.callId);
+    this.trip = null; this.engine = null; this.linked = false; this.driverConflict = false;
+    return null;
+  }
 
   private useRoute(route: Route) {
     this.engine = new RouteGuidance(route);
