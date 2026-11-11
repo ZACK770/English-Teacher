@@ -2,7 +2,10 @@ import { z } from "zod";
 import type { Env } from "./env";
 import { customerPosition } from "./navigation";
 import { NavigationTrips } from "./navigation-trips";
-import { computeNavigationRoute, findPlaces, RouteGuidance, usableFix, type Guidance, type NavigationFix, type PlaceMatch } from "./navigation-route";
+import { computeNavigationRoute, findPlaces, overlap, RouteGuidance, usableFix, type Guidance, type NavigationFix, type PlaceMatch, type Route } from "./navigation-route";
+
+/** How often an active trip is re-checked against live Google traffic. */
+export const TRAFFIC_CHECK_MS = 150_000;
 
 export const NavigationRequestSchema = z.object({
   intent: z.enum(["destination", "confirm", "decline", "status", "overview", "see", "report", "complete", "cancel"]),
@@ -22,10 +25,11 @@ export class NavigationCall {
   private trips: NavigationTrips;
   private trip: Awaited<ReturnType<NavigationTrips["current"]>> = null;
   private engine: RouteGuidance | null = null;
-  private pending: { kind: "destination"; address: string; label: string; alternatives: PlaceMatch[] } | { kind: "resume" } | { kind: "completed" } | { kind: "cancelled" } | null = null;
+  private pending: { kind: "destination"; address: string; label: string; alternatives: PlaceMatch[] } | { kind: "resume" } | { kind: "faster"; route: Route } | { kind: "completed" } | { kind: "cancelled" } | null = null;
   private linked = false;
   private driverConflict = false;
   private lastLocation: Awaited<ReturnType<typeof customerPosition>> = null;
+  private trafficAt = 0;
 
   constructor(private env: Env, private customerId: string, private callId: string) { this.trips = new NavigationTrips(env); }
 
@@ -77,8 +81,7 @@ export class NavigationCall {
     if (!route) return { status: "route_unavailable", say: `לא הצלחתי לחשב מסלול אל ${this.trip.destination_label}. נסה לומר שוב את הכתובת המלאה עם שם העיר.` };
     const current = await this.fix();
     if (!current) return { status: "gps_unavailable", say: "המיקום התיישן בזמן חישוב המסלול. ההנחיות מושהות." };
-    this.engine = new RouteGuidance(route);
-    return this.engine.update(current, force);
+    return this.useRoute(route).update(current, force);
   }
 
   async request(input: unknown): Promise<Guidance> {
@@ -101,6 +104,7 @@ export class NavigationCall {
     }
     if (command.intent === "decline") {
       const pending = this.pending;
+      if (pending?.kind === "faster") { this.pending = null; return { status: "guidance", say: "בסדר, נשארים במסלול הנוכחי." }; }
       if (pending?.kind === "destination" && pending.alternatives.length) {
         const [next, ...alternatives] = pending.alternatives;
         this.pending = { kind: "destination", address: next.address, label: next.label, alternatives };
@@ -114,6 +118,11 @@ export class NavigationCall {
       const pending = this.pending;
       if (!pending) return { status: "confirmation_required", say: "מה ברצונך לאשר?" };
       if (pending.kind === "resume") return this.resume(true);
+      if (pending.kind === "faster") {
+        this.pending = null;
+        const result = this.useRoute(pending.route).update(await this.fix(), true);
+        return { ...result, say: `עוברים למסלול המהיר. ${result.say}`.trim() };
+      }
       if (pending.kind === "completed" || pending.kind === "cancelled") {
         if (!this.trip || !this.linked) return { status: "confirmation_required", say: "יש לחבר את השיחה לנסיעה לפני סיומה." };
         await this.trips.finish(this.customerId, this.trip.id, pending.kind, this.callId);
@@ -130,8 +139,7 @@ export class NavigationCall {
       const connected = await this.trips.connect(this.customerId, this.trip.id, this.callId, true);
       if (connected.action !== "resume") return { status: connected.reason, say: connected.prompt };
       this.trip = connected.trip; this.linked = true; this.pending = null; this.driverConflict = false;
-      this.engine = new RouteGuidance(route);
-      return this.engine.update(await this.fix(), true);
+      return this.useRoute(route).update(await this.fix(), true);
     }
     if (!this.trip || !this.linked) return { status: "confirmation_required", say: this.trip ? "האם להמשיך ליעד של הנסיעה הקודמת?" : "לאן תרצה להגיע?" };
     if (command.intent === "complete" || command.intent === "cancel") {
@@ -146,7 +154,41 @@ export class NavigationCall {
     }
     if (this.driverConflict) return { status: "manual_confirmation", say: "צריך לאמת את המיקום שמסרת לפני הנחיות נוספות. אפשר לאשר יעד חדש לחישוב מחדש." };
     if (!this.engine) return this.refreshRoute(true);
-    return this.engine.update(await this.fix(), true, command.intent === "overview");
+    const result = this.engine.update(await this.fix(), true, command.intent === "overview");
+    const eta = this.eta();
+    if ((command.intent === "status" || command.intent === "overview") && eta !== null && ["guidance", "overview", "depart"].includes(result.status)) {
+      return { ...result, then: [result.then, `זמן משוער ליעד: כ-${eta} דקות`].filter(Boolean).join(". ") };
+    }
+    return result;
+  }
+
+  /** Minutes left by Google's traffic-aware estimate, when a route is active. */
+  eta(): number | null { return this.engine ? Math.max(1, Math.round(this.engine.remainingSeconds() / 60)) : null; }
+  destination(): string | null { return this.trip?.destination_label ?? null; }
+
+  private useRoute(route: Route) {
+    this.engine = new RouteGuidance(route);
+    this.trafficAt = Date.now();
+    return this.engine;
+  }
+
+  /** Re-asks Google with live traffic; offers a clearly faster different route, or reports a major delay. */
+  private async traffic(): Promise<Guidance | null> {
+    if (!this.engine || !this.trip || Date.now() - this.trafficAt < TRAFFIC_CHECK_MS) return null;
+    this.trafficAt = Date.now();
+    const fix = await this.fix();
+    if (!fix) return null;
+    const route = await this.route(fix, this.trip.destination_address);
+    if (!route) return null;
+    const current = this.engine.remainingSeconds();
+    if (overlap(this.engine.route, route) < 0.9) {
+      if (current - route.seconds < 180) return null;
+      this.pending = { kind: "faster", route };
+      return { status: "confirmation_required", say: `יש עומס במסלול הנוכחי. מצאתי דרך מהירה יותר שחוסכת כ-${Math.round((current - route.seconds) / 60)} דקות. לעבור אליה?` };
+    }
+    this.engine.retime(route.seconds);
+    if (route.seconds - current < 300) return null;
+    return { status: "traffic_delay", say: `יש עומס בהמשך הדרך. זמן ההגעה התארך לכ-${Math.round(route.seconds / 60)} דקות.` };
   }
 
   async poll(): Promise<Guidance> {
@@ -156,6 +198,7 @@ export class NavigationCall {
     if (!this.engine) return { status: "silent", say: "" };
     const result = this.engine.update(await this.fix());
     if (result.status === "reroute") return this.refreshRoute(true);
+    if (result.status === "silent") return await this.traffic() ?? result;
     return result;
   }
 

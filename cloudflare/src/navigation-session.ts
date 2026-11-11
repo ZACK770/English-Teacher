@@ -1,5 +1,5 @@
 import { AsyncQueue, sleep } from "./async";
-import { concat, FRAME_BYTES, FRAME_MS, SILENCE_FRAME, upsample8kTo16k } from "./audio";
+import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, SILENCE_FRAME, upsample8kTo16k } from "./audio";
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { controlsFromSettings } from "./controls";
@@ -13,6 +13,16 @@ import { buildSetupPayload } from "./prompt";
 import { parseStartFrame } from "./technoline";
 
 const SYSTEM = `You understand Hebrew driver speech on a car phone line. Call navigation_request once for each complete request the driver addresses to the navigator, extracting only what the driver actually said. Ignore background noise, radio, passengers, echoes of the navigator's own voice and unintelligible fragments: do not call the tool for them. Every tool response contains spoken_to_driver: the exact sentence the driver heard last. Interpret the next utterance in that context: "כן/נכון/סע" after a yes/no question is confirm, "לא" is decline, a street name in answer to a location question is report, "מה עכשיו/לאן לפנות/כמה נשאר" is status. Never give directions, calculate routes, invent turns, infer a completed turn from a sign, or invent confirmations. The deterministic navigation engine is the sole source of directions and questions; its output is spoken separately. Use destination only when the driver named a destination, passing the words exactly as heard even if they look misheard: the engine checks them against Google Maps and asks the driver "התכוונת ל...?". If the driver spells a name letter by letter, join the letters into the name. confirm/decline only for an explicit answer to the last question. When location or heading is uncertain, never guess. Do not read tool results aloud or produce conversational audio. You have no access to GPS coordinates.`;
+
+const LIVE_SYSTEM = `You are a calm, friendly Hebrew voice navigator on a car phone line, like a good co-driver. Speak short, natural Hebrew: one or two sentences, never lecture. All routing comes from the navigation_request tool, which uses the car's live GPS, Google Maps and live Google traffic. Call it for every destination, yes/no answer to its question, "what now / where do I turn / how long is left" question, sign the driver sees, position report, completion or cancellation. Its response contains spoken_to_driver: tell the driver exactly that content in your own natural words, but keep every direction (right/left/U-turn/exit), distance, street name, place name and number exactly as given, and never add a turn, distance, street, arrival time or confirmation that is not in it. Messages that start with [מנוע הניווט] are live updates from the engine (next turn, reroute, traffic, GPS problem): say them to the driver right away in the same way and add nothing. For any navigation question call the tool instead of answering from memory. You may answer a brief non-navigation remark briefly, but never guess where the car is, which way to turn or how long is left. Ignore background noise, radio, passengers and echoes of your own voice: stay silent and do not call the tool for them. Pass destinations exactly as heard even if they look misheard: the engine checks them against Google Maps and asks "התכוונת ל...?". If the driver spells a name letter by letter, join the letters. "כן/נכון/סע" after a yes/no question is confirm and "לא" is decline. You have no GPS coordinates except through the tool.`;
+
+const DIRECTIONS = [["ימינה", "ימין"], ["שמאלה", "שמאל"], ["פרסה"]];
+/** True when spoken text gives a direction or number that the engine's last instruction does not contain. */
+export function contradicts(said: string, engine: string): boolean {
+  if (DIRECTIONS.some((g) => g.some((w) => said.includes(w)) && !g.some((w) => engine.includes(w)))) return true;
+  const allowed = new Set(engine.match(/\d+/g) ?? []);
+  return (said.match(/\d+/g) ?? []).some((n) => !allowed.has(n));
+}
 
 const YES = new Set(["כן", "נכון", "בטח", "סע", "יאללה", "אישור", "מאשר", "בדיוק", "אוקיי"]);
 const NO = new Set(["לא", "ממש"]);
@@ -51,6 +61,11 @@ export class NavigationSession {
   private lastStatus = "";
   private aiCalls = 0;
   private speech: BasicTranslator | null = null;
+  private live = false;
+  private engineText = "";
+  private muted = false;
+  private carry: Uint8Array = new Uint8Array();
+  private partial: Uint8Array = new Uint8Array();
 
   constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null) {}
 
@@ -77,13 +92,27 @@ export class NavigationSession {
     if (!force && text === this.lastMessage) return;
     this.lastMessage = text;
     this.lastStatus = result.status;
-    this.trace("engine", text, { status: result.status, source, gps: this.controller?.gps() ?? null });
+    this.engineText = text;
+    this.trace("engine", text, { status: result.status, source, voice: this.live ? "gemini" : "engine", gps: this.controller?.gps() ?? null });
+    if (this.live) {
+      // Gemini voices the engine's words; tool replies already carry them, other updates are sent as a turn to speak now.
+      if (source !== "reply" && this.ai) {
+        const update = `[מנוע הניווט] ${text}`;
+        this.ai.startGreeting(update);
+        this.trace("ai_input", update, { kind: "engine_update" });
+      }
+      return;
+    }
     if (source !== "reply" && this.ai) {
       // Tool responses already carry spoken_to_driver; other engine speech must reach the AI too, or the reply has no context.
       const context = `spoken_to_driver (status ${result.status}): ${text}`;
       this.ai.addContext(context);
       this.trace("ai_input", context, { kind: "context" });
     }
+    await this.play(text, speech);
+  }
+
+  private async play(text: string, speech: BasicTranslator) {
     this.clearSpeech();
     const generation = this.generation;
     for (const chunk of text.match(/[\s\S]{1,500}/g) ?? []) {
@@ -128,11 +157,15 @@ export class NavigationSession {
       const allowance = await business.reserveCall(customerId, profileId, callId, controls.max_call_minutes * 60);
       if (!allowance.seconds || allowance.mode === "basic") throw new Error("navigation_access_unavailable");
       timer = setTimeout(() => this.stop("hard_time_limit"), allowance.seconds * 1000);
-      const setup = buildSetupPayload(controls, SYSTEM, profileId, this.s);
+      this.live = controls.navigation_voice === "gemini";
+      const system = this.live ? LIVE_SYSTEM : SYSTEM;
+      const setup = buildSetupPayload(controls, system, profileId, this.s);
       setup.setup.tools = [{ functionDeclarations: [NAVIGATION_REQUEST_TOOL] }];
       this.ai = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
-      const greeting = "The call has started. Wait for the driver's destination or response; the navigation engine speaks its own greeting.";
-      await progress.savePromptSnapshot(profileId, callId, { system_instruction: SYSTEM, opening_message: greeting, history_context: "",
+      const greeting = this.live
+        ? "The call has started. The engine's opening line follows as [מנוע הניווט]; greet the driver with it."
+        : "The call has started. Wait for the driver's destination or response; the navigation engine speaks its own greeting.";
+      await progress.savePromptSnapshot(profileId, callId, { system_instruction: system, opening_message: greeting, history_context: "",
         setup_message: setup, fingerprint: await sha256Hex(JSON.stringify(setup)), controls }).catch(() => {});
       const speech = new BasicTranslator(this.env, this.s);
       this.speech = speech;
@@ -140,7 +173,7 @@ export class NavigationSession {
       await Promise.race([this.ai.connect(), ...tasks]);
       if (this.abort.signal.aborted) return;
       meteredAt = Date.now();
-      await progress.logDiagnostic(profileId, callId, "navigation_connected");
+      await progress.logDiagnostic(profileId, callId, "navigation_connected", { voice: this.live ? "gemini" : "engine" });
       this.ai.addContext(greeting);
       this.trace("ai_input", greeting, { kind: "context" });
       tasks.push(this.sendInput(), this.readAi(speech), this.poll(speech, progress, callId));
@@ -179,7 +212,10 @@ export class NavigationSession {
   private flushHeard() {
     const said = this.heard.learner.trim();
     if (said) { this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
-    if (this.heard.tutor.trim()) this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
+    if (this.heard.tutor.trim()) {
+      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, { engine: this.engineText }); }
+      else this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
+    }
     this.heard = { learner: "", tutor: "" };
   }
 
@@ -203,6 +239,7 @@ export class NavigationSession {
       if (event.type === "usage") this.meter.recordUsage(event.usage);
       // Engine speech is replaced only by a newer engine reply; line echo and noise must not cut it off.
       if (event.type === "transcript") this.heard[event.role] += event.text;
+      if (this.live) this.voice(event, speech);
       if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard();
       if (event.type === "tool_call") this.flushHeard();
       if (event.type === "tool_call") for (const call of event.calls) {
@@ -211,21 +248,47 @@ export class NavigationSession {
           if (this.abort.signal.aborted) return;
           this.trace("tool_call", JSON.stringify({ name: call.name, args: call.args ?? {} }));
           if (call.name !== NAVIGATION_REQUEST_TOOL.name) { this.ai!.submitToolResult(call, false); return; }
-          const response = await this.handle(call.args, speech, (r) => this.ai!.submitToolResult(call, true, r));
+          const response = await this.handle(call.args, speech, (r) => this.ai!.submitToolResult(call, true, r), "reply");
           this.trace("tool_result", JSON.stringify(response));
         }).catch(() => this.stop("navigation_speech_failed"));
       }
     }
   }
 
-  private async handle(args: unknown, speech: BasicTranslator, reply: (r: Record<string, unknown>) => void) {
+  /** Plays Gemini's own voice, cutting it off and playing the engine's words if it contradicts them. */
+  private voice(event: Awaited<ReturnType<GeminiLive["next"]>>, speech: BasicTranslator) {
+    if (event.type === "audio" && !this.muted) {
+      this.meter.outputAudioBytes += event.pcm24k.byteLength;
+      const [pcm, carry] = downsample24kTo8k(event.pcm24k, this.carry);
+      this.carry = carry;
+      const data = concat([this.partial, pcm]);
+      let offset = 0;
+      for (; offset + FRAME_BYTES <= data.length; offset += FRAME_BYTES) this.output.push(data.slice(offset, offset + FRAME_BYTES));
+      this.partial = data.slice(offset);
+    }
+    if (event.type === "interrupted" || event.type === "turn_complete") {
+      if (event.type === "interrupted") this.clearSpeech();
+      this.muted = false; this.carry = new Uint8Array(); this.partial = new Uint8Array();
+    }
+    if (event.type === "transcript" && event.role === "tutor" && !this.muted && contradicts(this.heard.tutor, this.engineText)) {
+      this.muted = true;
+      this.clearSpeech();
+      const engine = this.engineText;
+      this.trace("guard_blocked", this.heard.tutor, { engine });
+      this.ai?.addContext("Your last sentence contradicted the navigation engine and was cut off; the driver heard the engine's exact words instead.");
+      if (engine) this.commands = this.commands.then(() => this.play(engine, speech)).catch(() => this.stop("navigation_speech_failed"));
+    }
+  }
+
+  private async handle(args: unknown, speech: BasicTranslator, reply: (r: Record<string, unknown>) => void, source = "reply") {
     this.meter.learnerTurns++;
     let result: Guidance;
     try { result = await this.controller!.request(args); }
     catch { result = { status: "navigation_unavailable", say: "לא ניתן לעדכן את הניווט כרגע. אל תסתמך על ההנחיה הקודמת." }; }
-    const response = { status: result.status, spoken_to_driver: [result.say, result.then].filter(Boolean).join(". ") };
+    const response = { status: result.status, spoken_to_driver: [result.say, result.then].filter(Boolean).join(". "),
+      destination: this.controller!.destination(), eta_minutes: this.controller!.eta() };
     reply(response);
-    await this.speak(result, speech, true);
+    await this.speak(result, speech, true, source);
     return response;
   }
 
@@ -239,7 +302,9 @@ export class NavigationSession {
       this.commands = this.commands.then(async () => {
         if (this.abort.signal.aborted) return;
         this.trace("engine_fallback", JSON.stringify({ intent }), { note: "AI did not call the tool for a bare yes/no answer" });
-        const response = await this.handle({ intent }, speech, (r) => this.ai?.addContext(`Handled the driver's answer as ${intent}. spoken_to_driver: ${r.spoken_to_driver}`));
+        const response = await this.handle({ intent }, speech, (r) => {
+          if (!this.live) this.ai?.addContext(`Handled the driver's answer as ${intent}. spoken_to_driver: ${r.spoken_to_driver}`);
+        }, this.live ? "engine_fallback" : "reply");
         this.trace("tool_result", JSON.stringify(response), { source: "engine_fallback" });
       }).catch(() => this.stop("navigation_speech_failed"));
     }).catch(() => {});

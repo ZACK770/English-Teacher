@@ -113,3 +113,55 @@ describe("bare yes/no fallback", () => {
     expect(shortAnswer("")).toBeNull();
   });
 });
+
+import { contradicts } from "../src/navigation-session";
+import { TRAFFIC_CHECK_MS } from "../src/navigation-call";
+describe("Gemini voice guard", () => {
+  it("blocks directions or numbers the engine did not give", () => {
+    const engine = "בעוד 300 מטרים: פנה שמאלה לרחוב עזרא";
+    expect(contradicts("עוד שלוש מאות מטר שמאלה לעזרא", engine)).toBe(false);
+    expect(contradicts("בעוד 300 מטר פנה ימינה", engine)).toBe(true);
+    expect(contradicts("בעוד 200 מטר שמאלה", engine)).toBe(true);
+    expect(contradicts("סע בזהירות", "")).toBe(false);
+  });
+});
+
+describe("live traffic re-check", () => {
+  const far = (seconds) => ({ routes: [{ duration: `${seconds}s`, legs: [{ steps: [
+    step([[32, 34], [32, 34.03]], "התחל מזרחה", "DEPART"),
+    step([[32, 34.03], [32.01, 34.03]], "פנה שמאלה לרחוב עזרא", "TURN_LEFT"),
+  ] }] }] });
+  async function driving(next) {
+    const nav = new NavigationCall(env, "a", "call-1");
+    await nav.open();
+    await nav.request({ intent: "destination", destination: "עזרא 14 ירושלים" });
+    await nav.request({ intent: "confirm" });
+    fetch.mockImplementation(async (url, init) => {
+      requests.push({ url: String(url), body: init?.body });
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return Response.json({ access_token: "t", expires_in: 3600 });
+      if (String(url).includes("computeRoutes")) return Response.json(next);
+      throw new Error("unexpected " + url);
+    });
+    const t = NOW + TRAFFIC_CHECK_MS + 1000;
+    vi.setSystemTime(t);
+    db.prepare("UPDATE navigation_positions SET source_position_id=2, fix_at_ms=?, received_at_ms=?, longitude=34.0001, heading=90 WHERE device_id=?").run(t, t, "device-a");
+    return nav;
+  }
+
+  it("offers a clearly faster different route and switches on confirm", async () => {
+    const nav = await driving({ routes: [{ duration: "60s", legs: [{ steps: [
+      step([[32, 34], [31.99, 34]], "התחל דרומה", "DEPART"),
+      step([[31.99, 34], [31.99, 34.01]], "פנה ימינה לרחוב הרצל", "TURN_RIGHT"),
+    ] }] }] });
+    const offer = await nav.poll();
+    expect(offer.status).toBe("confirmation_required");
+    expect(offer.say).toMatch(/דרך מהירה יותר שחוסכת כ-6 דקות/);
+    expect((await nav.request({ intent: "confirm" })).say).toMatch(/^עוברים למסלול המהיר/);
+  });
+
+  it("reports a major delay on the same roads", async () => {
+    const nav = await driving({ routes: [{ duration: "1200s", legs: ROUTE.routes[0].legs }] });
+    expect(await nav.poll()).toEqual({ status: "traffic_delay", say: "יש עומס בהמשך הדרך. זמן ההגעה התארך לכ-20 דקות." });
+    expect((await nav.request({ intent: "status" })).then).toMatch(/זמן משוער ליעד: כ-20 דקות/);
+  });
+});

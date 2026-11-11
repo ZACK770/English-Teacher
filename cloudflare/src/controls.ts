@@ -60,6 +60,7 @@ export const TutorControlsSchema = z
     idle_timeout_seconds: z.number().int().min(15).max(300).default(60),
     idle_audio_threshold: z.number().int().min(50).max(5000).default(300),
     session_end_action: z.enum(["hangup", "return_to_menu"]).default("hangup"),
+    navigation_voice: z.enum(["engine", "gemini"]).default("engine"),
   })
   .refine((c) => c.context_target_tokens < c.context_trigger_tokens, "context target must be smaller than trigger");
 

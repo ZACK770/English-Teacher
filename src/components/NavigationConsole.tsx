@@ -69,6 +69,8 @@ const TURN_LABELS: Record<string, string> = {
   engine: "🔊 המערכת השמיעה לנהג",
   ai_input: "➡ הודעה שנשלחה ל-AI",
   ai_audio_dropped: "⚠ ה-AI דיבר בעצמו (לא הושמע)",
+  ai_spoke: "🗣 Gemini אמר לנהג",
+  guard_blocked: "⛔ נחסם: Gemini סתר את המנוע, הושמעה הוראת המנוע",
   engine_fallback: "🛟 המנוע זיהה כן/לא בעצמו (ה-AI לא הגיב)",
   error: "❌ שגיאה",
   ended: "■ סיום שיחה",
@@ -116,6 +118,7 @@ function CallLog({ token }: { token: string }) {
           <summary>
             {new Date(c.created_at).toLocaleString("he-IL")} · {c.turns.filter((t) => t.direction === "driver").length} פניות נהג ·{" "}
             {c.turns.filter((t) => t.direction === "engine").length} הודעות מערכת
+            {(() => { const v = c.events.find((e) => e.event_type === "navigation_connected")?.details.voice; return v ? (v === "gemini" ? " · Gemini מדבר" : " · מנוע קבוע") : ""; })()}
             {c.session ? ` · ${c.session.duration_seconds} ש׳` : ""}
             {(() => { const end = c.events.find((e) => e.event_type === "navigation_ended")?.details.reason; return end ? ` · סיום: ${String(end)}` : ""; })()}
             {c.events.some((e) => e.event_type === "navigation_failed") ? " · ❌ נכשלה" : ""}

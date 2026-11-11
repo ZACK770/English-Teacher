@@ -121,6 +121,17 @@ export async function findPlaces(env: Env, text: string, near: NavigationFix | n
   return out;
 }
 
+/** Share of `b`'s geometry lying on `a`; near 1 means the same roads. */
+export function overlap(a: Route, b: Route): number {
+  const stride = Math.max(1, Math.floor(b.points.length / 50));
+  let hits = 0, samples = 0;
+  for (let i = 0; i < b.points.length; i += stride) {
+    samples++;
+    if (a.points.some((p) => distance(p, b.points[i]) < 40)) hits++;
+  }
+  return samples ? hits / samples : 0;
+}
+
 export function usableFix(fix: NavigationFix | null): fix is NavigationFix {
   if (!fix) return false;
   const age = Date.now() - fix.fix_at_ms;
@@ -153,8 +164,16 @@ export class RouteGuidance {
   private deviations = 0;
   private spoken = "";
   private manualConflict = false;
+  private eta: { seconds: number; along: number };
 
-  constructor(readonly route: Route) {}
+  constructor(readonly route: Route) { this.eta = { seconds: route.seconds, along: 0 }; }
+
+  /** Google's traffic-aware duration for the rest of the route, scaled by distance still to drive. */
+  remainingSeconds(): number {
+    const total = this.route.cumulative.at(-1)!;
+    return this.eta.seconds * Math.max(0, total - this.along) / Math.max(1, total - this.eta.along);
+  }
+  retime(seconds: number) { this.eta = { seconds, along: this.along }; }
 
   reportSeen(): Guidance { return { status: "seen", say: "ראיית שלט אינה אומרת שכבר הגעת אליו או פנית. ההנחיה תתבסס על המיקום המאומת." }; }
   reportConflict(): Guidance {

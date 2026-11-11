@@ -36,6 +36,7 @@ export interface TutorControls {
   vad_end_sensitivity: 'END_SENSITIVITY_LOW' | 'END_SENSITIVITY_HIGH';
   vad_prefix_ms: number;
   vad_silence_ms: number;
+  navigation_voice?: 'engine' | 'gemini';
   activity_handling: 'START_OF_ACTIVITY_INTERRUPTS' | 'NO_INTERRUPTION';
   turn_coverage: string;
   input_batch_frames: number;
