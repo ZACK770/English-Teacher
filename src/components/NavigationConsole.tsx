@@ -83,6 +83,36 @@ function gpsText(meta: Record<string, unknown>) {
   return `GPS ${g.fresh ? "עדכני" : "ישן"} · ${Number(g.lat).toFixed(5)},${Number(g.lng).toFixed(5)} · גיל ${g.age_s} ש׳ · ${g.speed_kmh} קמ״ש · כיוון ${g.heading ?? "לא ידוע"}`;
 }
 
+const NAV_BOT = "voice-navigator-live";
+
+function VoiceMode({ token }: { token: string }) {
+  const [controls, setControls] = useState<Record<string, unknown> | null>(null);
+  const [state, setState] = useState("");
+  useEffect(() => {
+    api<{ controls: Record<string, unknown> }>(`/v1/admin/config/${NAV_BOT}`, token)
+      .then((r) => setControls(r.controls)).catch(() => setState("טעינת המצב נכשלה"));
+  }, [token]);
+  const choose = async (voice: string) => {
+    if (!controls) return;
+    setState("שומר...");
+    try {
+      const r = await api<{ controls: Record<string, unknown> }>(`/v1/admin/config/${NAV_BOT}`, token, { method: "PUT", body: JSON.stringify({ ...controls, navigation_voice: voice }) });
+      setControls(r.controls);
+      setState("נשמר. ייכנס לתוקף מהשיחה הבאה.");
+    } catch { setState("השמירה נכשלה"); }
+  };
+  const voice = (controls?.navigation_voice as string | undefined) ?? "engine";
+  return (
+    <section className="nav-panel">
+      <h2>מצב הקול בשיחת ניווט</h2>
+      <label><input type="radio" checked={voice === "engine"} disabled={!controls} onChange={() => choose("engine")} /> מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</label>
+      <br />
+      <label><input type="radio" checked={voice === "gemini"} disabled={!controls} onChange={() => choose("gemini")} /> Gemini מדבר: שיחה טבעית, ההוראות והפקקים מהמנוע ו-Google, וחסימה אוטומטית של כיוון או מספר שסותרים את המנוע</label>
+      {state && <p>{state}</p>}
+    </section>
+  );
+}
+
 function CallLog({ token }: { token: string }) {
   const [calls, setCalls] = useState<CallTrace[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -811,6 +841,7 @@ export function NavigationConsole() {
                 )}
               </section>
             </div>
+            <VoiceMode token={token} />
             <CallLog token={token} />
             <details className="nav-panel">
               <summary>ניהול קליטה ורישום מכשירים</summary>
