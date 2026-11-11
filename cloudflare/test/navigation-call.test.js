@@ -114,18 +114,7 @@ describe("bare yes/no fallback", () => {
   });
 });
 
-import { contradicts } from "../src/navigation-session";
 import { TRAFFIC_CHECK_MS } from "../src/navigation-call";
-describe("Gemini voice guard", () => {
-  it("blocks directions or numbers the engine did not give", () => {
-    const engine = "בעוד 300 מטרים: פנה שמאלה לרחוב עזרא";
-    expect(contradicts("עוד שלוש מאות מטר שמאלה לעזרא", engine)).toBe(false);
-    expect(contradicts("בעוד 300 מטר פנה ימינה", engine)).toBe(true);
-    expect(contradicts("בעוד 200 מטר שמאלה", engine)).toBe(true);
-    expect(contradicts("סע בזהירות", "")).toBe(false);
-  });
-});
-
 describe("live traffic re-check", () => {
   const far = (seconds) => ({ routes: [{ duration: `${seconds}s`, legs: [{ steps: [
     step([[32, 34], [32, 34.03]], "התחל מזרחה", "DEPART"),
@@ -192,5 +181,33 @@ describe("previous trip on a new call", () => {
     const { nav } = await previous();
     expect(await nav.request({ intent: "cancel" })).toEqual({ status: "destination_required", say: "הנסיעה הקודמת בוטלה. לאן תרצה להגיע?" });
     expect(db.prepare("SELECT status FROM navigation_trips").get().status).toBe("cancelled");
+  });
+});
+
+import { LiveNavigator } from "../src/navigation-live";
+describe("Gemini-led navigator tools return data", () => {
+  it("finds a place, starts a traffic-aware route, reports status and pushes a turn event", async () => {
+    const nav = new LiveNavigator(env, "a", "call-1");
+    expect(await nav.open()).toMatchObject({ event: "call_started", previous_trip: null, gps: { available: true, lat: 32, lng: 34 } });
+    expect(await nav.tool("find_place", { query: "עזרה 14" })).toEqual({ results: [
+      { name: "עזרא 14, בני ברק", address: "עזרא 14, בני ברק" }, { name: "עזרא 14, ירושלים", address: "עזרא 14, ירושלים" }] });
+    const started = await nav.tool("start_route", { destination: "עזרא 14, בני ברק" });
+    expect(started).toMatchObject({ ok: true, minutes_with_live_traffic: 7, navigating: true, on_route: true, start_instruction: "התחל מזרחה",
+      next_turn: { instruction: "פנה שמאלה לרחוב עזרא" }, upcoming_turns: [{ instruction: "פנה שמאלה לרחוב עזרא" }] });
+    expect(callBody("computeRoutes")).toMatchObject({ routingPreference: "TRAFFIC_AWARE", destination: { address: "עזרא 14, בני ברק" } });
+    expect(db.prepare("SELECT status, destination_address FROM navigation_trips").get()).toEqual({ status: "active", destination_address: "עזרא 14, בני ברק" });
+    const t = NOW + 10_000;
+    vi.setSystemTime(t);
+    db.prepare("UPDATE navigation_positions SET source_position_id=2, fix_at_ms=?, received_at_ms=?, longitude=34.008, heading=90 WHERE device_id=?").run(t, t, "device-a");
+    expect(await nav.poll()).toMatchObject({ event: "turn", when: "soon", instruction: "פנה שמאלה לרחוב עזרא" });
+    expect(await nav.poll()).toBeNull();
+    expect(await nav.tool("get_status", {})).toMatchObject({ navigating: true, on_route: true, gps: { available: true } });
+    // A new call sees the trip and a new destination simply replaces it.
+    await nav.close();
+    const again = new LiveNavigator(env, "a", "call-2");
+    expect((await again.open()).previous_trip).toMatchObject({ address: "עזרא 14, בני ברק" });
+    expect((await again.tool("start_route", { destination: "עזרא 14, ירושלים" })).ok).toBe(true);
+    expect(db.prepare("SELECT status FROM navigation_trips ORDER BY created_at_ms, rowid").all().map((r) => r.status)).toEqual(["cancelled", "active"]);
+    expect(await again.tool("stop_navigation", {})).toEqual({ ok: true, navigating: false });
   });
 });

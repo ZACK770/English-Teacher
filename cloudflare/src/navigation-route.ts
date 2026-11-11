@@ -79,8 +79,8 @@ export function parseRoute(data: unknown): Route {
   return route;
 }
 
-export async function computeNavigationRoute(env: Env, fix: NavigationFix, destination: string): Promise<Route> {
-  if (!usableFix(fix)) throw new Error("Fresh GPS required");
+export async function computeNavigationRoute(env: Env, fix: NavigationFix, destination: string, strict = true): Promise<Route> {
+  if (strict && !usableFix(fix)) throw new Error("Fresh GPS required");
   if (!destination.trim() || destination.length > 300) throw new Error("Invalid destination");
   const { token, project } = await googleToken(env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON, env.GOOGLE_TTS_PROJECT);
   if (!await new BusinessStore(env.DB).consumeMonthlyQuota("routes", settings(env).routesMonthlyLimit)) throw new Error("Route allowance unavailable");
@@ -141,7 +141,7 @@ export function usableFix(fix: NavigationFix | null): fix is NavigationFix {
     (fix.accuracy_m === null || (Number.isFinite(fix.accuracy_m) && fix.accuracy_m >= 0 && fix.accuracy_m <= 50));
 }
 
-function project(route: Route, point: Point, minimum: number, maximum: number) {
+export function project(route: Route, point: Point, minimum: number, maximum: number) {
   let best = { off: Infinity, along: 0, bearing: 0 };
   const scale = Math.cos(point[0] * R);
   for (let i = 1; i < route.points.length; i++) {
