@@ -19,7 +19,7 @@ The car carries a GPS tracker, so never ask the driver where he is: call get_sta
 
 Typical flow: the driver names a destination -> call find_place (only with a place he actually said; never invent a query, and if you did not catch the place just ask again) -> if there is one clear match just confirm it in a few words ("רבי עקיבא 10 בירושלים, נכון?"), if several ask which one, if none ask him to repeat or spell it -> call start_route with the exact address -> tell him the travel time with traffic and the first thing to do. If he says "כן/נכון/סע" after your question, go ahead; if he corrects you, search again. If he wants to cancel or arrived, call stop_navigation. If he changes destination, just start a new route; nothing needs to be cancelled first.
 
-Messages that start with [נתוני ניווט] are not the driver speaking: they are live data pushed by the tracking system (call started, a turn coming up, the car left the route and a new route was computed, traffic changed, GPS lost or back, arrived). Tell the driver what matters from them right away in your own words. For a turn event say the distance and the instruction; mention "then" only when the event includes it (it is included only when the following turn comes right after). current_segment_started_with tells you which street he is on now (the last instruction he passed), if he asks. If the call starts with a previous_trip, ask casually whether he is still heading there, and if so call start_route with its address.
+Messages that start with [נתוני ניווט] are not the driver speaking: they are live data pushed by the tracking system (call started, a turn coming up, the car left the route and a new route was computed, traffic changed, GPS lost or back, arrived). Tell the driver what matters from them right away in your own words. For a turn event say the distance and the instruction; mention "then" only when the event includes it (it is included only when the following turn comes right after). gps.street is the street the car is on right now according to the map (use it when he asks where he is, or when he doubts the route); current_segment_started_with is the last route instruction he passed. If the call starts with a previous_trip, ask casually whether he is still heading there, and if so call start_route with its address.
 
 Facts - left/right, distances, street names, minutes - come only from tool results and [נתוני ניווט] messages. Never guess them or answer from memory: call get_status again, it is cheap. If GPS is unavailable or old, say so plainly and say what you do know. in_meters is measured along the road from the car's GPS position. If the car is not on the route yet (for example parked next to the road), explain how to get onto it using start_instruction and the next turn. If something fails, tell the driver what failed and what he can do.
 
@@ -37,6 +37,18 @@ const OFF_ROUTE_M = 35;
 const COMPASS = ["צפון", "צפון-מזרח", "מזרח", "דרום-מזרח", "דרום", "דרום-מערב", "מערב", "צפון-מערב"];
 const compass = (deg: number) => COMPASS[Math.round(deg / 45) % 8];
 const clock = (ms: number) => new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", hour12: false }).format(ms);
+
+/** Street and town at a position, from OpenStreetMap; best effort, so Gemini can answer "which street am I on?". */
+export async function streetAt(lat: number, lng: number): Promise<string | null> {
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}&zoom=17&accept-language=he`,
+      { headers: { "User-Agent": "english-engine-navigation/1.0" }, signal: AbortSignal.timeout(2500) });
+    if (!response.ok) return null;
+    const address = ((await response.json()) as { address?: Record<string, string> }).address ?? {};
+    const town = address.city ?? address.town ?? address.village ?? "";
+    return address.road ? [address.road, town].filter(Boolean).join(", ") : town || null;
+  } catch { return null; }
+}
 const round10 = (m: number) => Math.max(10, Math.round(m / 10) * 10);
 
 export class LiveNavigator {
@@ -54,13 +66,14 @@ export class LiveNavigator {
   private eta = { seconds: 0, along: 0 };
   private announced = { along: -1, rank: 0 };
   private gpsOk = true;
+  private street: { key: string; name: string | null } = { key: "", name: null };
   private last: NavigationFix | null = null;
   private motion: { speed: number; heading: number; at: number } | null = null;
   private trafficAt = 0;
 
   constructor(private env: Env, private customerId: string, private callId: string) { this.trips = new NavigationTrips(env); }
 
-  private async position() {
+  private async position(withStreet = false) {
     const location = await customerPosition(this.env, this.customerId).catch(() => null);
     let fix = (location?.position ?? null) as NavigationFix | null;
     const live = !!fix;
@@ -89,6 +102,11 @@ export class LiveNavigator {
         speed_kmh: Math.round(fix.speed_mps * 3.6), heading_deg: fix.heading === null ? null : Math.round(fix.heading),
         ...(battery === null ? {} : { tracker_battery_percent: battery }),
         ...(live ? {} : { warning: "the tracker has no satellite fix right now; this is only the last known position, the car may have moved since", tracker_last_heard_seconds_ago: heard }) };
+    if (withStreet && fix) {
+      const key = `${fix.latitude.toFixed(4)},${fix.longitude.toFixed(4)}`;
+      if (this.street.key !== key) this.street = { key, name: await streetAt(fix.latitude, fix.longitude) };
+      if (this.street.name) gps.street = this.street.name;
+    }
     return { fix, gps, live };
   }
 
@@ -182,14 +200,14 @@ export class LiveNavigator {
   }
 
   async open(): Promise<Data> {
-    const { gps } = await this.position();
+    const { gps } = await this.position(true);
     const trip = await this.trips.current(this.customerId).catch(() => null);
     return { event: "call_started", gps, previous_trip: trip ? { destination: trip.destination_label, address: trip.destination_address,
       minutes_since_it_was_active: Math.round((Date.now() - (trip.disconnected_at_ms ?? trip.updated_at_ms)) / 60000) } : null };
   }
 
   async tool(name: string, args: Data): Promise<Data> {
-    const { fix, gps, live } = await this.position();
+    const { fix, gps, live } = await this.position(name === "get_status" || name === "start_route");
     if (name === "find_place") {
       const query = String(args.query ?? "").trim();
       if (!query) return { error: "query is required" };

@@ -52,6 +52,7 @@ beforeEach(() => {
     if (String(url).startsWith("https://oauth2.googleapis.com/")) return Response.json({ access_token: "t", expires_in: 3600 });
     if (String(url).includes("places:searchText")) return places instanceof Error ? new Response("down", { status: 503 }) : Response.json(places);
     if (String(url).includes("computeRoutes")) return Response.json(ROUTE);
+    if (String(url).includes("nominatim")) return Response.json({ address: { road: "חזון איש", town: "בני ברק" } });
     throw new Error("unexpected " + url);
   }));
 });
@@ -188,7 +189,7 @@ import { LiveNavigator } from "../src/navigation-live";
 describe("Gemini-led navigator tools return data", () => {
   it("finds a place, starts a traffic-aware route, reports status and pushes a turn event", async () => {
     const nav = new LiveNavigator(env, "a", "call-1");
-    expect(await nav.open()).toMatchObject({ event: "call_started", previous_trip: null, gps: { available: true, lat: 32, lng: 34 } });
+    expect(await nav.open()).toMatchObject({ event: "call_started", previous_trip: null, gps: { available: true, lat: 32, lng: 34, street: "חזון איש, בני ברק" } });
     expect(await nav.tool("find_place", { query: "עזרה 14" })).toEqual({ results: [
       { name: "עזרא 14, בני ברק", address: "עזרא 14, בני ברק" }, { name: "עזרא 14, ירושלים", address: "עזרא 14, ירושלים" }] });
     const started = await nav.tool("start_route", { destination: "עזרא 14, בני ברק" });
