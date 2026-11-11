@@ -202,10 +202,18 @@ describe("Gemini-led navigator tools return data", () => {
     expect(await nav.poll()).toMatchObject({ event: "turn", when: "soon", instruction: "פנה שמאלה לרחוב עזרא" });
     expect(await nav.poll()).toBeNull();
     expect(await nav.tool("get_status", {})).toMatchObject({ navigating: true, on_route: true, gps: { available: true } });
+    // The car leaves the route: asking for the status already returns a new route from the real position.
+    vi.setSystemTime(t + 10_000);
+    db.prepare("UPDATE navigation_positions SET source_position_id=3, fix_at_ms=?, received_at_ms=?, latitude=32.003, longitude=34.008 WHERE device_id=?").run(t + 10_000, t + 10_000, "device-a");
+    const before = requests.filter((r) => r.url.includes("computeRoutes")).length;
+    expect(await nav.tool("get_status", {})).toMatchObject({ rerouted: true, navigating: true });
+    expect(requests.filter((r) => r.url.includes("computeRoutes")).length).toBe(before + 1);
+    expect(JSON.parse(requests.filter((r) => r.url.includes("computeRoutes")).at(-1).body).origin.location.latLng).toEqual({ latitude: 32.003, longitude: 34.008 });
+    db.prepare("UPDATE navigation_positions SET latitude=32, longitude=34.008 WHERE device_id=?").run("device-a");
     // The tracker loses its satellite fix: Gemini is told once, and the last known position still serves status and new routes.
     vi.setSystemTime(t + 150_000);
     db.prepare("UPDATE navigation_devices SET last_report_valid=0").run();
-    expect(await nav.poll()).toMatchObject({ event: "gps_lost", gps: { available: true, seconds_ago: 150, warning: expect.stringContaining("last known position") } });
+    expect(await nav.poll()).toMatchObject({ event: "gps_lost", gps: { available: true, seconds_ago: 140, warning: expect.stringContaining("last known position") } });
     expect(await nav.poll()).toBeNull();
     expect((await nav.tool("start_route", { destination: "עזרא 14, בני ברק" })).ok).toBe(true);
     db.prepare("UPDATE navigation_devices SET last_report_valid=1").run();

@@ -34,7 +34,7 @@ export function distance(a: Point, b: Point): number {
   const y = (b[0] - a[0]) * R;
   return Math.hypot(x, y) * 6371000;
 }
-function bearing(a: Point, b: Point): number {
+export function bearing(a: Point, b: Point): number {
   return (Math.atan2((b[1] - a[1]) * Math.cos(a[0] * R), b[0] - a[0]) / R + 360) % 360;
 }
 function decodePolyline(encoded: string): Point[] {

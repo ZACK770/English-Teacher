@@ -196,11 +196,11 @@ export class NavigationSession {
     }
   }
 
-  private flushHeard() {
+  private flushHeard(interrupted = false) {
     const said = this.heard.learner.trim();
     if (said) { this.utterances++; this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
     if (this.heard.tutor.trim()) {
-      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor); }
+      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, interrupted ? { cut_off_by_driver: true } : {}); }
       else this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
     }
     this.heard = { learner: "", tutor: "" };
@@ -227,7 +227,7 @@ export class NavigationSession {
       // Engine speech is replaced only by a newer engine reply; line echo and noise must not cut it off.
       if (event.type === "transcript") this.heard[event.role] += event.text;
       if (this.live) this.voice(event);
-      if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard();
+      if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard(event.type === "interrupted");
       if (event.type === "tool_call") this.flushHeard();
       if (event.type === "tool_call") for (const call of event.calls) {
         this.aiCalls++;
