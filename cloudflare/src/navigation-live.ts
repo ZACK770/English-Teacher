@@ -28,6 +28,7 @@ Ignore background noise, radio, passengers and echoes of your own voice. Do not 
 type Data = Record<string, unknown>;
 const SKIP = ["DEPART", "STRAIGHT", "NAME_CHANGE", "MANEUVER_UNSPECIFIED"];
 const TRAFFIC_CHECK_MS = 150_000;
+const LAST_KNOWN_MS = 10 * 60_000;
 const round10 = (m: number) => Math.max(10, Math.round(m / 10) * 10);
 
 export class LiveNavigator {
@@ -48,13 +49,22 @@ export class LiveNavigator {
 
   private async position() {
     const location = await customerPosition(this.env, this.customerId).catch(() => null);
-    const fix = (location?.position ?? null) as NavigationFix | null;
+    let fix = (location?.position ?? null) as NavigationFix | null;
+    const live = !!fix;
+    // Without a current satellite fix the last known position (up to 10 minutes old) is still better than nothing.
+    if (location?.enabled && !fix) {
+      const last = await this.env.DB.prepare("SELECT * FROM navigation_positions WHERE device_id=?").bind(location.device_id).first<NavigationFix>().catch(() => null);
+      if (last && Date.now() - last.fix_at_ms <= LAST_KNOWN_MS) fix = last;
+    }
+    const heard = location?.last_received_at_ms ? Math.round((Date.now() - location.last_received_at_ms) / 1000) : null;
     const gps: Data = !location ? { available: false, reason: "no GPS tracker is assigned to this caller" }
       : !location.enabled ? { available: false, reason: "the GPS tracker is disabled" }
-      : !fix ? { available: false, reason: "no recent GPS fix", last_fix_seconds_ago: location.last_valid_fix_at_ms ? Math.round((Date.now() - location.last_valid_fix_at_ms) / 1000) : null }
+      : !fix ? { available: false, reason: location.last_report_valid ? "no recent GPS fix" : "the tracker is online but has no satellite fix (indoors, covered or just switched on)",
+        tracker_last_heard_seconds_ago: heard, last_fix_seconds_ago: location.last_valid_fix_at_ms ? Math.round((Date.now() - location.last_valid_fix_at_ms) / 1000) : null }
       : { available: true, seconds_ago: Math.round((Date.now() - fix.fix_at_ms) / 1000), lat: fix.latitude, lng: fix.longitude,
-        speed_kmh: Math.round(fix.speed_mps * 3.6), heading_deg: fix.heading };
-    return { fix, gps };
+        speed_kmh: Math.round(fix.speed_mps * 3.6), heading_deg: fix.heading,
+        ...(live ? {} : { warning: "the tracker has no satellite fix right now; this is only the last known position, the car may have moved since", tracker_last_heard_seconds_ago: heard }) };
+    return { fix, gps, live };
   }
 
   private use(route: Route, destination: string) {
@@ -113,7 +123,7 @@ export class LiveNavigator {
   }
 
   async tool(name: string, args: Data): Promise<Data> {
-    const { fix, gps } = await this.position();
+    const { fix, gps, live } = await this.position();
     if (name === "find_place") {
       const query = String(args.query ?? "").trim();
       if (!query) return { error: "query is required" };
@@ -143,7 +153,7 @@ export class LiveNavigator {
         gps, ...this.state(fix) };
     }
     if (name === "get_status") {
-      if (fix) this.track(fix);
+      if (fix && live) this.track(fix);
       return { gps, ...this.state(fix) };
     }
     if (name === "stop_navigation") {
@@ -158,8 +168,8 @@ export class LiveNavigator {
   async poll(): Promise<Data | null> {
     if (!this.route) return null;
     if (this.tripId) await this.trips.heartbeat(this.customerId, this.tripId, this.callId).catch(() => {});
-    const { fix, gps } = await this.position();
-    if (!fix) {
+    const { fix, gps, live } = await this.position();
+    if (!fix || !live) {
       if (!this.gpsOk) return null;
       this.gpsOk = false;
       return { event: "gps_lost", gps };

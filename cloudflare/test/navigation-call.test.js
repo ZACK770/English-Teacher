@@ -202,12 +202,21 @@ describe("Gemini-led navigator tools return data", () => {
     expect(await nav.poll()).toMatchObject({ event: "turn", when: "soon", instruction: "פנה שמאלה לרחוב עזרא" });
     expect(await nav.poll()).toBeNull();
     expect(await nav.tool("get_status", {})).toMatchObject({ navigating: true, on_route: true, gps: { available: true } });
+    // The tracker loses its satellite fix: Gemini is told once, and the last known position still serves status and new routes.
+    vi.setSystemTime(t + 150_000);
+    db.prepare("UPDATE navigation_devices SET last_report_valid=0").run();
+    expect(await nav.poll()).toMatchObject({ event: "gps_lost", gps: { available: true, seconds_ago: 150, warning: expect.stringContaining("last known position") } });
+    expect(await nav.poll()).toBeNull();
+    expect((await nav.tool("start_route", { destination: "עזרא 14, בני ברק" })).ok).toBe(true);
+    db.prepare("UPDATE navigation_devices SET last_report_valid=1").run();
+    db.prepare("UPDATE navigation_positions SET fix_at_ms=?, received_at_ms=? WHERE device_id=?").run(t + 150_000, t + 150_000, "device-a");
+    expect((await nav.poll()).event).toMatch(/gps_back|turn/);
     // A new call sees the trip and a new destination simply replaces it.
     await nav.close();
     const again = new LiveNavigator(env, "a", "call-2");
     expect((await again.open()).previous_trip).toMatchObject({ address: "עזרא 14, בני ברק" });
     expect((await again.tool("start_route", { destination: "עזרא 14, ירושלים" })).ok).toBe(true);
-    expect(db.prepare("SELECT status FROM navigation_trips ORDER BY created_at_ms, rowid").all().map((r) => r.status)).toEqual(["cancelled", "active"]);
+    expect(db.prepare("SELECT status FROM navigation_trips ORDER BY created_at_ms, rowid").all().map((r) => r.status)).toEqual(["cancelled", "cancelled", "active"]);
     expect(await again.tool("stop_navigation", {})).toEqual({ ok: true, navigating: false });
   });
 });
