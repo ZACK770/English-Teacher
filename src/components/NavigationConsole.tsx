@@ -9,6 +9,13 @@ import {
   Users,
 } from "lucide-react";
 import "./navigation.css";
+import { AdminPlatform, type PlatformTab } from "./navigation/AdminPlatform";
+
+type ConsoleTab = "devices" | PlatformTab | "calls" | "settings";
+const CONSOLE_TABS: [ConsoleTab, string][] = [
+  ["customers", "לקוחות"], ["devices", "מכשירים ומיקום חי"], ["trips", "היסטוריית נסיעות"], ["calls", "שיחות ולוגים"],
+  ["plans", "מסלולי מחיר"], ["inventory", "מלאי מכשירים וסימים"], ["invoices", "חשבוניות"], ["reports", "דוחות"], ["settings", "הגדרות ניווט"],
+];
 
 interface Device {
   device_id: string;
@@ -296,6 +303,7 @@ export function NavigationConsole() {
   const [notice, setNotice] = useState("");
   const [version, setVersion] = useState(0);
   const [now, setNow] = useState(Date.now());
+  const [tab, setTab] = useState<ConsoleTab>("customers");
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -456,7 +464,7 @@ export function NavigationConsole() {
           </span>
           <div>
             <h1>וייז כשר</h1>
-            <p>ניהול מיקום ומכשירים · Cloudflare</p>
+            <p>ניהול לקוחות, מכשירים, נסיעות ושיחות</p>
           </div>
         </div>
         <nav>
@@ -525,10 +533,13 @@ export function NavigationConsole() {
                 <RefreshCw size={16} /> רענון
               </button>
             </div>
-            <div className="nav-banner">
-              קליטת GPS ומסך ניהול בלבד. ניווט קולי, היסטוריית מסלולים ודוחות
-              נסיעה עדיין בפיתוח.
-            </div>
+            <nav className="nav-tabs" role="tablist">
+              {CONSOLE_TABS.map(([t, label]) => (
+                <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
+                  {label}
+                </button>
+              ))}
+            </nav>
             {error && (
               <p className="nav-error" role="alert">
                 {error}
@@ -539,6 +550,19 @@ export function NavigationConsole() {
                 {notice}
               </p>
             )}
+            {tab === "calls" && <CallLog token={token} />}
+            {tab === "settings" && (
+              <>
+                <VoiceMode token={token} />
+                <section className="nav-panel">
+                  <h3>מדיניות הנחיות</h3>
+                  <p>ברירת מחדל: שני צעדים קדימה (הפנייה הקרובה עם מרחק, ואחריה הבאה). הנהג יכול לבקש ״כל המסלול״ ולקבל את כל הפניות.</p>
+                  <p>מילות עצירה: רגע, שתוק, שתקי, שקט, עצור, עצרי, סטופ, stop. הגדרה פרטנית ללקוח נמצאת בכרטיס הלקוח וגוברת על ברירת המחדל.</p>
+                </section>
+              </>
+            )}
+            {tab !== "devices" && tab !== "calls" && tab !== "settings" && <AdminPlatform tab={tab} token={token} />}
+            {tab === "devices" && (<>
             <div className="nav-workspace">
               <aside className="nav-panel nav-devices">
                 <h3>
@@ -893,8 +917,6 @@ export function NavigationConsole() {
                 )}
               </section>
             </div>
-            <VoiceMode token={token} />
-            <CallLog token={token} />
             <details className="nav-panel">
               <summary>ניהול קליטה ורישום מכשירים</summary>
               <p>
@@ -976,6 +998,7 @@ export function NavigationConsole() {
                 <button disabled={busy}>רישום מכשיר</button>
               </form>
             </details>
+            </>)}
           </>
         )}
       </main>

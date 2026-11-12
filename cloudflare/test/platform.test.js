@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
+import { customerControlOverrides } from "../src/platform";
 import { BusinessStore } from "../src/business";
 
 const NOW = Date.parse("2026-11-12T12:00:00Z");
@@ -69,7 +70,7 @@ describe("0007 migration backfill", () => {
 });
 
 describe("platform API", () => {
-  beforeEach(() => migrations("0007_platform.sql"));
+  beforeEach(() => migrations("0008_platform_history.sql"));
 
   it("mirrors legacy console saves and phone-identified callers into customers/plans", async () => {
     const store = new BusinessStore(env.DB);
@@ -185,5 +186,54 @@ describe("platform API", () => {
     const spec = await call("/v1/openapi.json", undefined, { token: null });
     expect(spec.body.openapi).toBe("3.1.0");
     expect(Object.keys(spec.body.paths)).toContain("/v1/app/trips");
+  });
+
+  it("registers customers from the public form with or without a device", async () => {
+    const plan = (await call("/v1/admin/app/plans", { name: "חודשי", billing: "monthly", price_agorot: 4900, active: true })).body;
+    const r = await call("/v1/app/signup", { name: "משה כהן", phone: "052-7000001", device_mode: "kit", plan_id: plan.id }, { token: null });
+    expect(r.status).toBe(201);
+    expect(r.body.status).toBe("lead");
+    const c = (await call("/v1/admin/app/customers/" + r.body.customer_id)).body;
+    expect(c.customer).toMatchObject({ device_mode: "kit", source: "web_signup", status: "lead" });
+    expect(c.subscriptions[0]).toMatchObject({ status: "trial", price_agorot: 4900 });
+    expect((await call("/v1/app/signup", { name: "כפול", phone: "0527000001", device_mode: "none" }, { token: null })).status).toBe(409);
+    expect((await call("/v1/app/signup", { name: "בוט", phone: "0527000002", device_mode: "none", website: "x" }, { token: null })).status).toBe(422);
+    const none = await call("/v1/app/signup", { name: "בלי מכשיר", phone: "0527000003", device_mode: "none" }, { token: null });
+    expect(none.status).toBe(201);
+    expect((await call("/v1/admin/app/customers?status=lead")).body).toHaveLength(2);
+    const reports = (await call("/v1/admin/app/reports")).body;
+    expect(reports.customers_by_device_mode).toMatchObject({ kit: 1, none: 1 });
+    expect(reports.months[0].new_customers).toBe(2);
+  });
+
+  it("stores per-customer call settings and applies them as control overrides", async () => {
+    const a = (await call("/v1/admin/app/customers", { name: "א", phone: "0521000001" })).body;
+    expect(await customerControlOverrides(env, a.id)).toEqual({});
+    const token = await login(a.id, "0521000001");
+    expect((await call("/v1/app/settings", { voice: "Nobody" }, { token, method: "PUT" })).status).toBe(422);
+    const saved = await call("/v1/app/settings", { navigation_voice: "gemini", voice: "Charon" }, { token, method: "PUT" });
+    expect(saved.body).toMatchObject({ navigation_voice: "gemini", voice: "Charon", navigation_interrupt: null });
+    await call(`/v1/admin/app/customers/${a.id}/settings`, { navigation_interrupt: "speech" }, { method: "PUT" });
+    expect(await customerControlOverrides(env, a.id)).toEqual({ navigation_voice: "gemini", voice: "Charon", navigation_interrupt: "speech" });
+  });
+
+  it("returns the driven path and metrics of a trip, scoped to its customer", async () => {
+    const a = (await call("/v1/admin/app/customers", { name: "א", phone: "0521000001" })).body;
+    const b = (await call("/v1/admin/app/customers", { name: "ב", phone: "0521000002" })).body;
+    db.prepare("INSERT INTO navigation_devices(device_id,traccar_device_id,label,enabled,created_at) VALUES ('d1',1,'x',1,'t')").run();
+    db.prepare(`INSERT INTO navigation_trips(id,customer_id,device_id,destination_label,destination_address,status,created_at_ms,updated_at_ms,ended_at_ms)
+      VALUES ('t1',?,'d1','מירון','מירון','completed',?,?,?)`).run(a.id, NOW, NOW, NOW + 60_000);
+    const ins = db.prepare("INSERT INTO navigation_position_history VALUES ('d1',?,?,34.8,?,NULL,NULL)");
+    for (let i = 0; i <= 30; i++) ins.run(NOW + i * 2000, 32 + i * 0.0003, 16 + (i % 2));
+    const path = (await call("/v1/admin/app/trips/t1/path")).body;
+    expect(path.point_count).toBe(31);
+    expect(path.distance_m).toBeGreaterThan(950);
+    expect(path.distance_m).toBeLessThan(1050);
+    expect(path.max_speed_kmh).toBe(61.2);
+    expect((await call("/v1/admin/app/trips")).body[0]).toMatchObject({ id: "t1", customer_name: "א", duration_s: 60 });
+    const tokenB = await login(b.id, "0521000002");
+    expect((await call("/v1/app/trips/t1/path", undefined, { token: tokenB })).status).toBe(404);
+    const tokenA = await login(a.id, "0521000001");
+    expect((await call("/v1/app/trips/t1/path", undefined, { token: tokenA })).body.points).toHaveLength(31);
   });
 });

@@ -6,6 +6,8 @@ import { LearnerPortal } from './components/portal/LearnerPortal';
 import { JoinLanding } from './components/join/JoinLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
 import { NavigationConsole } from './components/NavigationConsole';
+import { CustomerApp } from './components/navigation/CustomerApp';
+import { Signup } from './components/navigation/Signup';
 
 export const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy'>('learn');
@@ -81,6 +83,8 @@ export const AppContent: React.FC = () => {
 
 export const App: React.FC = () => {
   if (/\/(?:english\/)?navigation\/?$/.test(window.location.pathname)) return <NavigationConsole />;
+  if (/\/(?:english\/)?app\/?$/.test(window.location.pathname)) return <CustomerApp />;
+  if (/\/(?:english\/)?join-navigation\/?$/.test(window.location.pathname)) return <Signup />;
   return (
     <AppProvider>
       <AppContent />

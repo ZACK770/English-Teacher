@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(NOW);
   sql = new DatabaseSync(":memory:");
   sql.exec("PRAGMA foreign_keys=ON");
-  for (const name of ["0001_init.sql", "0002_callback_requests.sql", "0003_navigation_gps.sql", "0004_navigation_console.sql", "0006_navigation_call_costs.sql", "0007_platform.sql"]) {
+  for (const name of ["0001_init.sql", "0002_callback_requests.sql", "0003_navigation_gps.sql", "0004_navigation_console.sql", "0006_navigation_call_costs.sql", "0007_platform.sql", "0008_platform_history.sql"]) {
     sql.exec(readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8"));
   }
   sql.prepare("INSERT INTO navigation_devices(device_id,traccar_device_id,label,created_at) VALUES(?,?,?,?)")

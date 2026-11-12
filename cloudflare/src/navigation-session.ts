@@ -1,5 +1,6 @@
 import { AsyncQueue, sleep } from "./async";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, SILENCE_FRAME, upsample8kTo16k } from "./audio";
+import { customerControlOverrides } from "./platform";
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { controlsFromSettings } from "./controls";
@@ -148,7 +149,7 @@ export class NavigationSession {
       customerId = await business.identifyCall(start.caller, callId, profileId);
       const tripCall = await sha256Hex(callId);
       this.controller = new NavigationCall(this.env, customerId, tripCall);
-      const controls = await progress.loadControls(profileId, controlsFromSettings(false));
+      const controls = { ...(await progress.loadControls(profileId, controlsFromSettings(false))), ...(await customerControlOverrides(this.env, customerId)) };
       model = controls.model;
       this.speechModel = model;
       this.accounting = new NavigationAccounting(this.env.DB, profileId, callId);

@@ -3,10 +3,13 @@ import { bearer, type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex,
 import { BusinessStore, normalizedPhone } from "./business";
 import { customerPosition, navigationBody } from "./navigation";
 import { PLATFORM_OPENAPI } from "./platform-openapi";
+import { VOICE_OPTIONS } from "./controls";
 
 const LOGIN_CODE_TTL_MS = 10 * 60_000;
 const LOGIN_CODE_MAX_ATTEMPTS = 5;
 const APP_SESSION_TTL_MS = 30 * 86400_000;
+export const POSITION_HISTORY_DAYS = 90;
+const SIGNUPS_PER_10_MIN = 20;
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
 const date = z.string().datetime({ offset: true });
@@ -17,6 +20,7 @@ const CustomerCreate = z.object({
   name: text(100).min(1), phone: z.string().min(5).max(40),
   status: z.enum(["lead", "active", "suspended", "closed"]).default("active"),
   city: text(80).default(""), source: text(80).default("platform"), notes: text(2000).default(""),
+  device_mode: z.enum(["none", "kit", "own"]).default("none"),
 });
 const CustomerPatch = CustomerCreate.partial().refine((v) => Object.keys(v).length > 0, "Empty update");
 const PlanCreate = z.object({
@@ -52,6 +56,16 @@ const InvoiceCreate = z.object({
 const InvoicePatch = z.object({ status: InvoiceStatus, paid_at: date.nullable(), provider_reference: text(120).nullable() })
   .partial().refine((v) => Object.keys(v).length > 0, "Empty update");
 const Verify = z.object({ phone: z.string().min(5).max(40), code: z.string().regex(/^[0-9]{6}$/) });
+const Signup = z.object({
+  name: text(100).min(2), phone: z.string().min(5).max(40), city: text(80).default(""),
+  plan_id: id.nullable().default(null), device_mode: z.enum(["none", "kit", "own"]), notes: text(500).default(""),
+  website: z.string().max(0).default(""),
+});
+export const CustomerSettings = z.object({
+  navigation_voice: z.enum(["engine", "gemini"]).nullable().default(null),
+  voice: z.string().refine((v) => (VOICE_OPTIONS as readonly string[]).includes(v), "unsupported voice").nullable().default(null),
+  navigation_interrupt: z.enum(["speech", "stop_word"]).nullable().default(null),
+}).strict();
 const Destination = z.object({ label: text(80).min(1), address: text(300).min(3) });
 
 const json = (value: unknown, status = 200) =>
@@ -80,7 +94,7 @@ const costOut = (summary: string | null) => {
 };
 
 async function customerRow(env: Env, customerId: string) {
-  const c = await env.DB.prepare("SELECT id,name,primary_phone,status,source,city,notes,created_at,updated_at FROM customers WHERE id=?")
+  const c = await env.DB.prepare("SELECT id,name,primary_phone,status,source,city,notes,device_mode,created_at,updated_at FROM customers WHERE id=?")
     .bind(customerId).first<Record<string, any>>();
   if (!c) throw new HttpError(404, "Customer not found");
   return c;
@@ -131,6 +145,79 @@ async function customerByPhone(env: Env, rawPhone: string): Promise<string | nul
       UNION SELECT p.customer_id FROM customer_phones p JOIN customers c ON c.id=p.customer_id WHERE p.phone=? LIMIT 1`)
     .bind(phone, phone).first<{ id: string }>();
   return row?.id ?? null;
+}
+
+async function loadSettings(env: Env, customerId: string) {
+  const row = await env.DB.prepare("SELECT body FROM customer_settings WHERE customer_id=?").bind(customerId).first<{ body: string }>();
+  const parsed = CustomerSettings.safeParse(parseJson(row?.body) ?? {});
+  return parsed.success ? parsed.data : CustomerSettings.parse({});
+}
+
+async function saveSettings(request: Request, env: Env, customerId: string) {
+  await customerRow(env, customerId);
+  const next = CustomerSettings.parse({ ...(await loadSettings(env, customerId)), ...(await navigationBody(request, CustomerSettings.partial())) });
+  await env.DB.prepare(`INSERT INTO customer_settings(customer_id,body,updated_at) VALUES(?,?,?)
+      ON CONFLICT(customer_id) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at`).bind(customerId, JSON.stringify(next), nowIso()).run();
+  return next;
+}
+
+/** Per-customer overrides applied on top of the navigation bot controls at call start. */
+export async function customerControlOverrides(env: Env, customerId: string): Promise<Record<string, string>> {
+  try {
+    const s = await loadSettings(env, customerId);
+    return Object.fromEntries(Object.entries(s).filter(([, v]) => v !== null)) as Record<string, string>;
+  } catch { return {}; }
+}
+
+const haversine = (a: number[], b: number[]) => {
+  const r = Math.PI / 180, dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+};
+
+async function tripPath(env: Env, tripId: string, customerId: string | null) {
+  const t = await env.DB.prepare("SELECT id,customer_id,device_id,created_at_ms,ended_at_ms FROM navigation_trips WHERE id=?" + (customerId ? " AND customer_id=?" : ""))
+    .bind(...(customerId ? [tripId, customerId] : [tripId])).first<Record<string, any>>();
+  if (!t) throw new HttpError(404, "Trip not found");
+  const end = t.ended_at_ms ?? Date.now();
+  const { results } = await env.DB.prepare(`SELECT fix_at_ms,latitude,longitude,speed_mps FROM navigation_position_history
+      WHERE device_id=? AND fix_at_ms BETWEEN ? AND ? ORDER BY fix_at_ms LIMIT 20000`).bind(t.device_id, t.created_at_ms, end).all<Record<string, number>>();
+  let distance = 0, maxSpeed = 0;
+  for (let i = 0; i < results.length; i++) {
+    const p = results[i];
+    maxSpeed = Math.max(maxSpeed, p.speed_mps);
+    if (!i) continue;
+    const q = results[i - 1];
+    const d = haversine([q.latitude, q.longitude], [p.latitude, p.longitude]);
+    const dt = (p.fix_at_ms - q.fix_at_ms) / 1000;
+    if (dt > 0 && d / dt < 70) distance += d;
+  }
+  const moving = results.length > 1 ? (results[results.length - 1].fix_at_ms - results[0].fix_at_ms) / 1000 : 0;
+  const step = Math.max(1, Math.ceil(results.length / 1500));
+  const points = results.filter((_, i) => i % step === 0 || i === results.length - 1).map((p) => [p.latitude, p.longitude, p.fix_at_ms, Math.round(p.speed_mps * 36) / 10]);
+  return { trip_id: t.id, from_ms: t.created_at_ms, to_ms: end, point_count: results.length, distance_m: Math.round(distance),
+    max_speed_kmh: Math.round(maxSpeed * 36) / 10, avg_speed_kmh: moving > 0 ? Math.round(distance / moving * 36) / 10 : null, points };
+}
+
+async function signup(request: Request, env: Env) {
+  const input = await navigationBody(request, Signup);
+  if (input.website) throw new HttpError(422, "Invalid form");
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM customers WHERE source='web_signup' AND created_at>?")
+    .bind(new Date(Date.now() - 10 * 60_000).toISOString()).first<{ n: number }>();
+  if ((recent?.n ?? 0) >= SIGNUPS_PER_10_MIN) throw new HttpError(429, "נסו שוב בעוד כמה דקות");
+  if (await customerByPhone(env, input.phone)) throw new HttpError(409, "המספר כבר רשום. אפשר להתחבר לאזור האישי.");
+  let plan: Record<string, any> | null = null;
+  if (input.plan_id) {
+    plan = await env.DB.prepare("SELECT id,price_agorot FROM plans WHERE id=? AND active=1 AND product='navigation'").bind(input.plan_id).first();
+    if (!plan) throw new HttpError(422, "Plan not available");
+  }
+  const c = await saveCustomer(env, null, { name: input.name, phone: input.phone, status: "lead", city: input.city, source: "web_signup", notes: input.notes, device_mode: input.device_mode });
+  if (plan) {
+    const now = nowIso();
+    await env.DB.prepare(`INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,notes,created_at,updated_at)
+        VALUES(?,?,?,'trial',?,?,'web signup',?,?)`).bind(crypto.randomUUID(), c.id, plan.id, plan.price_agorot, now, now, now).run();
+  }
+  return json({ customer_id: c.id, status: c.status }, 201);
 }
 
 export async function issueLoginCode(env: Env, customerId: string) {
@@ -186,6 +273,7 @@ export async function handleApp(request: Request, env: Env, path: string): Promi
     return json(results.map((p) => ({ ...p, includes_device: !!p.includes_device })));
   }
   if (path === "/v1/app/auth/verify" && request.method === "POST") return verifyLogin(request, env);
+  if (path === "/v1/app/signup" && request.method === "POST") return signup(request, env);
   const customerId = await sessionCustomer(request, env);
   if (path === "/v1/app/auth/logout" && request.method === "POST") {
     await env.DB.prepare("DELETE FROM app_sessions WHERE token_hash=?").bind(await sha256Hex(bearer(request.headers.get("Authorization")) ?? "")).run();
@@ -194,7 +282,7 @@ export async function handleApp(request: Request, env: Env, path: string): Promi
   if (path === "/v1/app/me" && request.method === "GET") {
     const c = await customerRow(env, customerId);
     const { results: phones } = await env.DB.prepare("SELECT phone FROM customer_phones WHERE customer_id=?").bind(customerId).all<{ phone: string }>();
-    return json({ customer: { id: c.id, name: c.name, primary_phone: c.primary_phone, status: c.status, city: c.city },
+    return json({ customer: { id: c.id, name: c.name, primary_phone: c.primary_phone, status: c.status, city: c.city, device_mode: c.device_mode },
       phones: phones.map((p) => p.phone), subscriptions: await subscriptionsFor(env, customerId), device: await deviceSummary(env, customerId) });
   }
   if (path === "/v1/app/device/live" && request.method === "GET") {
@@ -205,6 +293,13 @@ export async function handleApp(request: Request, env: Env, path: string): Promi
   if (path === "/v1/app/trips" && request.method === "GET") {
     const { limit, offset } = page(request);
     return json(await tripsFor(env, customerId, limit, offset));
+  }
+  const appTrip = path.match(/^\/v1\/app\/trips\/([a-zA-Z0-9_-]{1,100})\/path$/);
+  if (appTrip && request.method === "GET") return json(await tripPath(env, appTrip[1], customerId));
+  if (path === "/v1/app/settings") {
+    if (request.method === "GET") return json(await loadSettings(env, customerId));
+    if (request.method === "PUT") return json(await saveSettings(request, env, customerId));
+    return notAllowed("GET, PUT");
   }
   if (path === "/v1/app/calls" && request.method === "GET") {
     const { limit, offset } = page(request);
@@ -256,7 +351,7 @@ async function saveCustomer(env: Env, customerId: string | null, input: Partial<
   let saved: { id: string };
   try { saved = await store.save("customers", body, customerId); }
   catch (error) { throw new HttpError(422, error instanceof Error ? error.message : "Invalid customer"); }
-  const extra = Object.fromEntries(Object.entries({ status: input.status, city: input.city }).filter(([, v]) => v !== undefined));
+  const extra = Object.fromEntries(Object.entries({ status: input.status, city: input.city, device_mode: input.device_mode }).filter(([, v]) => v !== undefined));
   if (Object.keys(extra).length) await update(env, "customers", "id", saved.id, extra);
   return customerRow(env, saved.id);
 }
@@ -275,13 +370,49 @@ export async function platformAdmin(request: Request, env: Env, path: string): P
     if (m === "GET") {
       const { limit, offset } = page(request, 200);
       const term = "%" + (new URL(request.url).searchParams.get("q") ?? "").trim() + "%";
-      const { results } = await env.DB.prepare(`SELECT c.id,c.name,c.primary_phone,c.status,c.city,c.source,c.created_at,c.updated_at,a.device_id
+      const status = new URL(request.url).searchParams.get("status");
+      const { results } = await env.DB.prepare(`SELECT c.id,c.name,c.primary_phone,c.status,c.city,c.source,c.device_mode,c.created_at,c.updated_at,a.device_id
           FROM customers c LEFT JOIN navigation_assignments a ON a.customer_id=c.id
-          WHERE c.name LIKE ? OR COALESCE(c.primary_phone,'') LIKE ? ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`).bind(term, term, limit, offset).all();
+          WHERE (c.name LIKE ? OR COALESCE(c.primary_phone,'') LIKE ?) AND (? IS NULL OR c.status=?) ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`)
+        .bind(term, term, status, status, limit, offset).all();
       return json(results);
     }
     if (m === "POST") return json(await saveCustomer(env, null, await navigationBody(request, CustomerCreate)), 201);
     return notAllowed("GET, POST");
+  }
+  const settings = sub.match(/^\/customers\/([a-zA-Z0-9_-]{1,100})\/settings$/);
+  if (settings && m === "GET") { await customerRow(env, settings[1]); return json(await loadSettings(env, settings[1])); }
+  if (settings && m === "PUT") return json(await saveSettings(request, env, settings[1]));
+  const adminTrip = sub.match(/^\/trips\/([a-zA-Z0-9_-]{1,100})\/path$/);
+  if (adminTrip && m === "GET") return json(await tripPath(env, adminTrip[1], null));
+  if (sub === "/trips" && m === "GET") {
+    const { limit, offset } = page(request, 200);
+    const cid = new URL(request.url).searchParams.get("customer_id");
+    const { results } = await env.DB.prepare(`SELECT t.id,t.customer_id,c.name AS customer_name,t.device_id,t.destination_label,t.destination_address,t.status,
+        t.created_at_ms,t.ended_at_ms,t.last_call_id,k.summary_json FROM navigation_trips t LEFT JOIN customers c ON c.id=t.customer_id
+        LEFT JOIN navigation_call_costs k ON k.call_id=t.last_call_id WHERE (? IS NULL OR t.customer_id=?) ORDER BY t.created_at_ms DESC LIMIT ? OFFSET ?`)
+      .bind(cid, cid, limit, offset).all<Record<string, any>>();
+    return json(results.map(({ summary_json, ...t }) => ({ ...t, duration_s: t.ended_at_ms ? Math.round((t.ended_at_ms - t.created_at_ms) / 1000) : null, last_call_cost: costOut(summary_json) })));
+  }
+  if (sub === "/reports" && m === "GET") {
+    const all = async (sql: string) => (await env.DB.prepare(sql).all<Record<string, any>>()).results;
+    const [byStatus, byMode, mrr, newCustomers, trips, calls] = await Promise.all([
+      all("SELECT status,COUNT(*) AS n FROM customers GROUP BY status"),
+      all("SELECT device_mode,COUNT(*) AS n FROM customers GROUP BY device_mode"),
+      all(`SELECT COALESCE(SUM(CASE p.billing WHEN 'monthly' THEN s.price_agorot WHEN 'yearly' THEN s.price_agorot/12 ELSE 0 END),0) AS mrr
+        FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active'`),
+      all("SELECT substr(created_at,1,7) AS month,COUNT(*) AS n FROM customers GROUP BY month"),
+      all("SELECT strftime('%Y-%m',created_at_ms/1000,'unixepoch') AS month,COUNT(*) AS n FROM navigation_trips GROUP BY month"),
+      all(`SELECT substr(computed_at,1,7) AS month,COUNT(*) AS n,SUM(json_extract(summary_json,'$.known_subtotal_ils')) AS ils,
+        SUM(CASE WHEN json_extract(summary_json,'$.status')='complete' THEN 0 ELSE 1 END) AS partial FROM navigation_call_costs GROUP BY month`),
+    ]);
+    const months = [...new Set([...newCustomers, ...trips, ...calls].map((r) => r.month).filter(Boolean))].sort().reverse().slice(0, 12);
+    const at = (rows: Record<string, any>[], month: string) => rows.find((r) => r.month === month);
+    return json({ customers_by_status: Object.fromEntries(byStatus.map((r) => [r.status, r.n])),
+      customers_by_device_mode: Object.fromEntries(byMode.map((r) => [r.device_mode, r.n])), mrr_agorot: Math.round(mrr[0]?.mrr ?? 0),
+      months: months.map((month) => ({ month, new_customers: at(newCustomers, month)?.n ?? 0, trips: at(trips, month)?.n ?? 0,
+        calls_costed: at(calls, month)?.n ?? 0, calls_partial_cost: at(calls, month)?.partial ?? 0,
+        call_cost_ils: Math.round((at(calls, month)?.ils ?? 0) * 100) / 100 })) });
   }
   const loginCode = sub.match(/^\/customers\/([a-zA-Z0-9_-]{1,100})\/login-code$/);
   if (loginCode && m === "POST") return json(await issueLoginCode(env, loginCode[1]), 201);

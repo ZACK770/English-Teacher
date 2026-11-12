@@ -127,7 +127,11 @@ export async function receivePosition(request: Request, env: Env): Promise<Respo
       latitude=excluded.latitude,longitude=excluded.longitude,speed_mps=excluded.speed_mps,heading=excluded.heading,accuracy_m=excluded.accuracy_m
     WHERE excluded.fix_at_ms > navigation_positions.fix_at_ms`)
     .bind(device.uniqueId, p.id, fix, now, p.latitude, p.longitude, speed, heading, (p.accuracy ?? 0) > 0 ? p.accuracy : null, device.uniqueId, fix);
-  const results = await env.DB.batch([report, upsert]);
+  const history = env.DB.prepare(`INSERT OR IGNORE INTO navigation_position_history
+    (device_id,fix_at_ms,latitude,longitude,speed_mps,heading,accuracy_m)
+    SELECT ?,?,?,?,?,?,? FROM navigation_devices WHERE device_id=? AND enabled=1 AND last_report_valid=1 AND last_report_at_ms=?`)
+    .bind(device.uniqueId, fix, p.latitude, p.longitude, speed, heading, (p.accuracy ?? 0) > 0 ? p.accuracy : null, device.uniqueId, fix);
+  const results = await env.DB.batch([report, upsert, history]);
   const accepted = results[1].meta.changes > 0;
   return json({ accepted, ...(accepted ? {} : { reason: "duplicate_or_out_of_order" }) });
 }

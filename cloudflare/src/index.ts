@@ -7,17 +7,18 @@ import { syncCrm } from "./crm";
 import { dispatchCallbacks, submitCallback } from "./callbacks";
 import { navigationAdmin, receivePosition } from "./navigation";
 import { navigationTripsAdmin } from "./navigation-trips";
-import { handleApp, platformAdmin } from "./platform";
+import { handleApp, platformAdmin, POSITION_HISTORY_DAYS } from "./platform";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const s = settings(env);
   const path = url.pathname.replace(/^\/english(\/|$)/, "/") || "/";
-  if (path === "/navigation" || path === "/navigation/") {
+  const page = path.replace(/\/$/, "");
+  if (page === "/navigation" || page === "/app" || page === "/join-navigation") {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const asset = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
-    const html = (await asset.text()).replace(/<title>[^<]*<\/title>/, "<title>וייז כשר · מיקום ומכשירים</title>")
+    const html = (await asset.text()).replace(/<title>[^<]*<\/title>/, `<title>${page === "/navigation" ? "וייז כשר · ניהול" : page === "/app" ? "וייז כשר · האזור האישי" : "וייז כשר · הצטרפות"}</title>`)
       .replace(/<link\b[^>]*https:\/\/fonts\.(?:googleapis|gstatic)\.com[^>]*>/g, "");
     return new Response(request.method === "HEAD" ? null : html, { status: asset.status, headers: {
       "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
@@ -129,5 +130,6 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
+    ctx.waitUntil(env.DB.prepare("DELETE FROM navigation_position_history WHERE fix_at_ms<?").bind(Date.now() - POSITION_HISTORY_DAYS * 86400_000).run().catch(() => undefined));
   },
 };
