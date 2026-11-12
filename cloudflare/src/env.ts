@@ -32,6 +32,7 @@ export interface Env {
   CALLBACK_RELAY_URL?: string;
   CALLBACK_RELAY_SECRET?: string;
   CRM_INGEST_SECRET?: string;
+  TRACCAR_FORWARD_SECRET?: string;
 }
 
 const flag = (v?: string) => ["1", "true", "yes", "on"].includes((v ?? "").trim().toLowerCase());

@@ -462,6 +462,18 @@ export const BotsView: React.FC = () => {
                 </div>
 
                 <div>
+                  <label className="font-bold text-[#718087] block mb-1">קול בבוט ניווט:</label>
+                  <select
+                    value={draftControls.navigation_voice ?? 'engine'}
+                    onChange={e => setDraftControls({ ...draftControls, navigation_voice: e.target.value as any })}
+                    className="w-full p-2.5 rounded-xl border border-[#e3e8eb] text-xs"
+                  >
+                    <option value="engine">מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</option>
+                    <option value="gemini">Gemini מדבר: Gemini מנהל את השיחה ומקבל נתונים חיים</option>
+                  </select>
+                </div>
+
+                <div>
                   <label className="font-bold text-[#718087] block mb-1">זמן שקט לסיום תור (מילישניות):</label>
                   <input
                     type="number"

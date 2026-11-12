@@ -133,10 +133,7 @@ export class BusinessStore {
       body.phone = normalizedPhone(body.phone);
       const other = await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(body.phone).first<{ customer_id: string }>();
       if (other && other.customer_id !== id) throw new Error("מספר טלפון שכבר רשום");
-      stmts.push(
-        this.db.prepare("DELETE FROM customer_phones WHERE customer_id=?").bind(id),
-        this.db.prepare("INSERT INTO customer_phones VALUES (?,?)").bind(body.phone, id),
-      );
+      stmts.push(this.db.prepare("INSERT INTO customer_phones(phone,customer_id) VALUES (?,?) ON CONFLICT(customer_id) DO UPDATE SET phone=excluded.phone").bind(body.phone, id));
     }
     if (kind === "courses" && body.active) {
       const teacher = await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(body.bot_id).first();
@@ -155,6 +152,17 @@ export class BusinessStore {
         .bind(kind, id, JSON.stringify(body), now, now),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("save:" + kind, id, now),
     );
+    if (kind === "customers") {
+      stmts.push(this.db.prepare(`INSERT INTO customers(id,name,primary_phone,source,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,primary_phone=excluded.primary_phone,source=excluded.source,notes=excluded.notes,updated_at=excluded.updated_at`)
+        .bind(id, body.name ?? "", body.phone, body.source ?? "", body.notes ?? "", now, now));
+    }
+    if (kind === "packages") {
+      stmts.push(this.db.prepare(`INSERT INTO plans(id,name,product,billing,price_agorot,included_minutes,validity_days,active,created_at,updated_at)
+        VALUES (?,?,?,'prepaid',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,product=excluded.product,price_agorot=excluded.price_agorot,
+        included_minutes=excluded.included_minutes,validity_days=excluded.validity_days,active=excluded.active,updated_at=excluded.updated_at`)
+        .bind(id, body.name, body.product, Math.round(Number(body.price_ils) * 100), body.minutes, body.validity_days, body.active ? 1 : 0, now, now));
+    }
     await this.db.batch(stmts);
     return { id, ...body };
   }
@@ -190,6 +198,7 @@ export class BusinessStore {
       stmts.push(
         this.db.prepare("INSERT OR IGNORE INTO customer_phones VALUES (?,?)").bind(phone, customerId),
         this.db.prepare("INSERT OR IGNORE INTO console_records VALUES ('customers',?,?,?,?)").bind(customerId, JSON.stringify(body), now, now),
+        this.db.prepare("INSERT OR IGNORE INTO customers(id,name,primary_phone,source,created_at,updated_at) VALUES (?,?,?,?,?,?)").bind(customerId, body.name, phone, body.source, now, now),
       );
     }
     stmts.push(this.db.prepare("INSERT OR IGNORE INTO call_customers VALUES (?,?,?,?,?)").bind(callId, customerId, botId, "phone", now));

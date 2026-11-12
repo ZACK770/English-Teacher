@@ -29,3 +29,24 @@ crons = ["*/10 * * * *"]
 
 [observability]
 enabled = true
+
+# Isolated sandbox for web/AI development. Separate D1, secrets and URL; no cron, no PBX traffic.
+[env.staging]
+name = "english-engine-staging"
+workers_dev = true
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "english-engine-staging"
+database_id = "9f6c191a-2f80-4424-a1be-bc81f57e1249"
+migrations_dir = "migrations"
+
+[[env.staging.durable_objects.bindings]]
+name = "CALLS"
+class_name = "CallSession"
+
+[env.staging.triggers]
+crons = []
+
+[env.staging.vars]
+STORE_TRANSCRIPTS = "1"

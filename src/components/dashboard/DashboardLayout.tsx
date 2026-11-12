@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   Bell,
   Search,
+  MapPin,
 } from 'lucide-react';
 import { OverviewView } from './OverviewView';
 import { CampaignsView } from './CampaignsView';
@@ -84,6 +85,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
 
         {/* Navigation list */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+          <a href="/navigation" className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-slate-100" title="וייז כשר — מיקום ומכשירים">
+            <MapPin className="w-4 h-4 shrink-0" />
+            {sidebarOpen && <span>וייז כשר — מיקום ומכשירים</span>}
+          </a>
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
