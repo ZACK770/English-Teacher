@@ -17,6 +17,7 @@ export class NavigationSpeechGate {
   private ringBytes = 0;
   private stopped = false;
   private stopAt = 0;
+  private stoppedUtterance: number | null = null;
 
   busy(now = Date.now(), timeoutMs = 15_000) { this.busyUntil = now + timeoutMs; }
   generated() { this.busyUntil = 0; }
@@ -33,9 +34,10 @@ export class NavigationSpeechGate {
     while (this.ringBytes > 3 * 32_000 && this.ring.length > 1) this.ringBytes -= this.ring.shift()!.byteLength;
   }
 
-  stop(text: string, active: boolean, now = Date.now()): { word: string; audio: Uint8Array } | null {
+  stop(text: string, active: boolean, now = Date.now(), utterance: number | null = null): { word: string; audio: Uint8Array } | null {
     const word = stopWord(text);
-    if (!this.enabled || this.stopped || !active || !word || now - this.stopAt < 1500) return null;
+    if (!this.enabled || this.stopped || !active || !word || now - this.stopAt < 1500 || (utterance !== null && utterance === this.stoppedUtterance)) return null;
+    this.stoppedUtterance = utterance;
     this.stopAt = now; this.stopped = true; this.muted = true;
     this.busyUntil = 0; this.playbackUntil = 0;
     const audio = concat(this.ring);

@@ -5,6 +5,7 @@ export type GeminiEvent =
   | { type: "interrupted" }
   | { type: "transcript"; role: "learner" | "tutor"; text: string }
   | { type: "interim_transcript"; text: string }
+  | { type: "voice_activity"; activity: "start" | "end"; offset_ms: number | null }
   | { type: "turn_complete" }
   | { type: "tool_call"; calls: ToolCall[] }
   | { type: "usage"; usage: Record<string, unknown> }
@@ -111,6 +112,10 @@ export class GeminiLive {
     const usage = event.usageMetadata;
     if (usage) this.push({ type: "usage", usage });
     const server = event.serverContent ?? {};
+    if (event.voiceActivity?.type) {
+      const v = event.voiceActivity, seconds = Number(String(v.audioOffset ?? "").replace(/s$/, ""));
+      this.push({ type: "voice_activity", activity: v.type === "ACTIVITY_START" ? "start" : "end", offset_ms: Number.isFinite(seconds) ? Math.round(seconds * 1000) : null });
+    }
     if (server.interrupted) this.push({ type: "interrupted" });
     if (server.interimInputTranscription?.text) this.push({ type: "interim_transcript", text: String(server.interimInputTranscription.text) });
     for (const [key, role] of [["inputTranscription", "learner"], ["outputTranscription", "tutor"]] as const) {

@@ -169,17 +169,21 @@ export async function navigationCalls(env: Env, bots: string[], limit: number, o
     GROUP BY call_id ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(...bots, ...bots, ...bots, limit, offset).all<Record<string, string>>();
   const out = [];
   for (const c of calls) {
-    const [snapshot, turns, events, latency, session] = await Promise.all([
+    const [snapshot, turns, events, latency, session, costs, usage] = await Promise.all([
       env.DB.prepare("SELECT system_instruction, opening_message, setup_json, bot_version FROM prompt_snapshots WHERE call_id=?").bind(c.call_id).all<Record<string, any>>(),
       env.DB.prepare("SELECT created_at, direction, text, metadata_json FROM conversation_turns WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
       env.DB.prepare("SELECT created_at, event_type, details_json FROM diagnostic_events WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
       env.DB.prepare("SELECT created_at, event_name, since_call_start_ms, details_json FROM latency_events WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
       env.DB.prepare("SELECT started_at, ended_at, duration_seconds, learner_turns, tutor_turns, estimated_cost_usd, model FROM sessions WHERE call_id=?").bind(c.call_id).all<Record<string, any>>(),
+      env.DB.prepare("SELECT summary_json FROM navigation_call_costs WHERE call_id=?").bind(c.call_id).all<Record<string, any>>(),
+      env.DB.prepare("SELECT channel,model,reported_at,usage_json FROM navigation_usage_events WHERE call_id=? ORDER BY id").bind(c.call_id).all<Record<string, any>>(),
     ]);
     const s = snapshot.results[0];
     out.push({ call_id: c.call_id, created_at: c.created_at, profile_id: c.profile_id, has_prompt: !!s,
       system_instruction: s?.system_instruction ?? "", opening_message: s?.opening_message ?? "", bot_version: s ? Number(s.bot_version) : null,
       setup_message: s ? parse(s.setup_json) : null, session: session.results[0] ?? null,
+      cost: costs.results[0] ? parse(costs.results[0].summary_json) : null,
+      reported_usage: usage.results.map((r) => ({ channel: r.channel, model: r.model, reported_at: r.reported_at, usage: parse(r.usage_json) })),
       turns: turns.results.map((r) => ({ created_at: r.created_at, direction: r.direction, text: r.text, metadata: parse(r.metadata_json) })),
       events: events.results.map((r) => ({ created_at: r.created_at, event_type: r.event_type, details: parse(r.details_json) })),
       latency: latency.results.map((r) => ({ created_at: r.created_at, event_name: r.event_name, since_call_start_ms: r.since_call_start_ms, details: parse(r.details_json) })) });

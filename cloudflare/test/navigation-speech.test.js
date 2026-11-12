@@ -39,4 +39,12 @@ describe("explicit stop word instead of every voice activity", () => {
     for (let i = 0; i < 10; i++) gate.remember(new Uint8Array(32000));
     expect(gate.stop("רגע", true, 11000).audio.byteLength).toBeLessThanOrEqual(96000);
   });
+  it("does not re-stop on the final transcript of an old utterance after playback has resumed", () => {
+    const gate = new NavigationSpeechGate(); gate.enabled = true;
+    gate.remember(new Uint8Array(100));
+    expect(gate.stop("כן אבל רגע", true, 10000, 1)).not.toBeNull();
+    gate.interrupted(); gate.resume(); gate.played(13000);
+    expect(gate.stop("כן אבל רגע", true, 14000, 1)).toBeNull();
+    expect(gate.stop("רגע", true, 14000, 2)).not.toBeNull();
+  });
 });

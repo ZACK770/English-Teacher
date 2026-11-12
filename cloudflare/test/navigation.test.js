@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(NOW);
   sql = new DatabaseSync(":memory:");
   sql.exec("PRAGMA foreign_keys=ON");
-  for (const name of ["0001_init.sql", "0002_callback_requests.sql", "0003_navigation_gps.sql", "0004_navigation_console.sql"]) {
+  for (const name of ["0001_init.sql", "0002_callback_requests.sql", "0003_navigation_gps.sql", "0004_navigation_console.sql", "0006_navigation_call_costs.sql"]) {
     sql.exec(readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8"));
   }
   sql.prepare("INSERT INTO navigation_devices(device_id,traccar_device_id,label,created_at) VALUES(?,?,?,?)")
@@ -310,6 +310,14 @@ describe("navigation call log", () => {
     const calls = await (await call("/v1/admin/navigation/calls?limit=1")).json();
     expect(calls.map((c) => c.call_id)).toEqual(["new-call"]);
     expect(calls[0].turns[0].text).toBe("לא לא.");
+    expect(calls[0].cost).toBeNull();
+    sql.prepare("INSERT INTO navigation_call_costs(call_id,profile_id,computed_at,summary_json) VALUES(?,?,?,?)")
+      .run("new-call", "voice-navigator-live", new Date().toISOString(), JSON.stringify({ status: "partial", known_subtotal_ils: 0.1234 }));
+    sql.prepare("INSERT INTO navigation_usage_events(call_id,profile_id,channel,model,reported_at,usage_json) VALUES(?,?,?,?,?,?)")
+      .run("new-call", "voice-navigator-live", "main", "gemini-3.8-live", new Date().toISOString(), JSON.stringify({ promptTokenCount: 12 }));
+    const priced = await (await call("/v1/admin/navigation/calls?limit=1")).json();
+    expect(priced[0].cost).toEqual({ status: "partial", known_subtotal_ils: 0.1234 });
+    expect(priced[0].reported_usage[0].usage).toEqual({ promptTokenCount: 12 });
     const older = await (await call("/v1/admin/navigation/calls?limit=5&offset=1")).json();
     expect(older.map((c) => c.call_id)).toEqual(["old-call"]);
     expect(older[0]).toMatchObject({ has_prompt: false, turns: [], setup_message: null });

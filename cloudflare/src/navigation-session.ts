@@ -9,6 +9,8 @@ import { SessionMeter } from "./meter";
 import { NavigationCall, NAVIGATION_REQUEST_TOOL } from "./navigation-call";
 import { LIVE_SYSTEM, LIVE_TOOLS, LiveNavigator } from "./navigation-live";
 import { NavigationSpeechGate, STOP_LISTENER_SETUP } from "./navigation-speech";
+import { NavigationLatency } from "./navigation-latency";
+import { NavigationAccounting } from "./navigation-cost";
 import type { Guidance } from "./navigation-route";
 import { ProgressStore } from "./progress";
 import { buildSetupPayload } from "./prompt";
@@ -45,6 +47,12 @@ export class NavigationSession {
   private earActiveUntil = 0;
   private firstReplyAt = 0;
   private learnerReadyAt = 0;
+  private timing = new NavigationLatency();
+  private playbackMarks = new WeakMap<Uint8Array, Record<string, any>>();
+  private nextPlaybackMark: Record<string, any> | null = null;
+  private accounting: NavigationAccounting | null = null;
+  private speechModel = "";
+  private earUtterance = 0;
   private controller: NavigationCall | null = null;
   private meter = new SessionMeter();
   private startedAt = new Date();
@@ -84,7 +92,7 @@ export class NavigationSession {
     this.clearSpeech();
   }
 
-  private clearSpeech() { this.generation++; this.output = []; }
+  private clearSpeech() { this.generation++; this.output = []; this.nextPlaybackMark = null; }
 
   private async speak(result: Guidance, speech: BasicTranslator, force = false, source = "reply") {
     if (!result.say || this.abort.signal.aborted) return;
@@ -142,6 +150,8 @@ export class NavigationSession {
       this.controller = new NavigationCall(this.env, customerId, tripCall);
       const controls = await progress.loadControls(profileId, controlsFromSettings(false));
       model = controls.model;
+      this.speechModel = model;
+      this.accounting = new NavigationAccounting(this.env.DB, profileId, callId);
       this.trace = (direction, text, meta = {}) => {
         this.logs = this.logs.then(() => progress.logTurn(profileId, callId, direction, text, meta)).catch(() => {});
       };
@@ -173,6 +183,7 @@ export class NavigationSession {
         try {
           await this.ear.connect(5000);
           this.gate.enabled = true;
+          this.accounting.expect("stop_listener");
           this.earTask = this.readEar().catch(() => {
             this.gate.enabled = false;
             this.trace("stop_listener_unavailable", "חזרה לקטיעה רגילה: ערוץ זיהוי מילת העצירה אינו זמין");
@@ -210,6 +221,14 @@ export class NavigationSession {
       this.flushHeard();
       this.trace("ended", this.reason || "transport_ended");
       await this.logs;
+      if (this.accounting) {
+        try {
+          const cost = await this.accounting.finish();
+          await progress.logTurn(profileId!, callId, "call_cost", JSON.stringify(cost));
+        } catch {
+          await progress.logDiagnostic(profileId!, callId, "call_cost_failed", { reason: "Cost summary could not be persisted" }).catch(() => {});
+        }
+      }
       await (this.navigator ?? this.controller)?.close().catch(() => {});
       if (customerId && meteredAt !== null) {
         await business.settleCall(callId, (Date.now() - meteredAt) / 1000).catch(() => {});
@@ -227,7 +246,7 @@ export class NavigationSession {
     const said = this.heard.learner.trim();
     if (said) { this.utterances++; this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
     if (this.heard.tutor.trim()) {
-      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, { ...(interrupted ? { cut_off_by_driver: true } : {}), ...(this.firstReplyAt && this.learnerReadyAt ? { first_audio_after_transcript_ms: this.firstReplyAt - this.learnerReadyAt } : {}) }); }
+      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, interrupted ? { cut_off_by_driver: true } : {}); }
       else this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
     }
     this.heard = { learner: "", tutor: "" };
@@ -240,6 +259,17 @@ export class NavigationSession {
       const frame = this.output.shift();
       if (frame) this.gate.played();
       this.pbx.send(frame ?? SILENCE_FRAME);
+      if (frame) {
+        const mark = this.playbackMarks.get(frame);
+        if (mark) {
+          const at = Date.now();
+          this.trace("latency", "first_playback", { ...mark, first_playback_at_ms: at,
+            measurement_point: "pbx_websocket_send",
+            generation_to_playback_ms: at - mark.first_audio_at_ms,
+            speech_end_to_playback_ms: mark.speech_end_estimate_at_ms !== null ? at - mark.speech_end_estimate_at_ms : null });
+          this.playbackMarks.delete(frame);
+        }
+      }
     }
   }
   private async sendInput() {
@@ -250,6 +280,10 @@ export class NavigationSession {
       const pcm = upsample8kTo16k(data);
       this.meter.inputAudioBytes += pcm.length;
       const blocked = this.gate.blocked(this.output.length > 0);
+      if (!blocked) {
+        const ended = this.timing.input(data);
+        if (ended) this.trace("latency", "speech_end_estimate", ended);
+      }
       if (blocked) {
         this.gate.remember(pcm);
         this.earActiveUntil = Date.now() + 1500;
@@ -266,9 +300,13 @@ export class NavigationSession {
     while (!this.abort.signal.aborted) {
       const event = await this.ai!.next();
       if (event.type === "closed" || event.type === "go_away") return;
-      if (event.type === "usage") this.meter.recordUsage(event.usage);
+      if (event.type === "usage") {
+        this.meter.recordUsage(event.usage);
+        this.accounting?.record("main", this.speechModel, event.usage);
+      }
       // Engine speech is replaced only by a newer engine reply; line echo and noise must not cut it off.
       if (event.type === "transcript") {
+        if (event.role === "learner" && !this.heard.learner) this.trace("latency", "transcript_received", this.timing.transcript());
         this.heard[event.role] += event.text;
         if (event.role === "learner") {
           this.learnerReadyAt = Date.now();
@@ -287,11 +325,12 @@ export class NavigationSession {
           if (this.abort.signal.aborted) return;
           this.trace("tool_call", JSON.stringify({ name: call.name, args: call.args ?? {} }));
           if (this.navigator) {
+            const toolAt = Date.now();
             this.meter.learnerTurns++;
             const result = await this.navigator.tool(call.name ?? "", (call.args ?? {}) as Record<string, unknown>)
               .catch((error) => ({ error: "the navigation system failed on this request", detail: error instanceof Error ? error.message.slice(0, 120) : "" }));
             this.ai!.submitToolResult(call, true, result);
-            this.trace("tool_result", JSON.stringify(result));
+            this.trace("tool_result", JSON.stringify(result), { name: call.name, tool_ms: Date.now() - toolAt });
             return;
           }
           if (call.name !== NAVIGATION_REQUEST_TOOL.name) { this.ai!.submitToolResult(call, false); return; }
@@ -315,6 +354,7 @@ export class NavigationSession {
   private push(data: Record<string, unknown>) {
     const text = `[נתוני ניווט] ${JSON.stringify(data)}`;
     this.ai?.startGreeting(text);
+    this.timing.event();
     this.gate.resume(); this.gate.busy();
     this.trace("ai_input", text, { kind: "event" });
   }
@@ -326,12 +366,19 @@ export class NavigationSession {
       this.meter.outputAudioBytes += event.pcm24k.byteLength;
       if (this.gate.muted) return;
       this.gate.resume();
-      if (!this.firstReplyAt) this.firstReplyAt = Date.now();
+      if (!this.firstReplyAt) {
+        this.firstReplyAt = Date.now(); this.nextPlaybackMark = this.timing.firstAudio(this.firstReplyAt);
+        this.trace("latency", "first_generated_audio", this.nextPlaybackMark);
+      }
       const [pcm, carry] = downsample24kTo8k(event.pcm24k, this.carry);
       this.carry = carry;
       const data = concat([this.partial, pcm]);
       let offset = 0;
-      for (; offset + FRAME_BYTES <= data.length; offset += FRAME_BYTES) this.output.push(data.slice(offset, offset + FRAME_BYTES));
+      for (; offset + FRAME_BYTES <= data.length; offset += FRAME_BYTES) {
+        const frame = data.slice(offset, offset + FRAME_BYTES);
+        if (this.nextPlaybackMark) { this.playbackMarks.set(frame, this.nextPlaybackMark); this.nextPlaybackMark = null; }
+        this.output.push(frame);
+      }
       this.partial = data.slice(offset);
     }
     if (event.type === "interrupted" || event.type === "turn_complete") {
@@ -344,18 +391,27 @@ export class NavigationSession {
   private async readEar() {
     while (!this.abort.signal.aborted && this.ear) {
       const event = await this.ear.next();
+      if (event.type === "voice_activity") {
+        if (event.activity === "start") this.earUtterance++;
+        continue;
+      }
       if (event.type === "closed" || event.type === "go_away") {
         if (!this.abort.signal.aborted) { this.gate.enabled = false; this.trace("stop_listener_unavailable", "ערוץ זיהוי מילת העצירה נסגר; חזרה לקטיעה רגילה"); }
         return;
       }
-      if (event.type === "usage") this.trace("stop_listener_usage", JSON.stringify(event.usage));
+      if (event.type === "usage") {
+        this.accounting?.record("stop_listener", STOP_LISTENER_SETUP.setup.model, event.usage);
+        this.trace("stop_listener_usage", JSON.stringify(event.usage));
+      }
       const text = event.type === "interim_transcript" ? event.text : event.type === "transcript" && event.role === "learner" ? event.text : "";
       if (!text) continue;
-      const stopped = this.gate.stop(text, this.gate.blocked(this.output.length > 0) || Date.now() < this.earActiveUntil);
+      const utterance = this.earUtterance;
+      const stopped = this.gate.stop(text, this.gate.blocked(this.output.length > 0) || Date.now() < this.earActiveUntil, Date.now(), utterance);
+      if (event.type === "transcript") this.earUtterance++;
       if (stopped) {
         this.clearSpeech(); this.carry = new Uint8Array(); this.partial = new Uint8Array();
         this.flushHeard(true);
-        this.trace("stop_word", text, { word: stopped.word, source: event.type, replay_audio_ms: Math.round(stopped.audio.byteLength / 32) });
+        this.trace("stop_word", text, { word: stopped.word, source: event.type, utterance, replay_audio_ms: Math.round(stopped.audio.byteLength / 32) });
         // The main Live session hears the actual word and receives VAD interruption.
         // Muting queued audio alone would leave its generation active for many seconds.
         if (stopped.audio.length) this.ai?.sendAudio(stopped.audio);
@@ -394,7 +450,7 @@ export class NavigationSession {
   }
   private async poll(speech: BasicTranslator, progress: ProgressStore, callId: string) {
     while (!this.abort.signal.aborted) {
-      await sleep(5000, this.abort.signal);
+      await sleep(this.live ? 2000 : 5000, this.abort.signal);
       if (!await progress.renewCall(callId, this.ownerId)) { this.stop("navigation_lease_lost"); return; }
       if (this.navigator) {
         const event = await this.navigator.poll().catch(() => null);

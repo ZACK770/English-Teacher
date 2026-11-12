@@ -9,7 +9,8 @@ export const LIVE_TOOLS = [
     parameters: { type: "OBJECT", properties: { query: { type: "STRING", description: "What the driver said, in Hebrew, including the town if he gave one." } }, required: ["query"] } },
   { name: "start_route", description: "Start navigating from the car's current GPS position to an address, using Google Routes with live traffic. Replaces any earlier trip. Also use it to continue a previous trip or to switch to the currently fastest route. Returns km, minutes with live traffic and the upcoming turns.",
     parameters: { type: "OBJECT", properties: { destination: { type: "STRING", description: "Full address, preferably exactly as returned by find_place." } }, required: ["destination"] } },
-  { name: "get_status", description: "Live state right now: GPS (position, speed, age), whether the car is on the route, the next turn and the distance to it, the turn after it, remaining km and minutes with live traffic. Call it whenever the driver asks where he is, what is next or how long is left, and whenever you are unsure." },
+  { name: "get_status", description: "Live state right now: GPS (position, speed, age), whether the car is on the route, next turns, remaining km and minutes with traffic. Set include_street=true only when the driver asks which street he is on; otherwise omit it for a faster response.", parameters: { type: "OBJECT", properties: { include_street: { type: "BOOLEAN" } } } },
+  { name: "get_route_overview", description: "Return ALL the remaining route turns, in order with distances. Use when the driver requests the whole route, all remaining turns, or what comes after the turns already mentioned. Never invent missing steps from memory." },
   { name: "stop_navigation", description: "End the current trip, when the driver arrived or wants to cancel." },
 ];
 
@@ -19,6 +20,8 @@ The driver may say "רגע", "שתוק", "שקט" or "עצור" to stop your spe
 
 The car carries a GPS tracker, so never ask the driver where he is: call get_status. Your tools return live data (GPS, Google Maps places, Google Routes with live traffic); you decide what to say and when.
 
+When giving the first guidance after start_route, say what road/direction to continue on from start_instruction, then the distance from next_turn.in_meters and its action. If a turn is 410 meters away, say that distance; do not make it sound like the turn is now. Keep the spoken ETA within two minutes of the returned value. For the entire route call get_route_overview and read all the returned turns in order, rather than only the few preview turns. Ask for current street lookup only when it helps answer the driver's question.
+
 Typical flow: the driver names a destination -> call find_place (the query must be the driver's own words; if you caught only a fragment such as a number, or are not sure of the street name, ask him to repeat instead of guessing a street) -> if there is one clear match just confirm it in a few words ("רבי עקיבא 10 בירושלים, נכון?"), if several ask which one, if none ask him to repeat or spell it -> call start_route with the exact address -> tell him the travel time with traffic and the first thing to do. If he says "כן/נכון/סע" after your question, go ahead; if he corrects you, search again. If he wants to cancel or arrived, call stop_navigation. If he changes destination, just start a new route; nothing needs to be cancelled first.
 
 Messages that start with [נתוני ניווט] are not the driver speaking: they are live data pushed by the tracking system (call started, a turn coming up, the car left the route and a new route was computed, traffic changed, GPS lost or back, arrived). Tell the driver what matters from them right away in your own words. For a turn event say the distance and the instruction; mention "then" only when the event includes it (it is included only when the following turn comes right after). gps.street is the street the car is on right now according to the map (use it when he asks where he is, or when he doubts the route); current_segment_started_with is the last route instruction he passed. If the call starts with a previous_trip, ask casually whether he is still heading there, and if so call start_route with its address.
@@ -27,7 +30,7 @@ Facts - left/right, distances, street names, minutes - come only from tool resul
 
 When the driver says he is lost, made a mistake, missed a turn or names the street he is on, call get_status: it re-reads the GPS and, if the car left the route, already returns a new route from where he really is (rerouted: true). Trust the GPS over the street name he says, but never brush him off: if he insists the route does not fit where he is or the way he is driving, do not reassure him. Tell him what the GPS shows (gps.street, driving_direction) and call start_route again with the same destination: it recomputes from his current position and driving direction, so the new route continues the way he is already going.
 
-Do not repeat yourself. After a short acknowledgement ("אוקיי", "טוב", "תודה", "הבנתי") say nothing, or at most one word. Repeat an instruction only when he asks. Talk to him in the singular ("פנה שמאלה", "תמשיך ישר") even though Google's instructions are written in the plural. Say travel time from the data exactly or rounded to five minutes (109 minutes is "בערך שעה וחמישים", not "שעה וארבעים וחמש"); arrival_clock is the expected arrival time in Israel. gps.tracker_battery_percent is the battery of the GPS tracker in the car, if he asks.
+Do not repeat yourself. After a short acknowledgement ("אוקיי", "טוב", "תודה", "הבנתי") say nothing, or at most one word. Repeat an instruction only when he asks. Talk to him in the singular ("פנה שמאלה", "תמשיך ישר") even though Google's instructions are written in the plural. Say travel time from the data exactly or rounded to five minutes (109 minutes is "בערך שעה וחמישים", not "שעה וארבעים וחמש"); arrival_clock is the expected arrival time in Israel. gps.tracker_battery_percent is the battery of the GPS tracker in the car, if he asks. gps.speed_source says where speed came from: position_delta_estimate is only an estimate from GPS points; tracker_report is the device report. Speed is from the last report, so do not present it as exact to the kilometer.
 
 Ignore background noise, radio, passengers and echoes of your own voice. Do not read JSON or field names aloud. Round numbers naturally ("בערך 300 מטר", "עוד רבע שעה").`;
 
@@ -80,6 +83,7 @@ export class LiveNavigator {
     const location = await customerPosition(this.env, this.customerId).catch(() => null);
     let fix = (location?.position ?? null) as NavigationFix | null;
     const live = !!fix;
+    let speedFromPoints = false;
     // Without a current satellite fix the last known position (up to 10 minutes old) is still better than nothing.
     if (location?.enabled && !fix) {
       const last = await this.env.DB.prepare("SELECT * FROM navigation_positions WHERE device_id=?").bind(location.device_id).first<NavigationFix>().catch(() => null);
@@ -93,7 +97,12 @@ export class LiveNavigator {
         this.motion = dt <= 40 && moved >= 12 && moved / dt <= 50 ? { speed: moved / dt, heading: bearing([last.latitude, last.longitude], [fix.latitude, fix.longitude]), at: fix.fix_at_ms } : null;
       }
       if (!last || fix.fix_at_ms > last.fix_at_ms) this.last = fix;
-      if (this.motion?.at === fix.fix_at_ms) fix = { ...fix, speed_mps: Math.max(fix.speed_mps, this.motion.speed), heading: fix.heading ?? this.motion.heading };
+      if (this.motion?.at === fix.fix_at_ms) {
+        // A distance estimate must not inflate a positive tracker reading merely
+        // because it is higher. Keep it only as an explicitly labelled fallback.
+        speedFromPoints = fix.speed_mps === 0;
+        fix = { ...fix, speed_mps: speedFromPoints ? this.motion.speed : fix.speed_mps, heading: fix.heading ?? this.motion.heading };
+      }
       if (fix.speed_mps >= 1.5 && fix.heading !== null) this.course = { deg: fix.heading, at: fix.fix_at_ms };
     }
     const battery = location?.battery.level_percent ?? null;
@@ -104,12 +113,13 @@ export class LiveNavigator {
         tracker_last_heard_seconds_ago: heard, last_fix_seconds_ago: location.last_valid_fix_at_ms ? Math.round((Date.now() - location.last_valid_fix_at_ms) / 1000) : null }
       : { available: true, seconds_ago: Math.round((Date.now() - fix.fix_at_ms) / 1000), lat: fix.latitude, lng: fix.longitude,
         speed_kmh: Math.round(fix.speed_mps * 3.6), heading_deg: fix.heading === null ? null : Math.round(fix.heading),
+        speed_source: speedFromPoints ? "position_delta_estimate" : "tracker_report",
         ...(battery === null ? {} : { tracker_battery_percent: battery }),
         ...(live ? {} : { warning: "the tracker has no satellite fix right now; this is only the last known position, the car may have moved since", tracker_last_heard_seconds_ago: heard }) };
-    if (withStreet && fix) {
+    if (fix) {
       const key = `${fix.latitude.toFixed(4)},${fix.longitude.toFixed(4)}`;
-      if (this.street.key !== key) this.street = { key, name: await streetAt(fix.latitude, fix.longitude) };
-      if (this.street.name) gps.street = this.street.name;
+      if (withStreet && this.street.key !== key) this.street = { key, name: await streetAt(fix.latitude, fix.longitude) };
+      if (this.street.key === key && this.street.name) gps.street = this.street.name;
     }
     return { fix, gps, live };
   }
@@ -209,14 +219,14 @@ export class LiveNavigator {
   }
 
   async open(): Promise<Data> {
-    const { gps } = await this.position(true);
+    const { gps } = await this.position();
     const trip = await this.trips.current(this.customerId).catch(() => null);
     return { event: "call_started", gps, previous_trip: trip ? { destination: trip.destination_label, address: trip.destination_address,
       minutes_since_it_was_active: Math.round((Date.now() - (trip.disconnected_at_ms ?? trip.updated_at_ms)) / 60000) } : null };
   }
 
   async tool(name: string, args: Data): Promise<Data> {
-    const { fix, gps, live } = await this.position(name === "get_status" || name === "start_route");
+    const { fix, gps, live } = await this.position(name === "get_status" && args.include_street === true);
     if (name === "find_place") {
       const query = String(args.query ?? "").trim();
       if (!query) return { error: "query is required" };
@@ -245,6 +255,12 @@ export class LiveNavigator {
       return { ok: true, total_km: Math.round(route.cumulative.at(-1)! / 100) / 10, minutes_with_live_traffic: Math.max(1, Math.round(route.seconds / 60)),
         upcoming_turns: turns.slice(0, 6).map((s) => ({ instruction: s.instruction, at_km: Math.round(s.along / 100) / 10 })), total_turns: turns.length,
         gps, ...this.state(fix) };
+    }
+    if (name === "get_route_overview") {
+      if (!this.route) return { navigating: false, error: "No active route" };
+      if (fix && live) this.track(fix);
+      const at = this.estimate(fix);
+      return { gps, ...this.state(fix), all_remaining_turns: this.turns(at).map((s, i) => ({ order: i + 1, in_meters: round10(s.along - at), instruction: s.instruction })) };
     }
     if (name === "get_status") {
       if (fix && live) this.track(fix);

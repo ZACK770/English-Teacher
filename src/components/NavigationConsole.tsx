@@ -58,8 +58,40 @@ interface CallTrace {
   setup_message: unknown;
   has_prompt: boolean;
   session: { duration_seconds: number; ended_at: string } | null;
+  cost: CallCost | null;
+  reported_usage: unknown[];
   turns: { created_at: string; direction: string; text: string; metadata: Record<string, unknown> }[];
   events: { created_at: string; event_type: string; details: Record<string, unknown> }[];
+}
+
+interface CallCost {
+  status: string;
+  known_subtotal_usd: number | null;
+  known_subtotal_ils: number | null;
+  exchange_rate: { usd_ils: number; published_at: string; source: string } | null;
+  price_source: string;
+  price_verified_at: string;
+  channels: { channel: string; model: string | null; usd: number | null; ils: number | null; missing: string[]; tokens: Record<string, number> }[];
+}
+
+function CallCostSummary({ call }: { call: CallTrace }) {
+  const cost = call.cost;
+  if (!cost) return <p>עלות בש״ח: {call.session ? "לא נשמר פירוט שימוש לשיחה זו; האומדן הישן בדולרים אינו סיכום מלא." : "תסוכם בסיום השיחה כאשר יגיעו נתוני השימוש."}</p>;
+  const money = (v: number | null, currency: string) => v === null ? "חסר דיווח" : new Intl.NumberFormat("he-IL", { style: "currency", currency, minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(v);
+  const missingLabel = (key: string) => ({ provider_usage_not_received: "לא התקבל דיווח שימוש מ־Google", model_price_not_configured: "אין תעריף מאומת למודל", input_modality_breakdown_missing: "חסר פירוט סוגי קלט", output_modality_breakdown_missing: "חסר פירוט סוגי פלט", original_usage_events_not_saved: "בשיחה היסטורית זו נשמרו סיכומי טוקנים בלבד" } as Record<string, string>)[key] ?? key;
+  return <details className="nav-panel">
+    <summary>עלות AI מחושבת: {cost.known_subtotal_ils === null ? "חסר שער/שימוש" : money(cost.known_subtotal_ils, "ILS")} {cost.status === "complete_ai" ? "— לפי שימוש מדווח" : "— סכום חלקי, חסרים נתונים"}</summary>
+    <p>חישוב לפי נתוני שימוש ש־Google דיווחה ותעריף מפורסם; אינו חשבונית סופית. מפות, טלפוניה, הקראה חיצונית ומסים אינם כלולים.</p>
+    <p>סכום ידוע בדולרים: {money(cost.known_subtotal_usd, "USD")}</p>
+    {cost.exchange_rate && <p>שער דולר: {cost.exchange_rate.usd_ils} ₪; פורסם ב־{new Date(cost.exchange_rate.published_at).toLocaleString("he-IL")} — <a href={cost.exchange_rate.source} target="_blank" rel="noreferrer">בנק ישראל</a></p>}
+    <p><a href={cost.price_source} target="_blank" rel="noreferrer">תעריפי Google</a> — אומתו ב־{cost.price_verified_at}</p>
+    {cost.channels.map((c) => <div key={c.channel}>
+      <strong>{c.channel === "main" ? "מודל השיחה" : "זיהוי מילת עצירה"}</strong> · {c.model ?? "לא התקבל דיווח"} · {money(c.ils, "ILS")}
+      {!!c.missing.length && <p>חסר מידע: {c.missing.map(missingLabel).join(", ")}</p>}
+      <pre dir="ltr">{JSON.stringify(c.tokens, null, 2)}</pre>
+    </div>)}
+    <details><summary>נתוני השימוש הגולמיים מ־Google</summary><pre dir="ltr">{JSON.stringify(call.reported_usage, null, 2)}</pre></details>
+  </details>;
 }
 
 const TURN_LABELS: Record<string, string> = {
@@ -72,6 +104,11 @@ const TURN_LABELS: Record<string, string> = {
   ai_spoke: "🗣 Gemini אמר לנהג",
   engine_fallback: "🛟 המנוע זיהה כן/לא בעצמו (ה-AI לא הגיב)",
   error: "❌ שגיאה",
+  stop_word: "עצירה במילת קוד",
+  driver_during_playback: "דיבור בזמן ההשמעה",
+  stop_listener_unavailable: "ערוץ זיהוי העצירה אינו זמין",
+  latency: "מדידת תגובה",
+  call_cost: "סיכום עלות לפי שימוש מדווח",
   ended: "■ סיום שיחה",
 };
 
@@ -173,6 +210,7 @@ function CallLog({ token }: { token: string }) {
             <pre dir="ltr">{c.system_instruction}</pre>
             <pre dir="ltr">{JSON.stringify(c.setup_message, null, 2)}</pre>
           </details>}
+          <CallCostSummary call={c} />
           <table className="nav-call-table">
             <thead>
               <tr><th>שעה</th><th>שלב</th><th>תוכן</th><th>פרטים</th></tr>
@@ -186,6 +224,7 @@ function CallLog({ token }: { token: string }) {
                   <td>
                     {[t.metadata.status ? `סטטוס: ${t.metadata.status}` : "", t.metadata.source ? `מקור: ${t.metadata.source}` : "", gpsText(t.metadata)]
                       .filter(Boolean).join(" · ")}
+                    {!!Object.keys(t.metadata).length && <details><summary>כל הפרטים</summary><pre dir="ltr">{JSON.stringify(t.metadata, null, 2)}</pre></details>}
                   </td>
                 </tr>
               ))}
