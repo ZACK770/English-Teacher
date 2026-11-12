@@ -8,6 +8,7 @@ import { GeminiLive } from "./gemini";
 import { SessionMeter } from "./meter";
 import { NavigationCall, NAVIGATION_REQUEST_TOOL } from "./navigation-call";
 import { LIVE_SYSTEM, LIVE_TOOLS, LiveNavigator } from "./navigation-live";
+import { NavigationSpeechGate, STOP_LISTENER_SETUP } from "./navigation-speech";
 import type { Guidance } from "./navigation-route";
 import { ProgressStore } from "./progress";
 import { buildSetupPayload } from "./prompt";
@@ -37,6 +38,13 @@ export class NavigationSession {
   private output: Uint8Array[] = [];
   private abort = new AbortController();
   private ai: GeminiLive | null = null;
+  private ear: GeminiLive | null = null;
+  private gate = new NavigationSpeechGate();
+  private earTask: Promise<void> | null = null;
+  private earTailUntil = 0;
+  private earActiveUntil = 0;
+  private firstReplyAt = 0;
+  private learnerReadyAt = 0;
   private controller: NavigationCall | null = null;
   private meter = new SessionMeter();
   private startedAt = new Date();
@@ -72,7 +80,7 @@ export class NavigationSession {
 
   stop(reason = "admin_requested", disconnected = false) {
     this.reason ||= reason; this.disconnected ||= disconnected;
-    this.abort.abort(); this.input.end(); this.ai?.close();
+    this.abort.abort(); this.input.end(); this.ai?.close(); this.ear?.close();
     this.clearSpeech();
   }
 
@@ -145,19 +153,37 @@ export class NavigationSession {
       const setup = buildSetupPayload(controls, system, profileId, this.s);
       if (this.live) this.navigator = new LiveNavigator(this.env, customerId, tripCall);
       setup.setup.tools = [{ functionDeclarations: this.live ? LIVE_TOOLS : [NAVIGATION_REQUEST_TOOL] }];
+      const stopWords = this.live && controls.navigation_interrupt === "stop_word";
+      // NO_INTERRUPTION hides caller transcripts while speaking. Instead keep automatic
+      // interruption and feed it silence during playback; the separate STT ear hears stops.
+      if (stopWords) setup.setup.realtimeInputConfig.activityHandling = "START_OF_ACTIVITY_INTERRUPTS";
       this.ai = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
       const greeting = this.live
         ? "(The first turn is a [נתוני ניווט] call_started message with the GPS state and any previous trip; Gemini greets the driver itself.)"
         : "The call has started. Wait for the driver's destination or response; the navigation engine speaks its own greeting.";
       await progress.savePromptSnapshot(profileId, callId, { system_instruction: system, opening_message: greeting, history_context: "",
-        setup_message: setup, fingerprint: await sha256Hex(JSON.stringify(setup)), controls }).catch(() => {});
+        setup_message: { ...setup, ...(stopWords ? { stop_listener: STOP_LISTENER_SETUP } : {}) }, fingerprint: await sha256Hex(JSON.stringify(setup)), controls }).catch(() => {});
       const speech = new BasicTranslator(this.env, this.s);
       this.speech = speech;
       tasks = [this.pacedOutput(), this.watchdog()];
       await Promise.race([this.ai.connect(), ...tasks]);
       if (this.abort.signal.aborted) return;
+      if (stopWords) {
+        this.ear = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, STOP_LISTENER_SETUP);
+        try {
+          await this.ear.connect(5000);
+          this.gate.enabled = true;
+          this.earTask = this.readEar().catch(() => {
+            this.gate.enabled = false;
+            this.trace("stop_listener_unavailable", "חזרה לקטיעה רגילה: ערוץ זיהוי מילת העצירה אינו זמין");
+          });
+        } catch {
+          this.ear.close(); this.ear = null;
+          this.trace("stop_listener_unavailable", "לא ניתן לפתוח ערוץ זיהוי מילת עצירה; קטיעה רגילה נשארה פעילה");
+        }
+      }
       meteredAt = Date.now();
-      await progress.logDiagnostic(profileId, callId, "navigation_connected", { voice: this.live ? "gemini" : "engine" });
+      await progress.logDiagnostic(profileId, callId, "navigation_connected", { voice: this.live ? "gemini" : "engine", interruption: this.gate.enabled ? "stop_word" : "speech", selected_voice: controls.voice });
       tasks.push(this.sendInput(), this.readAi(speech), this.poll(speech, progress, callId));
       if (this.navigator) this.push(await this.navigator.open());
       else {
@@ -180,6 +206,7 @@ export class NavigationSession {
       if (timer !== undefined) clearTimeout(timer);
       this.stop(this.reason || "transport_ended", this.disconnected);
       await Promise.allSettled([...tasks, this.commands]);
+      await this.earTask;
       this.flushHeard();
       this.trace("ended", this.reason || "transport_ended");
       await this.logs;
@@ -200,14 +227,20 @@ export class NavigationSession {
     const said = this.heard.learner.trim();
     if (said) { this.utterances++; this.trace("driver", said, { source: "gemini_input_transcription" }); this.fallback(said); }
     if (this.heard.tutor.trim()) {
-      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, interrupted ? { cut_off_by_driver: true } : {}); }
+      if (this.live) { this.meter.tutorTurns++; this.trace("ai_spoke", this.heard.tutor, { ...(interrupted ? { cut_off_by_driver: true } : {}), ...(this.firstReplyAt && this.learnerReadyAt ? { first_audio_after_transcript_ms: this.firstReplyAt - this.learnerReadyAt } : {}) }); }
       else this.trace("ai_audio_dropped", this.heard.tutor, { note: "Gemini spoke; audio is not played to the caller" });
     }
     this.heard = { learner: "", tutor: "" };
+    this.firstReplyAt = 0;
   }
 
   private async pacedOutput() {
-    while (!this.abort.signal.aborted) { await sleep(FRAME_MS, this.abort.signal); this.pbx.send(this.output.shift() ?? SILENCE_FRAME); }
+    while (!this.abort.signal.aborted) {
+      await sleep(FRAME_MS, this.abort.signal);
+      const frame = this.output.shift();
+      if (frame) this.gate.played();
+      this.pbx.send(frame ?? SILENCE_FRAME);
+    }
   }
   private async sendInput() {
     while (!this.abort.signal.aborted) {
@@ -216,7 +249,17 @@ export class NavigationSession {
       if (!this.ai) continue;
       const pcm = upsample8kTo16k(data);
       this.meter.inputAudioBytes += pcm.length;
-      this.ai.sendAudio(pcm);
+      const blocked = this.gate.blocked(this.output.length > 0);
+      if (blocked) {
+        this.gate.remember(pcm);
+        this.earActiveUntil = Date.now() + 1500;
+        this.earTailUntil = Date.now() + 900;
+      }
+      if (this.ear && this.gate.enabled && (blocked || Date.now() < this.earTailUntil)) {
+        try { this.ear.sendAudio(blocked ? pcm : new Uint8Array(pcm.length)); }
+        catch { this.gate.enabled = false; this.trace("stop_listener_unavailable", "ערוץ הזיהוי נסגר; חזרה לקטיעה רגילה"); }
+      }
+      this.ai.sendAudio(blocked && this.gate.enabled ? new Uint8Array(pcm.length) : pcm);
     }
   }
   private async readAi(speech: BasicTranslator) {
@@ -225,12 +268,16 @@ export class NavigationSession {
       if (event.type === "closed" || event.type === "go_away") return;
       if (event.type === "usage") this.meter.recordUsage(event.usage);
       // Engine speech is replaced only by a newer engine reply; line echo and noise must not cut it off.
-      if (event.type === "transcript") this.heard[event.role] += event.text;
+      if (event.type === "transcript") {
+        this.heard[event.role] += event.text;
+        if (event.role === "learner") this.learnerReadyAt = Date.now();
+      }
       if (this.live) this.voice(event);
       if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard(event.type === "interrupted");
       if (event.type === "tool_call") this.flushHeard();
       if (event.type === "tool_call") for (const call of event.calls) {
         this.aiCalls++;
+        if (this.live) { this.gate.resume(); this.gate.busy(); }
         this.commands = this.commands.then(async () => {
           if (this.abort.signal.aborted) return;
           this.trace("tool_call", JSON.stringify({ name: call.name, args: call.args ?? {} }));
@@ -263,13 +310,18 @@ export class NavigationSession {
   private push(data: Record<string, unknown>) {
     const text = `[נתוני ניווט] ${JSON.stringify(data)}`;
     this.ai?.startGreeting(text);
+    this.gate.resume(); this.gate.busy();
     this.trace("ai_input", text, { kind: "event" });
   }
 
   /** Plays Gemini's own voice to the caller. */
   private voice(event: Awaited<ReturnType<GeminiLive["next"]>>) {
     if (event.type === "audio") {
+      this.gate.generated();
       this.meter.outputAudioBytes += event.pcm24k.byteLength;
+      if (this.gate.muted) return;
+      this.gate.resume();
+      if (!this.firstReplyAt) this.firstReplyAt = Date.now();
       const [pcm, carry] = downsample24kTo8k(event.pcm24k, this.carry);
       this.carry = carry;
       const data = concat([this.partial, pcm]);
@@ -279,7 +331,32 @@ export class NavigationSession {
     }
     if (event.type === "interrupted" || event.type === "turn_complete") {
       if (event.type === "interrupted") this.clearSpeech();
+      this.gate.complete();
       this.carry = new Uint8Array(); this.partial = new Uint8Array();
+    }
+  }
+
+  private async readEar() {
+    while (!this.abort.signal.aborted && this.ear) {
+      const event = await this.ear.next();
+      if (event.type === "closed" || event.type === "go_away") {
+        if (!this.abort.signal.aborted) { this.gate.enabled = false; this.trace("stop_listener_unavailable", "ערוץ זיהוי מילת העצירה נסגר; חזרה לקטיעה רגילה"); }
+        return;
+      }
+      if (event.type === "usage") this.trace("stop_listener_usage", JSON.stringify(event.usage));
+      const text = event.type === "interim_transcript" ? event.text : event.type === "transcript" && event.role === "learner" ? event.text : "";
+      if (!text) continue;
+      const stopped = this.gate.stop(text, this.gate.blocked(this.output.length > 0) || Date.now() < this.earActiveUntil);
+      if (stopped) {
+        this.clearSpeech(); this.carry = new Uint8Array(); this.partial = new Uint8Array();
+        this.flushHeard(true);
+        this.trace("stop_word", text, { word: stopped.word, source: event.type, replay_audio_ms: Math.round(stopped.audio.byteLength / 32) });
+        // The main Live session hears the actual word and receives VAD interruption.
+        // Muting queued audio alone would leave its generation active for many seconds.
+        if (stopped.audio.length) this.ai?.sendAudio(stopped.audio);
+      } else if (event.type === "transcript") {
+        this.trace("driver_during_playback", text, { note: "נשמע בערוץ זיהוי העצירה; לא נשלח לשיחה הראשית" });
+      }
     }
   }
 

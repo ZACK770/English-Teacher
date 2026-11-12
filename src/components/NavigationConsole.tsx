@@ -87,26 +87,40 @@ const NAV_BOT = "voice-navigator-live";
 function VoiceMode({ token }: { token: string }) {
   const [controls, setControls] = useState<Record<string, unknown> | null>(null);
   const [state, setState] = useState("");
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     api<{ controls: Record<string, unknown> }>(`/v1/admin/config/${NAV_BOT}`, token)
       .then((r) => setControls(r.controls)).catch(() => setState("טעינת המצב נכשלה"));
   }, [token]);
-  const choose = async (voice: string) => {
-    if (!controls) return;
+  const save = async (change: Record<string, unknown>) => {
+    if (!controls || saving) return;
+    setSaving(true);
     setState("שומר...");
     try {
-      const r = await api<{ controls: Record<string, unknown> }>(`/v1/admin/config/${NAV_BOT}`, token, { method: "PUT", body: JSON.stringify({ ...controls, navigation_voice: voice }) });
+      const r = await api<{ controls: Record<string, unknown> }>(`/v1/admin/config/${NAV_BOT}`, token, { method: "PUT", body: JSON.stringify({ ...controls, ...change }) });
       setControls(r.controls);
       setState("נשמר. ייכנס לתוקף מהשיחה הבאה.");
     } catch { setState("השמירה נכשלה"); }
+    finally { setSaving(false); }
   };
   const voice = (controls?.navigation_voice as string | undefined) ?? "engine";
   return (
     <section className="nav-panel">
       <h2>מצב הקול בשיחת ניווט</h2>
-      <label><input type="radio" checked={voice === "engine"} disabled={!controls} onChange={() => choose("engine")} /> מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</label>
+      <label><input type="radio" checked={voice === "engine"} disabled={!controls || saving} onChange={() => save({ navigation_voice: "engine" })} /> מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</label>
       <br />
-      <label><input type="radio" checked={voice === "gemini"} disabled={!controls} onChange={() => choose("gemini")} /> Gemini מדבר: Gemini מנהל את השיחה בעצמו ומקבל נתונים חיים (GPS, Google Maps, פקקים)</label>
+      <label><input type="radio" checked={voice === "gemini"} disabled={!controls || saving} onChange={() => save({ navigation_voice: "gemini" })} /> Gemini מדבר: Gemini מנהל את השיחה בעצמו ומקבל נתונים חיים (GPS, Google Maps, פקקים)</label>
+      {voice === "gemini" && <div>
+        <p><label>קול לשיחה הבאה: <select value={String(controls?.voice ?? "Aoede")} disabled={!controls || saving} onChange={(e) => save({ voice: e.target.value })}>
+          <option value="Charon">Charon — גברי</option>
+          <option value="Puck">Puck — גברי</option>
+          <option value="Fenrir">Fenrir — גברי</option>
+          <option value="Aoede">Aoede — נשי</option>
+          <option value="Kore">Kore — נשי</option>
+          {typeof controls?.voice === "string" && !["Charon", "Puck", "Fenrir", "Aoede", "Kore"].includes(controls.voice) && <option value={controls.voice}>{controls.voice}</option>}
+        </select></label></p>
+        <label><input type="checkbox" checked={(controls?.navigation_interrupt ?? "stop_word") === "stop_word"} disabled={!controls || saving} onChange={(e) => save({ navigation_interrupt: e.target.checked ? "stop_word" : "speech" })} /> בזמן תשובה — עצירה רק ב״רגע״, ״שתוק״, ״שקט״ או ״עצור״</label>
+      </div>}
       {state && <p>{state}</p>}
     </section>
   );

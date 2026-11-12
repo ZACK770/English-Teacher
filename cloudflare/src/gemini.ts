@@ -4,6 +4,7 @@ export type GeminiEvent =
   | { type: "audio"; pcm24k: Uint8Array }
   | { type: "interrupted" }
   | { type: "transcript"; role: "learner" | "tutor"; text: string }
+  | { type: "interim_transcript"; text: string }
   | { type: "turn_complete" }
   | { type: "tool_call"; calls: ToolCall[] }
   | { type: "usage"; usage: Record<string, unknown> }
@@ -111,6 +112,7 @@ export class GeminiLive {
     if (usage) this.push({ type: "usage", usage });
     const server = event.serverContent ?? {};
     if (server.interrupted) this.push({ type: "interrupted" });
+    if (server.interimInputTranscription?.text) this.push({ type: "interim_transcript", text: String(server.interimInputTranscription.text) });
     for (const [key, role] of [["inputTranscription", "learner"], ["outputTranscription", "tutor"]] as const) {
       const text = String(server[key]?.text ?? "").trim();
       if (text) this.push({ type: "transcript", role, text });
