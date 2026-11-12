@@ -7,6 +7,7 @@ import { syncCrm } from "./crm";
 import { dispatchCallbacks, submitCallback } from "./callbacks";
 import { navigationAdmin, receivePosition } from "./navigation";
 import { navigationTripsAdmin } from "./navigation-trips";
+import { handleApp, platformAdmin } from "./platform";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -59,10 +60,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/")) {
     if (!secureEqual(bearer(request.headers.get("Authorization")), env.ADMIN_BEARER_SECRET)) throw new HttpError(401, "Unauthorized");
     if (path.startsWith("/v1/admin/navigation/")) return await navigationTripsAdmin(request, env, path) ?? navigationAdmin(request, env, path);
+    if (path.startsWith("/v1/admin/app/")) return platformAdmin(request, env, path);
     const response = await handleAdmin(request, env, s, path);
     if (response) return response;
   }
   if (path === "/v1/public/callback" && request.method === "POST") return submitCallback(request, env);
+  const app = await handleApp(request, env, path);
+  if (app) return app;
   const turn = path.match(/^\/v1\/bots\/([a-z][a-z0-9-]{1,62})\/turn$/);
   if (turn && request.method === "POST") return webTurn(request, env, s, turn[1]);
   if (env.ASSETS) {
