@@ -18,7 +18,7 @@ export class NavigationSpeechGate {
   private stopped = false;
   private stopAt = 0;
 
-  busy(now = Date.now()) { this.busyUntil = now + 15_000; }
+  busy(now = Date.now(), timeoutMs = 15_000) { this.busyUntil = now + timeoutMs; }
   generated() { this.busyUntil = 0; }
   played(now = Date.now()) { this.playbackUntil = now + 200; }
   complete() { this.busyUntil = 0; this.muted = false; }

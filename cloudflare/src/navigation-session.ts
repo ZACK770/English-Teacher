@@ -270,7 +270,12 @@ export class NavigationSession {
       // Engine speech is replaced only by a newer engine reply; line echo and noise must not cut it off.
       if (event.type === "transcript") {
         this.heard[event.role] += event.text;
-        if (event.role === "learner") this.learnerReadyAt = Date.now();
+        if (event.role === "learner") {
+          this.learnerReadyAt = Date.now();
+          // Protect the thinking gap too: a repeated question must not restart a reply
+          // before its first audio arrives. Bounded for fragments the model ignores.
+          if (this.live) this.gate.busy(Date.now(), 6000);
+        }
       }
       if (this.live) this.voice(event);
       if (event.type === "interrupted" || event.type === "turn_complete") this.flushHeard(event.type === "interrupted");

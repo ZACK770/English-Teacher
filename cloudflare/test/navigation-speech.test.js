@@ -9,6 +9,9 @@ describe("explicit stop word instead of every voice activity", () => {
   it("gates speech while working or playing, but an explicit stop reopens input and replays its actual audio", () => {
     const gate = new NavigationSpeechGate(); gate.enabled = true;
     expect(gate.blocked(false, 10000)).toBe(false);
+    gate.busy(10000, 6000);
+    expect(gate.blocked(false, 15999)).toBe(true);
+    expect(gate.blocked(false, 16000)).toBe(false);
     gate.busy(10000);
     expect(gate.blocked(false, 10500)).toBe(true);
     gate.generated(); gate.played(11000);
