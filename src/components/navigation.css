@@ -76,6 +76,7 @@
   outline-offset: 3px;
 }
 .navigation-console input,
+.navigation-console textarea,
 .navigation-console select {
   width: 100%;
   border: 1px solid #34485a;
@@ -482,9 +483,10 @@
 .nav-transcript .from-caller { color: #b9d6e0; }
 .nav-transcript small { color: #7fb8ff; margin-inline-end: 6px; }
 .nav-ltr { direction: ltr; text-align: end; }
-.nav-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.navigation-console .nav-hp { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
 .nav-signup { max-width: 760px; margin: 0 auto; }
 .navigation-console textarea, .navigation-console select, .navigation-console input[type="search"] { font: inherit; }
 @media (max-width: 760px) {
   .nav-split, .nav-path { grid-template-columns: 1fr; }
 }
+.navigation-console input[type="radio"], .navigation-console input[type="checkbox"] { width: auto; }
