@@ -8,6 +8,7 @@ import { settings } from "../src/env";
 import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
 import worker from "../src/index";
+import { ProgressStore } from "../src/progress";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
@@ -98,4 +99,25 @@ it.each([
   }), env);
   expect(response.status).toBe(404);
   expect(await response.json()).toEqual({ detail: "Not found" });
+});
+
+it("keeps a migrated bot visible but unavailable without changing its saved record", async () => {
+  const records = [
+    { id: "voice-navigator-live", enabled: 1, phone_enabled: 1, web_enabled: 1 },
+    { id: "student", enabled: 1, phone_enabled: 1, web_enabled: 1 },
+    { id: "voice-navigator", enabled: 1, phone_enabled: 1, web_enabled: 1 },
+  ];
+  const db = {
+    prepare: () => ({
+      all: async () => ({ results: records }),
+      bind: (id: string) => ({ first: async () => records.find((bot) => bot.id === id) }),
+    }),
+  } as unknown as D1Database;
+  const store = new ProgressStore(db);
+  const bots = await store.listBots();
+  expect(bots.find((bot) => bot.id === "voice-navigator-live")?.enabled).toBe(false);
+  expect(bots.filter((bot) => bot.enabled).map((bot) => bot.id)).toEqual(["student", "voice-navigator"]);
+  expect((await store.getBot("voice-navigator-live"))?.enabled).toBe(false);
+  expect((await store.getBot("student"))?.enabled).toBe(true);
+  expect(records[0].enabled).toBe(1);
 });
