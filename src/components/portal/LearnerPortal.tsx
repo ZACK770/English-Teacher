@@ -26,7 +26,7 @@ function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: b
     </g>
     <g className="sk-float-one">
       <path d="M78 97Q78 80 95 80H211Q228 80 228 97V174Q228 191 211 191H132L104 217V191H95Q78 191 78 174Z" className="sk-art-paper" />
-      <text x="153" y="151" textAnchor="middle" fontSize="43" fontFamily="Georgia,serif" fill="currentColor">hello.</text>
+      <text x="153" y="151" textAnchor="middle" direction="ltr" fontSize="43" fontFamily="Georgia,serif" fill="currentColor">hello.</text>
     </g>
     <g className="sk-float-two">
       <path d="M145 184Q145 170 159 170H268Q282 170 282 184V246Q282 260 268 260H247V283L218 260H159Q145 260 145 246Z" className="sk-art-accent" />
