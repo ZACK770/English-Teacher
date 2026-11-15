@@ -161,15 +161,23 @@ describe("real learner portal", () => {
     const a = await (await request("/v1/portal/me")).json() as any;
     expect(a.progress.sessions[0].call_id).toBe("private-call");
   });
-  it("consumes a browser voice ticket atomically and forwards only its verified customer", async () => {
+  it.each(["", "/english"])("consumes a %s browser voice ticket atomically and forwards only its verified customer", async (prefix) => {
     const created = await (await request("/v1/portal/voice-ticket", tokenA, { bot_id: "student" })).json() as any;
-    const forward = vi.fn(async (r: Request) => Response.json({ customer: r.headers.get("X-Portal-Customer"), bot: r.headers.get("X-Profile") }));
+    const forward = vi.fn(async (r: Request) => Response.json({ customer: r.headers.get("X-Portal-Customer"), bot: r.headers.get("X-Profile"), path: new URL(r.url).pathname, search: new URL(r.url).search }));
     env.CALLS = { newUniqueId: () => "test-object", get: () => ({ fetch: forward }) } as unknown as DurableObjectNamespace;
-    const url = "https://school.example/v1/portal/voice?ticket=" + created.ticket;
+    const url = "https://school.example" + prefix + "/v1/portal/voice?ticket=" + created.ticket;
     const connect = () => worker.fetch(new Request(url, { headers: { Upgrade: "websocket", "X-Portal-Customer": "learner-b" } }), env);
-    expect(await (await connect()).json()).toEqual({ customer: "learner-a", bot: "student" });
+    expect(await (await connect()).json()).toEqual({ customer: "learner-a", bot: "student", path: "/v1/portal/voice", search: "" });
     expect((await connect()).status).toBe(401);
     expect(forward).toHaveBeenCalledOnce();
+  });
+  it("loads the learner bundle under the existing impact.net /english path", async () => {
+    env.ASSETS = { fetch: async (r: Request) => new URL(r.url).pathname === "/index.html"
+      ? new Response('<script src="/assets/app.js"></script><link href="/assets/app.css">', { headers: { "Content-Type": "text/html" } })
+      : new Response(null, { status: 404 }) } as Fetcher;
+    const page = await worker.fetch(new Request("https://school.example/english/learn"), env);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toBe('<script src="/english/assets/app.js"></script><link href="/english/assets/app.css">');
   });
   it("accepts microphone PCM after the browser socket returns from its upgrade", async () => {
     class Socket extends EventTarget { accept = vi.fn(); send = vi.fn(); close = vi.fn(); }

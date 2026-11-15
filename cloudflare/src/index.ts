@@ -90,7 +90,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (request.method === "GET" && !path.startsWith("/v1/")) {
       const indexResp = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
       if (indexResp.ok) {
-        return new Response(indexResp.body, {
+        const html = await indexResp.text();
+        return new Response(/^\/english(?:\/|$)/.test(rawPath) ? html.replaceAll('"/assets/', '"/english/assets/') : html, {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-cache, no-store, must-revalidate",

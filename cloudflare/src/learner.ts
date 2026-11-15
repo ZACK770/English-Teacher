@@ -197,7 +197,10 @@ export async function learnerVoice(request: Request, env: Env): Promise<Response
   if (!claim || claim.expires < Date.now()) throw new HttpError(401, "הקישור לשיחה פג. אפשר לנסות שוב.");
   await availableTeacher(new ProgressStore(env.DB), claim.botId);
   const headers = new Headers({ Upgrade: "websocket", "X-Portal-Customer": claim.customerId, "X-Profile": claim.botId, "X-Portal-Teacher": claim.teacherId });
-  return env.CALLS.get(env.CALLS.newUniqueId(), { locationHint: "weur" }).fetch(new Request(request.url, { headers }));
+  const url = new URL(request.url);
+  url.pathname = "/v1/portal/voice";
+  url.search = "";
+  return env.CALLS.get(env.CALLS.newUniqueId(), { locationHint: "weur" }).fetch(new Request(url, { headers }));
 }
 
 export async function requireLearner(request: Request, env: Env) {
