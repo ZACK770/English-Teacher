@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { concat, downsample24kTo8k, upsample8kTo16k, wav, wavToPcm } from "../src/audio";
 import { parseStartFrame, transferCommand } from "../src/technoline";
-import { controlsFromSettings } from "../src/controls";
+import { controlsFromSettings, TutorControlsSchema } from "../src/controls";
 import { buildSystemInstruction } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
 import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
+import worker from "../src/index";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
@@ -55,4 +56,46 @@ it("keeps learner progress and usage independently of bot identity", () => {
   expect(m.summary().points).toBe(8);
   m.inputAudioBytes = 16000 * 2 * 60;
   expect(m.usage(settings({} as Env)).estimated_cost_usd).toBe(0.005);
+});
+
+it.each(["student", "adult", "isaac-translator", "voice-navigator-live"])(
+  "only exposes school and translator tools for %s, including old bot records",
+  (profile) => {
+    const controls = controlsFromSettings(false);
+    const setup = buildSetupPayload(controls, "lesson", profile, settings({} as Env)).setup;
+    expect(setup.tools[0].functionDeclarations.map((tool) => tool.name)).toEqual([
+      "record_learning_observation", "record_lesson_summary", "end_session", "save_translation_language",
+    ]);
+  },
+);
+
+it("ignores obsolete navigation controls without losing teacher preferences", () => {
+  const controls = TutorControlsSchema.parse({
+    ...controlsFromSettings(false), voice: "Aoede", target_lesson_minutes: 10,
+    navigation_voice: "gemini", navigation_interrupt: "speech",
+  });
+  expect(controls.voice).toBe("Aoede");
+  expect(controls.target_lesson_minutes).toBe(10);
+  expect(controls).not.toHaveProperty("navigation_voice");
+  expect(controls).not.toHaveProperty("navigation_interrupt");
+});
+
+it.each([
+  ["/v1/navigation/positions", "POST"],
+  ["/v1/admin/navigation/devices", "GET"],
+  ["/v1/admin/app/customers", "GET"],
+  ["/v1/app/plans", "GET"],
+  ["/v1/app/signup", "POST"],
+  ["/v1/openapi.json", "GET"],
+])("no longer serves the navigation API %s", async (path, method) => {
+  const env = {
+    ADMIN_BEARER_SECRET: "test-admin",
+    DB: { prepare: () => { throw new Error("Removed endpoints must not query D1"); } },
+    ASSETS: { fetch: async () => new Response(null, { status: 404 }) },
+  } as unknown as Env;
+  const response = await worker.fetch(new Request(`https://school.example${path}`, {
+    method, headers: { Authorization: "Bearer test-admin" },
+  }), env);
+  expect(response.status).toBe(404);
+  expect(await response.json()).toEqual({ detail: "Not found" });
 });
