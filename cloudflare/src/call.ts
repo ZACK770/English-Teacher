@@ -1,5 +1,5 @@
 import { TutorSession } from "./session";
-import { type Env, settings } from "./env";
+import { type Env, settings, randomHex } from "./env";
 
 export class CallSession {
   private session: TutorSession | null = null;
@@ -21,8 +21,26 @@ export class CallSession {
     const timeout = setTimeout(() => { if (!started) server.close(1008, "Start frame timeout"); }, 10000);
     const s = settings(this.env);
     const profile = request.headers.get("X-Profile");
-    const shared = request.headers.get("X-Shared-Router") === "1";
     let incoming: Promise<void> = Promise.resolve();
+    const portalCustomer = new URL(request.url).pathname === "/v1/portal/voice" ? request.headers.get("X-Portal-Customer") : null;
+    if (portalCustomer && profile) {
+      const session = new TutorSession(server, this.env, s, this.ctx.id.toString(), null, { customerId: portalCustomer, teacherId: request.headers.get("X-Portal-Teacher") || "" });
+      this.session = session;
+      clearTimeout(timeout);
+      server.addEventListener("message", (event) => {
+        incoming = incoming.then(async () => {
+          const data = event.data as string | ArrayBuffer | Blob;
+          session.receive(data instanceof Blob ? await data.arrayBuffer() : data);
+        }).catch(() => session.stop("invalid_audio_frame"));
+      });
+      server.addEventListener("close", () => session.stop("caller_disconnected", true));
+      server.addEventListener("error", () => session.stop("web_transport_error", true));
+      this.ctx.waitUntil(session.run(JSON.stringify({ type: "start", token: "portal", callId: "web-" + randomHex(12), format: "pcm16;rate=8000;ch=1" }), profile, false)
+        .catch(() => { try { server.close(1011, "Call failed"); } catch { /* Peer closed. */ } })
+        .finally(() => { this.session = null; }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const shared = request.headers.get("X-Shared-Router") === "1";
     server.addEventListener("message", (event) => {
       if (started) {
         incoming = incoming.then(async () => {

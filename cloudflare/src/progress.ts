@@ -263,7 +263,7 @@ export class ProgressStore {
 
   async report(studentId: string, limit = 20) {
     const [rowsResult, lifetimeResult] = await this.db.batch<Record<string, any>>([
-      this.db.prepare(`SELECT started_at, duration_seconds, learner_turns, tutor_turns, observations_json, summary_he, success_he, next_step_he, points,
+      this.db.prepare(`SELECT call_id, started_at, duration_seconds, learner_turns, tutor_turns, observations_json, summary_he, success_he, next_step_he, points,
         input_text_tokens, input_audio_tokens, output_text_tokens, output_audio_tokens, thoughts_tokens, estimated_cost_usd, cost_basis, model
         FROM sessions WHERE student_id = ? ORDER BY started_at DESC LIMIT ?`).bind(studentId, limit),
       this.db.prepare(`SELECT COUNT(*) AS session_count, COALESCE(SUM(duration_seconds),0) AS duration_seconds, COALESCE(SUM(points),0) AS total_points,
@@ -279,7 +279,7 @@ export class ProgressStore {
         (skills[String(o.skill)] ??= []).push(Number(o.score));
       }
       return {
-        started_at: row.started_at, duration_seconds: row.duration_seconds, learner_turns: row.learner_turns, tutor_turns: row.tutor_turns,
+        call_id: row.call_id, started_at: row.started_at, duration_seconds: row.duration_seconds, learner_turns: row.learner_turns, tutor_turns: row.tutor_turns,
         observations, summary_he: row.summary_he, success_he: row.success_he, next_step_he: row.next_step_he, points: row.points,
         estimated_cost_usd: Math.round(row.estimated_cost_usd * 1e6) / 1e6, cost_basis: row.cost_basis, model: row.model,
         usage: {

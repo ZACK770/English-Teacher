@@ -10,6 +10,7 @@ import { markQuickIntro, quickOpening, runtimeContext } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
+import { applyLearnerControls } from "./learner";
 
 export class TutorSession {
   readonly meter = new SessionMeter();
@@ -42,7 +43,7 @@ export class TutorSession {
   private b: BusinessStore;
   private progress: ProgressStore;
 
-  constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null = null) {
+  constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null = null, private portal?: { customerId: string; teacherId: string }) {
     this.b = new BusinessStore(env.DB);
     this.progress = new ProgressStore(env.DB);
   }
@@ -100,7 +101,7 @@ export class TutorSession {
       const bot = await this.progress.getBot(profileId);
       if (!bot || !bot.enabled || (shared && !bot.phone_enabled)) throw new Error("Tutor unavailable");
       this.profileId = profileId;
-      const channel = testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannel : bot.channel_id;
+      const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannel : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");
       this.leaseCallId = start.callId;
       if (this.s.radioStreams[profileId]) {
@@ -118,10 +119,17 @@ export class TutorSession {
         await this.b.linkCallSegment(start.callId, this.callId, profileId);
         await this.b.saveContext(this.callId, await this.b.loadContext(start.callId));
       }
-      this.customerId = await this.b.identifyCall(start.caller, this.callId, profileId);
+      if (this.portal) {
+        this.customerId = this.portal.customerId;
+        await this.b.registerWebCall(this.callId, this.customerId, profileId);
+        await this.b.saveContext(this.callId, await this.b.loadContext("preferences:" + this.customerId));
+      } else {
+        this.customerId = await this.b.identifyCall(start.caller, this.callId, profileId);
+      }
       await this.latency("session_started");
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId);
       const opening = await quickOpening(this.b, this.callId);
       if (opening) this.controls = { ...this.controls, opening_message: opening };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
@@ -151,6 +159,7 @@ export class TutorSession {
         this.ai = ai;
         await ai.connect();
         if (this.abort.signal.aborted) return;
+        if (this.portal) this.pbx.send(JSON.stringify({ type: "ready" }));
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
@@ -188,7 +197,7 @@ export class TutorSession {
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
           const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.s.projectPath : this.s.returnExtension) : null);
-          this.pbx.send(target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
+          this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
@@ -257,7 +266,7 @@ export class TutorSession {
         await this.latency("tutor_interrupted");
       } else if (event.type === "transcript") {
         this.meter.transcript.push({ role: event.role, text: event.text });
-        await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
+        if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
         if (event.role === "learner") {
           this.lastHuman = Date.now();
           if (!this.learnerSeen) this.meter.learnerTurns++;

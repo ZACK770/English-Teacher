@@ -13,7 +13,9 @@ export const AppContent: React.FC = () => {
   // Sync hash routing
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash.replace('#', '') || 'learn';
+      const path = window.location.pathname.replace(/^\/english/, '');
+      const fallback = path.startsWith('/dashboard/legacy') ? 'legacy' : path.startsWith('/dashboard') ? 'dashboard' : path.startsWith('/join') ? 'join' : 'learn';
+      const hash = window.location.hash.replace('#', '') || fallback;
       if (['learn', 'join', 'legacy'].includes(hash)) {
         setCurrentView(hash as any);
       } else if (hash === 'dashboard') {
@@ -60,16 +62,14 @@ export const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
-      <Navbar currentView={currentView} onNavigate={navigateTo} />
+      {currentView !== 'learn' && <Navbar currentView={currentView} onNavigate={navigateTo} />}
 
       <div className="flex-1">
         {currentView === 'dashboard' && (
           <DashboardLayout currentTab={dashboardTab} onSelectTab={handleSelectDashboardTab} />
         )}
         {currentView === 'learn' && (
-          <div className="p-4 sm:p-8 max-w-7xl mx-auto">
-            <LearnerPortal />
-          </div>
+          <LearnerPortal />
         )}
         {currentView === 'join' && <JoinLanding />}
         {currentView === 'legacy' && <LegacyConsole />}

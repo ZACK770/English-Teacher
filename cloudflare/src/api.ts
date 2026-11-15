@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { BusinessStore, EconomicsSchema, MODELS, ReceiptSchema } from "./business";
 import { adultControls, controlsFromSettings, TutorControlsSchema, VOICE_OPTIONS, type TutorControls } from "./controls";
-import { type Env, type Settings, HttpError, paymentsConfigured, secureEqual, sha256Hex, tokenUrlsafe, bearer } from "./env";
+import { type Env, type Settings, HttpError, paymentsConfigured, secureEqual, sha256Hex, tokenUrlsafe, bearer, settings } from "./env";
+import { learnerRoutes, materialsKind, teachersKind } from "./learner";
 import { PaymentStore, PREFIX, agorot } from "./payments";
 import { IVRCopySchema, getCopy, narrationForSlot } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
-import { renderNarration } from "./learn";
+import { renderNarration, renderVoicePreview } from "./learn";
 import { syncCrm } from "./crm";
 import { dispatchCallbacks, listCallbacks } from "./callbacks";
 
@@ -337,34 +338,30 @@ export async function publicNarration(env: Env, narrationId: string, fingerprint
   throw new HttpError(404, "Narration not published");
 }
 
-const PreferenceSchema = z.object({
-  selected_bot: z.string().min(2).max(63),
-  mode: z.string().regex(/^(course|free|translation)$/).default("course"),
-  language: z.string().regex(/^(|English|Hebrew|Yiddish|Arabic|Russian|French)$/).default(""),
-});
-
 export async function handlePortal(request: Request, env: Env, path: string): Promise<Response | null> {
   if (!path.startsWith("/v1/portal/")) return null;
   const b = new BusinessStore(env.DB);
   const progress = new ProgressStore(env.DB);
   const customerId = await b.portalCustomer(bearer(request.headers.get("Authorization")) ?? "");
   if (!customerId) throw new HttpError(401, "קישור הכניסה אינו תקין או שפג תוקפו");
+  if (path === "/v1/portal/voice-preview" && request.method === "POST") return renderVoicePreview(request, env, settings(env), customerId);
   if (path === "/v1/portal/me" && request.method === "GET") {
     const detail: Record<string, any> = await b.customerDetail(customerId);
     const c = detail.customer;
     detail.customer = { id: c.id, name: c.name, phone: c.phone, preferred_bot: c.preferred_bot };
-    detail.bots = (await progress.listBots()).filter((x) => x.enabled && x.web_enabled && ["teacher", "translator"].includes(x.role)).map((x) => ({ id: x.id, label: x.label, role: x.role }));
+    detail.bots = (await progress.listBots()).filter((x) => x.enabled && x.web_enabled && ["teacher", "translator"].includes(x.role)).map((x) => ({ id: x.id, label: x.label, role: x.role, phone_enabled: x.phone_enabled }));
     detail.progress = await progress.report(customerId);
+    detail.progress.sessions = detail.progress.sessions.map(({ estimated_cost_usd, cost_basis, model, usage, ...session }: Record<string, any>) => session);
+    delete detail.progress.estimated_cost_usd;
     detail.preferences = await b.loadContext("preferences:" + customerId);
     detail.enrollments = (await b.list("enrollments")).filter((e) => e.customer_id === customerId);
-    return Response.json(detail);
+    detail.teachers = await b.list(teachersKind(customerId));
+    detail.materials = await b.list(materialsKind(customerId));
+    detail.phones = (await env.DB.prepare("SELECT id,body FROM console_records WHERE kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?").bind(customerId).all<{ id: string; body: string }>()).results.map(r => ({ id: r.id, phone: JSON.parse(r.body).phone }));
+    const s = settings(env);
+    detail.phone = s.systemPhone;
+    detail.extension = s.projectPath;
+    return Response.json(detail, { headers: { "Cache-Control": "no-store" } });
   }
-  if (path === "/v1/portal/preferences" && request.method === "POST") {
-    const input = await body(request, PreferenceSchema);
-    const bot = await progress.getBot(input.selected_bot);
-    if (!bot || !bot.enabled || !bot.web_enabled) throw new HttpError(404, "Bot not available");
-    await b.savePreference(customerId, input);
-    return Response.json({ saved: true });
-  }
-  return null;
+  return learnerRoutes(request, env, path, customerId, settings(env));
 }

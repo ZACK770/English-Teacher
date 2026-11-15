@@ -189,7 +189,8 @@ export class BusinessStore {
       if (botId !== "ivr") await this.db.prepare("UPDATE call_customers SET bot_id=? WHERE call_id=?").bind(botId, callId).run();
       return existing.customer_id;
     }
-    const row = phone ? await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(phone).first<{ customer_id: string }>() : null;
+    const linked = phone ? await this.customerForPhone(phone) : null;
+    const row = linked ? { customer_id: linked } : null;
     const customerId = row ? row.customer_id : phone ? "tel-" + (await sha256Hex(phone)).slice(0, 24) : "anonymous-" + randomHex(12);
     const now = nowIso();
     const stmts: D1PreparedStatement[] = [];
@@ -204,6 +205,13 @@ export class BusinessStore {
     stmts.push(this.db.prepare("INSERT OR IGNORE INTO call_customers VALUES (?,?,?,?,?)").bind(callId, customerId, botId, "phone", now));
     await this.db.batch(stmts);
     return customerId;
+  }
+
+  async customerForPhone(phone: string): Promise<string | null> {
+    const primary = await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(phone).first<{ customer_id: string }>();
+    if (primary) return primary.customer_id;
+    const linked = await this.record("learner-phone-links", (await sha256Hex(phone)).slice(0, 24));
+    return linked?.customer_id ?? null;
   }
 
   async consumeMonthlyQuota(api: string, limit: number): Promise<boolean> {

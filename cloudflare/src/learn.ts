@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { applyLearnerControls } from "./learner";
 import { downsample24kTo8k, b64encode, concat, wav } from "./audio";
 import { BusinessStore } from "./business";
-import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
-import { type Env, type Settings, HttpError, bearer, randomHex } from "./env";
+import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
+import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
@@ -11,7 +12,7 @@ import { compilePrompt } from "./prompt";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; startedAt: number | null }
 
-async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number): Promise<LiveResult> {
+async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -19,7 +20,8 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
   let size = 0;
   let startedAt: number | null = null;
   const ai = new GeminiLive(s.geminiLiveUrl, s.geminiKey, setup);
-  const deadline = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs));
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), timeoutMs); });
   const work = (async () => {
     await ai.connect();
     startedAt = Date.now();
@@ -35,7 +37,7 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
         meter.outputAudioBytes += event.pcm24k.byteLength;
       } else if (event.type === "transcript" && event.role === "tutor") {
         output.push(event.text);
-        await progress.logTurn(profileId, callId, "output", event.text);
+        if (storeTranscript) await progress.logTurn(profileId, callId, "output", event.text);
       } else if (event.type === "usage") meter.recordUsage(event.usage);
       else if (event.type === "tool_call") {
         let end = false;
@@ -48,7 +50,7 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
       else if (event.type === "closed" || event.type === "go_away") break;
     }
   })();
-  try { await Promise.race([work, deadline]); } finally { ai.close(); }
+  try { await Promise.race([work, deadline]); } finally { clearTimeout(timer!); ai.close(); }
   return { audio: concat(parts), text: output.join(" "), meter, startedAt };
 }
 
@@ -70,7 +72,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const parsed = TextTurnSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(422, "נתונים לא תקינים");
   const text = parsed.data.text;
-  const controls = await progress.loadControls(botId, defaults(s, botId));
+  const controls = await applyLearnerControls(b, customerId, bot, await progress.loadControls(botId, defaults(s, botId)));
   const callId = "web-" + randomHex(12);
   const allowance = await b.reserveCall(customerId, botId, callId, 120);
   if (!allowance.seconds) throw new HttpError(402, "אין יתרת שימוש זמינה. פנה לשירות לרכישת חבילה");
@@ -83,9 +85,9 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   let result: LiveResult | null = null;
   try {
     await progress.savePromptSnapshot(botId, callId, artifact);
-    await progress.logTurn(botId, callId, "input", text);
+    if (controls.store_transcripts) await progress.logTurn(botId, callId, "input", text);
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
-    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000);
+    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts);
   } catch (error) {
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");
@@ -96,7 +98,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     meter.learnerTurns = 1;
     await progress.saveSession({
       student_id: customerId, call_id: callId, started_at: startedAt, learner_turns: 1, tutor_turns: meter.tutorTurns,
-      observations: meter.observations, transcript: [{ role: "learner", text }, { role: "tutor", text: result?.text ?? "" }],
+      observations: meter.observations, transcript: controls.store_transcripts ? [{ role: "learner", text }, { role: "tutor", text: result?.text ?? "" }] : null,
       summary: meter.summary(), usage: meter.usage(s), model: controls.model,
     });
   }
@@ -104,6 +106,28 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
 }
 
 const ANNOUNCER = "You are a professional voice announcer. Read the supplied text exactly, without additions, introductions, comments, or changing any wording. Use the language of the supplied text. Do not call tools.";
+
+export async function renderVoicePreview(request: Request, env: Env, s: Settings, customerId: string): Promise<Response> {
+  const raw = await request.json().catch(() => null);
+  const parsed = z.object({ voice: z.enum(VOICE_OPTIONS) }).safeParse(raw);
+  if (!parsed.success) throw new HttpError(422, "הקול הזה לא זמין.");
+  const b = new BusinessStore(env.DB);
+  const cacheId = "portal-voice-preview:" + parsed.data.voice + ":v1";
+  const cached = await b.getAudio(cacheId);
+  if (cached) return Response.json({ audio_wav_base64: b64encode(cached.wav) });
+  if (!await b.consumeMonthlyQuota("portal-voice-preview", 30) || !await b.consumeMonthlyQuota("portal-voice-preview:" + customerId, 3)) throw new HttpError(429, "שמענו מספיק דוגמאות להיום. אפשר לנסות את המורה בשיחה.");
+  const progress = new ProgressStore(env.DB);
+  const text = "Hi! Good to meet you. Let's take it one sentence at a time.";
+  const controls = { ...controlsFromSettings(false), base_prompt: ANNOUNCER, opening_message: text, voice: parsed.data.voice, language_code: "en-US" };
+  const artifact = await compilePrompt(controls, "", s.studentId, s);
+  try {
+    const result = await runLive(s, progress, s.studentId, "preview-" + randomHex(12), artifact.setup_message, text, 15, 30000, false);
+    if (!result.audio.length) throw new Error("No audio");
+    const file = wav(result.audio, 24000);
+    await b.saveAudio(cacheId, await sha256Hex(text), file);
+    return Response.json({ audio_wav_base64: b64encode(file) });
+  } catch { throw new HttpError(502, "הדוגמה לא נטענה. אפשר לנסות שוב, או פשוט להתחיל שיחה."); }
+}
 
 export async function renderNarration(env: Env, s: Settings, narrationId: string): Promise<Response> {
   const b = new BusinessStore(env.DB);
