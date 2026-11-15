@@ -17,10 +17,12 @@ export interface Bot {
 const BOT_COLUMNS =
   "id, label, role, description, audience, channel_id, enabled, phone_enabled, web_enabled, active_version, created_at, updated_at";
 
+const RETIRED_BOT_IDS = new Set(["voice-navigator-live"]);
+
 function botRow(r: Record<string, any>): Bot {
   return {
     id: String(r.id), label: r.label, role: r.role, description: r.description, audience: r.audience,
-    channel_id: r.channel_id, channel_configured: !!r.channel_id, enabled: !!r.enabled,
+    channel_id: r.channel_id, channel_configured: !!r.channel_id, enabled: !!r.enabled && !RETIRED_BOT_IDS.has(String(r.id)),
     phone_enabled: !!r.phone_enabled, web_enabled: !!r.web_enabled, active_version: Number(r.active_version),
     websocket_path: `/v1/technoline/stream/bots/${r.id}`, created_at: r.created_at, updated_at: r.updated_at,
   };

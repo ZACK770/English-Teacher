@@ -103,7 +103,7 @@ export class TutorSession {
       const channel = testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannel : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");
       this.leaseCallId = start.callId;
-      if (this.s.radioStreams[profileId] || this.s.navigationBotIds.includes(profileId)) {
+      if (this.s.radioStreams[profileId]) {
         throw new Error("This test endpoint currently supports teachers and translators only");
       }
       claimed = await this.progress.claimCall(start.callId, profileId, this.ownerId);

@@ -32,10 +32,6 @@ export interface Env {
   CALLBACK_RELAY_URL?: string;
   CALLBACK_RELAY_SECRET?: string;
   CRM_INGEST_SECRET?: string;
-  TRACCAR_FORWARD_SECRET?: string;
-  NAVIGATION_ADMIN_PHONES?: string;
-  /** Workers AI; used only for shadow speech-recognition comparisons. */
-  AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
 
 const flag = (v?: string) => ["1", "true", "yes", "on"].includes((v ?? "").trim().toLowerCase());
@@ -47,11 +43,7 @@ export interface Settings {
   basicTranslatorModel: string;
   studentId: string;
   adultStudentId: string;
-  navigationBotIds: string[];
-  navigationAdminPhones: string[];
   radioStreams: Record<string, string>;
-  routesMonthlyLimit: number;
-  placesMonthlyLimit: number;
   storeTranscripts: boolean;
   channelId: string;
   adultChannelId: string | null;
@@ -83,14 +75,10 @@ export function settings(env: Env): Settings {
     basicTranslatorModel: "models/gemini-3.1-flash-lite",
     studentId: "student",
     adultStudentId: "adult",
-    navigationBotIds: ["voice-navigator-live"],
-    navigationAdminPhones: (env.NAVIGATION_ADMIN_PHONES || "0527180504").split(",").map((p) => p.trim()).filter(Boolean),
     radioStreams: {
       "voice-navigator":
         "https://n-121-7.il.cdn-redge.media/livehls/oil/ch14/live/ch14/live.livx/playlist.m3u8",
     },
-    routesMonthlyLimit: 4500,
-    placesMonthlyLimit: 4500,
     storeTranscripts: env.STORE_TRANSCRIPTS === undefined ? true : flag(env.STORE_TRANSCRIPTS),
     channelId: env.TECHNOLINE_CHANNEL_ID || "2614d922d06b4f",
     adultChannelId: env.TECHNOLINE_ADULT_CHANNEL_ID || null,

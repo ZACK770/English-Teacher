@@ -9,6 +9,29 @@ from app.prompting import compile_prompt
 
 
 @pytest.mark.asyncio
+async def test_migrated_bot_stays_visible_but_unavailable(tmp_path) -> None:
+    store = ProgressStore(tmp_path / "progress.db")
+    await store.initialize()
+    controls = TutorControls.from_settings(
+        Settings(gemini_api_key="test-key", admin_bearer_secret="a" * 32)
+    )
+    for bot_id in ("student", "voice-navigator-live", "voice-navigator"):
+        await store.seed_bot(
+            bot_id=bot_id, label=bot_id, audience="adult",
+            channel_id="channel-" + bot_id, controls=controls,
+        )
+    bots = {bot["id"]: bot for bot in await store.list_bots()}
+    assert not bots["voice-navigator-live"]["enabled"]
+    assert bots["student"]["enabled"]
+    assert bots["voice-navigator"]["enabled"]
+    assert not (await store.get_bot("voice-navigator-live"))["enabled"]
+    with store._connect() as db:
+        assert db.execute(
+            "SELECT enabled FROM bots WHERE id = 'voice-navigator-live'"
+        ).fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
 async def test_progress_round_trip_without_transcript(tmp_path) -> None:
     store = ProgressStore(tmp_path / "progress.db")
     await store.initialize()
