@@ -72,6 +72,9 @@ export class NavigationAccounting {
   private storageFailed = false;
   private fx = usdIls(); // Background fetch: never hold the greeting waiting for currency data.
   constructor(private db: D1Database, private profileId: string, private callId: string) {}
+  private units: Record<string, number> = {};
+  /** Non-Gemini usage counted per call (Places, Routes, TTS characters, shadow STT seconds); not priced yet. */
+  count(unit: string, amount = 1) { this.units[unit] = (this.units[unit] ?? 0) + amount; }
   expect(channel: string) { if (!this.expected.includes(channel)) this.expected.push(channel); }
   record(channel: string, model: string, usage: Record<string, unknown>) {
     this.records.push({ channel, model, usage });
@@ -83,7 +86,7 @@ export class NavigationAccounting {
   }
   async finish() {
     await this.pending;
-    const summary = { ...providerCost(this.records, this.expected, await this.fx), raw_usage_persisted: !this.storageFailed };
+    const summary = { ...providerCost(this.records, this.expected, await this.fx), raw_usage_persisted: !this.storageFailed, metered_units: this.units };
     if (this.storageFailed) summary.status = "partial";
     await this.db.prepare("INSERT OR REPLACE INTO navigation_call_costs(call_id,profile_id,computed_at,summary_json) VALUES(?,?,?,?)")
       .bind(this.callId, this.profileId, new Date().toISOString(), JSON.stringify(summary)).run();

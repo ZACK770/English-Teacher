@@ -8,16 +8,18 @@ import { computeNavigationRoute, findPlaces, overlap, RouteGuidance, usableFix, 
 export const TRAFFIC_CHECK_MS = 150_000;
 
 export const NavigationRequestSchema = z.object({
-  intent: z.enum(["destination", "confirm", "decline", "status", "overview", "see", "report", "complete", "cancel"]),
+  intent: z.enum(["destination", "confirm", "decline", "status", "eta", "overview", "see", "report", "complete", "cancel"]),
   destination: z.string().trim().min(3).max(300).optional(),
+  ask_eta: z.boolean().optional(),
 }).strict();
 
 export const NAVIGATION_REQUEST_TOOL = {
   name: "navigation_request",
-  description: "Call once for each complete driver request (not for noise or fragments). destination only for a destination explicitly named by the driver, confirm/decline only for an explicit answer to the last question; if the driver rejects a suggested destination and names another, send destination with the new name. see means seeing a sign, NOT reaching it or turning. report means a reported actual position/turn that conflicts with GPS. complete/cancel only when explicitly requested. Never invent a destination or a confirmation.",
+  description: "Call once for each complete driver request (not for noise or fragments). destination only for a destination explicitly named by the driver, confirm/decline only for an explicit answer to the last question; if the driver rejects a suggested destination and names another, send destination with the new name. see means seeing a sign, NOT reaching it or turning. report means a reported actual position/turn that conflicts with GPS. eta means the driver asks how long the drive takes or when he will arrive. complete/cancel only when explicitly requested. Never invent a destination or a confirmation.",
   parameters: { type: "OBJECT", properties: {
     intent: { type: "STRING", enum: NavigationRequestSchema.shape.intent.options },
     destination: { type: "STRING", description: "Exact destination with town supplied by driver. Never invent." },
+    ask_eta: { type: "BOOLEAN", description: "True when the driver also asked how long the drive takes." },
   }, required: ["intent"] },
 };
 
@@ -25,13 +27,15 @@ export class NavigationCall {
   private trips: NavigationTrips;
   private trip: Awaited<ReturnType<NavigationTrips["current"]>> = null;
   private engine: RouteGuidance | null = null;
-  private pending: { kind: "destination"; address: string; label: string; alternatives: PlaceMatch[] } | { kind: "resume" } | { kind: "faster"; route: Route } | { kind: "completed" } | { kind: "cancelled" } | null = null;
+  private pending: { kind: "destination"; address: string; label: string; alternatives: PlaceMatch[]; route?: Route; routedAt?: number } | { kind: "resume" } | { kind: "faster"; route: Route } | { kind: "completed" } | { kind: "cancelled" } | null = null;
   private linked = false;
   private driverConflict = false;
   private lastLocation: Awaited<ReturnType<typeof customerPosition>> = null;
   private trafficAt = 0;
 
-  constructor(private env: Env, private customerId: string, private callId: string) { this.trips = new NavigationTrips(env); }
+  constructor(private env: Env, private customerId: string, private callId: string, private meter: (unit: "places_requests" | "routes_requests") => void = () => {}) {
+    this.trips = new NavigationTrips(env);
+  }
 
   private async fix(): Promise<NavigationFix | null> {
     const location = await customerPosition(this.env, this.customerId);
@@ -48,6 +52,7 @@ export class NavigationCall {
   }
 
   private async route(fix: NavigationFix, address: string) {
+    this.meter("routes_requests");
     try { return await computeNavigationRoute(this.env, fix, address); }
     catch { return null; }
   }
@@ -93,6 +98,7 @@ export class NavigationCall {
     if (command.intent === "destination") {
       if (!command.destination) return { status: "destination_required", say: "מה הכתובת ובאיזו עיר?" };
       let matches: PlaceMatch[] | null = null;
+      this.meter("places_requests");
       try { matches = await findPlaces(this.env, command.destination, await this.fix()); } catch { /* Fall back to the spoken text. */ }
       if (matches && !matches.length) {
         this.pending = null;
@@ -100,7 +106,18 @@ export class NavigationCall {
       }
       const [first, ...alternatives] = matches ?? [{ label: command.destination, address: command.destination }];
       this.pending = { kind: "destination", address: first.address, label: first.label, alternatives };
-      return { status: "confirmation_required", say: `התכוונת ל${first.label}? להתחיל נסיעה לשם?` };
+      const minutes = command.ask_eta ? await this.pendingMinutes() : null;
+      return { status: "confirmation_required", say: `התכוונת ל${first.label}?${minutes ? ` הנסיעה כ-${minutes} דקות.` : ""} להתחיל נסיעה לשם?` };
+    }
+    if (command.intent === "eta") {
+      if (this.engine && this.linked) return { status: "eta", say: `זמן משוער ליעד: כ-${this.eta()} דקות.` };
+      if (this.pending?.kind === "destination") {
+        const minutes = await this.pendingMinutes();
+        return { status: "confirmation_required", say: minutes
+          ? `הנסיעה ל${this.pending.label} כ-${minutes} דקות. להתחיל נסיעה לשם?`
+          : `אחשב את זמן הנסיעה כשהמיקום יתעדכן. להתחיל נסיעה ל${this.pending.label}?` };
+      }
+      if (!this.trip) return { status: "destination_required", say: "עדיין לא נקבע יעד. לאן תרצה להגיע?" };
     }
     if (command.intent === "decline") {
       const pending = this.pending;
@@ -116,7 +133,8 @@ export class NavigationCall {
     }
     if (command.intent === "confirm") {
       const pending = this.pending;
-      if (!pending) return { status: "confirmation_required", say: "מה ברצונך לאשר?" };
+      // A stray "yes" with nothing to answer must not raise a new question.
+      if (!pending) return { status: "silent", say: "" };
       if (pending.kind === "resume") return this.resume(true);
       if (pending.kind === "faster") {
         this.pending = null;
@@ -129,9 +147,10 @@ export class NavigationCall {
         this.trip = null; this.engine = null; this.pending = null; this.linked = false; this.driverConflict = false;
         return { status: "finished", say: "הנסיעה הסתיימה. לאן תרצה להגיע עכשיו?" };
       }
-      const fix = await this.fix();
-      if (!fix) return { status: "gps_unavailable", say: "אין מיקום עדכני מספיק להתחלת ניווט. ממתין למכשיר האיתור." };
-      const route = await this.route(fix, pending.address);
+      const fresh = pending.route && Date.now() - (pending.routedAt ?? 0) < 60_000 ? pending.route : null;
+      const fix = fresh ? null : await this.fix();
+      if (!fresh && !fix) return { status: "gps_unavailable", say: "אין מיקום עדכני מספיק להתחלת ניווט. ממתין למכשיר האיתור." };
+      const route = fresh ?? await this.route(fix!, pending.address);
       if (!route) { this.pending = null; return { status: "route_unavailable", say: `לא מצאתי מסלול אל ${pending.label}. אמור שוב את הכתובת עם שם העיר.` }; }
       // Confirming a new destination replaces any earlier trip.
       const blocked = await this.dropPrevious();
@@ -140,7 +159,9 @@ export class NavigationCall {
       const connected = await this.trips.connect(this.customerId, this.trip.id, this.callId, true);
       if (connected.action !== "resume") return { status: connected.reason, say: connected.prompt };
       this.trip = connected.trip; this.linked = true; this.pending = null; this.driverConflict = false;
-      return this.useRoute(route).update(await this.fix(), true);
+      const result = this.useRoute(route).update(await this.fix(), true);
+      if (!["depart", "guidance"].includes(result.status)) return result;
+      return { ...result, say: `יוצאים ל${pending.label}. הנסיעה כ-${Math.max(1, Math.round(route.seconds / 60))} דקות. ${result.say}` };
     }
     if (command.intent === "cancel" && this.trip && !this.linked) {
       this.pending = null;
@@ -169,6 +190,27 @@ export class NavigationCall {
     }
     return result;
   }
+
+  /** Traffic-aware minutes to the destination awaiting confirmation; the route is reused if confirmed. */
+  private async pendingMinutes(): Promise<number | null> {
+    const pending = this.pending;
+    if (pending?.kind !== "destination") return null;
+    if (!pending.route) {
+      const fix = await this.fix();
+      const route = fix ? await this.route(fix, pending.address) : null;
+      if (!route) return null;
+      pending.route = route; pending.routedAt = Date.now();
+    }
+    return Math.max(1, Math.round(pending.route.seconds / 60));
+  }
+
+  /** A mixed answer ("לא... אני רוצה") repeats the open question instead of acting on it. */
+  clarify(): Guidance {
+    const pending = this.pending;
+    if (pending?.kind === "destination") return { status: "confirmation_required", say: `לא הבנתי. להתחיל נסיעה ל${pending.label}? כן או לא?` };
+    return { status: "confirmation_required", say: "לא הבנתי. כן או לא?" };
+  }
+  pendingDestination(): string | null { return this.pending?.kind === "destination" ? this.pending.label : null; }
 
   /** Minutes left by Google's traffic-aware estimate, when a route is active. */
   eta(): number | null { return this.engine ? Math.max(1, Math.round(this.engine.remainingSeconds() / 60)) : null; }

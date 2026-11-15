@@ -49,7 +49,7 @@ describe("safe route guidance", () => {
   });
   it("speaks the provider departure instruction instead of a dead-end heading question while stationary", () => {
     const nav = new RouteGuidance(route());
-    expect(nav.update(fix({ speed_mps: 0, heading: 90 }), true)).toEqual({ status: "depart", say: "התחל מזרחה" });
+    expect(nav.update(fix({ speed_mps: 0, heading: 90 }), true)).toMatchObject({ status: "depart", say: expect.stringMatching(/^התחל מזרחה(\. בעוד .+)?$/) });
     expect(nav.update(fix({ speed_mps: 0, heading: 90 })).status).toBe("silent");
   });
   it("retains a recent trusted movement heading while stopped, not a stationary course", () => {

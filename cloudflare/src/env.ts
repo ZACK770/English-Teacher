@@ -33,6 +33,8 @@ export interface Env {
   CALLBACK_RELAY_SECRET?: string;
   CRM_INGEST_SECRET?: string;
   TRACCAR_FORWARD_SECRET?: string;
+  /** Workers AI; used only for shadow speech-recognition comparisons. */
+  AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
 
 const flag = (v?: string) => ["1", "true", "yes", "on"].includes((v ?? "").trim().toLowerCase());

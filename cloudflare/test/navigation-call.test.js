@@ -70,7 +70,8 @@ describe("spoken destination → Google Places → confirmation → traffic-awar
     expect(search).toMatchObject({ textQuery: "עזרה 14 בני ברק", languageCode: "he", regionCode: "IL", locationBias: { circle: { center: { latitude: 32, longitude: 34 } } } });
     expect(await nav.request({ intent: "decline" })).toEqual({ status: "confirmation_required", say: "אולי התכוונת לעזרא 14, ירושלים?" });
     const started = await nav.request({ intent: "confirm" });
-    expect(started).toMatchObject({ status: "depart", say: "התחל מזרחה" });
+    expect(started.status).toBe("depart");
+    expect(started.say).toMatch(/^יוצאים לעזרא 14, ירושלים\. הנסיעה כ-7 דקות\. התחל מזרחה\. בעוד 9\d0 מטרים: פנה שמאלה לרחוב עזרא$/);
     expect(callBody("computeRoutes")).toMatchObject({ destination: { address: "עזרא 14, ירושלים" }, routingPreference: "TRAFFIC_AWARE", travelMode: "DRIVE", origin: { location: { latLng: { latitude: 32, longitude: 34 } } } });
     expect(db.prepare("SELECT destination_address FROM navigation_trips").get().destination_address).toBe("עזרא 14, ירושלים");
   });
@@ -81,7 +82,29 @@ describe("spoken destination → Google Places → confirmation → traffic-awar
     await nav.open();
     await nav.request({ intent: "destination", destination: "עזרה 14" });
     expect((await nav.request({ intent: "decline" })).say).toBe("אז מה הכתובת המדויקת? אפשר לאיית את שם הרחוב.");
-    expect((await nav.request({ intent: "confirm" })).say).toBe("מה ברצונך לאשר?");
+    expect(await nav.request({ intent: "confirm" })).toEqual({ status: "silent", say: "" });
+  });
+
+  it("answers how long the drive takes before and after confirming, and reuses that route", async () => {
+    const nav = new NavigationCall(env, "a", "call-1");
+    await nav.open();
+    expect((await nav.request({ intent: "eta" })).say).toBe("עדיין לא נקבע יעד. לאן תרצה להגיע?");
+    expect((await nav.request({ intent: "destination", destination: "עזרא 14 בני ברק", ask_eta: true })).say).toBe("התכוונת לעזרא 14, בני ברק? הנסיעה כ-7 דקות. להתחיל נסיעה לשם?");
+    expect((await nav.request({ intent: "eta" })).say).toBe("הנסיעה לעזרא 14, בני ברק כ-7 דקות. להתחיל נסיעה לשם?");
+    expect((await nav.request({ intent: "confirm" })).say).toMatch(/^יוצאים לעזרא 14, בני ברק\. הנסיעה כ-7 דקות\./);
+    expect(requests.filter((r) => r.url.includes("computeRoutes"))).toHaveLength(1);
+    expect((await nav.request({ intent: "eta" }))).toEqual({ status: "eta", say: "זמן משוער ליעד: כ-7 דקות." });
+  });
+
+  it("asks again on a mixed answer and counts Places/Routes requests", async () => {
+    const units = [];
+    const nav = new NavigationCall(env, "a", "call-1", (u) => units.push(u));
+    await nav.open();
+    await nav.request({ intent: "destination", destination: "עזרא 14" });
+    expect(nav.pendingDestination()).toBe("עזרא 14, בני ברק");
+    expect(nav.clarify().say).toBe("לא הבנתי. להתחיל נסיעה לעזרא 14, בני ברק? כן או לא?");
+    await nav.request({ intent: "confirm" });
+    expect(units).toEqual(["places_requests", "routes_requests"]);
   });
 
   it("says it found nothing instead of routing to an unknown place", async () => {

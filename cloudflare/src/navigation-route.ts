@@ -29,6 +29,24 @@ const resultSchema = z.object({ routes: z.array(z.object({
   })).min(1).max(2000) })).min(1),
 })).max(1) });
 
+function spokenMeters(meters: number) {
+  if (meters >= 1000) return `${(Math.round(meters / 100) / 10).toString()} קילומטר`;
+  return `${Math.max(10, Math.round(meters / 10) * 10)} מטרים`;
+}
+
+const SINGULAR: Record<string, string> = { "התקדמו": "סע", "סעו": "סע", "פנו": "פנה", "המשיכו": "המשך", "צאו": "צא", "היכנסו": "היכנס", "הכנסו": "היכנס",
+  "הישארו": "הישאר", "עלו": "עלה", "רדו": "רד", "קחו": "קח", "השתלבו": "השתלב", "בצעו": "בצע", "שמרו": "שמור", "הסתובבו": "הסתובב" };
+const COMPASS: Record<string, string> = { "צפון": "צפונה", "דרום": "דרומה", "מזרח": "מזרחה", "מערב": "מערבה" };
+const EDGE = "(?=[\\s,.]|$)";
+
+/** Google's Hebrew instructions are plural and use nouns for compass directions ("התקדמו דרום על X"). */
+export function hebrewInstruction(text: string): string {
+  let out = text.replace(new RegExp(`(^|\\s)(${Object.keys(SINGULAR).join("|")})${EDGE}`, "g"), (_, pre, verb) => pre + SINGULAR[verb]);
+  out = out.replace(new RegExp(`(^|\\s)(סע|המשך|פנה) (צפון|דרום|מזרח|מערב)(?: (צפון|דרום|מזרח|מערב))?${EDGE}( על )?`, "g"),
+    (_, pre, verb, a, b, on) => `${pre}${verb} ${b ? `${a}-${COMPASS[b]}` : COMPASS[a]}${on ? " ב" : ""}`);
+  return out;
+}
+
 export function distance(a: Point, b: Point): number {
   const x = (b[1] - a[1]) * R * Math.cos((a[0] + b[0]) / 2 * R);
   const y = (b[0] - a[0]) * R;
@@ -69,7 +87,7 @@ export function parseRoute(data: unknown): Route {
     const start = step.startLocation.latLng;
     if (!points.length || distance(points[0], [start.latitude, start.longitude]) > 30) throw new Error("Incomplete route geometry");
     if (route.points.length && distance(route.points.at(-1)!, points[0]) > 30) throw new Error("Disconnected route geometry");
-    if (step.navigationInstruction) route.steps.push({ along, instruction: step.navigationInstruction.instructions, maneuver: step.navigationInstruction.maneuver });
+    if (step.navigationInstruction) route.steps.push({ along, instruction: hebrewInstruction(step.navigationInstruction.instructions), maneuver: step.navigationInstruction.maneuver });
     for (const point of points) {
       if (route.points.length) along += distance(route.points.at(-1)!, point);
       route.points.push(point); route.cumulative.push(along);
@@ -209,7 +227,8 @@ export class RouteGuidance {
     if (!this.heading && depart && this.along < 50) {
       if (!force && this.spoken === "depart") return { status: "silent", say: "" };
       this.spoken = "depart";
-      return { status: "depart", say: depart.instruction };
+      const turn = this.route.steps.find((s) => s.along > this.along + 5 && !["DEPART", "STRAIGHT", "NAME_CHANGE", "MANEUVER_UNSPECIFIED"].includes(s.maneuver));
+      return { status: "depart", say: turn ? `${depart.instruction}. בעוד ${spokenMeters(turn.along - this.along)}: ${turn.instruction}` : depart.instruction };
     }
     const steps = this.route.steps.filter((s) => s.along >= this.along - 8 && !["DEPART", "STRAIGHT", "NAME_CHANGE", "MANEUVER_UNSPECIFIED"].includes(s.maneuver));
     if (overview) return { status: "overview", say: steps.map((s) => s.instruction).join(". ") || "אין פניות נוספות במסלול המאומת." };
@@ -221,7 +240,7 @@ export class RouteGuidance {
     const key = `${next.along}:${band}`;
     if (!force && (band === "far" || key === this.spoken)) return { status: "silent", say: "" };
     this.spoken = key;
-    return { status: "guidance", say: `בעוד ${Math.max(10, Math.round(meters / 10) * 10)} מטרים: ${next.instruction}`,
+    return { status: "guidance", say: `בעוד ${spokenMeters(meters)}: ${next.instruction}`,
       ...(steps[1] ? { then: `לאחר מכן: ${steps[1].instruction}` } : {}) };
   }
 }
