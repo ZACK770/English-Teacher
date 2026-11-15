@@ -5,9 +5,9 @@ import { NavigationRequestSchema } from "./navigation-call";
 export const INTENT_MODEL = "gemini-3.5-flash-lite";
 export const TRANSCRIBE_MODEL = "models/gemini-3.5-transcribe-live";
 
-const YES = new Set(["כן", "נכון", "בטח", "סע", "יאללה", "אישור", "מאשר", "בדיוק", "אוקיי"]);
+const YES = new Set(["כן", "נכון", "בטח", "סע", "יאללה", "אישור", "מאשר", "בדיוק", "אוקיי", "בסדר", "סבבה", "אחלה", "מעולה", "יופי"]);
 const NO = new Set(["לא", "ממש"]);
-const FILLER = new Set(["אממ", "אמ", "אה", "אהה", "הממ", "היי", "הלו", "אוקיי", "טוב", "תודה", "רבה", "סבבה", "יופי", "שומע", "שומעת", "אני", "נו", "רגע"]);
+const FILLER = new Set(["אממ", "אמ", "אה", "אהה", "הממ", "היי", "הלו", "אוקיי", "טוב", "תודה", "רבה", "סבבה", "יופי", "הבנתי", "ביי", "בסדר", "מודה", "לך", "שלום", "מעולה", "אחלה", "שומע", "שומעת", "אני", "נו", "רגע"]);
 
 const words = (text: string) => text.replace(/[^\u0590-\u05FF0-9\s]/g, " ").trim().split(/\s+/).filter(Boolean);
 
@@ -53,13 +53,14 @@ export function ruleIntent(text: string, awaiting: boolean): IntentRequest | nul
   if (/(עומס|פקק|תנועה)/.test(t)) return { intent: "traffic" };
   if (/(כמה זמן|מתי (אני )?(אגיע|נגיע|מגיע)|כמה (עוד )?נשאר|זמן (ה)?הגעה|כמה דקות)/.test(t)) return { intent: "eta" };
   if (/(פירוט|תאר|תתאר|תתארי|כל המסלול|את המסלול|סקירה|איך הולך המסלול|באיזו דרך)/.test(t)) return { intent: "overview" };
-  if (/^(מה עכשיו|לאן (לפנות|עכשיו|פונים)|מה הלאה|מה ההוראה|איפה לפנות)$/.test(t)) return { intent: "status" };
+  if (/^(מה עכשיו|לאן (לפנות|עכשיו|פונים)|מה הלאה|מה ההוראה|איפה לפנות)$/.test(t) || /(תבדוק|תבדקי|בדוק|תבדוק את זה) (שוב|עוד פעם|מחדש)/.test(t)) return { intent: "status" };
+  if (/(תחזור|תחזרי|חזור) על (זה|זאת|ההוראה|מה שאמרת)|תגיד שוב|תגידי שוב|לא שמעתי|מה אמרת|עוד פעם\s*$/.test(t)) return { intent: "repeat" };
   return null;
 }
 
-const INTENTS = [...NavigationRequestSchema.shape.intent.options, "noise"];
+const INTENTS = [...NavigationRequestSchema.shape.intent.options, "repeat", "noise"];
 const PROMPT = `Classify one Hebrew utterance of a driver to a phone navigation system. The transcript may contain recognition errors; infer the most likely meaning.
-Intents: destination (driver names where to drive; put the place with its town in destination exactly as said, never invent), confirm / decline (answer to the navigator's last question), status (what now, where to turn), eta (how long, when will I arrive), traffic (traffic, jams, delays), overview (describe the route / which way it goes), route_via (go via a specific road; put the road in via, e.g. "כביש 443"), report (made a mistake, missed a turn, lost), see (sees a sign or landmark), complete (arrived), cancel (stop the navigation), unknown (any other question or request to the navigator), noise (not addressed to the navigator: chatter, thanks, fragments).
+Intents: destination (driver names where to drive; put the place with its town in destination exactly as said, never invent), confirm / decline (answer to the navigator's last question), status (what now, where to turn, check again), repeat (say again what the navigator just said), eta (how long, when will I arrive), traffic (traffic, jams, delays), overview (describe the route / which way it goes), route_via (go via a specific road; put the road in via, e.g. "כביש 443"), report (made a mistake, missed a turn, lost), see (sees a sign or landmark), complete (arrived), cancel (stop the navigation), unknown (any other question or request to the navigator), noise (not addressed to the navigator, or a statement that asks nothing: chatter, thanks, "I am starting to drive", fragments).
 ask_eta: true when a destination request also asks how long it takes.`;
 const SCHEMA = { type: "OBJECT", properties: {
   intent: { type: "STRING", enum: INTENTS }, destination: { type: "STRING" }, via: { type: "STRING" }, ask_eta: { type: "BOOLEAN" },

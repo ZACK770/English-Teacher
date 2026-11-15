@@ -33,6 +33,7 @@ export interface Env {
   CALLBACK_RELAY_SECRET?: string;
   CRM_INGEST_SECRET?: string;
   TRACCAR_FORWARD_SECRET?: string;
+  NAVIGATION_ADMIN_PHONES?: string;
   /** Workers AI; used only for shadow speech-recognition comparisons. */
   AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
@@ -47,6 +48,7 @@ export interface Settings {
   studentId: string;
   adultStudentId: string;
   navigationBotIds: string[];
+  navigationAdminPhones: string[];
   radioStreams: Record<string, string>;
   routesMonthlyLimit: number;
   placesMonthlyLimit: number;
@@ -82,6 +84,7 @@ export function settings(env: Env): Settings {
     studentId: "student",
     adultStudentId: "adult",
     navigationBotIds: ["voice-navigator-live"],
+    navigationAdminPhones: (env.NAVIGATION_ADMIN_PHONES || "0527180504").split(",").map((p) => p.trim()).filter(Boolean),
     radioStreams: {
       "voice-navigator":
         "https://n-121-7.il.cdn-redge.media/livehls/oil/ch14/live/ch14/live.livx/playlist.m3u8",

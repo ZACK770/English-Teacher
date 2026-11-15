@@ -12,7 +12,8 @@ import { LIVE_SYSTEM, LIVE_TOOLS, LiveNavigator } from "./navigation-live";
 import { NavigationSpeechGate, STOP_LISTENER_SETUP } from "./navigation-speech";
 import { NavigationLatency } from "./navigation-latency";
 import { NavigationAccounting } from "./navigation-cost";
-import { loud, ShadowTranscriber } from "./navigation-shadow";
+import { loud } from "./navigation-shadow";
+import { adminCommand, currentModes, isAdminPhone, MODE_NAMES, setMode, type AdminCommand } from "./navigation-admin";
 import { classifyIntent, echoOf, filler, INTENT_MODEL, mixedAnswer, ruleIntent, shortAnswer, TRANSCRIBE_MODEL, type IntentRequest } from "./navigation-intent";
 import type { Guidance } from "./navigation-route";
 import { ProgressStore } from "./progress";
@@ -87,7 +88,7 @@ export class NavigationSession {
   private utterances = 0;
   private lastCall = { keys: [] as string[], utterances: -1, at: 0, response: {} as Record<string, unknown> };
   private lastDriver = { text: "", utterance: -1 };
-  private shadow: ShadowTranscriber | null = null;
+  private admin: { profileId: string; customerId: string; pending: AdminCommand | null } | null = null;
   private stage: (name: string, details: Record<string, unknown>) => void = () => {};
   private navigator: LiveNavigator | null = null;
   private carry: Uint8Array = new Uint8Array();
@@ -174,6 +175,7 @@ export class NavigationSession {
       claimed = await progress.claimCall(callId, profileId, this.ownerId);
       if (!claimed) throw new Error("navigation_duplicate_call");
       customerId = await business.identifyCall(start.caller, callId, profileId);
+      if (isAdminPhone(start.caller, this.s.navigationAdminPhones)) this.admin = { profileId, customerId, pending: null };
       const tripCall = await sha256Hex(callId);
       this.controller = new NavigationCall(this.env, customerId, tripCall, (unit) => this.accounting?.count(unit));
       const controls = { ...(await progress.loadControls(profileId, controlsFromSettings(false))), ...(await customerControlOverrides(this.env, customerId)) };
@@ -205,10 +207,6 @@ export class NavigationSession {
         // The engine keeps the trip state; a small window keeps the per-turn price flat in long calls.
         payload.setup.contextWindowCompression = { triggerTokens: Math.min(controls.context_trigger_tokens, 6000),
           slidingWindow: { targetTokens: Math.min(controls.context_target_tokens, 3000) } };
-        if (this.env.AI) this.shadow = new ShadowTranscriber(this.env.AI, (r) => {
-          this.trace("shadow_stt", r.text || (r.error ? "[שגיאה]" : "[ריק]"), { model: r.model, ms: r.ms, audio_ms: r.audio_ms, utterance: r.utterance, ...(r.error ? { error: r.error } : {}) });
-          this.accounting?.count(`shadow_audio_ms:${r.model}`, r.audio_ms);
-        });
       }
       const setup = this.text ? transcribeSetup(controls.custom_vocabulary) : payload;
       const stopWords = this.live && controls.navigation_interrupt === "stop_word";
@@ -268,7 +266,6 @@ export class NavigationSession {
       this.stop(this.reason || "transport_ended", this.disconnected);
       await Promise.allSettled([...tasks, this.commands]);
       await this.earTask;
-      await this.shadow?.drain();
       this.flushHeard();
       this.trace("ended", this.reason || "transport_ended");
       await this.logs;
@@ -300,7 +297,8 @@ export class NavigationSession {
       this.utterances++;
       this.lastDriver = { text: said, utterance: this.utterances };
       this.trace("driver", said, { source: this.text ? "transcribe_live" : "gemini_input_transcription" });
-      if (this.text) this.understand(said);
+      if (this.admin && this.adminSpeech(said)) { /* Handled as an admin mode command. */ }
+      else if (this.text) this.understand(said);
       else this.fallback(said);
     }
     if (this.heard.tutor.trim()) {
@@ -340,7 +338,6 @@ export class NavigationSession {
       const blocked = this.gate.blocked(this.output.length > 0);
       if (!blocked) {
         this.timing.input(data);
-        this.shadow?.push(data);
       }
       if (blocked) {
         this.gate.remember(pcm);
@@ -516,6 +513,37 @@ export class NavigationSession {
     }
   }
 
+  /** Admin callers switch navigation modes by voice; a change for all customers is confirmed first. */
+  private adminSpeech(said: string): boolean {
+    const admin = this.admin!, speech = this.speech;
+    if (!speech) return false;
+    const pending = admin.pending, answer = pending ? shortAnswer(said) : null;
+    const command = answer ? null : adminCommand(said);
+    if (!answer && !command) { admin.pending = null; return false; }
+    this.clearSpeech();
+    this.commands = this.commands.then(async () => {
+      let say: string;
+      if (answer && pending?.kind === "set") {
+        admin.pending = null;
+        if (answer === "confirm") { await setMode(this.env, admin.profileId, admin.customerId, "all", pending.mode); say = `ברירת המחדל לכל הלקוחות היא עכשיו ${MODE_NAMES[pending.mode]}, מהשיחה הבאה.`; }
+        else say = "בסדר, ברירת המחדל לא שונתה.";
+      } else if (command?.kind === "query") {
+        const modes = await currentModes(this.env, admin.profileId, admin.customerId);
+        say = `ברירת המחדל לכל הלקוחות: ${MODE_NAMES[modes.all] ?? modes.all}. המצב שלך: ${modes.own ? MODE_NAMES[modes.own] : "כמו ברירת המחדל"}.`;
+      } else if (command?.kind === "set" && command.scope === "all") {
+        admin.pending = command;
+        say = `לשנות את ברירת המחדל לכל הלקוחות ל${MODE_NAMES[command.mode]}? כן או לא?`;
+      } else {
+        const set = command as Extract<AdminCommand, { kind: "set" }>;
+        await setMode(this.env, admin.profileId, admin.customerId, "self", set.mode);
+        say = `המצב שלך הוא עכשיו ${MODE_NAMES[set.mode]}, מהשיחה הבאה.`;
+      }
+      this.trace("admin_command", said, { command: command ?? pending, answer });
+      await this.speak({ status: "admin", say }, speech, true, "admin");
+    }).catch(() => this.speak({ status: "admin", say: "השינוי נכשל. אפשר לנסות שוב או לשנות במסך הניהול." }, speech, true, "admin").catch(() => {}));
+    return true;
+  }
+
   /** Text mode: rules first, the small model only for sentences the rules do not cover. */
   private understand(said: string) {
     const speech = this.speech, controller = this.controller;
@@ -542,6 +570,12 @@ export class NavigationSession {
       if (this.abort.signal.aborted || utterance !== this.utterances) return;
       this.trace("intent", JSON.stringify(unclear ? { intent: "clarify" } : request), { source: rule ? "rule" : unclear ? "rule_mixed" : "model", ms: Date.now() - at });
       if (request?.intent === "noise") return;
+      if (request?.intent === "repeat") {
+        const last = this.lastMessage;
+        this.clearSpeech();
+        this.commands = this.commands.then(() => this.speak({ status: "repeat", say: last || "עוד לא נאמרה הנחיה." }, speech, true, "reply")).catch(() => this.stop("navigation_speech_failed"));
+        return;
+      }
       // A new request replaces whatever the navigator is still saying.
       this.clearSpeech();
       this.commands = this.commands.then(async () => {

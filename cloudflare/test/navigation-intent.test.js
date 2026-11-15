@@ -85,3 +85,36 @@ describe("route answers", () => {
     expect(new RouteGuidance(route).summary().say).toBe("המסלול דרך כביש 1, כ-943 מטרים, כ-25 דקות. הפניות הקרובות: פנה שמאלה אל כביש 4.");
   });
 });
+
+import { adminCommand, isAdminPhone } from "../src/navigation-admin";
+import { hebrewInstruction } from "../src/navigation-route";
+
+describe("approved follow-ups", () => {
+  it("treats check-again as status and repeat as repeat", () => {
+    expect(ruleIntent("אוקיי, תוכלי לבדוק שוב?", false)).toEqual({ intent: "status" });
+    expect(ruleIntent("תבדוק שוב", false)).toEqual({ intent: "status" });
+    expect(ruleIntent("תחזור על זה", false)).toEqual({ intent: "repeat" });
+    expect(ruleIntent("לא שמעתי", false)).toEqual({ intent: "repeat" });
+  });
+  it("filters more acknowledgements and accepts casual yes", () => {
+    for (const t of ["הבנתי.", "ביי.", "אני מודה לך.", "בסדר"]) expect(filler(t)).toBe(true);
+    expect(ruleIntent("סבבה", true)).toEqual({ intent: "confirm" });
+  });
+  it("makes merge instructions singular", () => {
+    expect(hebrewInstruction("התמזגו אל כביש 4")).toBe("התמזג אל כביש 4");
+  });
+  it("parses spoken admin mode commands", () => {
+    expect(adminCommand("קבע לי מצב טקסט")).toEqual({ kind: "set", scope: "self", mode: "text" });
+    expect(adminCommand("תשנה לכולם את המצב לג'מיני מדבר")).toEqual({ kind: "set", scope: "all", mode: "gemini" });
+    expect(adminCommand("קבע ברירת מחדל מצב מנוע")).toEqual({ kind: "set", scope: "all", mode: "engine" });
+    expect(adminCommand("איזה מצב פעיל?")).toEqual({ kind: "query" });
+    expect(adminCommand("באיזה מצב התנועה בכביש?")).toBeNull();
+    expect(adminCommand("אני רוצה לנסוע לטקסטיל 5")).toBeNull();
+  });
+  it("allows only admin numbers in any format", () => {
+    expect(isAdminPhone("+972527180504", ["0527180504"])).toBe(true);
+    expect(isAdminPhone("0527180504", ["0527180504"])).toBe(true);
+    expect(isAdminPhone("0500000001", ["0527180504"])).toBe(false);
+    expect(isAdminPhone("", ["0527180504"])).toBe(false);
+  });
+});
