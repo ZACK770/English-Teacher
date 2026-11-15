@@ -62,7 +62,7 @@ const Signup = z.object({
   website: z.string().max(0).default(""),
 });
 export const CustomerSettings = z.object({
-  navigation_voice: z.enum(["engine", "gemini"]).nullable().default(null),
+  navigation_voice: z.enum(["engine", "gemini", "text"]).nullable().default(null),
   voice: z.string().refine((v) => (VOICE_OPTIONS as readonly string[]).includes(v), "unsupported voice").nullable().default(null),
   navigation_interrupt: z.enum(["speech", "stop_word"]).nullable().default(null),
 }).strict();

@@ -29,7 +29,7 @@ export const PLATFORM_OPENAPI = {
     schemas: {
       TripPath: { type: "object", properties: { trip_id: str, from_ms: int, to_ms: int, point_count: int, distance_m: int, max_speed_kmh: { type: "number" },
         avg_speed_kmh: { type: ["number", "null"] }, points: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 } } } },
-      Settings: { type: "object", properties: { navigation_voice: { type: ["string", "null"], enum: ["engine", "gemini", null] },
+      Settings: { type: "object", properties: { navigation_voice: { type: ["string", "null"], enum: ["engine", "gemini", "text", null] },
         voice: { type: ["string", "null"], description: "Charon, Puck, Fenrir, Aoede, Kore …" }, navigation_interrupt: { type: ["string", "null"], enum: ["speech", "stop_word", null] } } },
       Error: { type: "object", properties: { detail: str } },
       Customer: { type: "object", properties: { id: str, name: str, primary_phone: strN, status: { enum: ["lead", "active", "suspended", "closed"] }, device_mode: { enum: ["none", "kit", "own"] },

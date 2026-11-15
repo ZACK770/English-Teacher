@@ -153,6 +153,8 @@ function VoiceMode({ token }: { token: string }) {
       <h2>מצב הקול בשיחת ניווט</h2>
       <label><input type="radio" checked={voice === "engine"} disabled={!controls || saving} onChange={() => save({ navigation_voice: "engine" })} /> מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</label>
       <br />
+      <label><input type="radio" checked={voice === "text"} disabled={!controls || saving} onChange={() => save({ navigation_voice: "text" })} /> טקסט זול: תמלול בלבד ומודל טקסט קטן להבנה, הנחיות בקול Google (הכי זול)</label>
+      <br />
       <label><input type="radio" checked={voice === "gemini"} disabled={!controls || saving} onChange={() => save({ navigation_voice: "gemini" })} /> Gemini מדבר: Gemini מנהל את השיחה בעצמו ומקבל נתונים חיים (GPS, Google Maps, פקקים)</label>
       {voice === "gemini" && <div>
         <p><label>קול לשיחה הבאה: <select value={String(controls?.voice ?? "Aoede")} disabled={!controls || saving} onChange={(e) => save({ voice: e.target.value })}>

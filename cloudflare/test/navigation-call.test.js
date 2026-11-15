@@ -96,6 +96,16 @@ describe("spoken destination → Google Places → confirmation → traffic-awar
     expect((await nav.request({ intent: "eta" }))).toEqual({ status: "eta", say: "זמן משוער ליעד: כ-7 דקות." });
   });
 
+  it("answers traffic and route questions before the destination is confirmed", async () => {
+    const nav = new NavigationCall(env, "a", "call-1");
+    await nav.open();
+    await nav.request({ intent: "destination", destination: "עזרא 14 בני ברק" });
+    expect(nav.awaiting()).toBe(true);
+    expect((await nav.request({ intent: "traffic" })).say).toBe("זמן הנסיעה עם התנועה כרגע: כ-7 דקות. להתחיל נסיעה לשם?");
+    expect((await nav.request({ intent: "overview" })).say).toBe("המסלול לעזרא 14, בני ברק, כ-7 דקות. להתחיל נסיעה לשם?");
+    expect((await nav.request({ intent: "route_via", via: "כביש 443" })).say).toBe("לא מצאתי מסלול דרך כביש 443. המסלול המהיר, כ-7 דקות. להתחיל נסיעה בו?");
+  });
+
   it("asks again on a mixed answer and counts Places/Routes requests", async () => {
     const units = [];
     const nav = new NavigationCall(env, "a", "call-1", (u) => units.push(u));
@@ -170,6 +180,28 @@ describe("live traffic re-check", () => {
     expect(offer.status).toBe("confirmation_required");
     expect(offer.say).toMatch(/דרך מהירה יותר שחוסכת כ-6 דקות/);
     expect((await nav.request({ intent: "confirm" })).say).toMatch(/^עוברים למסלול המהיר/);
+  });
+
+  it("answers a traffic question from Google's live and no-traffic durations", async () => {
+    const nav = await driving({ routes: [{ duration: "900s", staticDuration: "420s", legs: ROUTE.routes[0].legs }] });
+    expect(await nav.request({ intent: "traffic" })).toEqual({ status: "traffic", say: "יש עומסים בדרך, תוספת של כ-8 דקות. זמן משוער כ-15 דקות." });
+  });
+
+  it("finds a route via the road the driver asked for and switches on confirm", async () => {
+    const nav = await driving({ routes: [
+      { duration: "420s", description: "כביש 1", legs: ROUTE.routes[0].legs },
+      { duration: "540s", description: "כביש 443", legs: [{ steps: [step([[32, 34], [31.99, 34]], "התחל דרומה", "DEPART"), step([[31.99, 34], [31.99, 34.01]], "פנה ימינה אל כביש 443", "TURN_RIGHT")] }] },
+    ] });
+    const offer = await nav.request({ intent: "route_via", via: "כביש 443" });
+    expect(offer).toEqual({ status: "confirmation_required", say: "יש מסלול דרך כביש 443, כ-9 דקות, לעומת כ-7 דקות במסלול הנוכחי. לעבור אליו?" });
+    expect(JSON.parse(requests.filter((r) => r.url.includes("computeRoutes")).at(-1).body).computeAlternativeRoutes).toBe(true);
+    expect((await nav.request({ intent: "confirm" })).say).toMatch(/^עוברים למסלול דרך כביש 443/);
+    expect((await nav.request({ intent: "overview" })).say).toMatch(/^המסלול דרך כביש 443, כ-\d+ (קילומטר|מטרים), כ-\d+ דקות\./);
+  });
+
+  it("answers an unknown question without repeating the instruction", async () => {
+    const nav = await driving(ROUTE);
+    expect((await nav.request({ intent: "unknown" })).say).toMatch(/^על זה אני עוד לא יודע לענות/);
   });
 
   it("reports a major delay on the same roads", async () => {

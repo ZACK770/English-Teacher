@@ -14,7 +14,7 @@ export interface NavigationFix {
 }
 type Point = [number, number];
 interface Step { along: number; instruction: string; maneuver: string }
-export interface Route { points: Point[]; cumulative: number[]; steps: Step[]; seconds: number }
+export interface Route { points: Point[]; cumulative: number[]; steps: Step[]; seconds: number; staticSeconds?: number; description?: string }
 export interface Guidance { status: string; say: string; then?: string }
 const R = Math.PI / 180;
 // The tracker reports every ~10 s and delivery adds ~4 s, so 15 s caused constant "stale GPS" warnings.
@@ -22,12 +22,14 @@ export const GUIDANCE_MAX_AGE_MS = 25_000;
 const coordinate = z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) });
 const resultSchema = z.object({ routes: z.array(z.object({
   duration: z.string().regex(/^\d+(\.\d+)?s$/),
+  staticDuration: z.string().regex(/^\d+(\.\d+)?s$/).optional(),
+  description: z.string().max(300).optional(),
   legs: z.array(z.object({ steps: z.array(z.object({
     polyline: z.object({ encodedPolyline: z.string().max(100_000) }),
     startLocation: z.object({ latLng: coordinate }),
     navigationInstruction: z.object({ instructions: z.string().max(1000), maneuver: z.string() }).optional(),
   })).min(1).max(2000) })).min(1),
-})).max(1) });
+})).max(3) });
 
 function spokenMeters(meters: number) {
   if (meters >= 1000) return `${(Math.round(meters / 100) / 10).toString()} קילומטר`;
@@ -77,10 +79,11 @@ function decodePolyline(encoded: string): Point[] {
   return points;
 }
 
-export function parseRoute(data: unknown): Route {
-  const raw = resultSchema.parse(data).routes[0];
+export function parseRoute(data: unknown, index = 0): Route {
+  const raw = resultSchema.parse(data).routes[index];
   if (!raw) throw new Error("No driving route found");
-  const route: Route = { points: [], cumulative: [], steps: [], seconds: Number(raw.duration.slice(0, -1)) };
+  const route: Route = { points: [], cumulative: [], steps: [], seconds: Number(raw.duration.slice(0, -1)),
+    ...(raw.staticDuration ? { staticSeconds: Number(raw.staticDuration.slice(0, -1)) } : {}), ...(raw.description ? { description: raw.description } : {}) };
   let along = 0;
   for (const leg of raw.legs) for (const step of leg.steps) {
     const points = decodePolyline(step.polyline.encodedPolyline);
@@ -98,6 +101,11 @@ export function parseRoute(data: unknown): Route {
 }
 
 export async function computeNavigationRoute(env: Env, fix: NavigationFix, destination: string, strict = true, heading: number | null = null): Promise<Route> {
+  return (await computeRouteOptions(env, fix, destination, false, strict, heading))[0];
+}
+
+/** Google's traffic-aware route, plus up to two alternatives when asked (for "via road X?" questions). */
+export async function computeRouteOptions(env: Env, fix: NavigationFix, destination: string, alternatives: boolean, strict = true, heading: number | null = null): Promise<Route[]> {
   if (strict && !usableFix(fix)) throw new Error("Fresh GPS required");
   if (!destination.trim() || destination.length > 300) throw new Error("Invalid destination");
   const { token, project } = await googleToken(env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON, env.GOOGLE_TTS_PROJECT);
@@ -107,13 +115,15 @@ export async function computeNavigationRoute(env: Env, fix: NavigationFix, desti
     origin: { location: { latLng: { latitude: fix.latitude, longitude: fix.longitude }, ...(heading === null ? {} : { heading: Math.round(heading) % 360 }) } },
     destination: { address: destination }, travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE",
     languageCode: "he", regionCode: "IL", units: "METRIC", polylineQuality: "HIGH_QUALITY",
+    ...(alternatives ? { computeAlternativeRoutes: true } : {}),
   };
   const data = await postJson("https://routes.googleapis.com/directions/v2:computeRoutes", body, {
     Authorization: "Bearer " + token,
     ...(project ? { "x-goog-user-project": project } : {}),
-    "X-Goog-FieldMask": "routes.duration,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction",
+    "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.description,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction",
   }, 10_000);
-  return parseRoute(data);
+  const count = Math.max(1, Math.min(3, Array.isArray((data as { routes?: unknown[] })?.routes) ? (data as { routes: unknown[] }).routes.length : 1));
+  return Array.from({ length: count }, (_, i) => parseRoute(data, i));
 }
 
 export interface PlaceMatch { label: string; address: string }
@@ -193,6 +203,16 @@ export class RouteGuidance {
     return this.eta.seconds * Math.max(0, total - this.along) / Math.max(1, total - this.eta.along);
   }
   retime(seconds: number) { this.eta = { seconds, along: this.along }; }
+
+  /** Spoken summary of the rest of the trip: main road, distance, time and the next few turns. */
+  summary(): Guidance {
+    const km = Math.max(0, this.route.cumulative.at(-1)! - this.along) / 1000;
+    const minutes = Math.max(1, Math.round(this.remainingSeconds() / 60));
+    const turns = this.route.steps.filter((s) => s.along > this.along + 5 && !["DEPART", "STRAIGHT", "NAME_CHANGE", "MANEUVER_UNSPECIFIED"].includes(s.maneuver)).slice(0, 3);
+    const via = this.route.description ? ` דרך ${this.route.description}` : "";
+    const distance = km >= 1 ? `${Math.round(km)} קילומטר` : `${Math.round(km * 1000)} מטרים`;
+    return { status: "overview", say: `המסלול${via}, כ-${distance}, כ-${minutes} דקות.${turns.length ? ` הפניות הקרובות: ${turns.map((s) => s.instruction).join(". ")}.` : ""}` };
+  }
 
   reportSeen(): Guidance { return { status: "seen", say: "ראיית שלט אינה אומרת שכבר הגעת אליו או פנית. ההנחיה תתבסס על המיקום המאומת." }; }
   reportConflict(): Guidance {

@@ -4,7 +4,7 @@ const WHISPER = "@cf/openai/whisper-large-v3-turbo";
 const NOVA = "@cf/deepgram/nova-3";
 const RATE = 8000, PRE_ROLL = 4800, MAX_BYTES = 15 * 2 * RATE, END_SILENCE_MS = 600, MAX_UTTERANCES = 40;
 
-function loud(pcm: Uint8Array) {
+export function loud(pcm: Uint8Array) {
   const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   let sum = 0;
   for (let i = 0; i + 1 < pcm.length; i += 2) sum += view.getInt16(i, true) ** 2;

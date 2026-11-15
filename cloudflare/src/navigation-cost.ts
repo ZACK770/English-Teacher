@@ -8,6 +8,7 @@ const RATES: Record<string, Rates> = {
   "gemini-3.8-live-extended-thinking": LIVE,
   "gemini-3.1-flash-live-preview": LIVE,
   "gemini-3.5-transcribe-live": { input_text: 0, input_audio: 3.5, output_text: 21, output_audio: 0 },
+  "gemini-3.5-flash-lite": { input_text: 0.3, input_audio: 0.3, output_text: 2.5, output_audio: 0 },
 };
 export interface ExchangeRate { usd_ils: number; published_at: string; fetched_at: string; source: string }
 let cached: ExchangeRate | null = null;
@@ -27,7 +28,7 @@ export async function usdIls(): Promise<ExchangeRate | null> {
 
 export type UsageRecord = { channel: string; model: string; usage: Record<string, any> };
 export function providerCost(records: UsageRecord[], expected: string[], fx: ExchangeRate | null) {
-  const channels = expected.map((channel) => {
+  const channels = [...new Set([...expected, ...records.map((r) => r.channel)])].map((channel) => {
     const rows = records.filter((r) => r.channel === channel), model = rows[0]?.model ?? null;
     const rates = model ? RATES[model.replace(/^models\//, "")] : undefined;
     const tokens = { input_text: 0, input_audio: 0, output_text: 0, output_audio: 0, thoughts: 0 };
@@ -37,6 +38,8 @@ export function providerCost(records: UsageRecord[], expected: string[], fx: Exc
     for (const { usage: u } of rows) {
       const add = (details: unknown, direction: "input" | "output", total: unknown) => {
         if (!Array.isArray(details)) {
+          // Text-only models report no output breakdown; their output can only be text.
+          if (direction === "output" && rates && !rates.output_audio && Number(total) > 0) { tokens.output_text += Number(total); return; }
           if (Number(total) > 0) missing.push(`${direction}_modality_breakdown_missing`);
           return;
         }
@@ -86,10 +89,22 @@ export class NavigationAccounting {
   }
   async finish() {
     await this.pending;
-    const summary = { ...providerCost(this.records, this.expected, await this.fx), raw_usage_persisted: !this.storageFailed, metered_units: this.units };
+    const fx = await this.fx;
+    const summary = { ...providerCost(this.records, this.expected, fx), raw_usage_persisted: !this.storageFailed, metered_units: this.units,
+      ...estimates(this.units, this.records, fx) };
     if (this.storageFailed) summary.status = "partial";
     await this.db.prepare("INSERT OR REPLACE INTO navigation_call_costs(call_id,profile_id,computed_at,summary_json) VALUES(?,?,?,?)")
       .bind(this.callId, this.profileId, new Date().toISOString(), JSON.stringify(summary)).run();
     return summary;
   }
+}
+
+/** Published per-minute prices for streams whose usage may not be reported per event (Live Transcribe). */
+const PER_MINUTE_USD: Record<string, number> = { "transcribe_audio_ms": 0.009 };
+
+/** Estimated cost of metered streams with no provider token report, kept apart from the reported subtotal. */
+export function estimates(units: Record<string, number>, records: UsageRecord[], fx: ExchangeRate | null) {
+  const reported = records.some((r) => r.model.replace(/^models\//, "") === "gemini-3.5-transcribe-live");
+  const usd = reported ? 0 : Object.entries(PER_MINUTE_USD).reduce((n, [unit, rate]) => n + (units[unit] ?? 0) / 60000 * rate, 0);
+  return usd ? { estimated_unreported_usd: usd, estimated_unreported_ils: fx ? usd * fx.usd_ils : null, estimate_basis: "published blended Live Transcribe rate ~$0.009/min x streamed audio" } : {};
 }

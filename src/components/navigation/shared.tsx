@@ -163,7 +163,7 @@ export function SettingsForm({ load, save }: { load: () => Promise<Row>; save: (
   );
   return (
     <div className="nav-form-grid">
-      {select("navigation_voice", "מצב שיחת ניווט", [["engine", "מנוע קבוע (הנחיות קצרות, זול)"], ["gemini", "Gemini מדבר (שיחה חופשית)"]])}
+      {select("navigation_voice", "מצב שיחת ניווט", [["engine", "מנוע קבוע (הנחיות קצרות, זול)"], ["gemini", "Gemini מדבר (שיחה חופשית)"], ["text", "טקסט זול (תמלול ומודל קטן, הכי זול)"]])}
       {select("voice", "קול (במצב Gemini)", [["Charon", "Charon — גברי"], ["Puck", "Puck — גברי"], ["Fenrir", "Fenrir — גברי"], ["Aoede", "Aoede — נשי"], ["Kore", "Kore — נשי"]])}
       {select("navigation_interrupt", "קטיעה בזמן תשובה", [["stop_word", "רק במילת עצירה (״רגע״, ״עצור״, ״שקט״)"], ["speech", "בכל דיבור"]])}
       {state && <small role="status">{state}</small>}

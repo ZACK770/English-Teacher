@@ -470,6 +470,7 @@ export const BotsView: React.FC = () => {
                   >
                     <option value="engine">מנוע קבוע: משפטים מוגדרים מראש בקול Google (זול)</option>
                     <option value="gemini">Gemini מדבר: Gemini מנהל את השיחה ומקבל נתונים חיים</option>
+                    <option value="text">טקסט זול: תמלול Gemini ומודל טקסט קטן, הנחיות בקול Google (הכי זול)</option>
                   </select>
                 </div>
 
