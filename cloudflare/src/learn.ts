@@ -84,8 +84,10 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const startedAt = new Date();
   let result: LiveResult | null = null;
   try {
-    await progress.savePromptSnapshot(botId, callId, artifact);
-    if (controls.store_transcripts) await progress.logTurn(botId, callId, "input", text);
+    if (controls.store_transcripts) {
+      await progress.savePromptSnapshot(botId, callId, artifact);
+      await progress.logTurn(botId, callId, "input", text);
+    }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
     result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts);
   } catch (error) {

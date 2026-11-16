@@ -10,6 +10,7 @@ import { ProgressStore } from "../src/progress";
 import { startSchool } from "../src/pbx";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
+import { GeminiLive } from "../src/gemini";
 import worker from "../src/index";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
@@ -172,6 +173,21 @@ describe("real learner portal", () => {
     expect(await (await request("/v1/portal/sessions/private-call/transcript")).json()).toEqual({ transcript: null });
     const a = await (await request("/v1/portal/me")).json() as any;
     expect(a.progress.sessions[0].call_id).toBe("private-call");
+  });
+  it.each([false, true])("honors text transcript opt-in=%s in prompt traces as well as turns", async (enabled) => {
+    await request("/v1/portal/preferences", tokenA, { store_transcripts: enabled });
+    vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValue(new Error("Test model unavailable"));
+    const text = "A private sentence from the learner";
+    const result = await request("/v1/bots/student/turn", tokenA, { text });
+    expect(result.status).toBe(502);
+    const snapshots = db.sql.prepare("SELECT opening_message,setup_json FROM prompt_snapshots").all();
+    expect(snapshots.length).toBe(enabled ? 1 : 0);
+    expect(JSON.stringify(snapshots).includes(text)).toBe(enabled);
+    const turns = db.sql.prepare("SELECT text FROM conversation_turns").all();
+    expect(turns.length).toBe(enabled ? 1 : 0);
+    const session = db.sql.prepare("SELECT transcript_json FROM sessions WHERE student_id='learner-a'").get();
+    expect(session).toBeTruthy();
+    expect(String(session!.transcript_json).includes(text)).toBe(enabled);
   });
   it.each(["", "/english"])("consumes a %s browser voice ticket atomically and forwards only its verified customer", async (prefix) => {
     const created = await (await request("/v1/portal/voice-ticket", tokenA, { bot_id: "student" })).json() as any;
