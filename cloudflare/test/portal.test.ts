@@ -127,6 +127,18 @@ describe("real learner portal", () => {
     expect(c.store_transcripts).toBe(true);
     expect((await progress.loadControls("student", controlsFromSettings(false))).store_transcripts).toBe(false);
   });
+  it("previews the base voice without inheriting a personal teacher using the same bot", async () => {
+    const teacher = await b.save(teachersKind("learner-a"), config);
+    await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });
+    const bot = { id: "student", role: "teacher" } as const;
+    const defaults = controlsFromSettings(false);
+    const base = await applyLearnerControls(b, "learner-a", bot, defaults, "");
+    expect(base.voice).toBe(defaults.voice);
+    expect(base.custom_instructions).not.toContain("Personality: playful");
+    expect((await applyLearnerControls(b, "learner-a", bot, defaults)).voice).toBe("Puck");
+    expect((await applyLearnerControls(b, "learner-a", bot, defaults, teacher.id)).voice).toBe("Puck");
+    expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe(teacher.id);
+  });
   it("updates the active template when preferences or the active word list change", async () => {
     const teacher = await b.save(teachersKind("learner-a"), config);
     await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });

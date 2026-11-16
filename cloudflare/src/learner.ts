@@ -74,7 +74,7 @@ export async function applyLearnerControls(
   const p = await b.loadContext("preferences:" + customerId);
   const privacy = { store_transcripts: p.store_transcripts === true };
   if (bot.role !== "teacher") return { ...controls, ...privacy };
-  const raw = await b.record(teachersKind(customerId), previewTeacher || p.active_teacher || "");
+  const raw = await b.record(teachersKind(customerId), previewTeacher ?? p.active_teacher ?? "");
   const parsed = TeacherSchema.safeParse(raw);
   if (previewTeacher && !parsed.success) throw new HttpError(404, "המורה לא נמצא.");
   const teacher = parsed.success && parsed.data.base_bot === bot.id ? parsed.data : null;
