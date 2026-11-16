@@ -169,7 +169,7 @@ export const LearnerPortal: React.FC = () => {
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
         <fieldset className="sk-content-fieldset" disabled={busy}>
           {page === "home" && renderHome()}
-          {page === "intake" && <Intake initial={p.plan} initialName={p.learner_name || ""} saving={busy} onFinish={async (plan, extra) => { if (await run(async () => {
+          {page === "intake" && <Intake initial={p.plan} initialName={p.learner_name || ""} askPersonality={!account.teachers.length} saving={busy} onFinish={async (plan, extra) => { if (await run(async () => {
             await save({ plan, minutes: plan.minutes, topic: plan.topic, track: "recommended", mode: "free", learner_name: extra.learner_name.trim(), ...(!active && botId ? { selected_bot: botId } : {}) });
             if (!account.teachers.length && defaultBase) {
               const fluent = plan.level === "fluent";
@@ -206,7 +206,7 @@ function Empty({ icon, title, text, action, actionLabel }: { icon: React.ReactNo
   return <div className="sk-empty"><div className="sk-empty-mark">{icon}</div><h2>{title}</h2><p>{text}</p>{action && <button className="sk-primary" onClick={action}>{actionLabel}<ArrowLeft size={16} /></button>}</div>;
 }
 type IntakeExtra = { learner_name: string; personality: string };
-function Intake({ initial, initialName, onFinish, saving }: { initial?: Plan; initialName: string; onFinish: (p: Plan, extra: IntakeExtra) => Promise<void>; saving: boolean }) {
+function Intake({ initial, initialName, askPersonality, onFinish, saving }: { initial?: Plan; initialName: string; askPersonality: boolean; onFinish: (p: Plan, extra: IntakeExtra) => Promise<void>; saving: boolean }) {
   const [step, setStep] = useState(0);
   const [extra, setExtra] = useState<IntakeExtra>({ learner_name: initialName, personality: "warm" });
   const [named, setNamed] = useState(!!initialName);
@@ -218,7 +218,7 @@ function Intake({ initial, initialName, onFinish, saving }: { initial?: Plan; in
     { key: "goal", title: "בשביל מה האנגלית שלך?", sub: "לא למבחן. לחיים שלך.", values: { work: "בשביל העבודה", travel: "בשביל החו״ל", study: "בשביל הלימודים" } },
     { key: "level", title: "איפה אתה היום?", sub: "אין כאן תשובה לא נכונה.", values: { beginner: "ממש בהתחלה", intermediate: "מסתדר איכשהו", fluent: "מדבר, רוצה לדייק" } },
     { key: "difficulty", title: "איפה זה נתקע?", sub: "שם בדיוק נתחיל.", values: { speaking: "כשצריך לדבר", listening: "כשמדברים אליי", writing: "כשצריך לכתוב" } },
-    { key: "personality", title: "איזה מורה יעשה לך טוב?", sub: "אפשר להחליף מתי שבא לך.", values: personalities },
+    ...(askPersonality ? [{ key: "personality", title: "איזה מורה יעשה לך טוב?", sub: "אפשר להחליף מתי שבא לך.", values: personalities }] : []),
     { key: "minutes", title: "כמה זמן יש לך?", sub: "גם חמש דקות הן התחלה של משהו.", values: { "5": "חמש דקות", "10": "עשר דקות", "20": "עשרים דקות" } },
   ];
   const choose = (key: string, value: string) => { if (key === "personality") setExtra(x => ({ ...x, personality: value })); else setPlan(p => ({ ...p, [key]: key === "minutes" ? Number(value) : value })); setStep(n => n + 1); };

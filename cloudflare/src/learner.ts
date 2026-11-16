@@ -33,6 +33,7 @@ export const PlanSchema = z.object({
   topic: z.enum(["everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars"]),
 });
 export const DEFAULT_TEACHER_NAME = "מאיה";
+export const PHONE_SIGNUP_NAME = "לקוח מהטלפון";
 export const LearnerPreferencesSchema = z.object({
   learner_name: z.string().trim().max(40).optional(),
   selected_bot: z.string().max(63).optional(),
@@ -107,7 +108,8 @@ export async function applyLearnerControls(
   if (previewTeacher && !parsed.success) throw new HttpError(404, "המורה לא נמצא.");
   const teacher = parsed.success && parsed.data.base_bot === bot.id ? parsed.data : null;
   const customer = await b.record("customers", customerId);
-  const learnerName = String(p.learner_name || customer?.name || "").trim().slice(0, 40);
+  const customerName = String(customer?.name || "").trim();
+  const learnerName = String(p.learner_name || (customerName === PHONE_SIGNUP_NAME ? "" : customerName)).trim().slice(0, 40);
   const plan = PlanSchema.safeParse(p.plan);
   const topic = teacher?.topic || p.topic || (plan.success ? plan.data.topic : "everyday");
   const materialId = teacher?.material_id || p.material_id;

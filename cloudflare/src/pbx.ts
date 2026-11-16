@@ -131,17 +131,23 @@ async function chooseLearnerTeacher(b: BusinessStore, progress: ProgressStore, s
     const teacher = own.find((t) => t.id === selected);
     const bot = teacher ? teacher.base_bot : selected === "default" ? fallback : null;
     if (bot) {
-      await b.savePreference(customerId, { active_teacher: teacher ? teacher.id : "", selected_bot: bot, mode: "free" });
+      const copied = teacher ? Object.fromEntries(["pace", "corrections", "topic", "material_id", "level", "conversation_mode", "learning_load", "correction_policy", "closing_activity"].filter((k) => teacher[k] !== undefined).map((k) => [k, teacher[k]])) : {};
+      await b.savePreference(customerId, { ...copied, active_teacher: teacher ? teacher.id : "", selected_bot: bot, mode: "free" });
       return startSchool(b, progress, s, callId, customerId, bot);
     }
   }
   if (choice === "0") return { type: "goTo", goTo: extensionPath(s.projectPath, "/2"), removeParams: ["isaacBotChoice", "isaacTeacher"] };
   if (choice === "ERROR") return { type: "hangup" };
-  const options = [...own.slice(0, 7).map((t) => ({ id: String(t.id), name: String(t.name) })), ...(fallback ? [{ id: "default", name: DEFAULT_TEACHER_NAME + " מצוות ספיקול" }] : [])];
-  const mapping = Object.fromEntries(options.map((o, i) => [String(i + 1), o.id]));
-  await b.saveContext(callId, { teacher_choices: mapping, teacher_offset: 0 });
-  const content = options.length ? "בחרו מורה. " + options.map((o, i) => `ל${o.name} הקישו ${i + 1}.`).join(" ") : "אין מורה זמין כרגע.";
-  return menu("isaacBotChoice", content + " לחזרה הקישו 0.", [...Object.keys(mapping), "0"].join(","));
+  const options = [...own.map((t) => ({ id: String(t.id), name: String(t.name) })), ...(fallback ? [{ id: "default", name: DEFAULT_TEACHER_NAME + " מצוות ספיקול" }] : [])];
+  let offset = choice === "9" ? Number(context.teacher_offset ?? 0) + 8 : 0;
+  if (offset >= options.length) offset = 0;
+  const page = options.slice(offset, offset + 8);
+  const more = options.length > 8;
+  const mapping = Object.fromEntries(page.map((o, i) => [String(i + 1), o.id]));
+  await b.saveContext(callId, { teacher_choices: mapping, teacher_offset: offset });
+  let content = page.length ? "בחרו מורה. " + page.map((o, i) => `ל${o.name} הקישו ${i + 1}.`).join(" ") : "אין מורה זמין כרגע.";
+  if (more) content += " למורים נוספים הקישו 9.";
+  return menu("isaacBotChoice", content + " לחזרה הקישו 0.", [...Object.keys(mapping), ...(more ? ["9"] : []), "0"].join(","));
 }
 
 export async function runtimeContext(b: BusinessStore, callId: string): Promise<string> {

@@ -230,7 +230,7 @@ describe("real learner portal", () => {
     expect(listed).toContain("לDana הקישו 1");
     expect(listed).toContain("למאיה מצוות ספיקול הקישו 2");
     expect((await call("pick", "&isaacBotChoice=1")).goTo).toBe("/7");
-    expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe(teacher.id);
+    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ active_teacher: teacher.id, topic: "business", pace: "slow" });
     const named = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(named.custom_instructions).toContain('"Dana"');
     expect(named.custom_instructions).toContain('"Learner A"');
@@ -239,6 +239,13 @@ describe("real learner portal", () => {
     expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe("");
     const fallback = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(fallback.custom_instructions).toContain('"מאיה"');
+    for (let i = 0; i < 9; i++) await b.save(teachersKind("learner-a"), { ...config, name: "T" + i });
+    const first = JSON.stringify(await call("paged"));
+    expect(first).toContain("למורים נוספים הקישו 9");
+    expect(JSON.stringify(await call("paged", "&isaacBotChoice=9"))).toContain("מאיה מצוות ספיקול");
+    await b.save("customers", { name: "לקוח מהטלפון", phone: "0500000003", source: "missed-call", preferred_bot: "", notes: "" }, "learner-c");
+    const anon = await applyLearnerControls(b, "learner-c", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(anon.custom_instructions).toContain("name is unknown");
   });
   it("does not let another learner select, preview, or delete a private teacher or read a word list", async () => {
     const teacher = await b.save(teachersKind("learner-a"), config);
