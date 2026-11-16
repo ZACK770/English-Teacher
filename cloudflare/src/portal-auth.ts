@@ -3,6 +3,19 @@ import { BusinessStore, normalizedPhone } from "./business";
 import { type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex, tokenUrlsafe } from "./env";
 import { learnerBody, requireLearner } from "./learner";
 
+export function cleanupPortalAuth(env: Env) {
+  const now = Date.now();
+  const iso = new Date(now).toISOString();
+  return env.DB.batch([
+    env.DB.prepare("DELETE FROM console_settings WHERE (id LIKE 'portal-auth:%' OR id LIKE 'voice-ticket:%') AND json_extract(body,'$.expires')<?").bind(now),
+    env.DB.prepare(`DELETE FROM api_quota WHERE
+      (api GLOB 'portal-ring:day:????-??-??' AND substr(api,-10)<?) OR
+      (api GLOB 'portal-ring:*:????-??-??T??' AND substr(api,-13)<?) OR
+      (api GLOB 'portal-ring:*:????-??-??T??:??' AND substr(api,-16)<?)`)
+      .bind(iso.slice(0, 10), iso.slice(0, 13), iso.slice(0, 16)),
+  ]);
+}
+
 // Technoline's documented caller-ID verification action; never modifies the PBX tree.
 async function ring(env: Env, phone: string, code: string) {
   const url = new URL("https://api.tlivr.com/ivrFilesApi.php");

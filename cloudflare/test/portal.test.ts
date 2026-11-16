@@ -11,6 +11,7 @@ import { startSchool } from "../src/pbx";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
+import { cleanupPortalAuth } from "../src/portal-auth";
 import worker from "../src/index";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
@@ -75,6 +76,20 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("real learner portal", () => {
+  it("cleans expired login quota windows without resetting active or unrelated quotas", async () => {
+    const now = Date.parse("2027-01-01T10:15:30Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const expired = ["portal-ring:phone:abc:2027-01-01T10:14", "portal-ring:phone:abc:2027-01-01T09", "portal-ring:ip:abc:2026-12-31T23", "portal-ring:day:2026-12-31"];
+    const active = ["portal-ring:phone:abc:2027-01-01T10:15", "portal-ring:phone:abc:2027-01-01T10", "portal-ring:ip:abc:2027-01-01T10", "portal-ring:day:2027-01-01", "portal-ring:ip:abc:2027-01-01T11", "portal-voice-preview", "gemini"];
+    for (const key of [...expired, ...active]) db.sql.prepare("INSERT INTO api_quota VALUES (?,?,?)").run("2026-12", key, 3);
+    await b.putSetting("portal-auth:expired", { expires: now - 1 });
+    await b.putSetting("voice-ticket:expired", { expires: now - 1 });
+    await b.putSetting("portal-auth:current", { expires: now + 60000 });
+    await cleanupPortalAuth(env);
+    expect(db.sql.prepare("SELECT api FROM api_quota").all().map(r => r.api).sort()).toEqual(active.sort());
+    expect(db.sql.prepare("SELECT SUM(used) AS used FROM api_quota").get()?.used).toBe(active.length * 3);
+    expect(db.sql.prepare("SELECT id FROM console_settings").all().map(r => r.id)).toEqual(["portal-auth:current"]);
+  });
   it("serves authenticated JSON before the static SPA fallback", async () => {
     const r = await request("/v1/portal/me");
     expect(r.status).toBe(200);

@@ -6,7 +6,7 @@ import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { dispatchCallbacks, submitCallback } from "./callbacks";
 import { learnerVoice } from "./learner";
-import { phoneAuthStatus, portalAuth } from "./portal-auth";
+import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -118,6 +118,6 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
-    ctx.waitUntil(env.DB.prepare("DELETE FROM console_settings WHERE (id LIKE 'portal-auth:%' OR id LIKE 'voice-ticket:%') AND json_extract(body,'$.expires')<?").bind(Date.now()).run());
+    ctx.waitUntil(cleanupPortalAuth(env));
   },
 };
