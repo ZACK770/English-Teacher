@@ -8,7 +8,7 @@ import { SpeakoolLanding } from './components/portal/SpeakoolLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
 
 export const AppContent: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy' | 'home'>('learn');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy' | 'home'>(() => !location.hash && !/\/(learn|join|dashboard)/.test(location.pathname) ? 'home' : 'learn');
   const [dashboardTab, setDashboardTab] = useState('overview');
 
   // Sync hash routing
