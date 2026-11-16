@@ -67,3 +67,28 @@
 @media(max-width:960px){.sk-shell.has-side{grid-template-columns:86px minmax(0,1fr)}.sk-sidenav button>span,.sk-side-out>span,.sk-side .sk-brand>span{display:none}.sk-sidenav button,.sk-side-out{justify-content:center}.has-side .sk-main{padding:34px 28px}.sk-hero{grid-template-columns:1fr}.sk-hero-art{display:none}}
 @media(max-width:640px){.sk-shell.has-side{display:block}.sk-side{position:sticky;top:0;z-index:5;height:auto;flex-direction:row;align-items:center;gap:4px;padding:10px;background:var(--paper);border:0;border-bottom:1px solid var(--line);overflow-x:auto}.sk-side .sk-brand{padding:0 6px}.sk-sidenav{flex-direction:row;gap:2px}.sk-sidenav button,.sk-side-out{padding:11px}.sk-side-out{margin:0}.has-side .sk-main{padding:24px 18px 40px}.sk-page-heading h1{font-size:31px}.sk-page-heading p{font-size:17px}.sk-hero{padding:28px 22px}.sk-hero h2{font-size:40px}.sk-hero p{font-size:17px}.sk-metrics{gap:8px}.sk-metric{padding:16px 14px}.sk-metric strong{font-size:32px}.sk-metric span{font-size:15px}.sk-dash-bottom{grid-template-columns:1fr}.speakool .sk-history-row time,.speakool .sk-history-row>small{font-size:14px}.speakool .sk-primary{width:100%}}
 .speakool .sk-more,.speakool .sk-more summary{font-size:15px!important}.speakool .sk-login-form label{font-size:17px}.speakool .sk-header{border-bottom:0}
+
+/* Pulse inner screens */
+.speakool .sk-learning-progress{max-width:980px}
+.speakool .sk-learning-progress>h2{font-size:30px;line-height:1.2}
+.speakool .sk-learning-progress>h3{font-size:24px}
+.speakool .sk-learning-progress>p,.speakool .sk-learning-progress aside p{font-size:18px;color:var(--quiet)}
+.speakool .sk-learning-progress aside strong{font-size:18px}
+.speakool .sk-domain-card{border-radius:var(--radius);padding:20px;gap:10px}
+.speakool .sk-domain-card strong{font-size:20px}
+.speakool .sk-domain-card .sk-domain-count{font-size:17px;color:var(--quiet)}
+.speakool .sk-domain-count b{font-size:34px;font-weight:400;color:var(--accent);margin-left:4px}
+.speakool .sk-domain-card small{font-size:15px;color:var(--quiet)}
+.speakool .sk-domain-card meter{height:8px;border-radius:8px;-webkit-appearance:none;appearance:none;background:var(--line)}
+.speakool .sk-domain-card meter::-webkit-meter-bar{background:var(--line);border:0;border-radius:8px;height:8px}
+.speakool .sk-domain-card meter::-webkit-meter-optimum-value,.speakool .sk-domain-card meter::-webkit-meter-suboptimum-value,.speakool .sk-domain-card meter::-webkit-meter-even-less-good-value{background:var(--accent);border-radius:8px}
+.speakool .sk-domain-card meter::-moz-meter-bar{background:var(--accent);border-radius:8px}
+.speakool .sk-target-row strong{font-size:20px}
+.speakool .sk-target-row small{font-size:15px;color:var(--quiet)}
+.speakool .sk-target-row>span:last-child strong{font-size:26px;color:var(--accent);font-weight:400}
+.speakool .sk-learning-progress select{font-size:17px;min-height:50px}
+.speakool .sk-persistence{font-size:17px;gap:24px}
+.speakool .sk-material-card p,.speakool .sk-material-card small,.speakool .sk-teacher-card p{font-size:16px}
+.speakool .sk-history-row{font-size:18px}
+.speakool .sk-history-row time,.speakool .sk-history-row>small{font-size:16px}
+.speakool .sk-setting-row label small,.speakool .sk-setting summary small{font-size:15px}
