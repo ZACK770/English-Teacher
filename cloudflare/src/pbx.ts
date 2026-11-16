@@ -24,7 +24,7 @@ export const menu = (name: string, content: string, keys: string): IVRResponse =
   type: "simpleMenu", name, enabledKeys: keys, times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ text: content }],
 });
 const REMOVE = ["isaacMain", "isaacTeacher", "isaacTranslation", "isaacLanguage", "isaacSales", "isaacQuota", "isaacBasicMode", "isaacAdvancedMode", "isaacThanks", "isaacMessage", "FILEID_isaacMessage", "isaacBotChoice", "isaacMode", "isaacOptions"];
-export const streamTarget = (base: string): IVRResponse => ({ type: "goTo", goTo: extensionPath(base, "/1"), removeParams: REMOVE });
+export const streamTarget = (base: string): IVRResponse => ({ type: "goTo", goTo: extensionPath(base, "/7"), removeParams: REMOVE });
 
 export function ivrResponse(route: string, p: Record<string, string>, copy: IVRCopy, base: string): IVRResponse {
   const go = (suffix = ""): IVRResponse => ({ type: "goTo", goTo: extensionPath(base, suffix), removeParams: REMOVE });
@@ -32,7 +32,7 @@ export function ivrResponse(route: string, p: Record<string, string>, copy: IVRC
   const routes: Record<string, [string, string, string, Record<string, string>]> = {
     main: ["isaacMain", copy.welcome, "1,2,9,3,4,5", { "1": "/1", "2": "/2", "9": "/2", "3": "/3", "4": "/4", "5": "/6" }],
     options: ["isaacOptions", copy.options, "0,1,2,3,4,6", { "0": "", "1": "/2/1", "2": "/2/2", "3": "/3", "4": "/4", "6": "/6" }],
-    school: ["isaacTeacher", copy.school, "0,1,2,3,9", { "0": "", "1": "/1", "2": "/3", "3": "/4", "9": "/2" }],
+    school: ["isaacTeacher", copy.school, "0,1,2,3,9", { "0": "", "1": "/7", "2": "/3", "3": "/4", "9": "/2" }],
     translator: ["isaacTranslation", copy.translator, "0,1,2,9", { "0": "", "1": "/2/1", "2": "/1", "9": "/2/9", START: "/2/1" }],
     languages: ["isaacLanguage", copy.languages, "0,1,2,3,4,5,6,7", { "0": "/9", ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((i) => [String(i), "/2/1"])) }],
     sales: ["isaacSales", copy.sales, "0,1", { "0": "", "1": "/4" }],
