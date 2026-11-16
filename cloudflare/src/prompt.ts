@@ -4,6 +4,7 @@ import { buildSystemInstruction, type TutorControls } from "./controls";
 import { learningTool } from "./learning";
 import {
   END_SESSION_TOOL,
+  INTAKE_TOOL,
   LESSON_SUMMARY_TOOL,
   OBSERVATION_TOOL,
   TRANSLATION_LANGUAGE_TOOL,
@@ -31,7 +32,7 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
   if (c.transcription_language_codes.length) inputTranscription.languageCodes = c.transcription_language_codes;
   if (c.custom_vocabulary.length) inputTranscription.customVocabulary = c.custom_vocabulary;
   const tools: Record<string, unknown>[] = c.lesson
-    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL]
+    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL]
     : [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL, TRANSLATION_LANGUAGE_TOOL];
   return {
     setup: {

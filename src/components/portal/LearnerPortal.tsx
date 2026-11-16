@@ -9,7 +9,9 @@ import "./portal.css";
 type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan";
 const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "בקצב טבעי", fast: "אפשר להגביר" };
 const personalities: Record<string, string> = { warm: "חם ומעודד", focused: "ישר לעניין", playful: "עם חיוך" };
-const DEFAULT_NAME = "מאיה";
+const DEFAULT_NAME = "דוד";
+const FEMALE_NAME = "אסתי";
+const isFemale = (voice?: string) => ["Aoede", "Kore", "Leda", "Zephyr", "Callirrhoe", "Autonoe", "Despina", "Erinome", "Laomedeia", "Achernar", "Gacrux", "Pulcherrima", "Vindemiatrix", "Sulafat"].includes(voice || "");
 const voices = [{ value: "Aoede", label: "רך ובהיר" }, { value: "Puck", label: "קליל וחם" }, { value: "Charon", label: "עמוק ורגוע" }];
 const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day: "numeric", month: "long", timeZone: "Asia/Jerusalem" });
 
@@ -38,9 +40,25 @@ function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: b
     <circle cx="82" cy="232" r="3" fill="currentColor" /><circle cx="277" cy="301" r="3" fill="currentColor" />
       </svg>;
 }
+const markBg = ["#d4ff3f", "#7cc7ff", "#ffb86b", "#c9a7ff", "#5be3b5"];
+const markShirt = ["#1f3a5f", "#3b2f63", "#0f4c45", "#5a2a35", "#2d3b1f"];
+const markScarf = ["#e2557a", "#3c7dd9", "#8a5cf6", "#f0a030", "#16a37f"];
 function TeacherMark({ teacher, index = 0 }: { teacher?: Teacher; index?: number }) {
   const seed = teacher ? [...teacher.name].reduce((n, c) => n + c.charCodeAt(0), 0) : index;
-  return <svg className={"sk-teacher-mark shape-" + seed % 3} viewBox="0 0 100 100" aria-hidden="true"><circle cx="39" cy="46" r="26" /><rect x="43" y="26" width="41" height="48" rx={seed % 3 === 0 ? 21 : 4} transform={`rotate(${seed % 2 ? 16 : -14} 63 50)`} /><path d="M28 48h17m18 0h9" /></svg>;
+  const female = isFemale(teacher?.voice);
+  const pick = (list: string[]) => list[seed % list.length];
+  return <svg className="sk-avatar-mark" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="50" cy="50" r="48" fill={pick(markBg)} />
+    <path d="M17 97c3-20 16-30 33-30s30 10 33 30z" fill={pick(markShirt)} />
+    <path d="M43 60h14v10a7 7 0 0 1-14 0z" fill="#e2b48e" />
+    {female && <path d="M28 50c0-18 9-29 22-29s22 11 22 29c0 7-2 12-5 15-1-15-7-26-17-26s-16 11-17 26c-3-3-5-8-5-15z" fill={pick(markScarf)} />}
+    <ellipse cx="50" cy="46" rx="16" ry="19" fill="#f2c9a5" />
+    {female ? <><path d="M33 40c2-11 9-16 17-16s15 5 17 16c-5-5-10-7-17-7s-12 2-17 7z" fill={pick(markScarf)} /><circle cx="70" cy="60" r="5" fill={pick(markScarf)} /></>
+      : <><path d="M34 42c0-13 7-19 16-19s16 6 16 19c-3-6-8-9-16-9s-13 3-16 9z" fill="#2b2118" /><path d="M34 49c1 12 8 18 16 18s15-6 16-18c-3 4-9 6-16 6s-13-2-16-6z" fill="#3a2c20" /><path d="M41 25a9 5 0 0 1 18 0z" fill="#14161a" /></>}
+    <circle cx="44" cy="45" r="1.9" fill="#1d1d1f" /><circle cx="56" cy="45" r="1.9" fill="#1d1d1f" />
+    {seed % 2 === 1 && <g fill="none" stroke="#14161a" strokeWidth="1.6"><circle cx="44" cy="45" r="5" /><circle cx="56" cy="45" r="5" /><path d="M49 45h2" /></g>}
+    <path d="M45 54q5 3.5 10 0" stroke={female ? "#b5485a" : "#f2c9a5"} strokeWidth="2" fill="none" strokeLinecap="round" />
+  </svg>;
 }
 function Modal({ title, children, onClose, error, busy }: { title: string; children: React.ReactNode; onClose: () => void; error?: string; busy?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -173,10 +191,11 @@ export const LearnerPortal: React.FC = () => {
             await save({ plan, minutes: plan.minutes, topic: plan.topic, track: "recommended", mode: "free", learner_name: extra.learner_name.trim(), ...(!active && botId ? { selected_bot: botId } : {}) });
             if (!account.teachers.length && defaultBase) {
               const fluent = plan.level === "fluent";
-              const created = await portalRequest<Teacher>("/v1/portal/teachers", token, { name: DEFAULT_NAME, base_bot: defaultBase.id, personality: extra.personality, voice: "Aoede", explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, material_id: "", level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });
+              const female = extra.teacher_gender === "female";
+              const created = await portalRequest<Teacher>("/v1/portal/teachers", token, { name: female ? FEMALE_NAME : DEFAULT_NAME, base_bot: defaultBase.id, personality: extra.personality, voice: female ? "Aoede" : "Puck", explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, material_id: "", level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });
               await save({ active_teacher: created.id });
             }
-          }, account.teachers.length ? "התוכנית שלך מחכה גם בטלפון." : "הכרנו לך את " + DEFAULT_NAME + ". היא כבר מחכה בטלפון.")) navigate("plan"); }} />}
+          }, account.teachers.length ? "התוכנית שלך מחכה גם בטלפון." : (extra.teacher_gender === "female" ? "הכרנו לך את " + FEMALE_NAME + ". היא כבר מחכה בטלפון." : "הכרנו לך את " + DEFAULT_NAME + ". הוא כבר מחכה בטלפון."))) navigate("plan"); }} />}
           {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "everyday"]}<span className="sk-accent">, בוא נדבר.</span></h2><p>{teacherName} · {p.minutes || p.plan?.minutes || 10} דקות בכל פעם</p><p>רמת השיעור: {levelNames[(p.level || "beginner") as keyof typeof levelNames]} · {modeNames[(p.conversation_mode || "guided") as keyof typeof modeNames]}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />התחל בטלפון</button><button className="sk-link" onClick={() => talk()}>התחל כאן <ArrowUpLeft size={15} /></button></div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button></div><ConversationArt /></div>}
           {page === "teachers" && <>
             <div className="sk-section-intro"><p>כל מורה, שילוב אחר. רק אחד מקבל את השיחה הבאה שלך.</p><button className="sk-secondary" onClick={() => setBuilder(true)} disabled={!baseTeachers.length}><Plus size={16} />מורה חדש</button></div>
@@ -205,10 +224,10 @@ export const LearnerPortal: React.FC = () => {
 function Empty({ icon, title, text, action, actionLabel }: { icon: React.ReactNode; title: string; text: string; action?: () => void; actionLabel?: string }) {
   return <div className="sk-empty"><div className="sk-empty-mark">{icon}</div><h2>{title}</h2><p>{text}</p>{action && <button className="sk-primary" onClick={action}>{actionLabel}<ArrowLeft size={16} /></button>}</div>;
 }
-type IntakeExtra = { learner_name: string; personality: string };
+type IntakeExtra = { learner_name: string; personality: string; teacher_gender: string };
 function Intake({ initial, initialName, askPersonality, onFinish, saving }: { initial?: Plan; initialName: string; askPersonality: boolean; onFinish: (p: Plan, extra: IntakeExtra) => Promise<void>; saving: boolean }) {
   const [step, setStep] = useState(0);
-  const [extra, setExtra] = useState<IntakeExtra>({ learner_name: initialName, personality: "warm" });
+  const [extra, setExtra] = useState<IntakeExtra>({ learner_name: initialName, personality: "warm", teacher_gender: "male" });
   const [named, setNamed] = useState(!!initialName);
   const [plan, setPlan] = useState<Plan>(initial || { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "travel" });
   const [thinking, setThinking] = useState(false);
@@ -218,10 +237,10 @@ function Intake({ initial, initialName, askPersonality, onFinish, saving }: { in
     { key: "goal", title: "בשביל מה האנגלית שלך?", sub: "לא למבחן. לחיים שלך.", values: { work: "בשביל העבודה", travel: "בשביל החו״ל", study: "בשביל הלימודים" } },
     { key: "level", title: "איפה אתה היום?", sub: "אין כאן תשובה לא נכונה.", values: { beginner: "ממש בהתחלה", intermediate: "מסתדר איכשהו", fluent: "מדבר, רוצה לדייק" } },
     { key: "difficulty", title: "איפה זה נתקע?", sub: "שם בדיוק נתחיל.", values: { speaking: "כשצריך לדבר", listening: "כשמדברים אליי", writing: "כשצריך לכתוב" } },
-    ...(askPersonality ? [{ key: "personality", title: "איזה מורה יעשה לך טוב?", sub: "אפשר להחליף מתי שבא לך.", values: personalities }] : []),
+    ...(askPersonality ? [{ key: "personality", title: "איזה מורה יעשה לך טוב?", sub: "אפשר להחליף מתי שבא לך.", values: personalities }, { key: "teacher_gender", title: "עם מי נוח לך יותר?", sub: "נתאים את הקול והשם.", values: { male: "עם מורה", female: "עם מורָה" } }] : []),
     { key: "minutes", title: "כמה זמן יש לך?", sub: "גם חמש דקות הן התחלה של משהו.", values: { "5": "חמש דקות", "10": "עשר דקות", "20": "עשרים דקות" } },
   ];
-  const choose = (key: string, value: string) => { if (key === "personality") setExtra(x => ({ ...x, personality: value })); else setPlan(p => ({ ...p, [key]: key === "minutes" ? Number(value) : value })); setStep(n => n + 1); };
+  const choose = (key: string, value: string) => { if (key === "personality" || key === "teacher_gender") setExtra(x => ({ ...x, [key]: value })); else setPlan(p => ({ ...p, [key]: key === "minutes" ? Number(value) : value })); setStep(n => n + 1); };
   const finish = (topic: string) => {
     const next = { ...plan, topic }; setPlan(next); setThinking(true);
     timeout.current = setTimeout(() => { void onFinish(next, extra).finally(() => setThinking(false)); }, 1600);
@@ -230,7 +249,7 @@ function Intake({ initial, initialName, askPersonality, onFinish, saving }: { in
   if (!named) return <section className="sk-step-card"><h2>איך לקרוא לך?</h2><p>ככה המורה יפנה אליך.</p><form className="sk-name-form" onSubmit={e => { e.preventDefault(); setNamed(true); }}><input aria-label="השם שלך" maxLength={40} value={extra.learner_name} onChange={e => setExtra(x => ({ ...x, learner_name: e.target.value }))} placeholder="השם הפרטי שלך" autoFocus /><button className="sk-primary" type="submit">{extra.learner_name.trim() ? "נעים מאוד" : "אולי אחר כך"}</button></form></section>;
   const q = questions[step];
   const total = questions.length + 1;
-  return <section className="sk-step-card"><div className="sk-step-top"><span>{step + 1} / {total}</span><div className="sk-step-dots">{Array.from({ length: total }, (_, n) => n).map(n => <i className={n <= step ? "is-done" : ""} key={n} />)}</div></div><h2>{q?.title || "על מה בא לך לדבר?"}</h2><p>{q?.sub || "משהו שתוכל להשתמש בו כבר מחר."}</p>{q ? <Options value={q.key === "personality" ? extra.personality : String(plan[q.key as keyof Plan])} values={q.values as Record<string, string>} onChange={v => choose(q.key, v)} /> : <TopicPicker value={plan.topic} onChange={finish} recommended={plan.goal === "work" ? ["business", "property", "everyday"] : plan.goal === "study" ? ["academic", "medicine", "everyday"] : ["travel", "flights", "everyday"]} />}{step === 0 && <button className="sk-quiet-link" onClick={() => choose("goal", "other")}>משהו אחר <MoreHorizontal size={14} /></button>}{step > 0 && <button className="sk-quiet-link" onClick={() => setStep(n => n - 1)}><ArrowRight size={13} />רגע, אחורה</button>}</section>;
+  return <section className="sk-step-card"><div className="sk-step-top"><span>{step + 1} / {total}</span><div className="sk-step-dots">{Array.from({ length: total }, (_, n) => n).map(n => <i className={n <= step ? "is-done" : ""} key={n} />)}</div></div><h2>{q?.title || "על מה בא לך לדבר?"}</h2><p>{q?.sub || "משהו שתוכל להשתמש בו כבר מחר."}</p>{q ? <Options value={q.key === "personality" || q.key === "teacher_gender" ? extra[q.key] : String(plan[q.key as keyof Plan])} values={q.values as Record<string, string>} onChange={v => choose(q.key, v)} /> : <TopicPicker value={plan.topic} onChange={finish} recommended={plan.goal === "work" ? ["business", "property", "everyday"] : plan.goal === "study" ? ["academic", "medicine", "everyday"] : ["travel", "flights", "everyday"]} />}{step === 0 && <button className="sk-quiet-link" onClick={() => choose("goal", "other")}>משהו אחר <MoreHorizontal size={14} /></button>}{step > 0 && <button className="sk-quiet-link" onClick={() => setStep(n => n - 1)}><ArrowRight size={13} />רגע, אחורה</button>}</section>;
 }
 
 function TeacherBuilder({ defaultBot, materials, onSave, onPreview }: { defaultBot: string; materials: Material[]; onSave: (t: Omit<Teacher, "id">) => Promise<void>; onPreview: (v: string) => void }) {

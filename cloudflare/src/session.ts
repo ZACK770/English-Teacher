@@ -10,7 +10,7 @@ import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
-import { applyLearnerControls } from "./learner";
+import { applyLearnerControls, saveIntake } from "./learner";
 import { LearningStore } from "./learning";
 
 export class TutorSession {
@@ -53,6 +53,8 @@ export class TutorSession {
   private settling = false;
   private closingSent = false;
   private lessonDurationMs = 0;
+  private allowanceMs = 0;
+  private finalSent = false;
   private b: BusinessStore;
   private progress: ProgressStore;
 
@@ -164,8 +166,9 @@ export class TutorSession {
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
         await this.latency("learning_plan_ready", { vocabulary_targets: this.controls.lesson.vocabulary.length, grammar_targets: this.controls.lesson.grammar.length, material_rows: this.controls.lesson.material_status?.rows ?? null, material_targets: this.controls.lesson.material_status?.target_count ?? null });
-        this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
       }
+      this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
+      this.allowanceMs = allowance.seconds * 1000;
       hardLimit = setTimeout(() => {
         if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
         this.stop("hard_time_limit");
@@ -342,6 +345,7 @@ export class TutorSession {
       }
     }
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
+    if (call.name === "save_intake") return saveIntake(this.b, this.customerId, this.profileId, args);
     if (call.name === "end_session") {
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
@@ -378,12 +382,16 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
-      if (this.controls?.lesson && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
+      if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
-          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, propose and begin the configured closing " + this.controls.lesson.closing_activity + ". Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
+          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
           this.closingSent = true;
         }
+      }
+      if (this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
+        this.ai?.addContext("APPLICATION CLOCK: about 20 seconds remain before the line closes. If not done yet, save the results and lesson summary now, then say one short warm goodbye in Hebrew.");
+        this.finalSent = true;
       }
       await sleep(500, this.abort.signal);
     }

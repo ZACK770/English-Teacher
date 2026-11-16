@@ -15,6 +15,7 @@ export const PackageSchema = z.object({
   minutes: z.number().int().min(1).max(100000),
   price_ils: z.number().min(0).max(100000),
   validity_days: z.number().int().min(1).max(3650).default(30),
+  max_call_minutes: z.number().int().min(1).max(60).default(5),
   active: z.boolean().default(false),
   phone_enabled: z.boolean().default(true),
 });
@@ -240,7 +241,8 @@ export class BusinessStore {
     for (const receipt of receipts) {
       const remaining = receipt.minutes * 60 - receipt.spent;
       if (remaining >= 1) {
-        const seconds = Math.min(maxSeconds, remaining);
+        const pkg = PackageSchema.safeParse(await this.record("packages", receipt.package_id));
+        const seconds = Math.min(maxSeconds, remaining, pkg.success ? pkg.data.max_call_minutes * 60 : maxSeconds);
         await insert(policy.product, receipt.id, seconds);
         return { seconds, mode: "paid" };
       }

@@ -183,7 +183,7 @@ describe("learner settings to Gemini", () => {
     expect(instruction).toContain("Do not describe a prompted repetition as independent success");
     expect(instruction.indexOf("SPEAKOOL ACTIVE LESSON")).toBeGreaterThan(instruction.indexOf("Old notes:"));
     expect(instruction.match(/SPEAKOOL ACTIVE LESSON/g)).toHaveLength(1);
-    expect(buildSetupPayload(controls, instruction, "teacher", settings({} as any)).setup.tools[0].functionDeclarations.map(t => t.name)).toEqual(["record_lesson_summary", "end_session"]);
+    expect(buildSetupPayload(controls, instruction, "teacher", settings({} as any)).setup.tools[0].functionDeclarations.map(t => t.name)).toEqual(["record_lesson_summary", "end_session", "save_intake"]);
     expect((await b.loadContext("preferences:alice")).material_id).toBe("hebrew");
   });
   it.each(["he-IL", "en-US"])("keeps technical speech language %s unchanged when changing ability and mode", async language_code => {
@@ -195,7 +195,7 @@ describe("learner settings to Gemini", () => {
     expect(buildSystemInstruction(controls, "")).toContain("Explain in Hebrew only when asked");
     const payload = buildSetupPayload(controls, "test", "isaac-advanced", settings({} as any));
     const tools = payload.setup.tools[0].functionDeclarations;
-    expect(tools.map(t => t.name)).toEqual(["report_learning_batch", "record_lesson_summary", "end_session"]);
+    expect(tools.map(t => t.name)).toEqual(["report_learning_batch", "record_lesson_summary", "end_session", "save_intake"]);
     expect(JSON.stringify(tools)).not.toContain("business.liability");
   });
   it("does not add grammar to recommended practice and only sends its targets when explicitly selected", async () => {

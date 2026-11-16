@@ -72,6 +72,25 @@ export const LESSON_SUMMARY_TOOL = {
   }
 };
 
+export const INTAKE_TOOL = {
+  "name": "save_intake",
+  "description": "Save the first-call intake answers once, before the lesson starts.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "learner_name": { "type": "string", "description": "The learner's first name as they said it" },
+      "goal": { "type": "string", "enum": ["work", "travel", "study", "other"] },
+      "level": { "type": "string", "enum": ["beginner", "intermediate", "fluent"] },
+      "difficulty": { "type": "string", "enum": ["speaking", "listening", "writing"] },
+      "minutes": { "type": "integer", "enum": [5, 10, 20] },
+      "topic": { "type": "string", "enum": ["everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars"] },
+      "personality": { "type": "string", "enum": ["warm", "focused", "playful"] },
+      "teacher_gender": { "type": "string", "enum": ["male", "female"] }
+    },
+    "required": ["goal", "level", "difficulty", "minutes", "topic"]
+  }
+};
+
 export const END_SESSION_TOOL = {
   "name": "end_session",
   "description": "Finish generating the entire spoken summary and final goodbye BEFORE calling. Then end this AI session when the caller asks to stop or the permitted task is done. The server will play all buffered speech before hanging up or transferring. Do not leave a finished conversation running. The server controls phone disposition.",
