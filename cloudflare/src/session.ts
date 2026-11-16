@@ -6,7 +6,7 @@ import { adultControls, controlsFromSettings, type TutorControls } from "./contr
 import { type Env, type Settings, bearer, extensionPath, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
 import { SessionMeter } from "./meter";
-import { markQuickIntro, quickOpening, runtimeContext } from "./pbx";
+import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
@@ -105,7 +105,12 @@ export class TutorSession {
       if (shared) {
         const start = parseStartFrame(raw, this.s.routerChannels);
         profileId = (await this.b.loadContext(start.callId)).selected_bot;
-        if (!profileId) throw new Error("Select a bot in IVR first");
+        if (!profileId) {
+          const customerId = await this.b.identifyCall(start.caller || "private", start.callId, "ivr");
+          await startSchool(this.b, this.progress, this.s, start.callId, customerId);
+          profileId = (await this.b.loadContext(start.callId)).selected_bot;
+        }
+        if (!profileId) throw new Error("No phone teacher available");
       }
       if (!profileId) {
         const bots = await this.progress.listBots();
@@ -339,7 +344,7 @@ export class TutorSession {
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name === "end_session") {
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
-      const destinations: Record<string, string> = { main: "", school: "/1", translator: "/2", options: "/9" };
+      const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
       if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);
       this.reason = "model:" + reason;
       return true;

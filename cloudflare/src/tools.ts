@@ -94,7 +94,7 @@ export const END_SESSION_TOOL = {
           "translator",
           "options"
         ],
-        "description": "Explicit Dibura telephone navigation only; omit to end normally."
+        "description": "Explicit Speakool telephone navigation only; omit to end normally."
       }
     },
     "required": [

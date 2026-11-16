@@ -213,11 +213,12 @@ describe("real learner portal", () => {
   });
   it("routes a root-menu system and the existing /99 system with their own extension bases", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575,0765674434", TLIVR_PROJECT_PATH: "/99,/" } as Env;
-    const call = (phone: string, path: string, id: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/main?key=cb&PBXcallId=${id}&PBXnum=${phone}&PBXextensionPath=${encodeURIComponent(path)}&PBXphone=private${extra}`), pbxEnv, settings(pbxEnv), "main");
-    expect((await call("0765674434", "/", "root-call", "&isaacMain=1")).goTo).toBe("/7");
+    const call = (phone: string, path: string, id: string, extra = "", route = "main") => handleCallback(new Request(`https://x/v1/technoline/ivr/main?key=cb&PBXcallId=${id}&PBXnum=${phone}&PBXextensionPath=${encodeURIComponent(path)}&PBXphone=private${extra}`), pbxEnv, settings(pbxEnv), route);
+    expect((await call("0765674434", "/", "root-call", "&isaacMain=1")).goTo).toBe("/1");
     expect((await b.loadContext("root-call")).pbx_base).toBe("/");
-    expect((await call("0765674434", "/", "root-menu", "&isaacMain=9")).goTo).toBe("/9");
-    expect((await call("0765673575", "/99", "old-call", "&isaacMain=1")).goTo).toBe("/99/7");
+    expect((await call("0765674434", "/", "root-menu", "&isaacMain=2")).goTo).toBe("/2");
+    expect((await call("0765674434", "/2", "root-area", "&isaacOptions=1", "options")).goTo).toBe("/2/1");
+    expect((await call("0765673575", "/99", "old-call", "&isaacMain=1")).goTo).toBe("/99/1");
     await expect(call("0765673575", "/5", "taxi-call")).rejects.toMatchObject({ status: 403 });
     await expect(call("0700000000", "/", "foreign-call")).rejects.toMatchObject({ status: 400 });
   });
