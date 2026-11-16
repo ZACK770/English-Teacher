@@ -192,6 +192,7 @@ export class TutorSession {
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
         ai.startGreeting(this.controls.opening_message);
+        if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
         await this.latency("greeting_sent");
         clearTimeout(hardLimit);
         hardLimit = setTimeout(() => {
@@ -345,7 +346,11 @@ export class TutorSession {
       }
     }
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
-    if (call.name === "save_intake") return saveIntake(this.b, this.customerId, this.profileId, args);
+    if (call.name === "save_intake") {
+      const saved = await saveIntake(this.b, this.customerId, this.profileId, args);
+      if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
+      return saved;
+    }
     if (call.name === "end_session") {
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };

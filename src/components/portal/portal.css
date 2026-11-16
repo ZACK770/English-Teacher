@@ -98,3 +98,5 @@
 
 .speakool .sk-avatar-mark{width:96px;height:96px;display:block;filter:drop-shadow(0 10px 24px #0006)}
 .speakool .sk-teacher-art{display:flex;justify-content:center;padding:6px 0}
+
+.speakool .sk-access{margin:18px 0 0;padding:14px 18px;border:1px solid var(--line);border-radius:6px;background:var(--card);font-size:15px}.speakool .sk-access strong{font-weight:600}.speakool .sk-access a{color:var(--accent);font-weight:600}.speakool .sk-access.is-empty{border-color:var(--accent);background:#fbefe9}

@@ -80,7 +80,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
               const message = JSON.parse(event.data);
               if (message.type === "ready") { setConnected(true); setState("אפשר לדבר. אנחנו מקשיבים."); }
               if (message.type === "hangup" && ["call_failed", "access_blocked"].includes(message.reason)) {
-                serverError = message.reason === "access_blocked" ? "אין כרגע יתרת דקות לשיחה. אפשר להוסיף דקות דרך הקו." : "השיחה לא התחברה. אפשר לנסות שוב או להתקשר לקו.";
+                serverError = message.reason === "access_blocked" ? "שיחות הטעימה נוצלו ואין דקות בחבילה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3." : "השיחה לא התחברה. אפשר לנסות שוב או להתקשר לקו.";
                 setError(serverError);
               }
             } catch { /* Optional status frames do not affect audio. */ }

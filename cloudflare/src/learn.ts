@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { applyLearnerControls } from "./learner";
+import { applyLearnerControls, saveIntake } from "./learner";
 import { downsample24kTo8k, b64encode, concat, wav } from "./audio";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
@@ -13,7 +13,7 @@ import { LearningStore } from "./learning";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; startedAt: number | null }
 
-async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
+async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>, intake?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -44,7 +44,8 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
         let end = false;
         for (const call of event.calls) {
           end ||= call.name === "end_session";
-          const saved = call.name === "report_learning_batch" ? await learning?.(call.args ?? {}) ?? false
+          const saved = call.name === "save_intake" ? await intake?.(call.args ?? {}) ?? false
+            : call.name === "report_learning_batch" ? await learning?.(call.args ?? {}) ?? false
             : call.name === "record_learning_observation" && learning ? false : end || meter.recordLearning(call.name ?? "", call.args ?? {});
           ai.submitToolResult(call, saved);
         }
@@ -94,7 +95,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
       await progress.logTurn(botId, callId, "input", text);
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
-    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined);
+    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined, args => saveIntake(b, customerId, botId, args));
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });

@@ -43,7 +43,7 @@ function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: b
 const markBg = ["#d4ff3f", "#7cc7ff", "#ffb86b", "#c9a7ff", "#5be3b5"];
 const markShirt = ["#1f3a5f", "#3b2f63", "#0f4c45", "#5a2a35", "#2d3b1f"];
 const markScarf = ["#e2557a", "#3c7dd9", "#8a5cf6", "#f0a030", "#16a37f"];
-function TeacherMark({ teacher, index = 0 }: { teacher?: Teacher; index?: number }) {
+export function TeacherMark({ teacher, index = 0 }: { teacher?: Teacher; index?: number }) {
   const seed = teacher ? [...teacher.name].reduce((n, c) => n + c.charCodeAt(0), 0) : index;
   const female = isFemale(teacher?.voice);
   const pick = (list: string[]) => list[seed % list.length];
@@ -174,6 +174,7 @@ export const LearnerPortal: React.FC = () => {
       <div className="sk-metric"><strong>{account.progress.session_count}</strong><span>שיחות עד היום</span></div>
       <div className="sk-metric"><strong>{practiceDays(account.progress.sessions)}</strong><span>ימי תרגול לאחרונה</span></div>
     </div>
+    <AccessNotice account={account} />
     <div className="sk-dash-bottom">
       {lastLesson ? <button className="sk-panel-card" onClick={() => navigate("history")}><strong>השיחה האחרונה</strong><p>{lastLesson.summary_he || "עוד שיחה קטנה באנגלית."}</p><p className="sk-accent-text">הצעד הבא: {lastLesson.next_step_he || "ממשיכים לדבר."}</p></button>
         : <button className="sk-panel-card" onClick={() => navigate("teachers")}><strong>{teacherName}</strong><p>המורה שמחכה לך בטלפון. אפשר להחליף מתי שבא לך.</p></button>}
@@ -327,4 +328,14 @@ function PhoneLinks({ account, token, onRefresh }: { account: Account; token: st
     finally { setBusy(false); }
   };
   return <div><p>המספר הראשי: <bdi>{account.customer.phone}</bdi></p>{account.phones.map(p => <div className="sk-setting-row" key={p.id}><bdi>{p.phone}</bdi><button type="button" className="sk-link" onClick={async () => { if (confirm("לנתק את המספר מהחשבון?")) { try { await portalRequest("/v1/portal/phones/" + p.id, token, undefined, "DELETE"); await onRefresh(); } catch (e) { setError(e instanceof Error ? e.message : "לא הצלחנו לנתק את המספר."); } } }}>ניתוק</button></div>)}{!adding ? <button type="button" className="sk-link" onClick={() => setAdding(true)}><Plus size={15} />לחבר עוד טלפון</button> : <div><label>{challenge ? "שש הספרות האחרונות של המספר שצלצל" : "איזה מספר נחבר?"}<input type={challenge ? "text" : "tel"} dir="ltr" inputMode={challenge ? "numeric" : "tel"} maxLength={challenge ? 6 : 30} value={challenge ? code : phone} onChange={e => challenge ? setCode(e.target.value.replace(/\D/g, "")) : setPhone(e.target.value)} /></label><button type="button" className="sk-secondary" disabled={busy || (challenge ? code.length !== 6 : phone.length < 9)} onClick={() => void submit()}>{busy ? "רק רגע…" : challenge ? "לחבר לחשבון" : "שלחו לי צלצול"}</button><button type="button" className="sk-quiet-link" onClick={() => { setAdding(false); setChallenge(""); }}>ביטול</button></div>}{error && <p className="sk-error" role="alert">{error}</p>}</div>;
+}
+
+export const PHONE_LINE = "076-5673575";
+function AccessNotice({ account }: { account: Account }) {
+  const a = account.access;
+  if (!a?.limited) return null;
+  const minutes = remainingMinutes(account);
+  if (minutes > 0) return <p role="status" className="sk-access"><strong>מסלול {a.plan_name || "פעיל"}</strong> · נשארו {minutes} דקות · עד {a.max_call_minutes || 5} דקות בכל שיחה. בסוף כל שיחה המורה מסכם ושומר הכול.</p>;
+  if (a.free_calls_left > 0) return <p role="status" className="sk-access"><strong>מסלול טעימה</strong> · נשארו לך {a.free_calls_left} שיחות החודש, עד {a.free_call_minutes} דקות כל אחת. רוצה יותר? <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE}, מקש 3</a></p>;
+  return <p role="alert" className="sk-access is-empty"><strong>שיחות הטעימה של החודש נוצלו.</strong> כל מה שלמדת שמור. כדי להמשיך עכשיו: <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE} והקישו 3</a> לבחירת מסלול.</p>;
 }

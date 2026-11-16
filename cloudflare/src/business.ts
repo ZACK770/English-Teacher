@@ -16,6 +16,7 @@ export const PackageSchema = z.object({
   price_ils: z.number().min(0).max(100000),
   validity_days: z.number().int().min(1).max(3650).default(30),
   max_call_minutes: z.number().int().min(1).max(60).default(5),
+  tagline: z.string().max(120).default(""),
   active: z.boolean().default(false),
   phone_enabled: z.boolean().default(true),
 });
@@ -302,7 +303,26 @@ export class BusinessStore {
         LEFT JOIN sessions ON c.call_id=sessions.call_id WHERE c.customer_id=? AND ${SCHOOL_CALL_FILTER} AND ${SCHOOL_SESSION_FILTER} ORDER BY c.created_at DESC LIMIT 50`).bind(customerId),
     ]);
     const customer = (await this.list("customers")).find((c) => c.id === customerId) ?? { ...body, id: customerId };
-    return { customer, receipts: receipts.results, calls: calls.results };
+    return { customer, receipts: receipts.results, calls: calls.results, access: await this.accessSummary(customerId, receipts.results) };
+  }
+
+  async accessSummary(customerId: string, receipts: Record<string, any>[]) {
+    const policy = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).find((p) => p.enabled && p.product === "school");
+    if (!policy) return { limited: false, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    const used = await this.db
+      .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)`)
+      .bind(customerId, "school", month() + "%")
+      .first<{ n: number }>();
+    const now = nowIso();
+    const live = receipts.find((r) => r.product === "school" && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
+    const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
+    return {
+      limited: true,
+      free_calls_left: customerId.startsWith("anonymous-") ? 0 : Math.max(0, policy.free_calls_month - (used?.n ?? 0)),
+      free_call_minutes: Math.round(policy.free_call_seconds / 60),
+      plan_name: pkg?.success ? pkg.data.name.split(" · ")[0] : "",
+      max_call_minutes: pkg?.success ? pkg.data.max_call_minutes : 0,
+    };
   }
 
   async portalInvite(customerId: string) {
