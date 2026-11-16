@@ -9,10 +9,11 @@ import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
+import { LearningStore } from "./learning";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; startedAt: number | null }
 
-async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true): Promise<LiveResult> {
+async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -43,7 +44,9 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
         let end = false;
         for (const call of event.calls) {
           end ||= call.name === "end_session";
-          ai.submitToolResult(call, end || meter.recordLearning(call.name ?? "", call.args ?? {}));
+          const saved = call.name === "report_learning_batch" ? await learning?.(call.args ?? {}) ?? false
+            : call.name === "record_learning_observation" && learning ? false : end || meter.recordLearning(call.name ?? "", call.args ?? {});
+          ai.submitToolResult(call, saved);
         }
         if (end) break;
       } else if (event.type === "turn_complete") { meter.tutorTurns = 1; break; }
@@ -77,6 +80,8 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const allowance = await b.reserveCall(customerId, botId, callId, 120);
   if (!allowance.seconds) throw new HttpError(402, "אין יתרת שימוש זמינה. פנה לשירות לרכישת חבילה");
   await b.registerWebCall(callId, customerId, botId);
+  const learning = new LearningStore(env.DB);
+  if (controls.lesson) await learning.begin(customerId, callId, controls.lesson);
   let history = (await progress.lessonContext(customerId)) + (await b.lessonContext(customerId, botId));
   await b.saveContext(callId, await b.loadContext("preferences:" + customerId));
   history += "\n" + (await runtimeContext(b, callId));
@@ -89,7 +94,8 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
       await progress.logTurn(botId, callId, "input", text);
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
-    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts);
+    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined);
+    if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");

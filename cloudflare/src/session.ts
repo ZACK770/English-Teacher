@@ -11,6 +11,7 @@ import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls } from "./learner";
+import { LearningStore } from "./learning";
 
 export class TutorSession {
   readonly meter = new SessionMeter();
@@ -40,6 +41,8 @@ export class TutorSession {
   private firstSent = false;
   private learnerSeen = false;
   private settling = false;
+  private closingSent = false;
+  private lessonDurationMs = 0;
   private b: BusinessStore;
   private progress: ProgressStore;
 
@@ -131,7 +134,7 @@ export class TutorSession {
       this.controls = await this.progress.loadControls(profileId, defaults);
       this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId);
       const opening = await quickOpening(this.b, this.callId);
-      if (opening) this.controls = { ...this.controls, opening_message: opening };
+      if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson ? " Follow the active Speakool lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
@@ -140,6 +143,10 @@ export class TutorSession {
         this.returnPath = allowance.extension ?? null;
         this.reason = "access_blocked";
         return;
+      }
+      if (this.controls.lesson) {
+        await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
+        this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
       }
       hardLimit = setTimeout(() => {
         if (this.profileId.startsWith("isaac-")) this.returnPath = this.s.projectPath + "/8";
@@ -277,6 +284,9 @@ export class TutorSession {
         this.learnerSeen = false;
         this.firstAudio = false;
         await this.latency("tutor_turn_complete", { tutor_turn: this.meter.tutorTurns });
+        if (this.controls?.lesson) {
+          await new LearningStore(this.env.DB).exposures(this.customerId, this.callId, this.controls.lesson.vocabulary, this.meter.transcript.filter(t => t.role === "tutor").map(t => t.text).join(" "));
+        }
       } else if (event.type === "usage") this.meter.recordUsage(event.usage);
       else if (event.type === "tool_call") {
         for (const call of event.calls) {
@@ -302,6 +312,16 @@ export class TutorSession {
 
   private async recordTool(call: ToolCall): Promise<boolean> {
     const args = call.args ?? {};
+    if (call.name === "report_learning_batch") {
+      if (!this.controls?.lesson) return false;
+      try {
+        return await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
+      } catch {
+        await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_failed");
+        return false;
+      }
+    }
+    if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name === "end_session") {
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       const destinations: Record<string, string> = { main: "", school: "/1", translator: "/2", options: "/9" };
@@ -338,6 +358,13 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
+      if (this.controls?.lesson && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
+        const target = this.lessonDurationMs;
+        if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
+          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, propose and begin the configured closing " + this.controls.lesson.closing_activity + ". Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
+          this.closingSent = true;
+        }
+      }
       await sleep(500, this.abort.signal);
     }
   }

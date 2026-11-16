@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { LessonPlan } from "./learning";
 import {
   DEFAULT_ADULT_OPENING_MESSAGE,
   DEFAULT_ADULT_TUTOR_PROMPT,
@@ -63,7 +64,7 @@ export const TutorControlsSchema = z
   })
   .refine((c) => c.context_target_tokens < c.context_trigger_tokens, "context target must be smaller than trigger");
 
-export type TutorControls = z.output<typeof TutorControlsSchema>;
+export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan };
 
 export function controlsFromSettings(storeTranscripts: boolean): TutorControls {
   return TutorControlsSchema.parse({ store_transcripts: storeTranscripts });

@@ -1,7 +1,8 @@
 export type Plan = { goal: string; level: string; difficulty: string; minutes: number; topic: string };
-export type Teacher = { id: string; name: string; base_bot: string; personality: string; voice: string; explanation: string; pace: string; corrections: string; topic: string; material_id: string };
+export type LessonSettings = { level?: string; conversation_mode?: string; learning_load?: string; correction_policy?: string; closing_activity?: string };
+export type Teacher = LessonSettings & { id: string; name: string; base_bot: string; personality: string; voice: string; explanation: string; pace: string; corrections: string; topic: string; material_id: string };
 export type Material = { id: string; name: string; words: string[] };
-export type Preferences = { selected_bot?: string; active_teacher?: string; pace?: string; corrections?: string; minutes?: number; language?: string; track?: string; topic?: string; material_id?: string; store_transcripts?: boolean; plan?: Plan; mode?: string };
+export type Preferences = LessonSettings & { selected_bot?: string; active_teacher?: string; pace?: string; corrections?: string; minutes?: number; language?: string; track?: string; topic?: string; material_id?: string; store_transcripts?: boolean; plan?: Plan; mode?: string; grammar_targets?: string[] };
 export type Lesson = { call_id: string; started_at: string; duration_seconds: number; summary_he: string; success_he: string; next_step_he: string; points: number; observations: { skill: string; result: string; correction: string; score: number }[] };
 export type Account = {
   customer: { id: string; name: string; phone: string; preferred_bot: string };

@@ -13,6 +13,7 @@ import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
 import { cleanupPortalAuth } from "../src/portal-auth";
 import worker from "../src/index";
+import { LearningStore } from "../src/learning";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -76,6 +77,53 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("real learner portal", () => {
+  it("shares effective learning settings with the personal teacher and scopes learning history to the authenticated learner", async () => {
+    const teacher = await (await request("/v1/portal/teachers", tokenA, { ...config, level: "intermediate", conversation_mode: "conversation", learning_load: "normal", correction_policy: "after_activity", closing_activity: "quiz" })).json() as any;
+    await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });
+    await request("/v1/portal/preferences", tokenA, { level: "beginner", conversation_mode: "roleplay", correction_policy: "on_request", learning_load: "light", closing_activity: "roleplay" });
+    const saved = await b.record(teachersKind("learner-a"), teacher.id);
+    expect(saved).toMatchObject({ level: "beginner", conversation_mode: "roleplay", correction_policy: "on_request", learning_load: "light" });
+    const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    const store = new LearningStore(env.DB);
+    await store.begin("learner-a", "assessed-call", c.lesson!);
+    const word = c.lesson!.vocabulary[0];
+    expect(await store.record("learner-a", "assessed-call", { activity_id: "practice-1", vocabulary: [{ word_id: word.id, score: 100 }] })).toBe(true);
+    const report = await (await request("/english/v1/portal/learning")).json() as any;
+    expect(report.items.find((t: any) => t.id === word.id)).toMatchObject({ score: 100, attempts: 1 });
+    expect((await request("/v1/portal/learning", "invalid")).status).toBe(401);
+    const url = "/v1/portal/learning/history?kind=vocabulary&id=" + encodeURIComponent(word.id);
+    expect((await (await request(url)).json() as any).history).toHaveLength(1);
+    expect((await (await request(url, tokenB)).json() as any).history).toEqual([]);
+    const other = await (await request("/v1/portal/learning", tokenB)).json() as any;
+    expect(other.items.find((t: any) => t.id === word.id).score).toBe(null);
+    expect((await request("/v1/portal/learning/history?kind=unknown&id=a")).status).toBe(422);
+  });
+  it("routes live assessment calls directly to persistence and rejects legacy observations in targeted lessons", async () => {
+    const controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    await new LearningStore(env.DB).begin("learner-a", "live-call", controls.lesson!);
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
+    session.controls = controls; session.customerId = "learner-a"; session.callId = "live-call";
+    const target = controls.lesson!.vocabulary[0].id;
+    expect(await session.recordTool({ name: "report_learning_batch", args: { activity_id: "practice-1", vocabulary: [{ word_id: target, score: 50 }] } })).toBe(true);
+    expect(await session.recordTool({ name: "record_learning_observation", args: { skill: "vocabulary", result: "test", correction: "", score: 5 } })).toBe(false);
+    expect((await new LearningStore(env.DB).history("learner-a", "vocabulary", target))[0]).toMatchObject({ score: 50 });
+  });
+  it("signals a closing activity once from the server clock, without ending the call", async () => {
+    vi.useFakeTimers();
+    try {
+      const controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+      const addContext = vi.fn();
+      const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
+      session.controls = controls; session.ai = { addContext, close: vi.fn() };
+      session.lessonDurationMs = 120000; session.meteredAt = Date.now() - 90000;
+      const running = session.watchdog().catch(() => {});
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(addContext).toHaveBeenCalledOnce();
+      expect(addContext.mock.calls[0][0]).toContain("closing roleplay");
+      expect(session.reason).toBe("");
+      session.stop(); await running;
+    } finally { vi.useRealTimers(); }
+  });
   it("cleans expired login quota windows without resetting active or unrelated quotas", async () => {
     const now = Date.parse("2027-01-01T10:15:30Z");
     vi.spyOn(Date, "now").mockReturnValue(now);
@@ -139,7 +187,9 @@ describe("real learner portal", () => {
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.target_lesson_minutes).toBe(5);
     expect(c.ending_policy).toBe("after_target_with_permission");
-    expect(c.custom_instructions).toContain("40% spelling");
+    expect(c.lesson?.level).toBe("beginner");
+    expect(c.custom_instructions).toContain("Dedicated grammar practice OFF");
+    expect(c.custom_instructions).not.toContain("20% grammar");
     expect(c.store_transcripts).toBe(true);
     expect((await progress.loadControls("student", controlsFromSettings(false))).store_transcripts).toBe(false);
   });
