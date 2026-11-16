@@ -3,6 +3,7 @@ import { BusinessStore } from "./business";
 import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
 import { ProgressStore } from "./progress";
+import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
@@ -93,6 +94,7 @@ export async function startTranslation(b: BusinessStore, progress: ProgressStore
 }
 
 async function chooseTeacher(b: BusinessStore, progress: ProgressStore, s: Settings, p: Record<string, string>, callId: string, customerId: string, other = false) {
+  if (!other) return chooseLearnerTeacher(b, progress, s, p, callId, customerId);
   const context = await b.loadContext(callId);
   const choice = p.isaacBotChoice;
   const selected = context.teacher_choices?.[choice];
@@ -116,6 +118,30 @@ async function chooseTeacher(b: BusinessStore, progress: ProgressStore, s: Setti
   if (bots.length > 8) content += " למורים נוספים הקישו 9.";
   if (!bots.length) content = "אין מורה זמין כרגע.";
   return menu("isaacBotChoice", content + " לחזרה הקישו 0.", [...Object.keys(mapping), ...(bots.length > 8 ? ["9"] : []), "0"].join(","));
+}
+
+async function chooseLearnerTeacher(b: BusinessStore, progress: ProgressStore, s: Settings, p: Record<string, string>, callId: string, customerId: string) {
+  const context = await b.loadContext(callId);
+  const choice = p.isaacBotChoice;
+  const bots = (await progress.listBots()).filter((bot) => bot.enabled && bot.phone_enabled && bot.role === "teacher");
+  const fallback = (bots.find((bot) => bot.id === "isaac-basic") ?? bots[0])?.id;
+  const own = (await b.list(teachersKind(customerId))).filter((t) => TeacherSchema.safeParse(t).success && bots.some((bot) => bot.id === t.base_bot));
+  const selected = context.teacher_choices?.[choice];
+  if (selected) {
+    const teacher = own.find((t) => t.id === selected);
+    const bot = teacher ? teacher.base_bot : selected === "default" ? fallback : null;
+    if (bot) {
+      await b.savePreference(customerId, { active_teacher: teacher ? teacher.id : "", selected_bot: bot, mode: "free" });
+      return startSchool(b, progress, s, callId, customerId, bot);
+    }
+  }
+  if (choice === "0") return { type: "goTo", goTo: extensionPath(s.projectPath, "/2"), removeParams: ["isaacBotChoice", "isaacTeacher"] };
+  if (choice === "ERROR") return { type: "hangup" };
+  const options = [...own.slice(0, 7).map((t) => ({ id: String(t.id), name: String(t.name) })), ...(fallback ? [{ id: "default", name: DEFAULT_TEACHER_NAME + " מצוות ספיקול" }] : [])];
+  const mapping = Object.fromEntries(options.map((o, i) => [String(i + 1), o.id]));
+  await b.saveContext(callId, { teacher_choices: mapping, teacher_offset: 0 });
+  const content = options.length ? "בחרו מורה. " + options.map((o, i) => `ל${o.name} הקישו ${i + 1}.`).join(" ") : "אין מורה זמין כרגע.";
+  return menu("isaacBotChoice", content + " לחזרה הקישו 0.", [...Object.keys(mapping), "0"].join(","));
 }
 
 export async function runtimeContext(b: BusinessStore, callId: string): Promise<string> {

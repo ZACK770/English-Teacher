@@ -92,3 +92,6 @@
 .speakool .sk-history-row{font-size:18px}
 .speakool .sk-history-row time,.speakool .sk-history-row>small{font-size:16px}
 .speakool .sk-setting-row label small,.speakool .sk-setting summary small{font-size:15px}
+
+.speakool .sk-name-form{display:grid;gap:14px;max-width:420px}
+.speakool .sk-name-form input{font-size:22px;min-height:60px;padding:0 18px;border-radius:var(--radius);border:1px solid var(--line);background:var(--card);color:var(--ink)}

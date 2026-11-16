@@ -9,6 +9,7 @@ import "./portal.css";
 type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan";
 const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "בקצב טבעי", fast: "אפשר להגביר" };
 const personalities: Record<string, string> = { warm: "חם ומעודד", focused: "ישר לעניין", playful: "עם חיוך" };
+const DEFAULT_NAME = "מאיה";
 const voices = [{ value: "Aoede", label: "רך ובהיר" }, { value: "Puck", label: "קליל וחם" }, { value: "Charon", label: "עמוק ורגוע" }];
 const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day: "numeric", month: "long", timeZone: "Asia/Jerusalem" });
 
@@ -120,7 +121,8 @@ export const LearnerPortal: React.FC = () => {
   const activeMaterial = account?.materials.find(m => m.id === (active?.material_id || p.material_id));
   const baseTeachers = account?.bots.filter(b => b.role === "teacher" && b.phone_enabled) || [];
   const botId = [active?.base_bot, p.selected_bot, account?.customer.preferred_bot, "isaac-basic"].find(id => baseTeachers.some(b => b.id === id)) || baseTeachers[0]?.id;
-  const teacherName = active?.name || baseTeachers.find(t => t.id === botId)?.label || "המורה שלך";
+  const defaultBase = baseTeachers.find(b => b.id === "isaac-basic") || baseTeachers[0];
+  const teacherName = active?.name || DEFAULT_NAME;
   const talk = (teacher?: Teacher, bot?: { id: string; label: string }) => {
     const id = teacher?.base_bot || bot?.id || botId;
     if (!id) { setError("עדיין אין מורה זמין לשיחה. אפשר לנסות שוב מאוחר יותר."); return; }
@@ -167,12 +169,19 @@ export const LearnerPortal: React.FC = () => {
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
         <fieldset className="sk-content-fieldset" disabled={busy}>
           {page === "home" && renderHome()}
-          {page === "intake" && <Intake initial={p.plan} saving={busy} onFinish={async plan => { if (await run(async () => { await save({ plan, minutes: plan.minutes, topic: plan.topic, track: "recommended", mode: "free", ...(!active && botId ? { selected_bot: botId } : {}) }); }, "התוכנית שלך מחכה גם בטלפון.")) navigate("plan"); }} />}
+          {page === "intake" && <Intake initial={p.plan} initialName={p.learner_name || ""} saving={busy} onFinish={async (plan, extra) => { if (await run(async () => {
+            await save({ plan, minutes: plan.minutes, topic: plan.topic, track: "recommended", mode: "free", learner_name: extra.learner_name.trim(), ...(!active && botId ? { selected_bot: botId } : {}) });
+            if (!account.teachers.length && defaultBase) {
+              const fluent = plan.level === "fluent";
+              const created = await portalRequest<Teacher>("/v1/portal/teachers", token, { name: DEFAULT_NAME, base_bot: defaultBase.id, personality: extra.personality, voice: "Aoede", explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, material_id: "", level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });
+              await save({ active_teacher: created.id });
+            }
+          }, account.teachers.length ? "התוכנית שלך מחכה גם בטלפון." : "הכרנו לך את " + DEFAULT_NAME + ". היא כבר מחכה בטלפון.")) navigate("plan"); }} />}
           {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "everyday"]}<span className="sk-accent">, בוא נדבר.</span></h2><p>{teacherName} · {p.minutes || p.plan?.minutes || 10} דקות בכל פעם</p><p>רמת השיעור: {levelNames[(p.level || "beginner") as keyof typeof levelNames]} · {modeNames[(p.conversation_mode || "guided") as keyof typeof modeNames]}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />התחל בטלפון</button><button className="sk-link" onClick={() => talk()}>התחל כאן <ArrowUpLeft size={15} /></button></div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button></div><ConversationArt /></div>}
           {page === "teachers" && <>
             <div className="sk-section-intro"><p>כל מורה, שילוב אחר. רק אחד מקבל את השיחה הבאה שלך.</p><button className="sk-secondary" onClick={() => setBuilder(true)} disabled={!baseTeachers.length}><Plus size={16} />מורה חדש</button></div>
             <div className="sk-teacher-grid">{account.teachers.map((teacher, index) => <article key={teacher.id} className={"sk-teacher-card " + (active?.id === teacher.id ? "is-current" : "")}><div className="sk-card-top"><span className="sk-tag">{active?.id === teacher.id ? <><span className="sk-status-dot" />בטלפון שלך</> : personalities[teacher.personality]}</span><IconButton label={"מחיקת " + teacher.name} onClick={() => { if (confirm("למחוק את המורה " + teacher.name + "?")) void run(async () => { await portalRequest("/v1/portal/teachers/" + teacher.id, token, undefined, "DELETE"); }); }}><Trash2 size={15} /></IconButton></div><div className="sk-teacher-art"><TeacherMark teacher={teacher} index={index} /></div><h2>{teacher.name}</h2><p>{paceNames[teacher.pace]} · {topics[teacher.topic] || teacher.topic}</p><button className="sk-primary" onClick={() => talk(teacher)}><Mic size={16} />שוחח עכשיו</button>{active?.id !== teacher.id && <button className="sk-link" onClick={() => void run(() => save({ active_teacher: teacher.id }), "זה המורה שיחכה לך בטלפון.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
-              {baseTeachers.map((bot, index) => <article className={"sk-teacher-card sk-base-teacher " + (!active && botId === bot.id ? "is-current" : "")} key={bot.id}><span className="sk-tag">{!active && botId === bot.id ? "בטלפון שלך" : "מצוות ספיקול"}</span><div className="sk-teacher-art"><TeacherMark index={index} /></div><h2>{bot.label}</h2><p>נקודת פתיחה טובה. פשוט להתחיל.</p><button className="sk-primary" onClick={() => talk(undefined, bot)}><Mic size={16} />שוחח עכשיו</button>{(active || botId !== bot.id) && <button className="sk-link" onClick={() => void run(() => save({ selected_bot: bot.id, active_teacher: "", mode: "free" }), "המורה שלך בטלפון עודכן.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
+              {(defaultBase ? [defaultBase] : []).map((bot, index) => <article className={"sk-teacher-card sk-base-teacher " + (!active && botId === bot.id ? "is-current" : "")} key={bot.id}><span className="sk-tag">{!active && botId === bot.id ? "בטלפון שלך" : "מצוות ספיקול"}</span><div className="sk-teacher-art"><TeacherMark index={index} /></div><h2>{DEFAULT_NAME}</h2><p>נקודת פתיחה טובה. פשוט להתחיל.</p><button className="sk-primary" onClick={() => talk(undefined, { ...bot, label: DEFAULT_NAME })}><Mic size={16} />שוחח עכשיו</button>{(active || botId !== bot.id) && <button className="sk-link" onClick={() => void run(() => save({ selected_bot: bot.id, active_teacher: "", mode: "free" }), "המורה שלך בטלפון עודכן.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
             </div>{!baseTeachers.length && <Empty icon={<Users />} title="המורים עוד לא כאן." text="אין כרגע מורה זמין. אפשר לנסות שוב מאוחר יותר." />}
           </>}
           {page === "materials" && <Materials account={account} onSave={async (name, words) => await run(async () => { const r = await portalRequest<Material>("/v1/portal/materials", token, { name, words }); await save({ material_id: r.id }); setNote(r.target_count === 0 ? "נשמר כחומר לשיחה בלבד; טרם הוכנו יעדי אנגלית למדידה." : "המילים נשמרו. יעדי האנגלית מוכנים לשיחה הבאה."); })} onActivate={id => void run(() => save({ material_id: id }), id ? account.materials.find(m => m.id === id)?.target_count === 0 ? "נבחר חומר לשיחה בלבד, ללא ציוני מילים." : "הרשימה מחכה לשיחה הבאה." : "הרשימה האישית הוסרה מהשיחה הבאה.")} onDelete={id => void run(async () => { await portalRequest("/v1/portal/materials/" + id, token, undefined, "DELETE"); }, "הרשימה נמחקה.")} />}
@@ -196,26 +205,32 @@ export const LearnerPortal: React.FC = () => {
 function Empty({ icon, title, text, action, actionLabel }: { icon: React.ReactNode; title: string; text: string; action?: () => void; actionLabel?: string }) {
   return <div className="sk-empty"><div className="sk-empty-mark">{icon}</div><h2>{title}</h2><p>{text}</p>{action && <button className="sk-primary" onClick={action}>{actionLabel}<ArrowLeft size={16} /></button>}</div>;
 }
-function Intake({ initial, onFinish, saving }: { initial?: Plan; onFinish: (p: Plan) => Promise<void>; saving: boolean }) {
+type IntakeExtra = { learner_name: string; personality: string };
+function Intake({ initial, initialName, onFinish, saving }: { initial?: Plan; initialName: string; onFinish: (p: Plan, extra: IntakeExtra) => Promise<void>; saving: boolean }) {
   const [step, setStep] = useState(0);
+  const [extra, setExtra] = useState<IntakeExtra>({ learner_name: initialName, personality: "warm" });
+  const [named, setNamed] = useState(!!initialName);
   const [plan, setPlan] = useState<Plan>(initial || { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "travel" });
   const [thinking, setThinking] = useState(false);
   const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timeout.current) clearTimeout(timeout.current); }, []);
-  const questions: { key: keyof Plan; title: string; sub: string; values: Record<string, string> }[] = [
+  const questions: { key: string; title: string; sub: string; values: Record<string, string> }[] = [
     { key: "goal", title: "בשביל מה האנגלית שלך?", sub: "לא למבחן. לחיים שלך.", values: { work: "בשביל העבודה", travel: "בשביל החו״ל", study: "בשביל הלימודים" } },
     { key: "level", title: "איפה אתה היום?", sub: "אין כאן תשובה לא נכונה.", values: { beginner: "ממש בהתחלה", intermediate: "מסתדר איכשהו", fluent: "מדבר, רוצה לדייק" } },
     { key: "difficulty", title: "איפה זה נתקע?", sub: "שם בדיוק נתחיל.", values: { speaking: "כשצריך לדבר", listening: "כשמדברים אליי", writing: "כשצריך לכתוב" } },
+    { key: "personality", title: "איזה מורה יעשה לך טוב?", sub: "אפשר להחליף מתי שבא לך.", values: personalities },
     { key: "minutes", title: "כמה זמן יש לך?", sub: "גם חמש דקות הן התחלה של משהו.", values: { "5": "חמש דקות", "10": "עשר דקות", "20": "עשרים דקות" } },
   ];
-  const choose = (key: string, value: string) => { setPlan(p => ({ ...p, [key]: key === "minutes" ? Number(value) : value })); setStep(n => n + 1); };
+  const choose = (key: string, value: string) => { if (key === "personality") setExtra(x => ({ ...x, personality: value })); else setPlan(p => ({ ...p, [key]: key === "minutes" ? Number(value) : value })); setStep(n => n + 1); };
   const finish = (topic: string) => {
     const next = { ...plan, topic }; setPlan(next); setThinking(true);
-    timeout.current = setTimeout(() => { void onFinish(next).finally(() => setThinking(false)); }, 1600);
+    timeout.current = setTimeout(() => { void onFinish(next, extra).finally(() => setThinking(false)); }, 1600);
   };
   if (thinking || saving) return <div className="sk-thinking"><div className="sk-loading-shape" /><h2>מרכיבים לך תוכנית.</h2><p>קצת ממה שצריך. הרבה ממה שבא לך.</p></div>;
+  if (!named) return <section className="sk-step-card"><h2>איך לקרוא לך?</h2><p>ככה המורה יפנה אליך.</p><form className="sk-name-form" onSubmit={e => { e.preventDefault(); setNamed(true); }}><input aria-label="השם שלך" maxLength={40} value={extra.learner_name} onChange={e => setExtra(x => ({ ...x, learner_name: e.target.value }))} placeholder="השם הפרטי שלך" autoFocus /><button className="sk-primary" type="submit">{extra.learner_name.trim() ? "נעים מאוד" : "אולי אחר כך"}</button></form></section>;
   const q = questions[step];
-  return <section className="sk-step-card"><div className="sk-step-top"><span>{step + 1} / 5</span><div className="sk-step-dots">{[0, 1, 2, 3, 4].map(n => <i className={n <= step ? "is-done" : ""} key={n} />)}</div></div><h2>{q?.title || "על מה בא לך לדבר?"}</h2><p>{q?.sub || "משהו שתוכל להשתמש בו כבר מחר."}</p>{q ? <Options value={String(plan[q.key as keyof Plan])} values={q.values as Record<string, string>} onChange={v => choose(q.key, v)} /> : <TopicPicker value={plan.topic} onChange={finish} recommended={plan.goal === "work" ? ["business", "property", "everyday"] : plan.goal === "study" ? ["academic", "medicine", "everyday"] : ["travel", "flights", "everyday"]} />}{step === 0 && <button className="sk-quiet-link" onClick={() => choose("goal", "other")}>משהו אחר <MoreHorizontal size={14} /></button>}{step > 0 && <button className="sk-quiet-link" onClick={() => setStep(n => n - 1)}><ArrowRight size={13} />רגע, אחורה</button>}</section>;
+  const total = questions.length + 1;
+  return <section className="sk-step-card"><div className="sk-step-top"><span>{step + 1} / {total}</span><div className="sk-step-dots">{Array.from({ length: total }, (_, n) => n).map(n => <i className={n <= step ? "is-done" : ""} key={n} />)}</div></div><h2>{q?.title || "על מה בא לך לדבר?"}</h2><p>{q?.sub || "משהו שתוכל להשתמש בו כבר מחר."}</p>{q ? <Options value={q.key === "personality" ? extra.personality : String(plan[q.key as keyof Plan])} values={q.values as Record<string, string>} onChange={v => choose(q.key, v)} /> : <TopicPicker value={plan.topic} onChange={finish} recommended={plan.goal === "work" ? ["business", "property", "everyday"] : plan.goal === "study" ? ["academic", "medicine", "everyday"] : ["travel", "flights", "everyday"]} />}{step === 0 && <button className="sk-quiet-link" onClick={() => choose("goal", "other")}>משהו אחר <MoreHorizontal size={14} /></button>}{step > 0 && <button className="sk-quiet-link" onClick={() => setStep(n => n - 1)}><ArrowRight size={13} />רגע, אחורה</button>}</section>;
 }
 
 function TeacherBuilder({ defaultBot, materials, onSave, onPreview }: { defaultBot: string; materials: Material[]; onSave: (t: Omit<Teacher, "id">) => Promise<void>; onPreview: (v: string) => void }) {

@@ -222,6 +222,24 @@ describe("real learner portal", () => {
     await expect(call("0765673575", "/5", "taxi-call")).rejects.toMatchObject({ status: 403 });
     await expect(call("0700000000", "/", "foreign-call")).rejects.toMatchObject({ status: 400 });
   });
+  it("offers named learner teachers plus a default on the phone and gives the tutor both names", async () => {
+    const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" } as Env;
+    const teacher = await b.save(teachersKind("learner-a"), { ...config, name: "Dana" });
+    const call = (id: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/teachers?key=cb&PBXcallId=${id}&PBXnum=0765673575&PBXextensionPath=%2F2%2F1&PBXphone=0500000001${extra}`), pbxEnv, settings(pbxEnv), "teachers");
+    const listed = JSON.stringify(await call("pick"));
+    expect(listed).toContain("לDana הקישו 1");
+    expect(listed).toContain("למאיה מצוות ספיקול הקישו 2");
+    expect((await call("pick", "&isaacBotChoice=1")).goTo).toBe("/7");
+    expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe(teacher.id);
+    const named = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(named.custom_instructions).toContain('"Dana"');
+    expect(named.custom_instructions).toContain('"Learner A"');
+    await call("pick-default");
+    expect((await call("pick-default", "&isaacBotChoice=2")).goTo).toBe("/7");
+    expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe("");
+    const fallback = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(fallback.custom_instructions).toContain('"מאיה"');
+  });
   it("does not let another learner select, preview, or delete a private teacher or read a word list", async () => {
     const teacher = await b.save(teachersKind("learner-a"), config);
     const material = await b.save(materialsKind("learner-a"), { name: "secret", words: ["private"] });
