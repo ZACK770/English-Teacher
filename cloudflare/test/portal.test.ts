@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
-import { controlsFromSettings } from "../src/controls";
+import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
@@ -96,6 +96,19 @@ describe("real learner portal", () => {
     const other = await (await request("/v1/portal/learning", tokenB)).json() as any;
     expect(other.domains.some((d: any) => d.domain === "material:" + material.id)).toBe(false);
   });
+  it("exposes zero target counts for Hebrew-only material and reports its ungraded lesson without inventing scores", async () => {
+    const material = await (await request("/v1/portal/materials", tokenA, { name: "עבודה", words: ["אני עושה עסקים", "מה נשמע"] })).json() as any;
+    expect(material.target_count).toBe(0);
+    await request("/v1/portal/preferences", tokenA, { material_id: material.id });
+    const me = await (await request("/v1/portal/me")).json() as any;
+    expect(me.materials.find((m: any) => m.id === material.id)).toMatchObject({ target_count: 0, words: ["אני עושה עסקים", "מה נשמע"] });
+    const controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    await new LearningStore(env.DB).begin("learner-a", "ungraded", controls.lesson!);
+    const report = await (await request("/v1/portal/learning")).json() as any;
+    expect(report.last_lesson).toMatchObject({ status: "no_targets", target_count: 0, result_count: 0 });
+    expect(report.items.every((t: any) => t.score === null)).toBe(true);
+    expect((await (await request("/v1/portal/learning", tokenB)).json() as any).last_lesson).toBe(null);
+  });
   it("shares effective learning settings with the personal teacher and scopes learning history to the authenticated learner", async () => {
     const teacher = await (await request("/v1/portal/teachers", tokenA, { ...config, level: "intermediate", conversation_mode: "conversation", learning_load: "normal", correction_policy: "after_activity", closing_activity: "quiz" })).json() as any;
     await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });
@@ -116,6 +129,16 @@ describe("real learner portal", () => {
     const other = await (await request("/v1/portal/learning", tokenB)).json() as any;
     expect(other.items.find((t: any) => t.id === word.id).score).toBe(null);
     expect((await request("/v1/portal/learning/history?kind=unknown&id=a")).status).toBe(422);
+  });
+  it("applies a changed intake level even when the learner and active teacher already have an explicit level", async () => {
+    const teacher = await (await request("/v1/portal/teachers", tokenA, { ...config, level: "beginner", topic: "business" })).json() as any;
+    await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });
+    const plan = { goal: "work", level: "fluent", difficulty: "speaking", minutes: 10, topic: "business" };
+    expect((await request("/v1/portal/preferences", tokenA, { plan })).status).toBe(200);
+    const controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(controls.lesson!.level).toBe("fluent");
+    expect(controls.lesson!.vocabulary.every(t => t.level === "fluent")).toBe(true);
+    expect((await (await request("/v1/portal/me")).json() as any).preferences.level).toBe("fluent");
   });
   it("routes live assessment calls directly to persistence and rejects legacy observations in targeted lessons", async () => {
     const controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
@@ -207,8 +230,8 @@ describe("real learner portal", () => {
     expect(c.target_lesson_minutes).toBe(5);
     expect(c.ending_policy).toBe("after_target_with_permission");
     expect(c.lesson?.level).toBe("beginner");
-    expect(c.custom_instructions).toContain("Dedicated grammar practice OFF");
-    expect(c.custom_instructions).not.toContain("20% grammar");
+    expect(buildSystemInstruction(c, "")).toContain("Dedicated grammar practice OFF");
+    expect(buildSystemInstruction(c, "")).not.toContain("20% grammar");
     expect(c.store_transcripts).toBe(true);
     expect((await progress.loadControls("student", controlsFromSettings(false))).store_transcripts).toBe(false);
   });

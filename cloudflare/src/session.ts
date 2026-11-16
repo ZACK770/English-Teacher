@@ -146,6 +146,7 @@ export class TutorSession {
       }
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
+        await this.latency("learning_plan_ready", { vocabulary_targets: this.controls.lesson.vocabulary.length, grammar_targets: this.controls.lesson.grammar.length, material_rows: this.controls.lesson.material_status?.rows ?? null, material_targets: this.controls.lesson.material_status?.target_count ?? null });
         this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
       }
       hardLimit = setTimeout(() => {
@@ -315,7 +316,9 @@ export class TutorSession {
     if (call.name === "report_learning_batch") {
       if (!this.controls?.lesson) return false;
       try {
-        return await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
+        const saved = await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
+        await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_result", { saved, vocabulary_count: Array.isArray(args.vocabulary) ? args.vocabulary.length : null, grammar_count: Array.isArray(args.grammar) ? args.grammar.length : null }).catch(() => {});
+        return saved;
       } catch {
         await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_failed");
         return false;

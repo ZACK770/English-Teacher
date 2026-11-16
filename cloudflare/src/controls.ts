@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { LessonPlan } from "./learning";
+import { lessonInstruction, type LessonPlan } from "./learning";
 import {
   DEFAULT_ADULT_OPENING_MESSAGE,
   DEFAULT_ADULT_TUTOR_PROMPT,
@@ -100,5 +100,5 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [c.base_prompt.trim(), controls.join("\n"), history.trim()].filter(Boolean).join("\n\n");
+  return [c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
 }

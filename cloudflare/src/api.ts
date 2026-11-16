@@ -3,6 +3,7 @@ import { BusinessStore, EconomicsSchema, MODELS, ReceiptSchema } from "./busines
 import { adultControls, controlsFromSettings, TutorControlsSchema, VOICE_OPTIONS, type TutorControls } from "./controls";
 import { type Env, type Settings, HttpError, paymentsConfigured, secureEqual, sha256Hex, tokenUrlsafe, bearer, settings } from "./env";
 import { learnerRoutes, materialsKind, teachersKind, resolveLessonChoices, TeacherSchema } from "./learner";
+import { materialTargets } from "./learning";
 import { PaymentStore, PREFIX, agorot } from "./payments";
 import { IVRCopySchema, getCopy, narrationForSlot } from "./pbx";
 import { ProgressStore } from "./progress";
@@ -359,7 +360,7 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
     const selectedTeacher = TeacherSchema.safeParse(detail.teachers.find((t: Record<string, any>) => t.id === detail.preferences.active_teacher));
     const selectedBot = selectedTeacher.success ? selectedTeacher.data.base_bot : c.preferred_bot || detail.preferences.teacher_bot || detail.preferences.selected_bot || settings(env).studentId;
     detail.preferences = { ...detail.preferences, ...resolveLessonChoices(detail.preferences, selectedBot, selectedTeacher.success ? selectedTeacher.data : null) };
-    detail.materials = await b.list(materialsKind(customerId));
+    detail.materials = await Promise.all((await b.list(materialsKind(customerId))).map(async material => ({ ...material, target_count: (await materialTargets({ id: material.id, words: material.words })).length })));
     detail.phones = (await env.DB.prepare("SELECT id,body FROM console_records WHERE kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?").bind(customerId).all<{ id: string; body: string }>()).results.map(r => ({ id: r.id, phone: JSON.parse(r.body).phone }));
     const s = settings(env);
     detail.phone = s.systemPhone;

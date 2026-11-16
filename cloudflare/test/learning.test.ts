@@ -5,7 +5,7 @@ import { URL as FileURL } from "node:url";
 import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, vocabularyCatalog, type LessonPlan } from "../src/learning";
 import { BusinessStore } from "../src/business";
 import { applyLearnerControls, LearnerPreferencesSchema } from "../src/learner";
-import { controlsFromSettings } from "../src/controls";
+import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
 
@@ -38,6 +38,17 @@ beforeEach(() => { db = new SqlD1(); store = new LearningStore(db as unknown as 
 afterEach(() => db.sql.close());
 
 describe("targeted learning contract and production SQL", () => {
+  it("distinguishes no lesson, no targets, no evidence and stored results without fabricating grades", async () => {
+    expect((await store.report("alice")).last_lesson).toBe(null);
+    await store.begin("alice", "empty", { ...plan, vocabulary: [] });
+    expect((await store.report("alice")).last_lesson).toMatchObject({ status: "no_targets", target_count: 0, result_count: 0 });
+    await store.begin("alice", "targeted", plan);
+    expect((await store.report("alice")).last_lesson).toMatchObject({ call_id: "targeted", status: "no_evidence", target_count: 3, result_count: 0 });
+    expect((await store.report("alice")).items.every(t => t.score === null)).toBe(true);
+    await store.record("alice", "targeted", result());
+    expect((await store.report("alice")).last_lesson).toMatchObject({ status: "assessed", result_count: 1 });
+    expect((await store.report("bob")).last_lesson).toBe(null);
+  });
   it("persists a batch immediately without waiting for a session summary or disconnect", async () => {
     await store.begin("alice", "call-1", plan);
     expect(await store.record("alice", "call-1", result())).toBe(true);
@@ -45,7 +56,7 @@ describe("targeted learning contract and production SQL", () => {
     const report = await store.report("alice");
     expect(report.items.find(t => t.id === "business.invoice")).toMatchObject({ score: 100, attempts: 1, status: "initial", mastered: false });
     expect(report.items.find(t => t.id === "business.payment")).toMatchObject({ score: null, attempts: 0, status: "unassessed" });
-    expect(report.domains.find(d => d.domain === "business")).toMatchObject({ total: 6, assessed: 1, mastered: 0, coverage: 17, mastery: 0 });
+    expect(report.domains.find(d => d.domain === "business")).toMatchObject({ total: 20, assessed: 1, mastered: 0, coverage: 5, mastery: 0 });
   });
   it("replaces the complete activity atomically, keeping original order and omitting missing rather than zero", async () => {
     await store.begin("alice", "call", plan);
@@ -127,13 +138,61 @@ describe("targeted learning contract and production SQL", () => {
 });
 
 describe("learner settings to Gemini", () => {
+  it("has 160 unique targets, 20 per domain, each with a meaning, explicit level and contextual example", () => {
+    expect(vocabularyCatalog).toHaveLength(160);
+    expect(new Set(vocabularyCatalog.map(t => t.id)).size).toBe(160);
+    for (const domain of new Set(vocabularyCatalog.map(t => t.domain))) expect(vocabularyCatalog.filter(t => t.domain === domain)).toHaveLength(20);
+    for (const target of vocabularyCatalog) {
+      expect(["beginner", "intermediate", "fluent"]).toContain(target.level);
+      expect(target.meaning_he.length).toBeGreaterThan(0);
+      expect(target.usage_example!.length).toBeGreaterThan(0);
+    }
+  });
+  it.each(["beginner", "intermediate", "fluent"] as const)("selects level-appropriate targets for %s rather than always choosing the first basic words", async level => {
+    await b.savePreference("alice", { topic: "business", level, learning_load: "light" });
+    const controls = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(controls.lesson!.vocabulary).toHaveLength(3);
+    expect(controls.lesson!.vocabulary.every(t => t.level === level)).toBe(true);
+    const prompt = buildSystemInstruction(controls, "");
+    for (const target of controls.lesson!.vocabulary) {
+      expect(prompt).toContain(target.id);
+      expect(prompt).toContain(target.usage_example);
+    }
+    if (level === "beginner") expect(prompt).not.toContain("business.liability");
+  });
+  it.each([...new Set(vocabularyCatalog.map(t => t.domain))].flatMap(domain => (["beginner", "intermediate", "fluent"] as const).map(level => [domain, level] as const)))("never sends harder targets than %s / %s and prioritizes the nearest eligible level", async (topic, level) => {
+    await b.savePreference("alice", { topic, level, learning_load: "intensive" });
+    const controls = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    const rank: Record<string, number> = { beginner: 0, intermediate: 1, fluent: 2 };
+    const targets = controls.lesson!.vocabulary;
+    expect(targets.length).toBeGreaterThan(0);
+    expect(targets.length).toBeLessThanOrEqual(8);
+    expect(targets.every(t => t.domain === topic && rank[t.level] <= rank[level])).toBe(true);
+    const available = vocabularyCatalog.filter(t => t.domain === topic && rank[t.level] <= rank[level]);
+    expect(rank[targets[0].level]).toBe(Math.max(...available.map(t => rank[t.level])));
+  });
+  it("makes legacy Hebrew-only materials explicitly ungraded without silently changing the selected list", async () => {
+    await b.save("learner-materials:alice", { name: "עבודה", words: ["היי מה נשמע", "אני עושה עסקים"] }, "hebrew");
+    await b.savePreference("alice", { material_id: "hebrew", topic: "business", level: "intermediate", conversation_mode: "conversation", correction_policy: "after_activity" });
+    const controls = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(controls.lesson).toMatchObject({ vocabulary: [], grammar: [], material_status: { id: "hebrew", rows: 2, target_count: 0 } });
+    const instruction = buildSystemInstruction(controls, "Old notes: correct after every answer and report observations.");
+    expect(instruction).toContain("NO ASSESSMENT TARGETS");
+    expect(instruction).toContain("not after each answer");
+    expect(instruction).toContain("immediately simplify");
+    expect(instruction).toContain("Do not describe a prompted repetition as independent success");
+    expect(instruction.indexOf("SPEAKOOL ACTIVE LESSON")).toBeGreaterThan(instruction.indexOf("Old notes:"));
+    expect(instruction.match(/SPEAKOOL ACTIVE LESSON/g)).toHaveLength(1);
+    expect(buildSetupPayload(controls, instruction, "teacher", settings({} as any)).setup.tools[0].functionDeclarations.map(t => t.name)).toEqual(["record_lesson_summary", "end_session"]);
+    expect((await b.loadContext("preferences:alice")).material_id).toBe("hebrew");
+  });
   it.each(["he-IL", "en-US"])("keeps technical speech language %s unchanged when changing ability and mode", async language_code => {
     await b.savePreference("alice", { level: "beginner", conversation_mode: "roleplay", correction_policy: "after_answer", learning_load: "normal", closing_activity: "quiz", topic: "business" });
     const controls = await applyLearnerControls(b, "alice", { id: "isaac-advanced", role: "teacher" }, { ...controlsFromSettings(false), language_code });
     expect(controls.language_code).toBe(language_code);
     expect(controls.lesson).toMatchObject({ level: "beginner", conversation_mode: "roleplay", correction_policy: "after_activity", closing_activity: "quiz" });
     expect(controls.lesson?.vocabulary.length).toBeLessThanOrEqual(5);
-    expect(controls.custom_instructions).toContain("Explain in Hebrew only when asked");
+    expect(buildSystemInstruction(controls, "")).toContain("Explain in Hebrew only when asked");
     const payload = buildSetupPayload(controls, "test", "isaac-advanced", settings({} as any));
     const tools = payload.setup.tools[0].functionDeclarations;
     expect(tools.map(t => t.name)).toEqual(["report_learning_batch", "record_lesson_summary", "end_session"]);
