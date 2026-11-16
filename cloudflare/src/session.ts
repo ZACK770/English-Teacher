@@ -40,7 +40,7 @@ export class TutorSession {
 
   private rebase(target: string) {
     const primary = this.s.projectPath;
-    return this.pbxBase && this.pbxBase !== primary && withinBase(primary, target) ? this.extension(target.slice(primary.length)) : target;
+    return this.pbxBase && this.pbxBase !== primary && withinBase(primary, target) ? this.extension(primary === "/" ? (target === "/" ? "" : target) : target.slice(primary.length)) : target;
   }
   private callId = "";
   private customerId = "";

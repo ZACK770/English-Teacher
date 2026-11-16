@@ -9,6 +9,7 @@ import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
 import worker from "../src/index";
 import { ProgressStore } from "../src/progress";
+import { TutorSession } from "../src/session";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
@@ -29,6 +30,9 @@ describe("Technoline protocol", () => {
     expect(s.systems).toEqual([{ phone: "0765673575", base: "/99" }, { phone: "0765674434", base: "/" }]);
     expect(s.routerChannels).toEqual(["old-channel", "new-channel"]);
     expect([extensionPath("/", ""), extensionPath("/", "/7"), extensionPath("/99", ""), extensionPath("/99", "/7")]).toEqual(["/", "/7", "/99", "/99/7"]);
+    const rebase = (primary: string, base: string, target: string) =>
+      (TutorSession.prototype as any).rebase.call({ s: { projectPath: primary }, pbxBase: base, extension: (x = "") => extensionPath(base, x) }, target);
+    expect([rebase("/", "/99", "/8"), rebase("/", "/99", "/"), rebase("/99", "/", "/99/8")]).toEqual(["/99/8", "/99", "/8"]);
     expect([withinBase("/", "/5"), withinBase("/99", "/99/1"), withinBase("/99", "/990"), withinBase("/99", "/5")]).toEqual([true, true, false, false]);
   });
   it("only transfers to IVR paths", () => {
