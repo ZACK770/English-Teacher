@@ -162,11 +162,14 @@ export class LearningStore {
       const mastered = score !== null && score >= 80 && Number(r?.independent_calls) >= 2;
       return { ...target, score, attempts, exposures: Number(r?.exposures ?? 0), last_practiced: r?.last_practiced ?? null, mastered, status: !attempts ? "unassessed" : attempts === 1 ? "initial" : mastered ? "mastered" : "developing" };
     });
-    const domains = [...new Set(pool.map(t => t.domain))].map(domain => {
-      const ids = new Set(pool.filter(t => t.domain === domain).map(t => t.id));
+    const retained = items.filter(t => t.kind === "vocabulary");
+    const domains = [...new Set([...pool.map(t => t.domain), ...retained.map(t => t.domain)])].map(domain => {
+      const active = pool.filter(t => t.domain === domain);
+      const archived = !active.length;
+      const ids = new Set((archived ? retained.filter(t => t.domain === domain) : active).map(t => t.id));
       const words = items.filter(t => t.kind === "vocabulary" && ids.has(t.id));
       const assessed = words.filter(t => t.score !== null), mastered = words.filter(t => t.mastered).length;
-      return { domain, total: words.length, assessed: assessed.length, mastered, coverage: words.length ? Math.round(assessed.length / words.length * 100) : 0, mastery: words.length ? Math.round(mastered / words.length * 100) : 0, average_score: assessed.length ? Math.round(assessed.reduce((n, t) => n + t.score!, 0) / assessed.length) : null };
+      return { domain, archived, total: words.length, assessed: assessed.length, mastered, coverage: words.length ? Math.round(assessed.length / words.length * 100) : 0, mastery: words.length ? Math.round(mastered / words.length * 100) : 0, average_score: assessed.length ? Math.round(assessed.reduce((n, t) => n + t.score!, 0) / assessed.length) : null };
     });
     return { items, domains, scoring: "ממוצע עד שלוש הבדיקות האחרונות; שליטה מבוססת: 80 ומעלה ולפחות שתי הצלחות עצמאיות משיחות שונות בין שלוש הבדיקות. ללא הפחתה לפי זמן או תזמון חזרות.", syllabus: "מאגר פתיחה מוגדר ורשימות אישיות — לא כל אוצר המילים באנגלית" };
   }

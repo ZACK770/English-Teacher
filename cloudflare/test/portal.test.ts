@@ -77,6 +77,25 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("real learner portal", () => {
+  it("keeps deleted-list assessments discoverable without selecting deleted material for new lessons", async () => {
+    const material = await (await request("/v1/portal/materials", tokenA, { name: "A practiced list", words: ["invoice — חשבונית", "receipt — קבלה"] })).json() as any;
+    await request("/v1/portal/preferences", tokenA, { material_id: material.id });
+    const initial = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    const store = new LearningStore(env.DB);
+    await store.begin("learner-a", "list-call", initial.lesson!);
+    const target = initial.lesson!.vocabulary[0].id;
+    await store.record("learner-a", "list-call", { activity_id: "practice-1", vocabulary: [{ word_id: target, score: 100 }] });
+    const removed = await worker.fetch(new Request("https://school.example/v1/portal/materials/" + material.id, { method: "DELETE", headers: { Authorization: "Bearer " + tokenA } }), env);
+    expect(removed.status).toBe(200);
+    const report = await (await request("/v1/portal/learning")).json() as any;
+    expect(report.items.find((t: any) => t.id === target)).toMatchObject({ score: 100, attempts: 1 });
+    expect(report.domains.find((d: any) => d.domain === "material:" + material.id)).toMatchObject({ archived: true, assessed: 1, total: 2 });
+    expect((await (await request("/v1/portal/learning/history?kind=vocabulary&id=" + target)).json() as any).history).toHaveLength(1);
+    const next = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(next.lesson!.vocabulary.some(t => t.domain === "material:" + material.id)).toBe(false);
+    const other = await (await request("/v1/portal/learning", tokenB)).json() as any;
+    expect(other.domains.some((d: any) => d.domain === "material:" + material.id)).toBe(false);
+  });
   it("shares effective learning settings with the personal teacher and scopes learning history to the authenticated learner", async () => {
     const teacher = await (await request("/v1/portal/teachers", tokenA, { ...config, level: "intermediate", conversation_mode: "conversation", learning_load: "normal", correction_policy: "after_activity", closing_activity: "quiz" })).json() as any;
     await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });
