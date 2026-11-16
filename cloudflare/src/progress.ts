@@ -1,6 +1,7 @@
 import { type TutorControls, TutorControlsSchema } from "./controls";
 import { nowIso } from "./env";
 import type { PromptArtifact } from "./prompt";
+import { SCHOOL_SESSION_FILTER } from "./school-history";
 
 export interface Observation { skill: string; result: string; correction: string; score: number }
 export interface LessonSummary { summary_he: string; success_he: string; next_step_he: string; points: number }
@@ -231,8 +232,8 @@ export class ProgressStore {
 
   async lessonContext(studentId: string, limit = 5): Promise<string> {
     const [rowsResult, lifetimeResult] = await this.db.batch<Record<string, any>>([
-      this.db.prepare("SELECT observations_json, summary_he, next_step_he, points FROM sessions WHERE student_id = ? ORDER BY started_at DESC LIMIT ?").bind(studentId, limit),
-      this.db.prepare("SELECT COUNT(*) AS call_count, COALESCE(SUM(points), 0) AS total_points FROM sessions WHERE student_id = ?").bind(studentId),
+      this.db.prepare(`SELECT observations_json, summary_he, next_step_he, points FROM sessions WHERE student_id = ? AND ${SCHOOL_SESSION_FILTER} ORDER BY started_at DESC LIMIT ?`).bind(studentId, limit),
+      this.db.prepare(`SELECT COUNT(*) AS call_count, COALESCE(SUM(points), 0) AS total_points FROM sessions WHERE student_id = ? AND ${SCHOOL_SESSION_FILTER}`).bind(studentId),
     ]);
     const rows = rowsResult.results;
     const lifetime = lifetimeResult.results[0] ?? { call_count: 0, total_points: 0 };
@@ -265,9 +266,9 @@ export class ProgressStore {
     const [rowsResult, lifetimeResult] = await this.db.batch<Record<string, any>>([
       this.db.prepare(`SELECT call_id, started_at, duration_seconds, learner_turns, tutor_turns, observations_json, summary_he, success_he, next_step_he, points,
         input_text_tokens, input_audio_tokens, output_text_tokens, output_audio_tokens, thoughts_tokens, estimated_cost_usd, cost_basis, model
-        FROM sessions WHERE student_id = ? ORDER BY started_at DESC LIMIT ?`).bind(studentId, limit),
+        FROM sessions WHERE student_id = ? AND ${SCHOOL_SESSION_FILTER} ORDER BY started_at DESC LIMIT ?`).bind(studentId, limit),
       this.db.prepare(`SELECT COUNT(*) AS session_count, COALESCE(SUM(duration_seconds),0) AS duration_seconds, COALESCE(SUM(points),0) AS total_points,
-        COALESCE(SUM(estimated_cost_usd),0) AS estimated_cost_usd FROM sessions WHERE student_id = ?`).bind(studentId),
+        COALESCE(SUM(estimated_cost_usd),0) AS estimated_cost_usd FROM sessions WHERE student_id = ? AND ${SCHOOL_SESSION_FILTER}`).bind(studentId),
     ]);
     const lifetime = lifetimeResult.results[0];
     const scores: number[] = [];

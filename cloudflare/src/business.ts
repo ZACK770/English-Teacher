@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nowIso, randomHex, sha256Hex, tokenUrlsafe } from "./env";
+import { SCHOOL_CALL_FILTER, SCHOOL_SESSION_FILTER } from "./school-history";
 
 export const CustomerSchema = z.object({
   name: z.string().min(1).max(100),
@@ -295,8 +296,8 @@ export class BusinessStore {
     const [receipts, calls] = await this.db.batch<Record<string, any>>([
       this.db.prepare(`SELECT r.*, COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS spent_seconds FROM sales_receipts r
         LEFT JOIN usage_allocations u ON u.receipt_id=r.id WHERE r.customer_id=? GROUP BY r.id ORDER BY r.created_at DESC`).bind(customerId),
-      this.db.prepare(`SELECT c.call_id,c.bot_id,c.channel,c.created_at,s.duration_seconds,s.summary_he,s.points FROM call_customers c
-        LEFT JOIN sessions s ON c.call_id=s.call_id WHERE c.customer_id=? ORDER BY c.created_at DESC LIMIT 50`).bind(customerId),
+      this.db.prepare(`SELECT c.call_id,c.bot_id,c.channel,c.created_at,sessions.duration_seconds,sessions.summary_he,sessions.points FROM call_customers c
+        LEFT JOIN sessions ON c.call_id=sessions.call_id WHERE c.customer_id=? AND ${SCHOOL_CALL_FILTER} AND ${SCHOOL_SESSION_FILTER} ORDER BY c.created_at DESC LIMIT 50`).bind(customerId),
     ]);
     const customer = (await this.list("customers")).find((c) => c.id === customerId) ?? { ...body, id: customerId };
     return { customer, receipts: receipts.results, calls: calls.results };

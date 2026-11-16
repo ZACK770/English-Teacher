@@ -241,6 +241,54 @@ describe("real learner portal", () => {
   });
 });
 
+describe("school history after navigation migration", () => {
+  function session(call: string, customer = "learner-a", navigation = false) {
+    db.sql.prepare(`INSERT INTO sessions (student_id,call_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,
+      observations_json,transcript_json,summary_he,next_step_he,points) VALUES (?,?,datetime('now'),datetime('now'),60,1,1,?,?,?,?,?)`)
+      .run(customer, call, JSON.stringify([{ skill: navigation ? "navigation" : "speaking", score: navigation ? 1 : 4, result: "ok", correction: "" }]),
+        JSON.stringify([{ role: "user", text: navigation ? "NAVIGATION_ONLY" : "hello" }]),
+        navigation ? "NAVIGATION_ONLY" : "English practice", navigation ? "NAVIGATION_NEXT_STEP" : "Practice another phrase", navigation ? 999 : 10);
+  }
+  it.each([
+    { id: "voice-navigator-live", role: "teacher" },
+    { id: "old-navigation-profile", role: "navigation" },
+  ])("excludes retired bot $id from history, aggregates, transcripts and tutor context without deleting data", async ({ id, role }) => {
+    await progress.createBot({ id, role, label: "Archived", description: "", audience: "general", channel_id: null, phone_enabled: false, web_enabled: false, enabled: false }, controlsFromSettings(false));
+    session("english-call");
+    session("navigation-call", "learner-a", true);
+    await b.registerWebCall("english-call", "learner-a", "student");
+    await b.registerWebCall("navigation-call", "learner-a", id);
+    const report = await progress.report("learner-a", 1);
+    expect(report).toMatchObject({ session_count: 1, total_minutes: 1, total_points: 10, average_score: 4 });
+    expect(report.sessions.map(s => s.call_id)).toEqual(["english-call"]);
+    expect(await progress.lessonContext("learner-a")).not.toContain("NAVIGATION");
+    const account = await (await request("/v1/portal/me")).json() as any;
+    expect(account.calls.map((c: any) => c.call_id)).toEqual(["english-call"]);
+    expect(account.progress.session_count).toBe(1);
+    expect((await request("/v1/portal/sessions/navigation-call/transcript")).status).toBe(404);
+    expect((await request("/v1/portal/sessions/english-call/transcript")).status).toBe(200);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sessions").get()?.n).toBe(2);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM call_customers").get()?.n).toBe(2);
+  });
+  it("recognizes an archived navigation snapshot when the customer-call link is absent", async () => {
+    session("orphan-navigation", "learner-a", true);
+    db.sql.prepare(`INSERT INTO prompt_snapshots (created_at,profile_id,call_id,fingerprint,system_instruction,opening_message,history_context,setup_json)
+      VALUES (datetime('now'),'voice-navigator-live','orphan-navigation','test','','','','{}')`).run();
+    expect((await progress.report("learner-a")).session_count).toBe(0);
+    expect(await progress.lessonContext("learner-a")).not.toContain("NAVIGATION");
+    expect((await request("/v1/portal/sessions/orphan-navigation/transcript")).status).toBe(404);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM prompt_snapshots").get()?.n).toBe(1);
+  });
+  it("keeps customer identity independent of a retired bot ID and retains unknown legacy English calls", async () => {
+    session("english-unlinked", "voice-navigator-live");
+    session("translator-call");
+    await b.registerWebCall("translator-call", "learner-a", "translator");
+    expect((await progress.report("voice-navigator-live")).session_count).toBe(1);
+    expect((await progress.report("learner-a")).session_count).toBe(1);
+    expect((await b.customerDetail("learner-a")).calls.map(c => c.bot_id)).toEqual(["translator"]);
+  });
+});
+
 describe("Technoline caller-ID login", () => {
   async function challenge(token = "") {
     const response = await request("/v1/portal/auth/start", token, { phone: "0500000001" });

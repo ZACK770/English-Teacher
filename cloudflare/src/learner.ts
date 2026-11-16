@@ -4,6 +4,7 @@ import type { TutorControls } from "./controls";
 import { VOICE_OPTIONS } from "./controls";
 import { bearer, type Env, HttpError, randomHex, type Settings } from "./env";
 import { ProgressStore, type Bot } from "./progress";
+import { SCHOOL_SESSION_FILTER } from "./school-history";
 
 const pace = z.enum(["slow", "normal", "fast"]);
 const corrections = z.enum(["gentle", "balanced", "all"]);
@@ -169,7 +170,7 @@ export async function learnerRoutes(request: Request, env: Env, path: string, cu
   }
   const transcript = path.match(/^\/v1\/portal\/sessions\/([^/]+)\/transcript$/);
   if (transcript && request.method === "GET") {
-    const row = await env.DB.prepare("SELECT transcript_json FROM sessions WHERE call_id=? AND student_id=?")
+    const row = await env.DB.prepare(`SELECT transcript_json FROM sessions WHERE call_id=? AND student_id=? AND ${SCHOOL_SESSION_FILTER}`)
       .bind(transcript[1], customerId).first<{ transcript_json: string | null }>();
     if (!row) throw new HttpError(404, "השיחה לא נמצאה.");
     return Response.json({ transcript: row.transcript_json ? JSON.parse(row.transcript_json) : null });
