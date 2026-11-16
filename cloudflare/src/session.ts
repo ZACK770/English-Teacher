@@ -3,7 +3,7 @@ import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_F
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
-import { type Env, type Settings, bearer, randomHex, secureEqual } from "./env";
+import { type Env, type Settings, bearer, extensionPath, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
 import { SessionMeter } from "./meter";
 import { markQuickIntro, quickOpening, runtimeContext } from "./pbx";
@@ -32,6 +32,16 @@ export class TutorSession {
   private disconnected = false;
   private reason = "";
   private returnPath: string | null = null;
+  private pbxBase: string | null = null;
+
+  private extension(suffix = "") {
+    return extensionPath(this.pbxBase ?? this.s.projectPath, suffix);
+  }
+
+  private rebase(target: string) {
+    const primary = this.s.projectPath;
+    return this.pbxBase && this.pbxBase !== primary && withinBase(primary, target) ? this.extension(target.slice(primary.length)) : target;
+  }
   private callId = "";
   private customerId = "";
   private leaseCallId = "";
@@ -93,7 +103,7 @@ export class TutorSession {
         profileId = this.s.studentId;
       }
       if (shared) {
-        const start = parseStartFrame(raw, this.s.routerChannel ?? "");
+        const start = parseStartFrame(raw, this.s.routerChannels);
         profileId = (await this.b.loadContext(start.callId)).selected_bot;
         if (!profileId) throw new Error("Select a bot in IVR first");
       }
@@ -104,7 +114,7 @@ export class TutorSession {
       const bot = await this.progress.getBot(profileId);
       if (!bot || !bot.enabled || (shared && !bot.phone_enabled)) throw new Error("Tutor unavailable");
       this.profileId = profileId;
-      const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannel : bot.channel_id;
+      const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannels : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");
       this.leaseCallId = start.callId;
       if (this.s.radioStreams[profileId]) {
@@ -120,7 +130,9 @@ export class TutorSession {
       this.callId = shared ? start.callId.slice(0, 160) + "~" + randomHex(8) : start.callId;
       if (shared) {
         await this.b.linkCallSegment(start.callId, this.callId, profileId);
-        await this.b.saveContext(this.callId, await this.b.loadContext(start.callId));
+        const context = await this.b.loadContext(start.callId);
+        this.pbxBase = typeof context.pbx_base === "string" ? context.pbx_base : null;
+        await this.b.saveContext(this.callId, context);
       }
       if (this.portal) {
         this.customerId = this.portal.customerId;
@@ -140,7 +152,7 @@ export class TutorSession {
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
-        this.returnPath = allowance.extension ?? null;
+        this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
         this.reason = "access_blocked";
         return;
       }
@@ -150,7 +162,7 @@ export class TutorSession {
         this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
       }
       hardLimit = setTimeout(() => {
-        if (this.profileId.startsWith("isaac-")) this.returnPath = this.s.projectPath + "/8";
+        if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
         this.stop("hard_time_limit");
       }, (allowance.seconds + 20) * 1000);
       await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
@@ -175,7 +187,7 @@ export class TutorSession {
         await this.latency("greeting_sent");
         clearTimeout(hardLimit);
         hardLimit = setTimeout(() => {
-          if (this.profileId.startsWith("isaac-")) this.returnPath = this.s.projectPath + "/8";
+          if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
           this.stop("hard_time_limit");
         }, allowance.seconds * 1000);
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);
@@ -204,7 +216,7 @@ export class TutorSession {
         }
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
-          const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.s.projectPath : this.s.returnExtension) : null);
+          const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
@@ -328,7 +340,7 @@ export class TutorSession {
     if (call.name === "end_session") {
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       const destinations: Record<string, string> = { main: "", school: "/1", translator: "/2", options: "/9" };
-      if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.s.projectPath + destinations[args.destination];
+      if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);
       this.reason = "model:" + reason;
       return true;
     }

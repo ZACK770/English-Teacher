@@ -52,8 +52,10 @@ export interface Settings {
   returnExtension: string;
   systemPhone: string;
   projectPath: string;
+  systems: { phone: string; base: string }[];
   projectEnabled: boolean;
   routerChannel: string | null;
+  routerChannels: string[];
   callbackSecret: string;
   publicBaseUrl: string;
   pricing: {
@@ -67,6 +69,10 @@ export interface Settings {
 }
 
 export function settings(env: Env): Settings {
+  const list = (value: string | undefined, fallback: string) => (value || fallback).split(",").map((v) => v.trim()).filter(Boolean);
+  const phones = list(env.TLIVR_SYSTEM_PHONE, "0765673575");
+  const bases = list(env.TLIVR_PROJECT_PATH, "/99").map((p) => "/" + p.replace(/^\/+|\/+$/g, ""));
+  const routerChannels = list(env.TLIVR_ROUTER_CHANNEL, "");
   return {
     geminiKey: env.GEMINI_API_KEY,
     geminiLiveUrl:
@@ -85,10 +91,12 @@ export function settings(env: Env): Settings {
     enforceBearer: flag(env.TECHNOLINE_ENFORCE_BEARER),
     bearerSecret: env.TECHNOLINE_BEARER_SECRET ?? "",
     returnExtension: "/",
-    systemPhone: env.TLIVR_SYSTEM_PHONE || "0765673575",
-    projectPath: env.TLIVR_PROJECT_PATH || "/99",
+    systemPhone: phones[0],
+    projectPath: bases[0],
+    systems: phones.map((phone, i) => ({ phone, base: bases[Math.min(i, bases.length - 1)] })),
     projectEnabled: flag(env.TLIVR_PROJECT_ENABLED),
-    routerChannel: env.TLIVR_ROUTER_CHANNEL || null,
+    routerChannel: routerChannels[0] ?? null,
+    routerChannels,
     callbackSecret: env.TLIVR_CALLBACK_SECRET ?? "",
     publicBaseUrl: env.PUBLIC_BASE_URL ?? "",
     pricing: {
@@ -149,3 +157,6 @@ export class HttpError extends Error {
     super(detail);
   }
 }
+
+export const extensionPath = (base: string, suffix = "") => (base === "/" ? suffix || "/" : base + suffix);
+export const withinBase = (base: string, path: string) => base === "/" || path === base || path.startsWith(base + "/");

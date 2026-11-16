@@ -7,7 +7,7 @@ import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
-import { startSchool } from "../src/pbx";
+import { handleCallback, startSchool } from "../src/pbx";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
@@ -210,6 +210,16 @@ describe("real learner portal", () => {
     expect(controls.custom_instructions).toContain("playful");
     expect(controls.custom_instructions).toContain("slow");
     expect(controls.custom_instructions).toContain("business");
+  });
+  it("routes a root-menu system and the existing /99 system with their own extension bases", async () => {
+    const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575,0765674434", TLIVR_PROJECT_PATH: "/99,/" } as Env;
+    const call = (phone: string, path: string, id: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/main?key=cb&PBXcallId=${id}&PBXnum=${phone}&PBXextensionPath=${encodeURIComponent(path)}&PBXphone=private${extra}`), pbxEnv, settings(pbxEnv), "main");
+    expect((await call("0765674434", "/", "root-call", "&isaacMain=1")).goTo).toBe("/7");
+    expect((await b.loadContext("root-call")).pbx_base).toBe("/");
+    expect((await call("0765674434", "/", "root-menu", "&isaacMain=9")).goTo).toBe("/9");
+    expect((await call("0765673575", "/99", "old-call", "&isaacMain=1")).goTo).toBe("/99/7");
+    await expect(call("0765673575", "/5", "taxi-call")).rejects.toMatchObject({ status: 403 });
+    await expect(call("0700000000", "/", "foreign-call")).rejects.toMatchObject({ status: 400 });
   });
   it("does not let another learner select, preview, or delete a private teacher or read a word list", async () => {
     const teacher = await b.save(teachersKind("learner-a"), config);

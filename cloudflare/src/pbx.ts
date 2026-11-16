@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BusinessStore } from "./business";
-import { type Env, type Settings, HttpError, nowIso, randomHex, secureEqual, sha256Hex } from "./env";
+import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
 import { ProgressStore } from "./progress";
 
@@ -24,10 +24,10 @@ export const menu = (name: string, content: string, keys: string): IVRResponse =
   type: "simpleMenu", name, enabledKeys: keys, times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ text: content }],
 });
 const REMOVE = ["isaacMain", "isaacTeacher", "isaacTranslation", "isaacLanguage", "isaacSales", "isaacQuota", "isaacBasicMode", "isaacAdvancedMode", "isaacThanks", "isaacMessage", "FILEID_isaacMessage", "isaacBotChoice", "isaacMode", "isaacOptions"];
-export const streamTarget = (base: string): IVRResponse => ({ type: "goTo", goTo: base + "/7", removeParams: REMOVE });
+export const streamTarget = (base: string): IVRResponse => ({ type: "goTo", goTo: extensionPath(base, "/7"), removeParams: REMOVE });
 
 export function ivrResponse(route: string, p: Record<string, string>, copy: IVRCopy, base: string): IVRResponse {
-  const go = (suffix = ""): IVRResponse => ({ type: "goTo", goTo: base + suffix, removeParams: REMOVE });
+  const go = (suffix = ""): IVRResponse => ({ type: "goTo", goTo: extensionPath(base, suffix), removeParams: REMOVE });
   if (p.PBXcallStatus === "HANGUP") return { type: "hangup" };
   const routes: Record<string, [string, string, string, Record<string, string>]> = {
     main: ["isaacMain", copy.welcome, "1,2,9,3,4,5", { "1": "/1", "2": "/2", "9": "/9", "3": "/3", "4": "/4", "5": "/6" }],
@@ -104,7 +104,7 @@ async function chooseTeacher(b: BusinessStore, progress: ProgressStore, s: Setti
       return other ? streamTarget(s.projectPath) : startSchool(b, progress, s, callId, customerId, selected);
     }
   }
-  if (choice === "0") return { type: "goTo", goTo: s.projectPath + "/9", removeParams: ["isaacBotChoice", "isaacTeacher"] };
+  if (choice === "0") return { type: "goTo", goTo: extensionPath(s.projectPath, "/9"), removeParams: ["isaacBotChoice", "isaacTeacher"] };
   if (choice === "ERROR") return { type: "hangup" };
   const bots = (await progress.listBots()).filter((bot) => bot.enabled && bot.phone_enabled && (other ? !["teacher", "translator"].includes(bot.role) : bot.role === "teacher"));
   let offset = Number(context.teacher_offset ?? 0) + (choice === "9" ? 8 : 0);
@@ -177,12 +177,15 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     Object.assign(p, Object.fromEntries(form));
   }
   const callId = p.PBXcallId ?? "";
-  if (!callId || callId.length > 200 || p.PBXnum !== s.systemPhone) throw new HttpError(400, "Unexpected system or call");
+  const system = s.systems.find((x) => x.phone === p.PBXnum);
+  if (!callId || callId.length > 200 || !system) throw new HttpError(400, "Unexpected system or call");
   const path = "/" + (p.PBXextensionPath ?? "").replace(/^\/+|\/+$/g, "");
-  if (path !== s.projectPath && !path.startsWith(s.projectPath + "/")) throw new HttpError(403, "Outside project extension");
+  if (!withinBase(system.base, path)) throw new HttpError(403, "Outside project extension");
+  s = { ...s, systemPhone: system.phone, projectPath: system.base };
   const b = new BusinessStore(env.DB);
   const progress = new ProgressStore(env.DB);
   const customerId = await b.identifyCall(p.PBXphone ?? "private", callId, "ivr");
+  if (s.systems.length > 1) await b.saveContext(callId, { pbx_base: system.base });
   const values: Record<string, unknown> = {};
   const languages: Record<string, string> = { "1": "English", "2": "Hebrew", "3": "Yiddish", "4": "Arabic", "5": "Russian", "6": "French", "7": "" };
   if (route === "languages" && Object.hasOwn(languages, p.isaacLanguage)) values.language = languages[p.isaacLanguage];
