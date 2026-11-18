@@ -229,3 +229,62 @@ describe("learner settings to Gemini", () => {
     for (const data of [{ level: "genius" }, { learning_load: "unlimited" }, { grammar_targets: [] }, { grammar_targets: ["not-a-skill"] }, { grammar_targets: ["past", "present", "future", "questions"] }]) expect(LearnerPreferencesSchema.safeParse(data).success).toBe(false);
   });
 });
+
+describe("recommended vocabulary when no specific topic was chosen", () => {
+  const rank: Record<string, number> = { beginner: 0, intermediate: 1, fluent: 2 };
+  const lessonFor = async () => (await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false))).lesson!;
+  const master = async (targets: typeof vocabularyCatalog) => {
+    for (let i = 0; i < targets.length; i += 8) {
+      const vocabulary = targets.slice(i, i + 8);
+      for (const call of ["a" + i, "b" + i]) {
+        await store.begin("alice", call, { ...plan, vocabulary });
+        expect(await store.record("alice", call, { activity_id: "practice-1", vocabulary: vocabulary.map(t => ({ word_id: t.id, score: 100 })) })).toBe(true);
+      }
+    }
+  };
+  const words = (domain: string, level: string) => vocabularyCatalog.filter(t => t.domain === domain && rank[t.level] <= rank[level]);
+
+  it("defaults a learner with no choices to recommended beginner everyday words", async () => {
+    const lesson = await lessonFor();
+    expect(lesson).toMatchObject({ topic: "everyday", level: "beginner" });
+    expect(lesson.vocabulary).toHaveLength(3);
+    expect(lesson.vocabulary.every(t => t.domain === "everyday" && t.level === "beginner")).toBe(true);
+  });
+  it.each(["recommended", "not-a-domain"])("treats topic %s as recommended instead of sending no targets", async topic => {
+    await b.savePreference("alice", { topic, level: "intermediate" });
+    const lesson = await lessonFor();
+    expect(lesson.topic).toBe("everyday");
+    expect(lesson.vocabulary.length).toBe(3);
+  });
+  it("starts beginners on everyday basics and moves to their intake goal once those are mastered", async () => {
+    await b.savePreference("alice", { plan: { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" }, topic: "recommended", learning_load: "intensive" });
+    expect((await lessonFor()).vocabulary.every(t => t.domain === "everyday")).toBe(true);
+    await master(words("everyday", "beginner"));
+    const next = await lessonFor();
+    expect(next.topic).toBe("travel");
+    const travel = words("travel", "beginner").map(t => t.id);
+    expect(next.vocabulary).toHaveLength(8);
+    expect(next.vocabulary.slice(0, Math.min(8, travel.length)).every(t => travel.includes(t.id))).toBe(true);
+    expect(next.vocabulary.every(t => ["travel", "flights"].includes(t.domain) && t.level === "beginner")).toBe(true);
+  });
+  it("starts intermediate learners on their goal domain at their level", async () => {
+    await b.savePreference("alice", { plan: { goal: "work", level: "intermediate", difficulty: "speaking", minutes: 10, topic: "recommended" }, topic: "recommended" });
+    const lesson = await lessonFor();
+    expect(lesson.topic).toBe("business");
+    expect(lesson.vocabulary.every(t => t.domain === "business" && t.level === "intermediate")).toBe(true);
+  });
+  it("fills a lesson across domains and steps up a level after the recommended words at the current level are mastered", async () => {
+    await b.savePreference("alice", { topic: "recommended", level: "beginner", learning_load: "intensive" });
+    const everyday = words("everyday", "beginner");
+    await master(everyday.slice(0, -2));
+    const mixed = await lessonFor();
+    expect(mixed.vocabulary.slice(0, 2).map(t => t.id).sort()).toEqual(everyday.slice(-2).map(t => t.id).sort());
+    expect(mixed.vocabulary.slice(2).every(t => t.domain === "everyday" && t.level === "intermediate")).toBe(true);
+  });
+  it("keeps an explicitly chosen topic even when recommended words would differ", async () => {
+    await b.savePreference("alice", { plan: { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "cars" }, topic: "cars" });
+    const lesson = await lessonFor();
+    expect(lesson.topic).toBe("cars");
+    expect(lesson.vocabulary.every(t => t.domain === "cars")).toBe(true);
+  });
+});

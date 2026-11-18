@@ -26,6 +26,14 @@ export type LessonPlan = {
 export const vocabularyCatalog: LearningTarget[] = Object.entries(syllabus).flatMap(([domain, words]) => words.map(([text, meaning_he, level, usage_example]) => ({
   id: domain + "." + text.replace(/ /g, "-"), text, meaning_he, domain, level, usage_example,
 })));
+export const RECOMMENDED_TOPIC = "recommended";
+const goalDomains: Record<string, string[]> = { work: ["business", "property"], travel: ["travel", "flights"], study: ["academic", "medicine"], other: [] };
+const levelOrder = ["beginner", "intermediate", "fluent"] as const;
+export function recommendedDomains(level: LessonPlan["level"], goal?: string) {
+  const goals = goalDomains[goal || ""] || [];
+  const primary = level === "beginner" ? ["everyday", ...goals] : [...goals, "everyday"];
+  return { primary, rest: Object.keys(syllabus).filter(d => !primary.includes(d)) };
+}
 export const grammarCatalog: LearningTarget[] = grammarIds.map((id, i) => ({
   id, text: ["Present tense", "Past tense", "Future tense", "Questions", "Negation", "Subject–verb agreement", "Prepositions", "Word order"][i],
   meaning_he: ["זמן הווה", "זמן עבר", "זמן עתיד", "בניית שאלות", "שלילה", "התאמת נושא ופועל", "מילות יחס", "סדר מילים"][i], domain: "grammar", level: i === 0 || i === 3 || i === 4 ? "beginner" : "intermediate",
@@ -93,6 +101,10 @@ export function lessonInstruction(plan: LessonPlan) {
 }
 
 type Row = Record<string, any>;
+function order(stats: Map<string, Row>, pool: LearningTarget[], count: number, level?: LessonPlan["level"]) {
+  const rank: Record<string, number> = { beginner: 0, intermediate: 1, fluent: 2 };
+  return pool.map((target, index) => ({ target, index, distance: level && target.level in rank ? Math.abs(rank[level] - rank[target.level]) : 0, score: stats.get(target.id)?.score ?? 50 })).sort((a, b) => a.distance - b.distance || a.score - b.score || a.index - b.index).slice(0, count).map(r => r.target);
+}
 export class LearningStore {
   constructor(private db: D1Database) {}
 
@@ -132,9 +144,28 @@ export class LearningStore {
   }
 
   async select(customerId: string, pool: LearningTarget[], count: number, level?: LessonPlan["level"]) {
-    const stats = new Map((await this.stats(customerId)).map(r => [r.target_id, r]));
-    const rank: Record<string, number> = { beginner: 0, intermediate: 1, fluent: 2 };
-    return pool.map((target, index) => ({ target, index, distance: level && target.level in rank ? Math.abs(rank[level] - rank[target.level]) : 0, score: stats.get(target.id)?.score ?? 50 })).sort((a, b) => a.distance - b.distance || a.score - b.score || a.index - b.index).slice(0, count).map(r => r.target);
+    return order(await this.statsById(customerId), pool, count, level);
+  }
+
+  private async statsById(customerId: string) {
+    return new Map((await this.stats(customerId)).map(r => [r.target_id, r]));
+  }
+
+  async recommend(customerId: string, level: LessonPlan["level"], goal: string | undefined, count: number) {
+    const stats = await this.statsById(customerId);
+    const mastered = (t: LearningTarget) => { const r = stats.get(t.id); return r?.score != null && r.score >= 80 && Number(r.independent_calls) >= 2; };
+    const { primary, rest } = recommendedDomains(level, goal);
+    const rank = (l: string) => levelOrder.indexOf(l as LessonPlan["level"]);
+    const levels = levelOrder.slice(rank(level));
+    const tiers = [primary, rest].flatMap(domains => levels.flatMap(l => domains.map(domain => ({ domain, l }))));
+    const chosen: LearningTarget[] = [];
+    for (const { domain, l } of tiers) {
+      if (chosen.length >= count) break;
+      const open = vocabularyCatalog.filter(t => t.domain === domain && rank(t.level) <= rank(l) && !mastered(t) && !chosen.includes(t));
+      chosen.push(...order(stats, open, count - chosen.length, l));
+    }
+    const topic = chosen[0]?.domain || primary[0];
+    return { topic, vocabulary: chosen.length ? chosen : order(stats, vocabularyCatalog.filter(t => t.domain === topic && rank(t.level) <= rank(level)), count, level) };
   }
 
   async exposures(customerId: string, callId: string, targets: LearningTarget[], text: string) {
