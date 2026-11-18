@@ -231,7 +231,7 @@ function Intake({ initial, initialName, askPersonality, onFinish, saving }: { in
   const [step, setStep] = useState(0);
   const [extra, setExtra] = useState<IntakeExtra>({ learner_name: initialName, personality: "warm", teacher_gender: "male" });
   const [named, setNamed] = useState(!!initialName);
-  const [plan, setPlan] = useState<Plan>(initial || { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "travel" });
+  const [plan, setPlan] = useState<Plan>(initial || { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" });
   const [thinking, setThinking] = useState(false);
   const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timeout.current) clearTimeout(timeout.current); }, []);
