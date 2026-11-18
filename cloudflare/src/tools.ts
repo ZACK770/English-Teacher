@@ -82,7 +82,7 @@ export const INTAKE_TOOL = {
       "goal": { "type": "string", "enum": ["work", "travel", "study", "other"] },
       "level": { "type": "string", "enum": ["beginner", "intermediate", "fluent"] },
       "difficulty": { "type": "string", "enum": ["speaking", "listening", "writing"] },
-      "minutes": { "type": "integer", "enum": [5, 10, 20] },
+      "minutes": { "type": "integer", "description": "Lesson length in minutes. Choose 5, 10, or 20." },
       "topic": { "type": "string", "enum": ["everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars"] },
       "personality": { "type": "string", "enum": ["warm", "focused", "playful"] },
       "teacher_gender": { "type": "string", "enum": ["male", "female"] }
