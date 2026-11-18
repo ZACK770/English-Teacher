@@ -267,6 +267,8 @@ describe("recommended vocabulary when no specific topic was chosen", () => {
   it("starts beginners on everyday basics and moves to their intake goal once those are mastered", async () => {
     await b.savePreference("alice", { plan: { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" }, topic: "recommended", learning_load: "intensive" });
     const first = (await lessonFor()).vocabulary;
+    expect(first).toHaveLength(8);
+    expect(first.slice(6)).toHaveLength(2);
     expect(first.slice(0, 6).every(t => t.domain === "everyday" && t.level === "beginner")).toBe(true);
     expect(first.slice(6).every(t => ["travel", "flights"].includes(t.domain) && t.level === "beginner")).toBe(true);
     await master(words("everyday", "beginner"));
