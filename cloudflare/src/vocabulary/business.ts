@@ -249,7 +249,7 @@ export const business: VocabularyBank = {
         { en: "escrow", he: "נאמנות להחזקת כספים או מסמכים", pos: "noun" },
         { en: "title deed", he: "שטר בעלות", pos: "phrase" },
         { en: "lien", he: "שעבוד", pos: "noun" },
-      { en: "capitalize", he: "לנצל הזדמנות עסקית", pos: "verb" },
+      { en: "capitalize on", he: "לנצל (הזדמנות)", pos: "phrase" },
         { en: "diversify", he: "לגוון השקעות או פעילות", pos: "verb" },
         { en: "liquidate", he: "לממש נכסים; לפרק עסק", pos: "verb" },
         { en: "amortize", he: "לפרוס פירעון או הפחתה", pos: "verb" },
