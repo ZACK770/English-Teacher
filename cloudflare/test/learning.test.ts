@@ -198,6 +198,18 @@ describe("learner settings to Gemini", () => {
     expect(tools.map(t => t.name)).toEqual(["report_learning_batch", "record_lesson_summary", "end_session", "save_intake"]);
     expect(JSON.stringify(tools)).not.toContain("business.liability");
   });
+  it("sends intake minutes as an integer without an enum to Gemini Live", async () => {
+    const controls = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    const { setup } = buildSetupPayload(controls, "lesson", "teacher", settings({} as any));
+    const intake = setup.tools[0].functionDeclarations.find(tool => tool.name === "save_intake");
+    expect(intake).toMatchObject({
+      parameters: {
+        properties: { minutes: { type: "integer", description: expect.stringContaining("5, 10, or 20") } },
+        required: expect.arrayContaining(["minutes"]),
+      },
+    });
+    expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");
+  });
   it("does not add grammar to recommended practice and only sends its targets when explicitly selected", async () => {
     await b.savePreference("alice", { topic: "business", track: "recommended" });
     const initial = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
