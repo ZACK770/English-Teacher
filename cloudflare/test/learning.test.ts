@@ -153,6 +153,7 @@ describe("learner settings to Gemini", () => {
       expect(target.meaning_he.length).toBeGreaterThan(0);
     }
     expect(vocabularyCatalog.filter(t => t.domain === "everyday").length).toBeGreaterThanOrEqual(3000);
+    expect(vocabularyCatalog.find(t => t.id === "travel.sightseeing")).toMatchObject({ level: "beginner", usage_example: "We spent the morning sightseeing." });
     expect(vocabularyDomains).toEqual(expect.arrayContaining(["everyday", "travel", "career", "business", "school"]));
   });
   it.each(["beginner", "intermediate", "fluent"] as const)("selects level-appropriate targets for %s rather than always choosing the first basic words", async level => {
@@ -265,7 +266,9 @@ describe("recommended vocabulary when no specific topic was chosen", () => {
   });
   it("starts beginners on everyday basics and moves to their intake goal once those are mastered", async () => {
     await b.savePreference("alice", { plan: { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" }, topic: "recommended", learning_load: "intensive" });
-    expect((await lessonFor()).vocabulary.every(t => t.domain === "everyday")).toBe(true);
+    const first = (await lessonFor()).vocabulary;
+    expect(first.slice(0, 6).every(t => t.domain === "everyday" && t.level === "beginner")).toBe(true);
+    expect(first.slice(6).every(t => ["travel", "flights"].includes(t.domain) && t.level === "beginner")).toBe(true);
     await master(words("everyday", "beginner"));
     const next = await lessonFor();
     expect(next.topic).toBe("travel");
@@ -292,7 +295,8 @@ describe("recommended vocabulary when no specific topic was chosen", () => {
     const coreA1 = new Set(VOCABULARY_BANKS[0].levels[0].words.map(w => w.en));
     expect(next.vocabulary.every(t => t.domain === "everyday" && coreA1.has(t.text))).toBe(true);
     const report = await store.report("alice");
-    expect(report.items.filter(t => t.kind === "vocabulary" && !t.attempts && !t.exposures && t.domain === "everyday")).toHaveLength(40);
+    expect(report.items.filter(t => t.kind === "vocabulary" && !t.attempts && !t.exposures && t.domain === "everyday")).toHaveLength(40 * 3);
+    expect(report.items.filter(t => t.kind === "vocabulary" && !t.attempts && t.domain === "school" && t.level === "fluent")).toHaveLength(40);
     expect(report.domains.find(d => d.domain === "everyday")!.total).toBe(words("everyday", "beginner").length + vocabularyCatalog.filter(t => t.domain === "everyday" && t.level !== "beginner").length);
   });
   it("fills a lesson across domains and steps up a level after the recommended words at the current level are mastered", async () => {

@@ -34,8 +34,14 @@ const bankTargets: LearningTarget[] = VOCABULARY_BANKS.flatMap(bank => [...bank.
   const domain = bankDomains[bank.id] || bank.id;
   return { id: targetId(domain, w.en), text: w.en, meaning_he: w.he, domain, level: cefrLevels[level.cefr] };
 })));
-const uniqueTargets = new Map<string, LearningTarget>();
-for (const t of [...starterTargets, ...bankTargets]) if (!uniqueTargets.has(t.id.toLowerCase())) uniqueTargets.set(t.id.toLowerCase(), t);
+const uniqueTargets = new Map(starterTargets.map(t => [t.id.toLowerCase(), t]));
+const leveledByBank = new Set<string>();
+for (const t of bankTargets) {
+  const key = t.id.toLowerCase(), starter = uniqueTargets.get(key);
+  if (!starter) uniqueTargets.set(key, t);
+  else if (!leveledByBank.has(key)) uniqueTargets.set(key, { ...starter, level: t.level });
+  leveledByBank.add(key);
+}
 export const vocabularyCatalog: LearningTarget[] = [...uniqueTargets.values()];
 export const vocabularyDomains = [...new Set(vocabularyCatalog.map(t => t.domain))];
 export const RECOMMENDED_TOPIC = "recommended";
@@ -169,13 +175,19 @@ export class LearningStore {
     const { primary, rest } = recommendedDomains(level, goal);
     const rank = (l: string) => levelOrder.indexOf(l as LessonPlan["level"]);
     const levels = levelOrder.slice(rank(level));
-    const tiers = [primary, rest].flatMap(domains => levels.flatMap(l => domains.map(domain => ({ domain, l }))));
-    const chosen: LearningTarget[] = [];
-    for (const { domain, l } of tiers) {
-      if (chosen.length >= count) break;
-      const open = vocabularyCatalog.filter(t => t.domain === domain && rank(t.level) <= rank(l) && !mastered(t) && !chosen.includes(t));
-      chosen.push(...order(stats, open, count - chosen.length, l));
-    }
+    const pick = (domains: string[], limit: number, taken: LearningTarget[]) => {
+      const out: LearningTarget[] = [];
+      for (const l of levels) for (const domain of domains) {
+        if (out.length >= limit) return out;
+        const open = vocabularyCatalog.filter(t => t.domain === domain && rank(t.level) <= rank(l) && !mastered(t) && !taken.includes(t) && !out.includes(t));
+        out.push(...order(stats, open, limit - out.length, l));
+      }
+      return out;
+    };
+    const goalPicks = level === "beginner" ? pick(goalDomains[goal || ""] || [], Math.floor(count / 3), []) : [];
+    const main = pick(primary, count - goalPicks.length, goalPicks);
+    main.push(...pick(rest, count - goalPicks.length - main.length, [...goalPicks, ...main]));
+    const chosen = [...main, ...goalPicks];
     const topic = chosen[0]?.domain || primary[0];
     return { topic, vocabulary: chosen.length ? chosen : order(stats, vocabularyCatalog.filter(t => t.domain === topic && rank(t.level) <= rank(level)), count, level) };
   }
@@ -212,8 +224,8 @@ export class LearningStore {
     const upcoming = new Map<string, number>();
     const visible = items.filter(t => {
       if (t.kind !== "vocabulary" || t.attempts || t.exposures || !pool.length) return true;
-      const shown = upcoming.get(t.domain) || 0;
-      upcoming.set(t.domain, shown + 1);
+      const key = t.domain + ":" + t.level, shown = upcoming.get(key) || 0;
+      upcoming.set(key, shown + 1);
       return shown < 40;
     });
     const latest = await this.db.prepare(`SELECT l.call_id,l.created_at,l.plan_json,
@@ -225,7 +237,7 @@ export class LearningStore {
       target_count: plan.vocabulary.length + plan.grammar.length,
       status: !plan.vocabulary.length && !plan.grammar.length ? "no_targets" : latest.result_count ? "assessed" : "no_evidence",
     } : null;
-    return { items: visible, domains, last_lesson, scoring: "ממוצע עד שלוש הבדיקות האחרונות; שליטה מבוססת: 80 ומעלה ולפחות שתי הצלחות עצמאיות משיחות שונות בין שלוש הבדיקות. ללא הפחתה לפי זמן או תזמון חזרות.", syllabus: "מאגרי מילים לפי תחום ורמה, ורשימות אישיות. בכל תחום מוצגות המילים שכבר תרגלת ו־40 המילים הבאות בתור." };
+    return { items: visible, domains, last_lesson, scoring: "ממוצע עד שלוש הבדיקות האחרונות; שליטה מבוססת: 80 ומעלה ולפחות שתי הצלחות עצמאיות משיחות שונות בין שלוש הבדיקות. ללא הפחתה לפי זמן או תזמון חזרות.", syllabus: "מאגרי מילים לפי תחום ורמה, ורשימות אישיות. בכל תחום ורמה מוצגות המילים שכבר תרגלת ו־40 המילים הבאות בתור." };
   }
 
   async history(customerId: string, kind: string, targetId: string) {
