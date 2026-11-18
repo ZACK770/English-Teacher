@@ -5,6 +5,8 @@ import { DashboardLayout } from './components/dashboard/DashboardLayout';
 import { LearnerPortal } from './components/portal/LearnerPortal';
 import { JoinLanding } from './components/join/JoinLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
+import { LegalPage, type LegalPageName } from './components/legal/LegalPage';
+import { LegalFooter } from './components/legal/LegalFooter';
 
 export const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy'>('learn');
@@ -69,6 +71,7 @@ export const AppContent: React.FC = () => {
         {currentView === 'learn' && (
           <div className="p-4 sm:p-8 max-w-7xl mx-auto">
             <LearnerPortal />
+            <LegalFooter />
           </div>
         )}
         {currentView === 'join' && <JoinLanding />}
@@ -79,6 +82,11 @@ export const AppContent: React.FC = () => {
 };
 
 export const App: React.FC = () => {
+  const path = window.location.pathname.replace(/^\/english(?=\/|$)/, '').replace(/\/$/, '');
+  const legalPage = path.slice(1);
+  if (['terms', 'privacy', 'accessibility'].includes(legalPage)) {
+    return <LegalPage page={legalPage as LegalPageName} />;
+  }
   return (
     <AppProvider>
       <AppContent />
