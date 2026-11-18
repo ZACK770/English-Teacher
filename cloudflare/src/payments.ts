@@ -1,5 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
-import { type Env, HttpError, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
+import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
 export const PREFIX = "dibura-";
 
@@ -306,7 +306,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     return { type: "hangup" };
   }
   if (["0", "9", "ERROR"].includes(params.isaacPayExit)) {
-    return { type: "goTo", goTo: base + (params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"] };
+    return { type: "goTo", goTo: extensionPath(base, params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"] };
   }
   if (!paymentsConfigured(env)) return selectionMenu("isaacPayExit", "התשלום הטלפוני אינו זמין כרגע. לשירות הקישו 9. לחזרה הקישו 0.");
   if (customerId.startsWith("anonymous-")) return selectionMenu("isaacPayExit", "לרכישת חבילה יש להתקשר ממספר גלוי. לשירות הקישו 9. לחזרה הקישו 0.");
@@ -321,7 +321,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     }
     if (["0", "ERROR"].includes(params.isaacPayConfirm)) {
       await store.cancelSelection(callId);
-      return { type: "goTo", goTo: base, removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales"] };
+      return { type: "goTo", goTo: extensionPath(base), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales"] };
     }
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
     if (params.isaacPayConfirm === "1") {
@@ -337,7 +337,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   }
   const choice = params.isaacPackage ?? "";
   if (["0", "9", "ERROR"].includes(choice)) {
-    return { type: "goTo", goTo: base + (choice === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacSales"] };
+    return { type: "goTo", goTo: extensionPath(base, choice === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacSales"] };
   }
   if (/^\d+$/.test(choice) && Number(choice) >= 1 && Number(choice) <= packageIds.length) {
     try {

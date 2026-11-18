@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nowIso, randomHex, sha256Hex, tokenUrlsafe } from "./env";
+import { SCHOOL_CALL_FILTER, SCHOOL_SESSION_FILTER } from "./school-history";
 
 export const CustomerSchema = z.object({
   name: z.string().min(1).max(100),
@@ -14,6 +15,8 @@ export const PackageSchema = z.object({
   minutes: z.number().int().min(1).max(100000),
   price_ils: z.number().min(0).max(100000),
   validity_days: z.number().int().min(1).max(3650).default(30),
+  max_call_minutes: z.number().int().min(1).max(60).default(5),
+  tagline: z.string().max(120).default(""),
   active: z.boolean().default(false),
   phone_enabled: z.boolean().default(true),
 });
@@ -189,7 +192,8 @@ export class BusinessStore {
       if (botId !== "ivr") await this.db.prepare("UPDATE call_customers SET bot_id=? WHERE call_id=?").bind(botId, callId).run();
       return existing.customer_id;
     }
-    const row = phone ? await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(phone).first<{ customer_id: string }>() : null;
+    const linked = phone ? await this.customerForPhone(phone) : null;
+    const row = linked ? { customer_id: linked } : null;
     const customerId = row ? row.customer_id : phone ? "tel-" + (await sha256Hex(phone)).slice(0, 24) : "anonymous-" + randomHex(12);
     const now = nowIso();
     const stmts: D1PreparedStatement[] = [];
@@ -204,6 +208,13 @@ export class BusinessStore {
     stmts.push(this.db.prepare("INSERT OR IGNORE INTO call_customers VALUES (?,?,?,?,?)").bind(callId, customerId, botId, "phone", now));
     await this.db.batch(stmts);
     return customerId;
+  }
+
+  async customerForPhone(phone: string): Promise<string | null> {
+    const primary = await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(phone).first<{ customer_id: string }>();
+    if (primary) return primary.customer_id;
+    const linked = await this.record("learner-phone-links", (await sha256Hex(phone)).slice(0, 24));
+    return linked?.customer_id ?? null;
   }
 
   async consumeMonthlyQuota(api: string, limit: number): Promise<boolean> {
@@ -231,7 +242,8 @@ export class BusinessStore {
     for (const receipt of receipts) {
       const remaining = receipt.minutes * 60 - receipt.spent;
       if (remaining >= 1) {
-        const seconds = Math.min(maxSeconds, remaining);
+        const pkg = PackageSchema.safeParse(await this.record("packages", receipt.package_id));
+        const seconds = Math.min(maxSeconds, remaining, pkg.success ? pkg.data.max_call_minutes * 60 : maxSeconds);
         await insert(policy.product, receipt.id, seconds);
         return { seconds, mode: "paid" };
       }
@@ -287,11 +299,30 @@ export class BusinessStore {
     const [receipts, calls] = await this.db.batch<Record<string, any>>([
       this.db.prepare(`SELECT r.*, COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS spent_seconds FROM sales_receipts r
         LEFT JOIN usage_allocations u ON u.receipt_id=r.id WHERE r.customer_id=? GROUP BY r.id ORDER BY r.created_at DESC`).bind(customerId),
-      this.db.prepare(`SELECT c.call_id,c.bot_id,c.channel,c.created_at,s.duration_seconds,s.summary_he,s.points FROM call_customers c
-        LEFT JOIN sessions s ON c.call_id=s.call_id WHERE c.customer_id=? ORDER BY c.created_at DESC LIMIT 50`).bind(customerId),
+      this.db.prepare(`SELECT c.call_id,c.bot_id,c.channel,c.created_at,sessions.duration_seconds,sessions.summary_he,sessions.points FROM call_customers c
+        LEFT JOIN sessions ON c.call_id=sessions.call_id WHERE c.customer_id=? AND ${SCHOOL_CALL_FILTER} AND ${SCHOOL_SESSION_FILTER} ORDER BY c.created_at DESC LIMIT 50`).bind(customerId),
     ]);
     const customer = (await this.list("customers")).find((c) => c.id === customerId) ?? { ...body, id: customerId };
-    return { customer, receipts: receipts.results, calls: calls.results };
+    return { customer, receipts: receipts.results, calls: calls.results, access: await this.accessSummary(customerId, receipts.results) };
+  }
+
+  async accessSummary(customerId: string, receipts: Record<string, any>[]) {
+    const policy = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).find((p) => p.enabled && p.product === "school");
+    if (!policy) return { limited: false, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    const used = await this.db
+      .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)`)
+      .bind(customerId, "school", month() + "%")
+      .first<{ n: number }>();
+    const now = nowIso();
+    const live = receipts.find((r) => r.product === "school" && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
+    const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
+    return {
+      limited: true,
+      free_calls_left: customerId.startsWith("anonymous-") ? 0 : Math.max(0, policy.free_calls_month - (used?.n ?? 0)),
+      free_call_minutes: Math.round(policy.free_call_seconds / 60),
+      plan_name: pkg?.success ? pkg.data.name.split(" · ")[0] : "",
+      max_call_minutes: pkg?.success ? pkg.data.max_call_minutes : 0,
+    };
   }
 
   async portalInvite(customerId: string) {

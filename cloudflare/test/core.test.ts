@@ -4,11 +4,12 @@ import { parseStartFrame, transferCommand } from "../src/technoline";
 import { controlsFromSettings, TutorControlsSchema } from "../src/controls";
 import { buildSystemInstruction } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
-import { settings } from "../src/env";
+import { settings, extensionPath, withinBase } from "../src/env";
 import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
 import worker from "../src/index";
 import { ProgressStore } from "../src/progress";
+import { TutorSession } from "../src/session";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
@@ -20,6 +21,19 @@ describe("Technoline protocol", () => {
   });
   it.each([{ ...start, token: "wrong" }, { ...start, type: undefined }, { ...start, callId: "" }, { ...start, format: "pcm16;rate=16000;ch=1" }])("rejects unauthenticated or incompatible start frames", (frame) => {
     expect(() => parseStartFrame(JSON.stringify(frame), "test-channel")).toThrow();
+  });
+  it("accepts any configured router channel and resolves root-menu extensions", () => {
+    expect(parseStartFrame(JSON.stringify({ ...start, token: "new-channel" }), ["old-channel", "new-channel"]).callId).toBe("test-call");
+    expect(() => parseStartFrame(JSON.stringify({ ...start, token: "other" }), ["old-channel", "new-channel"])).toThrow();
+    expect(() => parseStartFrame(JSON.stringify({ ...start, token: "" }), [""])).toThrow();
+    const s = settings({ TLIVR_SYSTEM_PHONE: "0765673575, 0765674434", TLIVR_PROJECT_PATH: "/99,/", TLIVR_ROUTER_CHANNEL: "old-channel,new-channel" } as Env);
+    expect(s.systems).toEqual([{ phone: "0765673575", base: "/99" }, { phone: "0765674434", base: "/" }]);
+    expect(s.routerChannels).toEqual(["old-channel", "new-channel"]);
+    expect([extensionPath("/", ""), extensionPath("/", "/7"), extensionPath("/99", ""), extensionPath("/99", "/7")]).toEqual(["/", "/7", "/99", "/99/7"]);
+    const rebase = (primary: string, base: string, target: string) =>
+      (TutorSession.prototype as any).rebase.call({ s: { projectPath: primary }, pbxBase: base, extension: (x = "") => extensionPath(base, x) }, target);
+    expect([rebase("/", "/99", "/8"), rebase("/", "/99", "/"), rebase("/99", "/", "/99/8")]).toEqual(["/99/8", "/99", "/8"]);
+    expect([withinBase("/", "/5"), withinBase("/99", "/99/1"), withinBase("/99", "/990"), withinBase("/99", "/5")]).toEqual([true, true, false, false]);
   });
   it("only transfers to IVR paths", () => {
     expect(JSON.parse(transferCommand("/99/9"))).toEqual({ type: "transfer_extension", target: "/99/9" });

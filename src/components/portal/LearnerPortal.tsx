@@ -1,1411 +1,341 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useApp } from '../../store/AppContext';
-import {
-  BookOpen,
-  Gamepad2,
-  PhoneCall,
-  History,
-  Upload,
-  CheckCircle2,
-  Flame,
-  Volume2,
-  Sparkles,
-  Send,
-  Trash2,
-  FileText,
-  Mic,
-  MicOff,
-  PhoneOff,
-  Share2,
-  RotateCcw,
-  Award,
-  Zap,
-  Globe
-} from 'lucide-react';
-import { WordMatchGame } from '../games/WordMatchGame';
-import { SentenceBuilderGame } from '../games/SentenceBuilderGame';
-import { ListeningQuizGame } from '../games/ListeningQuizGame';
-import { RoleplayDialogGame } from '../games/RoleplayDialogGame';
-import { DetailedCallRecord } from '../../types';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, ChevronDown, Clock3, History, LogOut, Mic, MoreHorizontal, Phone, Plus, Settings2, Sprout, Trash2, Trophy, Upload, Users, X } from "lucide-react";
+import { Account, initialToken, Lesson, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
+import { VoiceRoom } from "./VoiceRoom";
+import { LearningProgress } from "./LearningProgress";
+import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
+import "./portal.css";
+
+type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan";
+const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "בקצב טבעי", fast: "אפשר להגביר" };
+const personalities: Record<string, string> = { warm: "חם ומעודד", focused: "ישר לעניין", playful: "עם חיוך" };
+const DEFAULT_NAME = "דוד";
+const FEMALE_NAME = "אסתי";
+const isFemale = (voice?: string) => ["Aoede", "Kore", "Leda", "Zephyr", "Callirrhoe", "Autonoe", "Despina", "Erinome", "Laomedeia", "Achernar", "Gacrux", "Pulcherrima", "Vindemiatrix", "Sulafat"].includes(voice || "");
+const voices = [{ value: "Aoede", label: "רך ובהיר" }, { value: "Puck", label: "קליל וחם" }, { value: "Charon", label: "עמוק ורגוע" }];
+const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day: "numeric", month: "long", timeZone: "Asia/Jerusalem" });
+
+function IconButton({ label, children, onClick, active = false }: { label: string; children: React.ReactNode; onClick: () => void; active?: boolean }) {
+  return <button type="button" className={"sk-icon " + (active ? "is-active" : "")} aria-label={label} aria-pressed={active} title={label} onClick={onClick}>{children}<span className="sk-tooltip">{label}</span></button>;
+}
+function Brand({ onClick }: { onClick: () => void }) {
+  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><AudioLines strokeWidth={1.5} /><span>speakool<span className="sk-brand-dot">.</span></span></button>;
+}
+function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
+  return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">
+    <circle className="sk-art-halo" cx="180" cy="180" r="135" />
+    <g className="sk-orbit" style={{ transformOrigin: "180px 180px", animationDelay: `${seed % 5 * -.8}s` }}>
+      <ellipse cx="180" cy="180" rx="142" ry="63" transform="rotate(-37 180 180)" fill="none" stroke="currentColor" strokeWidth=".75" />
+      <circle cx="292" cy="95" r="7" className="sk-art-accent" />
+    </g>
+    <g className="sk-float-one">
+      <path d="M78 97Q78 80 95 80H211Q228 80 228 97V174Q228 191 211 191H132L104 217V191H95Q78 191 78 174Z" className="sk-art-paper" />
+      <text x="153" y="151" textAnchor="middle" direction="ltr" fontSize="43" fontFamily="Georgia,serif" fill="currentColor">hello.</text>
+    </g>
+    <g className="sk-float-two">
+      <path d="M145 184Q145 170 159 170H268Q282 170 282 184V246Q282 260 268 260H247V283L218 260H159Q145 260 145 246Z" className="sk-art-accent" />
+      {[0, 1, 2, 3, 4, 5, 6].map(n => <rect key={n} className="sk-sound-bar" x={180 + n * 11} y={203 - (n % 3) * 5} width="3" height={24 + (n % 3) * 10} rx="2" fill="#fffef9" style={{ animationDelay: `${n * -.18}s` }} />)}
+    </g>
+    <path d="M82 265v22m-11-11h22M284 58v17m-8-8h16" stroke="currentColor" strokeWidth="1" />
+    <circle cx="82" cy="232" r="3" fill="currentColor" /><circle cx="277" cy="301" r="3" fill="currentColor" />
+      </svg>;
+}
+const markBg = ["#d4ff3f", "#7cc7ff", "#ffb86b", "#c9a7ff", "#5be3b5"];
+const markShirt = ["#1f3a5f", "#3b2f63", "#0f4c45", "#5a2a35", "#2d3b1f"];
+const markScarf = ["#e2557a", "#3c7dd9", "#8a5cf6", "#f0a030", "#16a37f"];
+export function TeacherMark({ teacher, index = 0 }: { teacher?: Teacher; index?: number }) {
+  const seed = teacher ? [...teacher.name].reduce((n, c) => n + c.charCodeAt(0), 0) : index;
+  const female = isFemale(teacher?.voice);
+  const pick = (list: string[]) => list[seed % list.length];
+  return <svg className="sk-avatar-mark" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="50" cy="50" r="48" fill={pick(markBg)} />
+    <path d="M17 97c3-20 16-30 33-30s30 10 33 30z" fill={pick(markShirt)} />
+    <path d="M43 60h14v10a7 7 0 0 1-14 0z" fill="#e2b48e" />
+    {female && <path d="M28 50c0-18 9-29 22-29s22 11 22 29c0 7-2 12-5 15-1-15-7-26-17-26s-16 11-17 26c-3-3-5-8-5-15z" fill={pick(markScarf)} />}
+    <ellipse cx="50" cy="46" rx="16" ry="19" fill="#f2c9a5" />
+    {female ? <><path d="M33 40c2-11 9-16 17-16s15 5 17 16c-5-5-10-7-17-7s-12 2-17 7z" fill={pick(markScarf)} /><circle cx="70" cy="60" r="5" fill={pick(markScarf)} /></>
+      : <><path d="M34 42c0-13 7-19 16-19s16 6 16 19c-3-6-8-9-16-9s-13 3-16 9z" fill="#2b2118" /><path d="M34 49c1 12 8 18 16 18s15-6 16-18c-3 4-9 6-16 6s-13-2-16-6z" fill="#3a2c20" /><path d="M41 25a9 5 0 0 1 18 0z" fill="#14161a" /></>}
+    <circle cx="44" cy="45" r="1.9" fill="#1d1d1f" /><circle cx="56" cy="45" r="1.9" fill="#1d1d1f" />
+    {seed % 2 === 1 && <g fill="none" stroke="#14161a" strokeWidth="1.6"><circle cx="44" cy="45" r="5" /><circle cx="56" cy="45" r="5" /><path d="M49 45h2" /></g>}
+    <path d="M45 54q5 3.5 10 0" stroke={female ? "#b5485a" : "#f2c9a5"} strokeWidth="2" fill="none" strokeLinecap="round" />
+  </svg>;
+}
+function Modal({ title, children, onClose, error, busy }: { title: string; children: React.ReactNode; onClose: () => void; error?: string; busy?: boolean }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => { const dialog = ref.current; dialog?.showModal(); return () => dialog?.close(); }, []);
+  return <dialog ref={ref} className="sk-modal" onCancel={onClose} onClick={e => { if (e.target === e.currentTarget) onClose(); }}><div className="sk-modal-top"><h2>{title}</h2><IconButton label="סגירה" onClick={onClose}><X /></IconButton></div>{error && <p className="sk-error" role="alert">{error}</p>}<fieldset className="sk-content-fieldset" disabled={busy}>{children}</fieldset></dialog>;
+}
+function Options({ values, value, onChange }: { values: Record<string, string>; value?: string; onChange: (v: string) => void }) {
+  return <div className="sk-options">{Object.entries(values).map(([key, label]) => <button key={key} type="button" className={"sk-choice " + (key === value ? "is-selected" : "")} aria-pressed={key === value} onClick={() => onChange(key)}><span>{label}</span>{key === value ? <Check size={17} /> : <ArrowUpLeft size={16} />}</button>)}</div>;
+}
+function TopicPicker({ value, onChange, recommended = ["everyday", "travel", "business"] }: { value?: string; onChange: (v: string) => void; recommended?: string[] }) {
+  return <><Options value={value} values={Object.fromEntries(recommended.map(k => [k, topics[k]]))} onChange={onChange} /><details className="sk-more"><summary>יש לי משהו אחר בראש <ChevronDown size={14} /></summary><Options value={value} values={Object.fromEntries(Object.entries(topics).filter(([k]) => !recommended.includes(k)))} onChange={onChange} /></details></>;
+}
+
+function Login({ onToken, error }: { onToken: (token: string) => void; error: string }) {
+  const [phone, setPhone] = useState("");
+  const [challenge, setChallenge] = useState("");
+  const [code, setCode] = useState("");
+  const [personal, setPersonal] = useState("");
+  const [notice, setNotice] = useState(error);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setNotice("");
+    try {
+      if (!challenge) { const r = await portalRequest<{ challenge: string }>("/v1/portal/auth/start", "", { phone }); setChallenge(r.challenge); }
+      else { const r = await portalRequest<{ token: string }>("/v1/portal/auth/verify", "", { challenge, code }); onToken(r.token); }
+    } catch (e) { setNotice(e instanceof Error ? e.message : "לא הצלחנו להתחבר."); }
+    finally { setBusy(false); }
+  };
+  return <main className="sk-login">
+    <section className="sk-login-copy"><h1>פשוט<br />לדבר<span>.</span></h1><p className="sk-lede">את השפה הראשונה שלך לא למדת מספר.<br />הקשבת. ניסית. דיברת.<br />בוא נעשה את זה שוב. הפעם באנגלית.</p>
+      <form onSubmit={submit} className="sk-login-form">
+        <label htmlFor="sk-phone">{challenge ? "מה שש הספרות האחרונות של המספר שצלצל?" : "באיזה מספר נדבר?"}</label>
+        {!challenge ? <input id="sk-phone" type="tel" dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="050-000-0000" required /> : <input id="sk-phone" key="otp" autoFocus dir="ltr" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" pattern="[0-9]{6}" required />}
+        <button className="sk-primary" disabled={busy}>{busy ? "רק רגע…" : challenge ? "בוא ניכנס" : "שלחו לי צלצול"}<ArrowLeft size={17} /></button>
+        <small>{challenge ? "לא צריך לענות. רק להעתיק את שש הספרות האחרונות." : "צלצול אחד, בלי הודעות ובלי סיסמאות."}</small>
+        {challenge && <button type="button" className="sk-link" onClick={() => { setChallenge(""); setCode(""); }}>מספר אחר או צלצול נוסף</button>}
+      </form>
+      <details className="sk-more"><summary>יש לי קישור אישי <Plus size={13} /></summary><form onSubmit={e => { e.preventDefault(); const t = personal.includes("#") ? personal.split("#").pop()! : personal.trim(); if (/^[A-Za-z0-9_-]{30,128}$/.test(t)) onToken(t); else setNotice("אפשר להדביק כאן את הקישור האישי המלא שקיבלת."); }}><label htmlFor="personal-link" className="sk-sr">קישור אישי</label><input id="personal-link" type="text" dir="ltr" value={personal} onChange={e => setPersonal(e.target.value)} placeholder="הקישור שקיבלת" required /><button className="sk-secondary">כניסה עם הקישור</button></form></details>
+      {notice && <p className="sk-error" role="alert">{notice}</p>}
+    </section><div className="sk-login-art"><ConversationArt /><p>לא צריך לדבר שוטף.<br />צריך רק להתחיל.</p></div>
+  </main>;
+}
 
 export const LearnerPortal: React.FC = () => {
-  const {
-    customers,
-    activeLearnerId,
-    setActiveLearnerId,
-    bots,
-    studyMaterials,
-    addStudyMaterial,
-    toggleMaterialActiveForPhone,
-    deleteStudyMaterial,
-    detailedCalls,
-    recordDetailedCall,
-    gameScores,
-    receipts,
-    showToast
-  } = useApp();
-
-  const currentCustomer = customers.find(c => c.id === activeLearnerId) || customers[0];
-
-  // Tabs - default to 'practice' (Native Browser Voice Call)
-  type PortalTab = 'practice' | 'materials' | 'games' | 'history';
-  const [activeTab, setActiveTab] = useState<PortalTab>('practice');
-
-  // Active game in Arena
-  const [selectedGame, setSelectedGame] = useState<'word_match' | 'sentence_builder' | 'listening_quiz' | 'roleplay_dialog'>('word_match');
-
-  // File / Text Upload Modal State
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadTitle, setUploadTitle] = useState('');
-  const [uploadTopic, setUploadTopic] = useState('');
-  const [uploadLevel, setUploadLevel] = useState<'beginner' | 'intermediate' | 'advanced'>('intermediate');
-  const [uploadText, setUploadText] = useState('');
-  const [isScanningFile, setIsScanningFile] = useState(false);
-
-  // Filtered customer materials
-  const myMaterials = studyMaterials.filter(m => m.customer_id === currentCustomer.id);
-  const activePhoneMaterial = myMaterials.find(m => m.is_active_for_phone);
-
-  // Customer receipts & minutes
-  const myReceipts = receipts.filter(r => r.customer_id === currentCustomer.id);
-  const totalMinutes = myReceipts.reduce((acc, r) => acc + (r.minutes - r.spent_seconds / 60), 0);
-  const totalPoints = gameScores.filter(g => g.customer_id === currentCustomer.id).reduce((acc, g) => acc + g.points_earned, 0);
-
-  // Habit loop state
-  const dailyStreak = 3;
-
-  // -------------------------------------------------------------
-  // NATIVE BROWSER VOICE CALL ENGINE (שיחה קולית חיה ישירה מול שוכי)
-  // -------------------------------------------------------------
-  const [isCallActive, setIsCallActive] = useState(false);
-  const [callDuration, setCallDuration] = useState(0);
-  const [isBotSpeaking, setIsBotSpeaking] = useState(false);
-  const [isMicListening, setIsMicListening] = useState(false);
-  const [speechSpeed, setSpeechSpeed] = useState<number>(1.0);
-  const [callTopic, setCallTopic] = useState('general');
-  const [selectedTeacherId, setSelectedTeacherId] = useState('shochi-robot');
-  const [activeCallSummary, setActiveCallSummary] = useState<DetailedCallRecord | null>(null);
-
-  interface LiveTurn {
-    id: string;
-    speaker: 'learner' | 'tutor';
-    text: string;
-    translation_he?: string;
-    correction?: { original: string; better: string; tip: string };
-    timestamp: string;
-  }
-
-  const [liveTurns, setLiveTurns] = useState<LiveTurn[]>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
-
-  const recognitionRef = useRef<any>(null);
-  const timerRef = useRef<any>(null);
-
-  // Call duration timer
-  useEffect(() => {
-    if (isCallActive) {
-      timerRef.current = setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isCallActive]);
-
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  const [token, setToken] = useState(initialToken);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [page, setPage] = useState<Page>("home");
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [voice, setVoice] = useState<{ botId: string; teacherId?: string; name: string } | null>(null);
+  const [builder, setBuilder] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null | undefined>();
+  const mainRef = useRef<HTMLElement>(null);
+  const login = (value: string) => { sessionStorage.setItem("learnerToken", value); setToken(value); setError(""); };
+  const logout = () => { sessionStorage.removeItem("learnerToken"); setAccount(null); setToken(""); setPage("home"); };
+  const refresh = useCallback(async () => {
+    if (!token) { setLoading(false); return; }
+    try { const data = await portalRequest<Account>("/v1/portal/me", token); setAccount(data); }
+    catch (e) { if (e instanceof PortalError && e.status === 401) { sessionStorage.removeItem("learnerToken"); setToken(""); setAccount(null); } setError(e instanceof Error ? e.message : "לא הצלחנו לטעון את החשבון."); }
+    finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { if (note) { const t = setTimeout(() => setNote(""), 4500); return () => clearTimeout(t); } }, [note]);
+  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus()); };
+  const run = async (action: () => Promise<void>, success = "") => {
+    setBusy(true); setError("");
+    try { await action(); await refresh(); if (success) setNote(success); return true; }
+    catch (e) { setError(e instanceof Error ? e.message : "לא הצלחנו לשמור. אפשר לנסות שוב."); return false; }
+    finally { setBusy(false); }
   };
-
-  const playSpeech = (text: string, rate: number = 1.0) => {
-    if ('speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = 'en-US';
-        u.rate = rate;
-        u.onstart = () => setIsBotSpeaking(true);
-        u.onend = () => setIsBotSpeaking(false);
-        u.onerror = () => setIsBotSpeaking(false);
-        window.speechSynthesis.speak(u);
-      } catch (err) {
-        setIsBotSpeaking(false);
-      }
-    }
+  const save = async (input: Preferences) => { await portalRequest("/v1/portal/preferences", token, input); };
+  const p = account?.preferences || {};
+  const active = account?.teachers.find(t => t.id === p.active_teacher);
+  const activeMaterial = account?.materials.find(m => m.id === (active?.material_id || p.material_id));
+  const baseTeachers = account?.bots.filter(b => b.role === "teacher" && b.phone_enabled) || [];
+  const botId = [active?.base_bot, p.selected_bot, account?.customer.preferred_bot, "isaac-basic"].find(id => baseTeachers.some(b => b.id === id)) || baseTeachers[0]?.id;
+  const defaultBase = baseTeachers.find(b => b.id === "isaac-basic") || baseTeachers[0];
+  const teacherName = active?.name || DEFAULT_NAME;
+  const talk = (teacher?: Teacher, bot?: { id: string; label: string }) => {
+    const id = teacher?.base_bot || bot?.id || botId;
+    if (!id) { setError("עדיין אין מורה זמין לשיחה. אפשר לנסות שוב מאוחר יותר."); return; }
+    setVoice({ botId: id, teacherId: teacher?.id || (!bot ? active?.id : undefined), name: teacher?.name || bot?.label || teacherName });
   };
-
-  // Start Voice Call
-  const handleStartCall = () => {
-    setActiveCallSummary(null);
-    setCallDuration(0);
-    setIsCallActive(true);
-
-    const initialGreeting = activePhoneMaterial
-      ? `Hello ${currentCustomer.name}! This is Shochi. I see you prepared the lesson on ${activePhoneMaterial.title}. Shall we start with our vocabulary words?`
-      : `Hello ${currentCustomer.name}! I am Shochi, your personal AI English tutor. I'm so glad we're talking! What would you like to practice today?`;
-
-    const initialTurn: LiveTurn = {
-      id: 'turn-0',
-      speaker: 'tutor',
-      text: initialGreeting,
-      translation_he: activePhoneMaterial
-        ? `שלום ${currentCustomer.name}! כאן שוכי. אני רואה שהכנת את השיעור על ${activePhoneMaterial.title}. נתחיל במילות המפתח?`
-        : `שלום ${currentCustomer.name}! אני שוכי, המורה האישי שלך לאנגלית ב-AI. איזה כיף לדבר! על מה תרצה שנתרגל היום?`,
-      timestamp: '00:01'
-    };
-
-    setLiveTurns([initialTurn]);
-    playSpeech(initialGreeting, speechSpeed);
-    showToast('📞 השיחה הקולית עם שוכי החלה! המיקרופון והרמקולים מחוברים.');
+  const headings: Record<Page, [string, string]> = {
+    home: ["עוד שיחה. קצת יותר ביטחון.", "כיף שחזרת."],
+    teachers: ["עם מי בא לך לדבר?", "המורים שלי"],
+    materials: ["המילים שלך. השיחה שלנו.", "אוצר מילים"],
+    history: ["תראה כמה כבר דיברת.", "השיחות שלי"],
+    achievements: ["האנגלית כבר זזה.", "ההתקדמות שלי"],
+    settings: ["בקצב שלך. בדרך שלך.", "העדפות"],
+    intake: ["בוא נכיר רגע.", "התוכנית שלך"],
+    plan: ["יופי. יש לנו כיוון.", "התוכנית שלך"],
   };
-
-  // End Voice Call & Compile Report
-  const handleEndCall = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-    }
-    setIsMicListening(false);
-    setIsBotSpeaking(false);
-    setIsCallActive(false);
-
-    const durationSec = Math.max(12, callDuration);
-    const selectedBotObj = bots.find(b => b.id === selectedTeacherId) || bots[0];
-
-    const completedCall: DetailedCallRecord = {
-      call_id: `call-native-${Date.now()}`,
-      customer_id: currentCustomer.id,
-      bot_id: selectedBotObj.id,
-      bot_name: selectedBotObj.label || 'שוכי (AI Voice Bot)',
-      topic: activePhoneMaterial ? activePhoneMaterial.title : 'שיחה קולית אינטראקטיבית מהמחשב',
-      created_at: new Date().toISOString(),
-      duration_seconds: durationSec,
-      points: 15,
-      grammar_score: 92,
-      vocabulary_score: 88,
-      fluency_score: 90,
-      summary_he: `התלמיד ניהל שיחה קולית ישירה מהמחשב מול שוכי. השיחה נמשכה ${Math.round(durationSec / 60) || 1} דקות, וכללה החלפת משפטים באנגלית שוטפת, תרגול אוצר מילים מקצועי ושיפור הגייה.`,
-      success_he: 'ביטחון בדיבור, קצב תגובה מהיר, ושימוש נכון במבני הווה ומשפטי שאלה.',
-      next_step_he: 'העמקת תרגול שימוש ב-Past Simple והרחבת אוצר מילים של תיאור תהליכים.',
-      turns: liveTurns.map((t, idx) => ({
-        id: `turn-rec-${idx}`,
-        speaker: t.speaker,
-        text: t.text,
-        translation_he: t.translation_he,
-        corrections: t.correction ? [{
-          original: t.correction.original,
-          correction: t.correction.better,
-          explanation_he: t.correction.tip
-        }] : undefined,
-        timestamp: t.timestamp
-      }))
-    };
-
-    recordDetailedCall(completedCall);
-    setActiveCallSummary(completedCall);
-    showToast(' השיחה נותחה בהצלחה! הדוח הפדגוגי נשמר ביומן השיחות.');
-  };
-
-  // Process User Turn (by mic or text)
-  const processUserResponse = (studentText: string) => {
-    if (!studentText.trim()) return;
-
-    const userTurn: LiveTurn = {
-      id: `turn-${Date.now()}-u`,
-      speaker: 'learner',
-      text: studentText,
-      timestamp: formatTimer(callDuration)
-    };
-
-    // Generate intelligent pedagogical tutor response
-    let tutorResponse = '';
-    let hebrewTranslation = '';
-    let correction: { original: string; better: string; tip: string } | undefined = undefined;
-
-    const lower = studentText.toLowerCase();
-
-    if (lower.includes('interview') || lower.includes('work') || lower.includes('job')) {
-      tutorResponse = "That's fantastic. Let's do a mock job interview! Could you describe your background and key strengths in one or two sentences?";
-      hebrewTranslation = "מעולה! נעשה סימולציית ראיון עבודה. תוכל לתאר את הרקע שלך ואת החוזקות המרכזיות שלך במשפט או שניים?";
-      if (lower.includes('i work in') || lower.includes('i have 5 years')) {
-        correction = {
-          original: 'I work in...',
-          better: 'I have been working as a professional for...',
-          tip: 'בראיון עבודה באנגלית עדיף להשתמש ב-Present Perfect Continuous כדי להדגיש ניסיון מתמשך.'
-        };
-      }
-    } else if (lower.includes('travel') || lower.includes('airport') || lower.includes('hotel')) {
-      tutorResponse = "Great! Imagine you just arrived at Heathrow Airport and your suitcase is missing. What would you say to the baggage service desk?";
-      hebrewTranslation = "מצוין! דמיין שנחתת כעת בלונדון והמזוודה שלך חסרה. מה תגיד לפקיד בדלפק איסוף המזוודות?";
-    } else if (lower.includes('slow') || lower.includes('slower') || lower.includes('repeat')) {
-      tutorResponse = "Of course! I will speak slower. How is this tempo for you? Tell me what you did today.";
-      hebrewTranslation = "בוודאי! אדבר לאט יותר. איך הקצב הזה עבורך? ספר לי מה עשית היום.";
-    } else if (activePhoneMaterial && activePhoneMaterial.vocabulary.length > 0) {
-      const vocab = activePhoneMaterial.vocabulary[0];
-      tutorResponse = `Well said! Let's incorporate "${vocab.english}", which means ${vocab.hebrew}. Can you create a sentence with it?`;
-      hebrewTranslation = `יפה מאוד! בוא נשלב את המילה "${vocab.english}" (שמשמעותה ${vocab.hebrew}). תוכל להרכיב איתה משפט?`;
-    } else {
-      tutorResponse = "That's a very clear point! I love how natural you sound. Tell me more, what do you think is the biggest challenge in your routine?";
-      hebrewTranslation = "נקודה ברורה מאוד! אני אוהב כמה שאתה נשמע טבעי. ספר לי עוד, מה האתגר הכי גדול בסדר היום שלך?";
-    }
-
-    const tutorTurn: LiveTurn = {
-      id: `turn-${Date.now()}-t`,
-      speaker: 'tutor',
-      text: tutorResponse,
-      translation_he: hebrewTranslation,
-      correction,
-      timestamp: formatTimer(callDuration + 2)
-    };
-
-    setLiveTurns(prev => [...prev, userTurn, tutorTurn]);
-    setChatInput('');
-
-    // Speak tutor response out loud
-    playSpeech(tutorResponse, speechSpeed);
-  };
-
-  // Toggle Microphone recognition
-  const handleToggleMic = () => {
-    if (isMicListening) {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
-      }
-      setIsMicListening(false);
-      return;
-    }
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      showToast('בדפדפן זה זיהוי דיבור מוטמע דורש הקלדה או הרשאות מיקרופון. תוכל להשתמש בשדה הטקסט או בכפתורי התגובה המהירה.');
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US';
-      recognition.continuous = false;
-      recognition.interimResults = false;
-
-      recognition.onstart = () => {
-        setIsMicListening(true);
-        showToast('🎙️ המיקרופון מאזין... דבר באנגלית עכשיו!');
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setIsMicListening(false);
-        if (transcript) {
-          processUserResponse(transcript);
-        }
-      };
-
-      recognition.onerror = () => {
-        setIsMicListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsMicListening(false);
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (e) {
-      setIsMicListening(false);
-      showToast('נא לאשר גישה למיקרופון בדפדפן כדי לדבר.');
-    }
-  };
-
-  const PRESET_TRACKS = [
-    {
-      id: 'job-interview',
-      title: 'הכנה לראיון הייטק ושיווק (Job Interview)',
-      topic: 'קריירה ועבודה',
-      level: 'advanced' as const,
-      desc: 'שאלות STAR, תיאור פרויקטים ומשא ומתן על שכר מול מראיין אמריקאי',
-      icon: '💼',
-      sampleText: `Core Competencies:
-Stakeholder management - ניהול בעלי עניין
-Scalability - יכולת הרחבה וגידול
-Trade-off - פשרה או ויתור מחושב
-Compensation expectations - ציפיות שכר ותגמול
-Key Phrases:
-Could you walk me through your previous experience?
-I led a cross-functional team that scaled our user base by forty percent.`
-    },
-    {
-      id: 'travel-airport',
-      title: 'אנגלית לחו״ל: טיסות, מלונות והשכרת רכב',
-      topic: 'תיירות וטיסות',
-      level: 'beginner' as const,
-      desc: 'צ׳ק אין, בידוק דרכונים, הזמנה במסעדה, מוניות והתמצאות',
-      icon: '✈️',
-      sampleText: `Travel Vocabulary:
-Boarding pass - כרטיס עלייה למטוס
-Baggage claim - איסוף מזוודות
-Reservation - הזמנה מראש
-Could we get the check, please? - אפשר בבקשה חשבון?
-Key Phrases:
-Excuse me, which gate is for flight three forty two?
-We would like to request a late check-out tomorrow morning.`
-    },
-    {
-      id: 'real-estate',
-      title: 'עסקאות נדל״ן, מכירות ומשא ומתן',
-      topic: 'עסקים ונדל״ן',
-      level: 'intermediate' as const,
-      desc: 'שיחת מכירה, תנאי חוזה, תשואה ולוחות זמנים עם משקיעים',
-      icon: '🏢',
-      sampleText: `Real Estate Vocabulary:
-Property appraisal - שמאות והערכת שווי נכס
-Yield / ROI - תשואה על ההשקעה
-Closing conditions - תנאי סגירת עסקה
-Down payment - מקדמה ראשונית
-Key Phrases:
-What is the projected net yield for this residential asset?
-Let us review the binding clause before signing the contract.`
-    },
-    {
-      id: 'small-talk',
-      title: 'שיחה חופשית וביטחון עצמי (Small Talk)',
-      topic: 'שיחה יומיומית',
-      level: 'beginner' as const,
-      desc: 'שבירת הקרח, שיחה על תחביבים ומזג אוויר בלי פחד מטעות',
-      icon: '☕',
-      sampleText: `Daily Vocabulary:
-In my spare time - בזמני הפנוי
-To be honest - למען האמת
-What do you do for a living? - במה אתה עוסק?
-Key Phrases:
-It is wonderful to meet you.
-I have been working on improving my spoken English recently.`
-    }
-  ];
-
-  const handleActivatePresetTrack = (track: typeof PRESET_TRACKS[0]) => {
-    const mat = addStudyMaterial({
-      title: track.title,
-      topic: track.topic,
-      level: track.level,
-      rawText: track.sampleText
-    });
-    toggleMaterialActiveForPhone(mat.id);
-    showToast(`מסלול "${track.title}" הופעל ומוכן לשיחה הבאה!`);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsScanningFile(true);
-    showToast(`סורק ומעבד את הקובץ "${file.name}"...`);
-
-    setTimeout(() => {
-      setIsScanningFile(false);
-      setUploadTitle(file.name.replace(/\.[^/.]+$/, ''));
-      setUploadTopic('סריקת מסמך וחומרי לימוד');
-      setUploadText(`Key concepts extracted from ${file.name}:
-Executive Summary: Modern English communication in professional settings.
-Vocabulary:
-Agenda - סדר יום
-Milestone - אבן דרך בפרויקט
-Deliverable - תוצר מוסכם
-Follow-up - שיחת המשך
-Action item - משימה לביצוע
-
-Key Sentences:
-We should align on the project milestones during our next sync.
-Please ensure all deliverables are reviewed before Friday.`);
-    }, 1000);
-  };
-
-  const handleSaveMaterial = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!uploadTitle.trim() || !uploadText.trim()) return;
-
-    addStudyMaterial({
-      title: uploadTitle,
-      topic: uploadTopic || 'כללי',
-      level: uploadLevel,
-      rawText: uploadText
-    });
-
-    setShowUploadModal(false);
-    setUploadTitle('');
-    setUploadTopic('');
-    setUploadText('');
-  };
-
-  return (
-    <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-8" dir="rtl">
-      {/* Top Profile & Welcome Bar - High-Tech Slate */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-8 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-6">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center text-2xl font-black shadow-inner">
-              {currentCustomer.name.charAt(0)}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-emerald-400 tracking-wider uppercase font-mono">
-                  קוקפיט למידה אישי · לישנא אחרינא
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300">
-                  <Flame className="w-3.5 h-3.5 fill-current" />
-                  רצף {dailyStreak} ימים
-                </span>
-              </div>
-              <h1 className="text-2xl font-black text-slate-100 mt-0.5">
-                שלום, {currentCustomer.name}
-              </h1>
-              <p className="text-xs text-slate-400 mt-0.5">
-                החשבון, הדקות והחומרים שלך מסונכרנים בזמן אמת לשיחה הטלפונית (076-567-3575 #99) ולשיחה מהמחשב בדפדפן.
-              </p>
-            </div>
-          </div>
-
-          {/* Quick Learner Profile Switcher */}
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400">תלמיד פעיל:</span>
-            <select
-              value={activeLearnerId}
-              onChange={e => setActiveLearnerId(e.target.value)}
-              className="text-xs font-semibold bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-emerald-500"
-            >
-              {customers.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.phone})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Metric Cards Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-slate-800/80">
-          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
-            <span className="text-xs text-slate-400 block">נקודות הישג</span>
-            <span className="text-2xl font-black text-slate-100 tabular-nums">{totalPoints}</span>
-            <span className="text-[11px] text-emerald-400 block mt-0.5 flex items-center gap-1">
-              <Award className="w-3.5 h-3.5" /> רמה מתקדמת
-            </span>
-          </div>
-
-          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
-            <span className="text-xs text-slate-400 block">יתרת דקות זמינה</span>
-            <span className="text-2xl font-black text-emerald-400 tabular-nums font-mono">
-              {Math.max(0, totalMinutes).toFixed(1)}
-            </span>
-            <span className="text-[11px] text-slate-400 block mt-0.5">זמינות לטלפון ולמחשב</span>
-          </div>
-
-          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
-            <span className="text-xs text-slate-400 block">חומר מוזרק לשיחה</span>
-            <span className="text-base font-bold text-slate-200 block truncate mt-1">
-              {activePhoneMaterial ? activePhoneMaterial.title : 'שיחה כללית חופשית'}
-            </span>
-            <span className="text-[11px] text-slate-400 block mt-0.5">
-              {activePhoneMaterial ? `${activePhoneMaterial.vocabulary.length} מילים פעילות` : 'בחר חומר לסנכרון'}
-            </span>
-          </div>
-
-          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
-            <span className="text-xs text-slate-400 block">שיחות שתועדו</span>
-            <span className="text-2xl font-black text-slate-100 tabular-nums font-mono">
-              {detailedCalls.filter(c => c.customer_id === currentCustomer.id).length}
-            </span>
-            <span className="text-[11px] text-slate-400 block mt-0.5">כולל תמלילים וניתוח הגייה</span>
-          </div>
-        </div>
+  const lastLesson = account?.progress.sessions[0];
+  const firstName = account && account.customer.name !== "לקוח מהטלפון" ? account.customer.name.split(" ")[0] : "";
+  const nav: [Page, string, React.ReactNode][] = [["home", "בית", <Sprout key="i" />], ["teachers", "המורים שלי", <Users key="i" />], ["materials", "אוצר מילים", <BookOpen key="i" />], ["achievements", "ההתקדמות", <Trophy key="i" />], ["history", "השיחות שלי", <History key="i" />], ["settings", "העדפות", <Settings2 key="i" />]];
+  const renderHome = () => account && <>
+    <section className="sk-hero">
+      <div>
+        <h2>{p.plan ? <>{topics[p.topic || p.plan.topic] || "שיחה קטנה"}. במילים שלך.</> : <>פשוט לדבר.</>}</h2>
+        <p>{teacherName} כבר על הקו · {p.minutes || p.plan?.minutes || 10} דקות · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}</p>
+        {p.track !== "grammar" && activeMaterial?.target_count === 0 && <p role="status" className="sk-notice">לרשימה ״{activeMaterial.name}״ עוד אין יעדי אנגלית, אז מדברים בלי ציוני מילים. <button className="sk-link" onClick={() => navigate("materials")}>לרשימות</button></p>}
+        <div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={19} />{account.progress.session_count ? "להמשיך בטלפון" : "בוא נדבר בטלפון"}</button><button className="sk-secondary" onClick={() => talk()}><Mic size={18} />לדבר כאן</button><button className="sk-link" onClick={() => navigate(p.plan ? "plan" : "intake")}>{p.plan ? "התוכנית שלי" : "נכיר רגע?"}</button></div>
       </div>
-
-      {/* Navigation Tabs - Modern High-Tech */}
-      <div className="flex items-center gap-2 border-b border-slate-800 mb-8 overflow-x-auto pb-1">
-        <button
-          onClick={() => setActiveTab('practice')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition shrink-0 ${
-            activeTab === 'practice'
-              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950'
-              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
-          }`}
-        >
-          <PhoneCall className="w-4 h-4" />
-          <span>אימון קולי חי מהמחשב (Native Call)</span>
-          <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
-        </button>
-
-        <button
-          onClick={() => setActiveTab('materials')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition shrink-0 ${
-            activeTab === 'materials'
-              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950'
-              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          <span>חומרי לימוד וסנכרון לטלפון</span>
-          {activePhoneMaterial && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400" title="חומר פעיל" />
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('games')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition shrink-0 ${
-            activeTab === 'games'
-              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950'
-              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
-          }`}
-        >
-          <Gamepad2 className="w-4 h-4" />
-          <span>משחקוני תרגול ושינון (60 שניות)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition shrink-0 ${
-            activeTab === 'history'
-              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950'
-              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
-          }`}
-        >
-          <History className="w-4 h-4" />
-          <span>יומן שיחות ותמלילים פדגוגיים</span>
-        </button>
-      </div>
-
-      {/* TAB 1: NATIVE BROWSER VOICE CALL COCKPIT */}
-      {activeTab === 'practice' && (
-        <div className="space-y-6">
-          {/* Main Calling Stage */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
-
-            {/* Stage Header */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                  isCallActive
-                    ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-                    : 'bg-slate-800 text-slate-400'
-                }`}>
-                  <PhoneCall className={`w-6 h-6 ${isCallActive ? 'animate-pulse' : ''}`} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-black text-slate-100">
-                      שיחה קולית חיה ישירה מול שוכי מהמחשב
-                    </h2>
-                    {isCallActive ? (
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-mono font-bold flex items-center gap-1.5 border border-emerald-500/30">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                        מחובר לשיחה · {formatTimer(callDuration)}
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 text-xs font-mono">
-                        ממתין לחיוג
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    בדיוק מה שאתה שומע בטלפון בקו 076-567-3575 שלוחה 99 – זמין כאן ישירות דרך הרמקול והמיקרופון של המחשב.
-                  </p>
-                </div>
-              </div>
-
-              {/* Call Control Buttons */}
-              <div className="flex items-center gap-3">
-                {!isCallActive ? (
-                  <button
-                    onClick={handleStartCall}
-                    className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-sm shadow-xl shadow-emerald-950 flex items-center gap-2 transition transform active:scale-95 cursor-pointer"
-                  >
-                    <PhoneCall className="w-5 h-5 text-emerald-200" />
-                    <span>התחל שיחה קולית עכשיו (מיקרופון ורמקול)</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleEndCall}
-                    className="px-6 py-3.5 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-black text-sm shadow-xl shadow-red-950 flex items-center gap-2 transition transform active:scale-95 cursor-pointer"
-                  >
-                    <PhoneOff className="w-5 h-5 text-red-200" />
-                    <span>נתק שיחה וסכם שיעור</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Active Call Live Cockpit */}
-            {isCallActive ? (
-              <div className="mt-8 space-y-6">
-                {/* Voice Status & Live Visual Wave */}
-                <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 flex flex-col sm:flex-row items-center justify-between gap-6">
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 flex items-center justify-center">
-                      <span className="text-3xl">🤖</span>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-200 text-sm">שוכי (AI Voice Teacher)</span>
-                        <span className="text-[11px] text-slate-500 font-mono">EN-US Natural Voice</span>
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        {isBotSpeaking ? (
-                          <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                            <Volume2 className="w-3.5 h-3.5 animate-pulse" /> שוכי מדבר כעת ברמקול...
-                          </span>
-                        ) : isMicListening ? (
-                          <span className="text-amber-400 font-semibold flex items-center gap-1.5">
-                            <Mic className="w-3.5 h-3.5 animate-bounce" /> מאזין לקול שלך מהמיקרופון...
-                          </span>
-                        ) : (
-                          <span>הקשב למורה או לחץ על המיקרופון כדי להשיב</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Audio Wave Visualizer */}
-                  <div className="flex items-center gap-1.5 h-10 px-4 py-2 bg-slate-900 rounded-xl border border-slate-800">
-                    {[12, 24, 16, 32, 28, 14, 20, 36, 18, 26, 10, 22].map((h, i) => (
-                      <span
-                        key={i}
-                        className={`w-1 rounded-full transition-all duration-150 ${
-                          isBotSpeaking
-                            ? 'bg-emerald-400 animate-pulse'
-                            : isMicListening
-                            ? 'bg-amber-400 animate-pulse'
-                            : 'bg-slate-700'
-                        }`}
-                        style={{ height: `${isBotSpeaking || isMicListening ? Math.max(8, (h * (i % 2 === 0 ? 1.2 : 0.8))) : 6}px` }}
-                      />
-                    ))}
-                  </div>
-
-                  {/* Quick Audio Controls */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        const newSpeed = speechSpeed === 1.0 ? 0.8 : 1.0;
-                        setSpeechSpeed(newSpeed);
-                        showToast(`מהירות דיבור שוכי הוגדרה ל-${newSpeed}x`);
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold border transition ${
-                        speechSpeed < 1.0
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                      }`}
-                      title="האטת קצב הדיבור"
-                    >
-                      🐢 {speechSpeed}x קצב
-                    </button>
-
-                    <button
-                      onClick={handleToggleMic}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-md ${
-                        isMicListening
-                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black animate-pulse'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                      }`}
-                    >
-                      {isMicListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4 text-slate-400" />}
-                      <span>{isMicListening ? 'מאזין... (לחץ לסיום)' : 'לחץ לדבר באנגלית'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Live Conversation Stream (Turn-by-turn with audio replay and pedagogical tips) */}
-                <div className="bg-slate-950 rounded-2xl border border-slate-800 p-5 max-h-[380px] overflow-y-auto space-y-4">
-                  {liveTurns.map(turn => {
-                    const isTutor = turn.speaker === 'tutor';
-                    return (
-                      <div
-                        key={turn.id}
-                        className={`p-4 rounded-2xl text-xs max-w-[85%] border transition-all ${
-                          isTutor
-                            ? 'bg-slate-900 border-slate-800 text-slate-100 mr-auto'
-                            : 'bg-emerald-950/40 border-emerald-800/50 text-emerald-100 ml-auto'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3 mb-1.5">
-                          <span className="font-bold text-[11px] opacity-80 flex items-center gap-1.5">
-                            {isTutor ? '🤖 שוכי (מורה AI)' : `👤 ${currentCustomer.name}`}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-slate-400 font-mono">{turn.timestamp}</span>
-                            {isTutor && (
-                              <button
-                                onClick={() => playSpeech(turn.text, speechSpeed)}
-                                className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition"
-                                title="השמע משפט זה מחדש"
-                              >
-                                <Volume2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        <p className="text-sm font-medium leading-relaxed" dir="ltr">
-                          {turn.text}
-                        </p>
-
-                        {turn.translation_he && (
-                          <p className="text-[11px] text-slate-400 border-t border-slate-800/80 pt-1.5 mt-2" dir="rtl">
-                            {turn.translation_he}
-                          </p>
-                        )}
-
-                        {turn.correction && (
-                          <div className="mt-2.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200" dir="rtl">
-                            <span className="font-bold block text-amber-300 mb-0.5">💡 טיפ דקדוק עדין:</span>
-                            <span>במקום <code className="bg-slate-900 px-1 py-0.5 rounded text-red-300 font-mono">{turn.correction.original}</code> עדיף לומר <strong className="text-emerald-300 font-mono">{turn.correction.better}</strong>: {turn.correction.tip}</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Spoken Quick-Response Chips (Click to speak) */}
-                <div>
-                  <span className="text-xs text-slate-400 block mb-2 font-semibold">
-                    לחצו על משפט מהיר לתרגול מיידי בקולכם (או השתמשו במיקרופון / הקלדה):
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { en: "Hi Shochi, I want to prepare for a job interview", he: "הכנה לראיון עבודה" },
-                      { en: "Can you help me practice ordering at a restaurant?", he: "הזמנה במסעדה" },
-                      { en: "I had a busy day at work today", he: "שיחה על יום עבודה" },
-                      { en: "Could you please speak a bit slower?", he: "בקשה לדבר לאט" },
-                      { en: "What is the best way to say this professionally?", he: "איך לומר באופן מקצועי?" }
-                    ].map((chip, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => processUserResponse(chip.en)}
-                        className="px-3 py-2 bg-slate-800/80 hover:bg-slate-800 hover:border-emerald-500/50 border border-slate-700 rounded-xl text-xs text-slate-200 transition text-right flex items-center gap-2 group cursor-pointer"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 group-hover:scale-125 transition" />
-                        <span dir="ltr" className="font-medium text-slate-100">{chip.en}</span>
-                        <span className="text-[10px] text-slate-400">({chip.he})</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Manual Text Fallback Form */}
-                <form
-                  onSubmit={e => {
-                    e.preventDefault();
-                    if (chatInput.trim()) {
-                      processUserResponse(chatInput);
-                    }
-                  }}
-                  className="flex gap-2 pt-2"
-                >
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={e => setChatInput(e.target.value)}
-                    placeholder="הקלד כאן משפט באנגלית (או השתמש במיקרופון 🎙️ מעלה)..."
-                    className="flex-1 p-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                    dir="ltr"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!chatInput.trim()}
-                    className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-xl font-bold text-xs shadow-md transition flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <span>שלח לשוכי</span>
-                    <Send className="w-3.5 h-3.5" />
-                  </button>
-                </form>
-              </div>
-            ) : (
-              /* Idle Stage / Explanation */
-              <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold mb-3">
-                    <Mic className="w-5 h-5" />
-                  </div>
-                  <h3 className="font-bold text-sm text-slate-100 mb-1">דיבור חי ללא מקלדת</h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    דיבור ישיר במיקרופון מול שוכי. המורה שומע אותך, עונה בקול טבעי ומתקן עדין בלי שום שיפוטיות.
-                  </p>
-                </div>
-
-                <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold mb-3">
-                    <Zap className="w-5 h-5" />
-                  </div>
-                  <h3 className="font-bold text-sm text-slate-100 mb-1">סנכרון מלא לקו הטלפוני</h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    אותו מוח בינה מלאכותית שמשרת את קו 076-567-3575 שלוחה 99. החומרים שתעלה כאן יחכו לך גם בטלפון.
-                  </p>
-                </div>
-
-                <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold mb-3">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <h3 className="font-bold text-sm text-slate-100 mb-1">ניתוח פדגוגי מיידי</h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    בסיום כל שיחה מופק דוח פדגוגי עם ציוני דקדוק, אוצר מילים, שטף דיבור וסיכום שניתן לשלוח בוואטסאפ.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Post-Call Pedagogical Summary Card (Shows after hanging up) */}
-          {activeCallSummary && (
-            <div className="bg-slate-900 border-2 border-emerald-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-slate-950 flex items-center justify-center font-bold">
-                    <CheckCircle2 className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider block">
-                      ניתוח פדגוגי של השיחה שהסתיימה הרגע
-                    </span>
-                    <h3 className="text-xl font-black text-slate-100">
-                      סיכום שיעור: {activeCallSummary.topic}
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <a
-                    href={`https://wa.me/?text=${encodeURIComponent(
-                      `*סיכום שיחת אנגלית עם שוכי 🤖*\n` +
-                      `משך השיחה: ${activeCallSummary.duration_seconds} שניות | ציון דקדוק: ${activeCallSummary.grammar_score}%\n\n` +
-                      `💡 *מה הצלחנו:* ${activeCallSummary.success_he}\n` +
-                      `🎯 *לשיעור הבא:* ${activeCallSummary.next_step_he}`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md"
-                  >
-                    <Share2 className="w-4 h-4" />
-                    <span>שתף סיכום בוואטסאפ</span>
-                  </a>
-                </div>
-              </div>
-
-              {/* Score Badges */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 block">ציון דקדוק</span>
-                  <span className="text-2xl font-black text-emerald-400 font-mono">{activeCallSummary.grammar_score}%</span>
-                </div>
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 block">אוצר מילים</span>
-                  <span className="text-2xl font-black text-indigo-400 font-mono">{activeCallSummary.vocabulary_score}%</span>
-                </div>
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 block">שטף וביטחון</span>
-                  <span className="text-2xl font-black text-amber-400 font-mono">{activeCallSummary.fluency_score}%</span>
-                </div>
-              </div>
-
-              {/* Pedagogical Takeaways */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs">
-                <div>
-                  <span className="font-bold text-slate-300 block mb-1">משוב וסיכום כללי:</span>
-                  <p className="text-slate-400 leading-relaxed">{activeCallSummary.summary_he}</p>
-                </div>
-                <div>
-                  <span className="font-bold text-emerald-400 block mb-1">נקודות חוזק ויעד הבא:</span>
-                  <p className="text-slate-400 leading-relaxed">
-                    <strong>חוזקה:</strong> {activeCallSummary.success_he}
-                    <br />
-                    <strong>בשיעור הבא:</strong> {activeCallSummary.next_step_he}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 2: Materials Upload & Telephone Sync */}
-      {activeTab === 'materials' && (
-        <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                  <span>מאגר חומרי הלימוד והספרים שלי</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  העלו טקסטים, ספרים או רשימות מילים. המערכת תסרוק אותם ליחידות ידע ותלביש את השיחה הטלפונית והאימון מהמחשב על הנושא שתבחרו!
-                </p>
-              </div>
-
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition inline-flex items-center gap-2 cursor-pointer"
-              >
-                <Upload className="w-4 h-4" />
-                <span>העלאת חומר לימוד חדש</span>
-              </button>
-            </div>
-
-            {/* Currently Active For Phone Banner */}
-            {activePhoneMaterial ? (
-              <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold">
-                    <PhoneCall className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">
-                      ● מוגדר כעת לשיחה הבאה (בטלפון ובמחשב)
-                    </span>
-                    <h3 className="font-bold text-slate-100 text-sm">{activePhoneMaterial.title}</h3>
-                    <p className="text-xs text-slate-400">
-                      המורה יתמקד ב-{activePhoneMaterial.vocabulary.length} מילים ומשפטי המפתח שהעלית!
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => toggleMaterialActiveForPhone(activePhoneMaterial.id)}
-                  className="text-xs bg-slate-900 border border-slate-700 text-slate-300 hover:bg-slate-800 px-3 py-1.5 rounded-lg font-semibold transition"
-                >
-                  הסר מסנכרון
-                </button>
-              </div>
-            ) : (
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 mb-6 text-xs text-slate-400 flex items-center justify-between">
-                <span>טרם נבחר חומר ממוקד. בחר חומר מהרשימה מטה והקלק "סנכרן לשיחה".</span>
-              </div>
-            )}
-
-            {/* Preset Accelerator Tracks */}
-            <div className="mb-8">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  <span>מסלולי שיחה מובנים בלחיצת כפתור</span>
-                </h3>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {PRESET_TRACKS.map(track => (
-                  <div
-                    key={track.id}
-                    className="p-4 bg-slate-950 border border-slate-800 hover:border-emerald-500/50 rounded-xl transition flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="text-2xl mb-1.5">{track.icon}</div>
-                      <h4 className="font-bold text-xs text-slate-100 line-clamp-1">{track.title}</h4>
-                      <p className="text-[11px] text-slate-400 mt-1 line-clamp-2 leading-relaxed">{track.desc}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleActivatePresetTrack(track)}
-                      className="mt-3 w-full py-1.5 bg-slate-900 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-slate-700 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                    >
-                      <PhoneCall className="w-3 h-3" />
-                      <span>הפעל לשיחה הבאה</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Materials Grid */}
-            {myMaterials.length === 0 ? (
-              <div className="text-center py-12 border-2 border-dashed border-slate-800 rounded-2xl bg-slate-950/40">
-                <FileText className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                <h3 className="font-bold text-base text-slate-200 mb-1">עדיין אין חומרי לימוד שמורים</h3>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto mb-4">
-                  העלו קובץ, עמוד מספר או רשימת מילים מקצועית מעולמכם כדי שהמורה יתרגל איתכם בטלפון ובמחשב.
-                </p>
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer"
-                >
-                  העלאת חומר ראשון
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {myMaterials.map(mat => {
-                  const isActive = mat.is_active_for_phone;
-                  return (
-                    <div
-                      key={mat.id}
-                      className={`p-5 rounded-2xl border transition-all ${
-                        isActive
-                          ? 'bg-slate-950 border-emerald-500/60 shadow-lg ring-1 ring-emerald-500/20'
-                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <div>
-                          <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
-                            {mat.topic}
-                          </span>
-                          <h3 className="font-bold text-base text-slate-100 mt-1.5">{mat.title}</h3>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => toggleMaterialActiveForPhone(mat.id)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
-                              isActive
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-slate-900 border border-slate-700 text-slate-400 hover:text-emerald-400'
-                            }`}
-                          >
-                            <PhoneCall className="w-3 h-3" />
-                            <span>{isActive ? 'פעיל בקו' : 'סנכרן'}</span>
-                          </button>
-                          <button
-                            onClick={() => deleteStudyMaterial(mat.id)}
-                            className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg transition cursor-pointer"
-                            title="מחק חומר"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-slate-400 line-clamp-2 mb-4 leading-relaxed">
-                        {mat.raw_text}
-                      </p>
-
-                      {/* Vocabulary Chips */}
-                      <div className="border-t border-slate-800 pt-3">
-                        <span className="text-[11px] font-bold text-slate-400 block mb-2">
-                          אוצר מילים שנסרק ({mat.vocabulary.length} מונחים):
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {mat.vocabulary.slice(0, 5).map((v, i) => (
-                            <span
-                              key={i}
-                              className="text-xs bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-md text-slate-200"
-                            >
-                              <strong dir="ltr" className="text-emerald-300">{v.english}</strong> – {v.hebrew}
-                            </span>
-                          ))}
-                          {mat.vocabulary.length > 5 && (
-                            <span className="text-xs text-slate-500 py-1 px-1">
-                              +{mat.vocabulary.length - 5} נוספים
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: Interactive Games Arena */}
-      {activeTab === 'games' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              { id: 'word_match', title: '1. התאמת מילים', sub: 'Word Match' },
-              { id: 'sentence_builder', title: '2. בניית משפטים', sub: 'Sentence Builder' },
-              { id: 'listening_quiz', title: '3. אתגר שמיעה', sub: 'Listening Quiz' },
-              { id: 'roleplay_dialog', title: '4. סימולציית שיחה', sub: 'Roleplay Studio' }
-            ].map(g => (
-              <button
-                key={g.id}
-                onClick={() => setSelectedGame(g.id as any)}
-                className={`p-3.5 rounded-xl border text-right transition cursor-pointer ${
-                  selectedGame === g.id
-                    ? 'bg-emerald-600 border-emerald-500 text-white shadow-md'
-                    : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <span className="text-xs block font-bold">{g.title}</span>
-                <span className="text-[11px] block mt-0.5 opacity-80">{g.sub}</span>
-              </button>
-            ))}
-          </div>
-
-          {selectedGame === 'word_match' && <WordMatchGame />}
-          {selectedGame === 'sentence_builder' && <SentenceBuilderGame />}
-          {selectedGame === 'listening_quiz' && <ListeningQuizGame />}
-          {selectedGame === 'roleplay_dialog' && <RoleplayDialogGame />}
-
-          {/* Game Score History */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-            <h3 className="font-bold text-base text-slate-100 mb-4">היסטוריית הישגים במשחקונים</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="py-2.5 px-3">משחקון</th>
-                    <th className="py-2.5 px-3">תוצאה</th>
-                    <th className="py-2.5 px-3">דיוק</th>
-                    <th className="py-2.5 px-3">נקודות</th>
-                    <th className="py-2.5 px-3">מועד</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {gameScores.filter(g => g.customer_id === currentCustomer.id).map(score => (
-                    <tr key={score.id} className="hover:bg-slate-950/40">
-                      <td className="py-3 px-3 font-semibold text-slate-200">{score.game_title}</td>
-                      <td className="py-3 px-3 tabular-nums text-slate-300">{score.score} / {score.total_questions}</td>
-                      <td className="py-3 px-3 tabular-nums text-emerald-400 font-bold">{score.accuracy_pct}%</td>
-                      <td className="py-3 px-3 tabular-nums font-bold text-indigo-400">+{score.points_earned}</td>
-                      <td className="py-3 px-3 text-slate-500">{new Date(score.completed_at).toLocaleString('he-IL')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 4: Detailed Call Traces & Audio History */}
-      {activeTab === 'history' && (
-        <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-            <h2 className="text-xl font-bold text-slate-100 mb-2">יומן שיחות מעמיק ותמלילים</h2>
-            <p className="text-xs text-slate-400 mb-6">
-              כל שיחה שקיימתם (בטלפון או מהמחשב) מנותחת כאן לעומק עם ציוני דקדוק, אוצר מילים, שטף דיבור, ותיקונים פדגוגיים עדינים.
-            </p>
-
-            <div className="space-y-4">
-              {detailedCalls.filter(c => c.customer_id === currentCustomer.id).map(call => {
-                const isExpanded = expandedCallId === call.call_id;
-                return (
-                  <div
-                    key={call.call_id}
-                    className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950 shadow-md transition"
-                  >
-                    {/* Header bar */}
-                    <div
-                      onClick={() => setExpandedCallId(isExpanded ? null : call.call_id)}
-                      className="p-4 bg-slate-950 hover:bg-slate-900/60 cursor-pointer flex flex-wrap items-center justify-between gap-4 select-none"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold">
-                          <PhoneCall className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-slate-100">{call.topic || 'שיעור באנגלית'}</span>
-                            <span className="text-[11px] text-slate-400">• {call.bot_name}</span>
-                          </div>
-                          <span className="text-xs text-slate-500">
-                            {new Date(call.created_at).toLocaleString('he-IL')} • {Math.round(call.duration_seconds / 60) || 1} דקות
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4">
-                        <div className="hidden sm:flex items-center gap-3 text-xs">
-                          <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-md font-bold tabular-nums">
-                            דקדוק: {call.grammar_score}%
-                          </span>
-                          <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-md font-bold tabular-nums">
-                            אוצר מילים: {call.vocabulary_score}%
-                          </span>
-                          <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2.5 py-1 rounded-md font-bold tabular-nums">
-                            שטף: {call.fluency_score}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Expanded Content */}
-                    {isExpanded && (
-                      <div className="p-5 border-t border-slate-800 space-y-5 bg-slate-900/40">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs">
-                          <div>
-                            <span className="font-bold text-slate-200 block mb-1">סיכום השיחה הפדגוגי:</span>
-                            <p className="text-slate-400 leading-relaxed">{call.summary_he}</p>
-                          </div>
-                          <div>
-                            <span className="font-bold text-emerald-400 block mb-1">הצלחות ושלב הבא:</span>
-                            <p className="text-slate-400 leading-relaxed">
-                              <strong>הצלחה:</strong> {call.success_he}
-                              <br />
-                              <strong>בשיעור הבא:</strong> {call.next_step_he}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Turn-by-Turn Bubbles */}
-                        <div>
-                          <span className="text-xs font-bold text-slate-400 block mb-3">
-                            תמליל שלב-אחר-שלב (לחצו על האודיו להאזנה):
-                          </span>
-                          <div className="space-y-3">
-                            {call.turns.map(turn => {
-                              const isTutor = turn.speaker === 'tutor';
-                              return (
-                                <div
-                                  key={turn.id}
-                                  className={`p-3.5 rounded-xl border text-xs max-w-[85%] ${
-                                    isTutor
-                                      ? 'bg-slate-900 border-slate-800 text-slate-100 mr-auto'
-                                      : 'bg-emerald-950/40 border-emerald-800/40 text-emerald-100 ml-auto'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between gap-3 mb-1">
-                                    <span className="font-bold text-[11px] opacity-75">
-                                      {isTutor ? call.bot_name : currentCustomer.name}
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-[10px] text-slate-500 tabular-nums">{turn.timestamp}</span>
-                                      {isTutor && (
-                                        <button
-                                          onClick={() => playSpeech(turn.text, 1.0)}
-                                          className="p-1 hover:bg-slate-800 rounded transition text-slate-400 hover:text-emerald-400"
-                                          title="השמעת משפט זה"
-                                        >
-                                          <Volume2 className="w-3.5 h-3.5" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <p className="text-sm font-medium mb-1" dir={/[a-zA-Z]/.test(turn.text) ? 'ltr' : 'rtl'}>
-                                    {turn.text}
-                                  </p>
-
-                                  {turn.translation_he && (
-                                    <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-1 mt-1">
-                                      {turn.translation_he}
-                                    </p>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload Material Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl max-w-xl w-full p-6 text-right" dir="rtl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-              <h3 className="font-bold text-lg text-slate-100">העלאת חומר לימוד וסריקה למאגר</h3>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="text-slate-400 hover:text-slate-200 text-sm cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveMaterial} className="space-y-4">
-              <div className="border-2 border-dashed border-slate-700 rounded-xl p-4 text-center hover:bg-slate-950/60 transition">
-                <input
-                  type="file"
-                  id="fileUpload"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  accept=".txt,.pdf,.docx,.doc"
-                />
-                <label htmlFor="fileUpload" className="cursor-pointer block">
-                  <Upload className="w-8 h-8 text-emerald-400 mx-auto mb-1.5" />
-                  <span className="text-xs font-bold text-slate-200 block">
-                    {isScanningFile ? 'סורק ומעבד קובץ...' : 'לחצו להעלאת קובץ מסמך או ספר (PDF / Word / TXT)'}
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    המערכת תסרוק את הטקסט ותוציא מתוכו מילים ומשפטי תרגול
-                  </span>
-                </label>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-400 block mb-1">כותרת החומר:</label>
-                <input
-                  type="text"
-                  required
-                  value={uploadTitle}
-                  onChange={e => setUploadTitle(e.target.value)}
-                  placeholder="למשל: שיחת משא ומתן עם לקוח אמריקאי"
-                  className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-slate-400 block mb-1">נושא:</label>
-                  <input
-                    type="text"
-                    value={uploadTopic}
-                    onChange={e => setUploadTopic(e.target.value)}
-                    placeholder="עסקים, נדל״ן, תיירות וכו׳"
-                    className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 block mb-1">רמת קושי:</label>
-                  <select
-                    value={uploadLevel}
-                    onChange={e => setUploadLevel(e.target.value as any)}
-                    className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="beginner">מתחילים (Beginner)</option>
-                    <option value="intermediate">בינוני (Intermediate)</option>
-                    <option value="advanced">מתקדמים ועסקים (Advanced)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-400 block mb-1">
-                  טקסט חופשי או רשימת מילים (אנגלית - עברית):
-                </label>
-                <textarea
-                  required
-                  rows={6}
-                  value={uploadText}
-                  onChange={e => setUploadText(e.target.value)}
-                  placeholder="הדביקו פה טקסט באנגלית, או זוגות מילים:&#10;Negotiation - משא ומתן&#10;Agreement - הסכם"
-                  className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 font-mono leading-relaxed"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-slate-800"
-                >
-                  ביטול
-                </button>
-                <button
-                  type="submit"
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
-                >
-                  שמור וסנכרן לשיחה
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <div className="sk-hero-art"><ConversationArt /></div>
+    </section>
+    <div className="sk-metrics">
+      <div className="sk-metric"><strong>{remainingMinutes(account)}</strong><span>דקות בחבילה</span></div>
+      <div className="sk-metric"><strong>{account.progress.session_count}</strong><span>שיחות עד היום</span></div>
+      <div className="sk-metric"><strong>{practiceDays(account.progress.sessions)}</strong><span>ימי תרגול לאחרונה</span></div>
     </div>
-  );
+    <AccessNotice account={account} />
+    <div className="sk-dash-bottom">
+      {lastLesson ? <button className="sk-panel-card" onClick={() => navigate("history")}><strong>השיחה האחרונה</strong><p>{lastLesson.summary_he || "עוד שיחה קטנה באנגלית."}</p><p className="sk-accent-text">הצעד הבא: {lastLesson.next_step_he || "ממשיכים לדבר."}</p></button>
+        : <button className="sk-panel-card" onClick={() => navigate("teachers")}><strong>{teacherName}</strong><p>המורה שמחכה לך בטלפון. אפשר להחליף מתי שבא לך.</p></button>}
+      <button className="sk-panel-card" onClick={() => navigate("achievements")}><strong>המילים שלך</strong><p>{activeMaterial ? "בשיחה הבאה: " + activeMaterial.name : "בשיחה הבאה: מילים מעולם " + (topics[p.topic || "everyday"] || "היום־יום")}</p><p>ציון מתעדכן רק כשמילה נבדקה באמת בשיחה.</p></button>
+    </div>
+  </>;
+  return <div className="speakool" dir="rtl">
+    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
+      {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
+        <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
+        {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
+        <fieldset className="sk-content-fieldset" disabled={busy}>
+          {page === "home" && renderHome()}
+          {page === "intake" && <Intake initial={p.plan} initialName={p.learner_name || ""} askPersonality={!account.teachers.length} saving={busy} onFinish={async (plan, extra) => { if (await run(async () => {
+            await save({ plan, minutes: plan.minutes, topic: plan.topic, track: "recommended", mode: "free", learner_name: extra.learner_name.trim(), ...(!active && botId ? { selected_bot: botId } : {}) });
+            if (!account.teachers.length && defaultBase) {
+              const fluent = plan.level === "fluent";
+              const female = extra.teacher_gender === "female";
+              const created = await portalRequest<Teacher>("/v1/portal/teachers", token, { name: female ? FEMALE_NAME : DEFAULT_NAME, base_bot: defaultBase.id, personality: extra.personality, voice: female ? "Aoede" : "Puck", explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, material_id: "", level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });
+              await save({ active_teacher: created.id });
+            }
+          }, account.teachers.length ? "התוכנית שלך מחכה גם בטלפון." : (extra.teacher_gender === "female" ? "הכרנו לך את " + FEMALE_NAME + ". היא כבר מחכה בטלפון." : "הכרנו לך את " + DEFAULT_NAME + ". הוא כבר מחכה בטלפון."))) navigate("plan"); }} />}
+          {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "everyday"]}<span className="sk-accent">, בוא נדבר.</span></h2><p>{teacherName} · {p.minutes || p.plan?.minutes || 10} דקות בכל פעם</p><p>רמת השיעור: {levelNames[(p.level || "beginner") as keyof typeof levelNames]} · {modeNames[(p.conversation_mode || "guided") as keyof typeof modeNames]}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />התחל בטלפון</button><button className="sk-link" onClick={() => talk()}>התחל כאן <ArrowUpLeft size={15} /></button></div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button></div><ConversationArt /></div>}
+          {page === "teachers" && <>
+            <div className="sk-section-intro"><p>כל מורה, שילוב אחר. רק אחד מקבל את השיחה הבאה שלך.</p><button className="sk-secondary" onClick={() => setBuilder(true)} disabled={!baseTeachers.length}><Plus size={16} />מורה חדש</button></div>
+            <div className="sk-teacher-grid">{account.teachers.map((teacher, index) => <article key={teacher.id} className={"sk-teacher-card " + (active?.id === teacher.id ? "is-current" : "")}><div className="sk-card-top"><span className="sk-tag">{active?.id === teacher.id ? <><span className="sk-status-dot" />בטלפון שלך</> : personalities[teacher.personality]}</span><IconButton label={"מחיקת " + teacher.name} onClick={() => { if (confirm("למחוק את המורה " + teacher.name + "?")) void run(async () => { await portalRequest("/v1/portal/teachers/" + teacher.id, token, undefined, "DELETE"); }); }}><Trash2 size={15} /></IconButton></div><div className="sk-teacher-art"><TeacherMark teacher={teacher} index={index} /></div><h2>{teacher.name}</h2><p>{paceNames[teacher.pace]} · {topics[teacher.topic] || teacher.topic}</p><button className="sk-primary" onClick={() => talk(teacher)}><Mic size={16} />שוחח עכשיו</button>{active?.id !== teacher.id && <button className="sk-link" onClick={() => void run(() => save({ active_teacher: teacher.id }), "זה המורה שיחכה לך בטלפון.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
+              {(defaultBase ? [defaultBase] : []).map((bot, index) => <article className={"sk-teacher-card sk-base-teacher " + (!active && botId === bot.id ? "is-current" : "")} key={bot.id}><span className="sk-tag">{!active && botId === bot.id ? "בטלפון שלך" : "מצוות ספיקול"}</span><div className="sk-teacher-art"><TeacherMark index={index} /></div><h2>{DEFAULT_NAME}</h2><p>נקודת פתיחה טובה. פשוט להתחיל.</p><button className="sk-primary" onClick={() => talk(undefined, { ...bot, label: DEFAULT_NAME })}><Mic size={16} />שוחח עכשיו</button>{(active || botId !== bot.id) && <button className="sk-link" onClick={() => void run(() => save({ selected_bot: bot.id, active_teacher: "", mode: "free" }), "המורה שלך בטלפון עודכן.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
+            </div>{!baseTeachers.length && <Empty icon={<Users />} title="המורים עוד לא כאן." text="אין כרגע מורה זמין. אפשר לנסות שוב מאוחר יותר." />}
+          </>}
+          {page === "materials" && <Materials account={account} onSave={async (name, words) => await run(async () => { const r = await portalRequest<Material>("/v1/portal/materials", token, { name, words }); await save({ material_id: r.id }); setNote(r.target_count === 0 ? "נשמר כחומר לשיחה בלבד; טרם הוכנו יעדי אנגלית למדידה." : "המילים נשמרו. יעדי האנגלית מוכנים לשיחה הבאה."); })} onActivate={id => void run(() => save({ material_id: id }), id ? account.materials.find(m => m.id === id)?.target_count === 0 ? "נבחר חומר לשיחה בלבד, ללא ציוני מילים." : "הרשימה מחכה לשיחה הבאה." : "הרשימה האישית הוסרה מהשיחה הבאה.")} onDelete={id => void run(async () => { await portalRequest("/v1/portal/materials/" + id, token, undefined, "DELETE"); }, "הרשימה נמחקה.")} />}
+          {page === "history" && <div className="sk-history">{account.progress.sessions.length === 0 ? <Empty icon={<History />} title="הסיפור שלנו עוד מתחיל." text="אחרי השיחה הראשונה יחכו לך כאן סיכום קטן וצעד הבא." action={() => setPhoneOpen(true)} actionLabel="בוא נדבר" /> : account.progress.sessions.map((lesson, index) => <article className="sk-history-item" key={lesson.call_id || index}><button className="sk-history-row" aria-expanded={expanded === lesson.call_id} onClick={() => { setExpanded(expanded === lesson.call_id ? null : lesson.call_id); setTranscript(undefined); }}><span className={"sk-history-dot " + (lesson.success_he ? "has-success" : "")} /><time dateTime={lesson.started_at}>{lessonDate(lesson.started_at)}</time><span>{lesson.summary_he || "עוד שיחה קטנה באנגלית"}</span><small>{Math.max(1, Math.round(lesson.duration_seconds / 60))} דקות</small><ChevronDown size={16} /></button>{expanded === lesson.call_id && <div className="sk-history-detail"><dl><dt>מה הצליח</dt><dd>{lesson.success_he || "כל שיחה היא עוד תרגול."}</dd><dt>כדאי לחזק</dt><dd>{lesson.observations.find(o => o.correction)?.correction || "עדיין אין הערה לשיחה הזאת."}</dd><dt>הצעד הבא</dt><dd>{lesson.next_step_he || "ממשיכים לדבר."}</dd></dl>{lesson.observations.length > 0 && <div className="sk-tags">{lesson.observations.slice(0, 6).map((o, i) => <span className="sk-tag" key={i}>{o.skill}</span>)}</div>}<button className="sk-quiet-link" onClick={() => void run(async () => { const r = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(lesson.call_id) + "/transcript", token); setTranscript(r.transcript); })}>הצג את השיחה</button>{transcript === null && <p className="sk-muted">לא נשמר תמליל לשיחה הזאת. אפשר לבחור שמירת שיחות בהעדפות.</p>}{transcript && <div className="sk-transcript">{transcript.map((t, i) => <p key={i}><strong>{t.role === "learner" ? "אני" : "המורה"}: </strong><span dir="auto">{t.text}</span></p>)}</div>}</div>}</article>)}</div>}
+          {page === "achievements" && <Achievements account={account} token={token} />}
+          {page === "settings" && <PreferencesForm key={JSON.stringify(p)} preferences={p} account={account} onSave={input => void run(() => save(input), "סגור. השיחה הבאה תהיה בדרך שלך.")} onTeachers={() => navigate("teachers")} onMaterials={() => navigate("materials")} onLogout={logout} phonesPanel={<PhoneLinks account={account} token={token} onRefresh={refresh} />} />}
+        </fieldset>
+      </main>}
+
+    </div>
+    {note && <div className="sk-toast" role="status"><Check size={16} />{note}</div>}
+    {busy && <span className="sk-saving" role="status">רק רגע, שומרים…</span>}
+    {phoneOpen && account && <Modal title="נתראה בצד השני של הקו." onClose={() => setPhoneOpen(false)}><p>מתקשרים מהמספר שמחובר לחשבון שלך, ומגיעים אל {teacherName}.</p><a className="sk-phone-number" href={"tel:" + account.phone} dir="ltr">{account.phone.replace(/(\d{3})(\d{3})(\d+)/, "$1-$2-$3")}<Phone size={23} /></a><p>מקישים <strong>1</strong> ונכנסים ישר לשיעור. מקש <strong>2</strong> הוא האזור האישי: מורה, סוג שיעור וחבילות.</p><div className="sk-phone-note"><Check size={16} />המורה, ההעדפות והמילים שלך כבר מחכים שם.</div><small>המספר המחובר: <bdi>{account.customer.phone}</bdi></small></Modal>}
+    {voice && <Modal title="בוא נדבר." onClose={() => { setVoice(null); void refresh(); }}><VoiceRoom token={token} {...voice} onDone={() => { setVoice(null); void refresh(); }} /></Modal>}
+    {builder && account && <Modal title="מורה. בדיוק בראש שלך." error={error} busy={busy} onClose={() => setBuilder(false)}><TeacherBuilder defaultBot={botId || baseTeachers[0]?.id || ""} materials={account.materials} onSave={async teacher => { if (await run(async () => { const saved = await portalRequest<Teacher>("/v1/portal/teachers", token, teacher); await save({ active_teacher: saved.id }); }, "נעים להכיר. המורה החדש שלך כבר בטלפון.")) setBuilder(false); }} onPreview={voiceName => {
+      void run(async () => { const r = await portalRequest<{ audio_wav_base64: string }>("/v1/portal/voice-preview", token, { voice: voiceName }); const audio = new Audio("data:audio/wav;base64," + r.audio_wav_base64); await audio.play(); });
+    }} /></Modal>}
+  </div>;
 };
+
+function Empty({ icon, title, text, action, actionLabel }: { icon: React.ReactNode; title: string; text: string; action?: () => void; actionLabel?: string }) {
+  return <div className="sk-empty"><div className="sk-empty-mark">{icon}</div><h2>{title}</h2><p>{text}</p>{action && <button className="sk-primary" onClick={action}>{actionLabel}<ArrowLeft size={16} /></button>}</div>;
+}
+type IntakeExtra = { learner_name: string; personality: string; teacher_gender: string };
+function Intake({ initial, initialName, askPersonality, onFinish, saving }: { initial?: Plan; initialName: string; askPersonality: boolean; onFinish: (p: Plan, extra: IntakeExtra) => Promise<void>; saving: boolean }) {
+  const [step, setStep] = useState(0);
+  const [extra, setExtra] = useState<IntakeExtra>({ learner_name: initialName, personality: "warm", teacher_gender: "male" });
+  const [named, setNamed] = useState(!!initialName);
+  const [plan, setPlan] = useState<Plan>(initial || { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "travel" });
+  const [thinking, setThinking] = useState(false);
+  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timeout.current) clearTimeout(timeout.current); }, []);
+  const questions: { key: string; title: string; sub: string; values: Record<string, string> }[] = [
+    { key: "goal", title: "בשביל מה האנגלית שלך?", sub: "לא למבחן. לחיים שלך.", values: { work: "בשביל העבודה", travel: "בשביל החו״ל", study: "בשביל הלימודים" } },
+    { key: "level", title: "איפה אתה היום?", sub: "אין כאן תשובה לא נכונה.", values: { beginner: "ממש בהתחלה", intermediate: "מסתדר איכשהו", fluent: "מדבר, רוצה לדייק" } },
+    { key: "difficulty", title: "איפה זה נתקע?", sub: "שם בדיוק נתחיל.", values: { speaking: "כשצריך לדבר", listening: "כשמדברים אליי", writing: "כשצריך לכתוב" } },
+    ...(askPersonality ? [{ key: "personality", title: "איזה מורה יעשה לך טוב?", sub: "אפשר להחליף מתי שבא לך.", values: personalities }, { key: "teacher_gender", title: "עם מי נוח לך יותר?", sub: "נתאים את הקול והשם.", values: { male: "עם מורה", female: "עם מורָה" } }] : []),
+    { key: "minutes", title: "כמה זמן יש לך?", sub: "גם חמש דקות הן התחלה של משהו.", values: { "5": "חמש דקות", "10": "עשר דקות", "20": "עשרים דקות" } },
+  ];
+  const choose = (key: string, value: string) => { if (key === "personality" || key === "teacher_gender") setExtra(x => ({ ...x, [key]: value })); else setPlan(p => ({ ...p, [key]: key === "minutes" ? Number(value) : value })); setStep(n => n + 1); };
+  const finish = (topic: string) => {
+    const next = { ...plan, topic }; setPlan(next); setThinking(true);
+    timeout.current = setTimeout(() => { void onFinish(next, extra).finally(() => setThinking(false)); }, 1600);
+  };
+  if (thinking || saving) return <div className="sk-thinking"><div className="sk-loading-shape" /><h2>מרכיבים לך תוכנית.</h2><p>קצת ממה שצריך. הרבה ממה שבא לך.</p></div>;
+  if (!named) return <section className="sk-step-card"><h2>איך לקרוא לך?</h2><p>ככה המורה יפנה אליך.</p><form className="sk-name-form" onSubmit={e => { e.preventDefault(); setNamed(true); }}><input aria-label="השם שלך" maxLength={40} value={extra.learner_name} onChange={e => setExtra(x => ({ ...x, learner_name: e.target.value }))} placeholder="השם הפרטי שלך" autoFocus /><button className="sk-primary" type="submit">{extra.learner_name.trim() ? "נעים מאוד" : "אולי אחר כך"}</button></form></section>;
+  const q = questions[step];
+  const total = questions.length + 1;
+  return <section className="sk-step-card"><div className="sk-step-top"><span>{step + 1} / {total}</span><div className="sk-step-dots">{Array.from({ length: total }, (_, n) => n).map(n => <i className={n <= step ? "is-done" : ""} key={n} />)}</div></div><h2>{q?.title || "על מה בא לך לדבר?"}</h2><p>{q?.sub || "משהו שתוכל להשתמש בו כבר מחר."}</p>{q ? <Options value={q.key === "personality" || q.key === "teacher_gender" ? extra[q.key] : String(plan[q.key as keyof Plan])} values={q.values as Record<string, string>} onChange={v => choose(q.key, v)} /> : <TopicPicker value={plan.topic} onChange={finish} recommended={plan.goal === "work" ? ["business", "property", "everyday"] : plan.goal === "study" ? ["academic", "medicine", "everyday"] : ["travel", "flights", "everyday"]} />}{step === 0 && <button className="sk-quiet-link" onClick={() => choose("goal", "other")}>משהו אחר <MoreHorizontal size={14} /></button>}{step > 0 && <button className="sk-quiet-link" onClick={() => setStep(n => n - 1)}><ArrowRight size={13} />רגע, אחורה</button>}</section>;
+}
+
+function TeacherBuilder({ defaultBot, materials, onSave, onPreview }: { defaultBot: string; materials: Material[]; onSave: (t: Omit<Teacher, "id">) => Promise<void>; onPreview: (v: string) => void }) {
+  const [step, setStep] = useState(0);
+  const [teacher, setTeacher] = useState<Omit<Teacher, "id">>({ name: "", base_bot: defaultBot, personality: "warm", voice: "Aoede", explanation: "hebrew", pace: "normal", corrections: "gentle", topic: "everyday", material_id: "", level: "beginner", conversation_mode: "guided", learning_load: "light", correction_policy: "after_answer", closing_activity: "roleplay" });
+  const update = (key: string, value: string) => setTeacher(t => ({ ...t, [key]: value, ...(key === "conversation_mode" && value === "roleplay" && t.correction_policy === "after_answer" ? { correction_policy: "after_activity" } : {}) }));
+  const steps = [{ title: "איזה אופי יעשה לך טוב?", key: "personality", values: personalities }, { title: "איך זה נשמע לך?", key: "voice", values: Object.fromEntries(voices.map(v => [v.value, v.label])) }, { title: "איך נלמד יחד?", key: "conversation_mode", values: modeNames }, { title: "באיזה קצב נדבר?", key: "pace", values: paceNames }, { title: "מתי נתקן טעויות?", key: "correction_policy", values: teacher.conversation_mode === "roleplay" ? { on_request: correctionPolicies.on_request, after_activity: correctionPolicies.after_activity } : correctionPolicies }];
+  const current = steps[step];
+  return <div className="sk-builder"><p className="sk-eyebrow">צעד {step + 1} מתוך 7</p><div className="sk-builder-mark"><TeacherMark teacher={{ ...teacher, id: "" }} /></div><h3>{current?.title || (step === 5 ? "על מה נדבר?" : "איך נקרא למורה שלך?")}</h3>
+    {current ? <Options values={current.values as Record<string, string>} value={teacher[current.key as keyof typeof teacher]} onChange={v => update(current.key, v)} /> : step === 5 ? <TopicPicker value={teacher.topic} onChange={v => update("topic", v)} /> : <>
+      <LessonSettingsFields value={teacher} compact onChange={next => setTeacher(t => ({ ...t, ...next }))} />
+      <label htmlFor="teacher-name">שם למורה</label><input id="teacher-name" maxLength={40} value={teacher.name} onChange={e => update("name", e.target.value)} placeholder="שם שכיף לך לשמוע" autoFocus />
+      {materials.length > 0 && <label>מילים מהמגירה שלך<select value={teacher.material_id} onChange={e => update("material_id", e.target.value)}><option value="">הרשימה הפעילה שלי</option>{materials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>}</>}
+    {step === 1 && <button className="sk-link" onClick={() => onPreview(teacher.voice)}><AudioLines size={16} />בוא נשמע רגע</button>}<div className="sk-actions"><button className="sk-primary" disabled={step === 6 && !teacher.name.trim()} onClick={() => { if (step < 6) setStep(n => n + 1); else void onSave(teacher); }}>{step === 6 ? "נעים להכיר. שומרים." : "ממשיכים"}<ArrowLeft size={16} /></button>{step > 0 && <button className="sk-link" onClick={() => setStep(n => n - 1)}>אחורה</button>}</div></div>;
+}
+
+function Materials({ account, onSave, onActivate, onDelete }: { account: Account; onSave: (n: string, w: string[]) => Promise<boolean>; onActivate: (id: string) => void; onDelete: (id: string) => void }) {
+  const [adding, setAdding] = useState(account.materials.length === 0);
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const words = [...new Set(text.split(/[\n,;]+/).map(w => w.trim()).filter(Boolean))];
+  const file = async (file?: File) => {
+    if (!file) return;
+    if (!/\.(txt|csv)$/i.test(file.name) || file.size > 200000) { setError("אפשר קובץ TXT או CSV עד 200KB. לכל רשימה עד מאה מילים או ביטויים."); return; }
+    const content = await file.text(); setText(content.replace(/^\uFEFF/, "")); if (!name) setName(file.name.replace(/\.[^.]+$/, "").slice(0, 80)); setError("");
+  };
+  const chosenTeacher = account.teachers.find(t => t.id === account.preferences.active_teacher);
+  const activeId = chosenTeacher?.material_id || account.preferences.material_id || "";
+  return <><div className="sk-section-intro"><p>מילים שהבאת מהחיים. המורה ישלב אותן בשיחה.</p><button className="sk-secondary" onClick={() => setAdding(!adding)}><Plus size={16} />רשימה חדשה</button></div>{adding && <form className="sk-material-form" onSubmit={e => { e.preventDefault(); if (!words.length || words.length > 100 || words.some(w => w.length > 120)) { setError("עד מאה מילים או ביטויים, עד 120 תווים בכל שורה."); return; } void onSave(name.trim(), words).then(saved => { if (saved) { setText(""); setName(""); setError(""); } }); }}><label htmlFor="word-name">שם קטן לרשימה</label><input id="word-name" maxLength={80} required value={name} onChange={e => setName(e.target.value)} placeholder="למשל: השיחה הבאה בעבודה" /><label htmlFor="word-text">אילו מילים נכנסות לשיחה?</label><textarea id="word-text" required dir="auto" maxLength={12500} value={text} onChange={e => setText(e.target.value)} placeholder={"appointment — פגישה\nopportunity — הזדמנות\nLet's give it a try"} rows={6} /><div className="sk-material-bottom"><label className="sk-file-button"><Upload size={16} />או קובץ משלך<input type="file" accept=".txt,.csv,text/plain,text/csv" onChange={e => { void file(e.target.files?.[0]); e.target.value = ""; }} /><small>TXT / CSV · עד מאה מילים</small></label><span className="sk-muted">{words.length} / 100</span></div>{error && <p className="sk-error" role="alert">{error}</p>}<button className="sk-primary" disabled={!name.trim() || !words.length}>שומרים לשיחה הבאה<ArrowLeft size={16} /></button></form>}
+    <div className="sk-material-list">{account.materials.map(m => <article key={m.id} className="sk-material-card"><div className="sk-card-top"><BookOpen strokeWidth={1.3} /><IconButton label={"מחיקת " + m.name} onClick={() => { if (confirm("למחוק את הרשימה " + m.name + "?")) onDelete(m.id); }}><Trash2 size={16} /></IconButton></div><h2>{m.name}</h2><p>{m.words.length} מילים וביטויים · {m.target_count ?? "—"} יעדי אנגלית ייחודיים למדידה</p>{m.target_count === 0 && <p role="status">הרשימה נשמרה כחומר לשיחה בלבד. טרם הוכנו לה יעדי אנגלית, ולכן לא יהיו עליה ציוני מילים.</p>}<div className="sk-tags">{m.words.slice(0, 5).map(w => <span className="sk-tag" dir="auto" key={w}>{w}</span>)}{m.words.length > 5 && <span className="sk-tag">ועוד {m.words.length - 5}</span>}</div><button className={activeId === m.id ? "sk-quiet-link sk-accent" : "sk-link"} onClick={() => onActivate(activeId === m.id ? "" : m.id)}>{activeId === m.id ? <><Check size={15} />ברשימת השיחה הבאה</> : "לקחת לשיחה הבאה"}<ArrowLeft size={14} /></button></article>)}</div></>;
+}
+function Achievements({ account, token }: { account: Account; token: string }) {
+  const progress = account.progress;
+  return <section className="sk-achievements"><LearningProgress token={token} account={account} /><div className="sk-persistence"><span><Clock3 size={16} />{progress.total_minutes} דקות של אנגלית</span><span>{progress.session_count} שיחות</span><span>{progress.total_points} נקודות עידוד — לא ציון ידע</span><span>{practiceDays(progress.sessions)} ימי תרגול בשיחות האחרונות</span></div></section>;
+}
+function PreferencesForm({ preferences, account, onSave, onTeachers, onMaterials, onLogout, phonesPanel }: { preferences: Preferences; account: Account; onSave: (p: Preferences) => void; onTeachers: () => void; onMaterials: () => void; onLogout: () => void; phonesPanel: React.ReactNode }) {
+  const [draft, setDraft] = useState<Preferences>({ pace: "normal", corrections: "gentle", minutes: 10, language: "", track: "recommended", topic: "everyday", store_transcripts: false, ...preferences });
+  const change = (key: string, value: string | boolean | number) => setDraft(p => ({ ...p, [key]: value }));
+  return <form className="sk-settings" onSubmit={e => { e.preventDefault(); const { active_teacher, selected_bot, ...values } = draft; onSave(values); }}><div className="sk-setting-row"><span>המורה שלי<small>מורה אחד, שמחכה לך בקו</small></span><button type="button" className="sk-link" onClick={onTeachers}>למורים שלי<ArrowUpLeft size={15} /></button></div>
+    <Setting title="מסלול תרגול" value={tracks[draft.track || "recommended"]}><Options values={Object.fromEntries(Object.entries(tracks).slice(0, 3))} value={draft.track} onChange={v => change("track", v)} /><Options values={{ grammar: tracks.grammar }} value={draft.track} onChange={v => change("track", v)} />{draft.track === "grammar" && <fieldset><legend>מה נתרגל? עד שלוש מיומנויות</legend>{Object.entries(grammarNames).map(([id, label]) => <label key={id}><input type="checkbox" checked={(draft.grammar_targets || ["present"]).includes(id)} onChange={e => {
+      const current = draft.grammar_targets || ["present"];
+      const next = e.target.checked ? [...current, id] : current.filter(v => v !== id);
+      if (next.length > 0 && next.length <= 3) setDraft(p => ({ ...p, grammar_targets: next }));
+    }} />{label}</label>)}</fieldset>}</Setting>
+    <Setting title="רמה וסגנון למידה" value={modeNames[(draft.conversation_mode || "guided") as keyof typeof modeNames]}><div className="sk-tags"><button type="button" className="sk-link" onClick={() => setDraft(p => ({ ...p, level: "beginner", conversation_mode: "guided", pace: "slow", learning_load: "light", correction_policy: "after_answer", closing_activity: "roleplay" }))}>צעדים ראשונים</button><button type="button" className="sk-link" onClick={() => setDraft(p => ({ ...p, level: "intermediate", conversation_mode: "conversation", pace: "normal", learning_load: "normal", correction_policy: "after_activity", closing_activity: "roleplay" }))}>לומדים בשיחה</button><button type="button" className="sk-link" onClick={() => setDraft(p => ({ ...p, level: "fluent", conversation_mode: "roleplay", pace: "normal", learning_load: "light", correction_policy: "after_activity", closing_activity: "roleplay" }))}>סימולציה מתקדמת</button></div><LessonSettingsFields value={{ level: draft.level || draft.plan?.level || "beginner", ...draft }} onChange={next => setDraft(p => ({ ...p, ...next }))} /></Setting>
+    <Setting title="על מה נדבר?" value={topics[draft.topic || "everyday"]}><TopicPicker value={draft.topic} onChange={v => change("topic", v)} /></Setting>
+    <Setting title="קצב דיבור" value={paceNames[draft.pace || "normal"]}><Options values={paceNames} value={draft.pace} onChange={v => change("pace", v)} /></Setting>
+    <Setting title="כמה זמן בכל פעם?" value={draft.minutes + " דקות"}><Options values={{ "5": "5 דקות", "10": "10 דקות", "20": "20 דקות" }} value={String(draft.minutes)} onChange={v => change("minutes", Number(v))} /></Setting>
+    <Setting title="שפת התרגום" value={draft.language || "זיהוי אוטומטי"}><label>השפה שלך<select value={draft.language} onChange={e => change("language", e.target.value)}><option value="">זיהוי אוטומטי</option>{["English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"].map(l => <option key={l}>{l}</option>)}</select></label></Setting>
+    <div className="sk-setting-row"><span>אוצר המילים שלי<small>{account.materials.length} רשימות שמורות</small></span><button type="button" className="sk-link" onClick={onMaterials}>לרשימות שלי<ArrowUpLeft size={15} /></button></div>
+    <Setting title="טלפונים מחוברים" value={account.customer.phone}>{phonesPanel}</Setting>
+    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{account.receipts.length ? account.receipts.map(r => <p key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"} · עד {lessonDate(r.expires_at)}</p>) : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
+    <div className="sk-setting-row"><label htmlFor="save-transcripts">לשמור גם את המילים<small>תמליל השיחות הבאות. סיכומים נשמרים גם בלי זה.</small></label><input id="save-transcripts" type="checkbox" role="switch" checked={draft.store_transcripts === true} onChange={e => change("store_transcripts", e.target.checked)} /></div>
+    <div className="sk-actions"><button className="sk-primary" type="submit">ככה מתאים לי<Check size={16} /></button><button type="button" className="sk-link" onClick={onLogout}><LogOut size={15} />יציאה</button></div>
+  </form>;
+}
+function Setting({ title, value, children }: { title: string; value?: string; children: React.ReactNode }) {
+  return <details className="sk-setting"><summary><span>{title}</span><span>{value}<ChevronDown size={15} /></span></summary><div className="sk-setting-body">{children}</div></details>;
+}
+
+function PhoneLinks({ account, token, onRefresh }: { account: Account; token: string; onRefresh: () => Promise<void> }) {
+  const [adding, setAdding] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [challenge, setChallenge] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true); setError("");
+    try {
+      if (!challenge) { const r = await portalRequest<{ challenge: string }>("/v1/portal/auth/start", token, { phone, purpose: "link_phone" }); setChallenge(r.challenge); }
+      else { await portalRequest("/v1/portal/auth/verify", token, { challenge, code }); await onRefresh(); setAdding(false); setChallenge(""); setPhone(""); setCode(""); }
+    } catch (e) { setError(e instanceof Error ? e.message : "לא הצלחנו לחבר את המספר."); }
+    finally { setBusy(false); }
+  };
+  return <div><p>המספר הראשי: <bdi>{account.customer.phone}</bdi></p>{account.phones.map(p => <div className="sk-setting-row" key={p.id}><bdi>{p.phone}</bdi><button type="button" className="sk-link" onClick={async () => { if (confirm("לנתק את המספר מהחשבון?")) { try { await portalRequest("/v1/portal/phones/" + p.id, token, undefined, "DELETE"); await onRefresh(); } catch (e) { setError(e instanceof Error ? e.message : "לא הצלחנו לנתק את המספר."); } } }}>ניתוק</button></div>)}{!adding ? <button type="button" className="sk-link" onClick={() => setAdding(true)}><Plus size={15} />לחבר עוד טלפון</button> : <div><label>{challenge ? "שש הספרות האחרונות של המספר שצלצל" : "איזה מספר נחבר?"}<input type={challenge ? "text" : "tel"} dir="ltr" inputMode={challenge ? "numeric" : "tel"} maxLength={challenge ? 6 : 30} value={challenge ? code : phone} onChange={e => challenge ? setCode(e.target.value.replace(/\D/g, "")) : setPhone(e.target.value)} /></label><button type="button" className="sk-secondary" disabled={busy || (challenge ? code.length !== 6 : phone.length < 9)} onClick={() => void submit()}>{busy ? "רק רגע…" : challenge ? "לחבר לחשבון" : "שלחו לי צלצול"}</button><button type="button" className="sk-quiet-link" onClick={() => { setAdding(false); setChallenge(""); }}>ביטול</button></div>}{error && <p className="sk-error" role="alert">{error}</p>}</div>;
+}
+
+export const PHONE_LINE = "076-5673575";
+function AccessNotice({ account }: { account: Account }) {
+  const a = account.access;
+  if (!a?.limited) return null;
+  const minutes = remainingMinutes(account);
+  if (minutes > 0) return <p role="status" className="sk-access"><strong>מסלול {a.plan_name || "פעיל"}</strong> · נשארו {minutes} דקות · עד {a.max_call_minutes || 5} דקות בכל שיחה. בסוף כל שיחה המורה מסכם ושומר הכול.</p>;
+  if (a.free_calls_left > 0) return <p role="status" className="sk-access"><strong>מסלול טעימה</strong> · נשארו לך {a.free_calls_left} שיחות החודש, עד {a.free_call_minutes} דקות כל אחת. רוצה יותר? <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE}, מקש 3</a></p>;
+  return <p role="alert" className="sk-access is-empty"><strong>שיחות הטעימה של החודש נוצלו.</strong> כל מה שלמדת שמור. כדי להמשיך עכשיו: <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE} והקישו 3</a> לבחירת מסלול.</p>;
+}
