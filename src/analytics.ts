@@ -21,7 +21,11 @@ function capture() {
   if (!first?.ts || !Number.isFinite(Date.parse(first.ts)) || Date.now() - Date.parse(first.ts) > 90 * 86400000) {
     first = current; write('analytics:first', JSON.stringify(first));
   }
-  last = current; write('analytics:last', JSON.stringify(last));
+  try { last = JSON.parse(read('analytics:last') || 'null'); } catch { /* Ignore corrupt storage. */ }
+  const external = current.referrer && new URL(current.referrer).origin !== location.origin;
+  if (!last?.ts || !Number.isFinite(Date.parse(last.ts)) || keys.some(k => new URLSearchParams(location.search).has(k)) || external) {
+    last = current; write('analytics:last', JSON.stringify(last));
+  }
 }
 export function attribution(): Attribution | undefined {
   try {

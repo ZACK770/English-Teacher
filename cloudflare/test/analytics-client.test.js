@@ -21,6 +21,27 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('browser attribution and runtime tracking', () => {
+  it.each(['https://speakool.net/learn?plan=school-foundations', 'https://speakool.net/'])('sends stored last touch on an internal or direct load (%s)', async url => {
+    const original = (await load()).attribution().last_touch;
+    document.referrer = url.includes('/learn') ? 'https://speakool.net/' : '';
+    const analytics = await load(url);
+    analytics.initAnalytics();
+    expect(analytics.attribution().last_touch).toEqual(original);
+    expect(JSON.parse(local.get('analytics:last'))).toEqual(original);
+    const body = JSON.parse(await navigator.sendBeacon.mock.calls[0][1].text());
+    expect(body.attribution.last_touch).toEqual(original);
+  });
+  it('replaces last touch for external referrals and recovers corrupt last-touch storage', async () => {
+    const original = (await load()).attribution();
+    document.referrer = 'https://search.example/results?q=private';
+    const next = (await load('https://speakool.net/learn')).attribution();
+    expect(next.first_touch).toEqual(original.first_touch);
+    expect(next.last_touch).toMatchObject({ referrer: 'https://search.example/results', landing_path: '/learn' });
+    expect(next.last_touch.utm_campaign).toBeUndefined();
+    local.set('analytics:last', '{');
+    document.referrer = '';
+    expect((await load('https://speakool.net/')).attribution().last_touch.landing_path).toBe('/');
+  });
   it('preserves first touch for 90 days and updates last touch on the next visit', async () => {
     const first = (await load()).attribution();
     const next = (await load('https://speakool.net/learn?utm_source=capsule&utm_campaign=reminder')).attribution();
