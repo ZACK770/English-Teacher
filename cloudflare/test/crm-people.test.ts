@@ -114,6 +114,17 @@ describe("CRM read-only endpoints", () => {
     expect((await (await request("people")).json() as any).items[0].status).toBe(expected);
     expect((await (await request("people/person1")).json() as any).status).toBe(expected);
   });
+  it("charges estimated telephony only for phone sessions, not web or unclassified sessions", async () => {
+    customer(); session("phone"); session("web"); session("unknown");
+    sql.prepare("UPDATE call_customers SET channel='web' WHERE call_id='web'").run();
+    sql.prepare("DELETE FROM call_customers WHERE call_id='unknown'").run();
+    sql.prepare("INSERT INTO console_settings VALUES ('economics',?)").run(JSON.stringify({ usd_ils: 4, forecast_cost_per_minute: 0.2 }));
+    const card = await (await request("people/person1")).json() as any;
+    expect(card.calls.find((c: any) => c.call_id === "phone")).toMatchObject({ telephony_cost_ils: 0.4, total_cost_ils: 0.8 });
+    for (const id of ["web", "unknown"]) expect(card.calls.find((c: any) => c.call_id === id)).toMatchObject({ telephony_cost_ils: 0, telephony_rate_ils: 0, total_cost_ils: 0.4 });
+    expect(card.total_cost_ils).toBe(1.6);
+    expect((await (await request("people")).json() as any).items[0].total_cost_ils).toBe(1.6);
+  });
   it("returns chronological journey/calls, lazy transcript, null recording and empty transcript", async () => {
     customer(); session(); session("empty", null);
     event("ivr-events", { call_id: "call1", route: "main", input: { isaacMain: "2" }, output: { goTo: "/99/2" } });
