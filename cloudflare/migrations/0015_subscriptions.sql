@@ -45,6 +45,7 @@ UPDATE subscriptions SET
   pause_year_start=started_at,
   domains_json=COALESCE((SELECT domains_json FROM plans WHERE id=subscriptions.plan_id),'[]');
 ALTER TABLE sales_receipts ADD COLUMN subscription_id TEXT REFERENCES subscriptions(id);
+ALTER TABLE sales_receipts ADD COLUMN valid_from TEXT;
 CREATE INDEX idx_receipts_subscription ON sales_receipts(subscription_id,expires_at);
 CREATE TABLE subscription_members (
   subscription_id TEXT NOT NULL REFERENCES subscriptions(id),

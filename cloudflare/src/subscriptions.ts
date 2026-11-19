@@ -53,8 +53,8 @@ export class SubscriptionStore {
     return this.get(id);
   }
   private grantStatement(sub: Subscription, at: string) {
-    return this.db.prepare(`INSERT OR IGNORE INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id)
-      VALUES (?,?,?,'school',?,0,0,?,?,?,?)`).bind(randomHex(10), sub.customer_id, sub.plan_id, `subscription:${sub.id}:${sub.current_period_start}`, sub.monthly_minutes, addMonths(sub.current_period_end, 1), at, sub.id);
+    return this.db.prepare(`INSERT OR IGNORE INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id,valid_from)
+      VALUES (?,?,?,'school',?,0,0,?,?,?,?,?)`).bind(randomHex(10), sub.customer_id, sub.plan_id, `subscription:${sub.id}:${sub.current_period_start}`, sub.monthly_minutes, addMonths(sub.current_period_end, 1), at, sub.id, sub.current_period_start);
   }
   async grantPeriod(id: string, at = new Date().toISOString()) {
     const sub = await this.get(id);

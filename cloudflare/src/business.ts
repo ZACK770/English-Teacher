@@ -266,8 +266,8 @@ export class BusinessStore {
           (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
            WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status='active'))
         AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
-        AND r.product=? AND r.expires_at>? GROUP BY r.id ORDER BY r.expires_at`)
-      .bind(customerId, customerId, policy.product, now)
+        AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?) GROUP BY r.id ORDER BY r.expires_at`)
+      .bind(customerId, customerId, policy.product, now, now)
       .all<Record<string, any>>();
     for (const receipt of receipts) {
       const pkg = PackageSchema.safeParse(await this.record("packages", receipt.package_id));

@@ -223,6 +223,14 @@ describe("subscription promises against production SQL", () => {
   it("clamps calendar-month arithmetic at month ends", () => {
     expect(addMonths("2026-01-31T00:00:00Z", 1)).toBe("2026-02-28T00:00:00.000+00:00");
   });
+  it("does not spend a future period granted by an early renewal", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    await store.recordRenewal(sub.id, at, "early-charge");
+    db.sql.prepare("INSERT INTO usage_allocations VALUES ('spent','owner','school',?,3600,3600,?)").run(receipts()[0].id, at);
+    expect((await b.reserveCall("owner", "teacher", "too-early", 60)).mode).toBe("blocked");
+    date("2026-02-01");
+    expect((await b.reserveCall("owner", "teacher", "on-time", 60)).mode).toBe("paid");
+  });
   it("isolates bad subscriptions during scheduled processing", async () => {
     const bad = await store.create("owner", "school-foundations", at);
     const good = await store.create("owner", "school-foundations", at);
