@@ -11,6 +11,7 @@ import { handleCallback, startSchool } from "../src/pbx";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
+import { GeminiBudget } from "../src/gemini-budget";
 import { cleanupPortalAuth } from "../src/portal-auth";
 import worker from "../src/index";
 import { LearningStore } from "../src/learning";
@@ -64,6 +65,14 @@ beforeEach(async () => {
     DB: db as unknown as D1Database, ADMIN_BEARER_SECRET: "test-admin",
     ASSETS: { fetch: vi.fn(async () => new Response("<html>SPA fallback</html>")) },
   } as unknown as Env;
+  let ledger: unknown;
+  const guard = new GeminiBudget({
+    storage: { kv: { get: () => ledger, put: (_: string, value: unknown) => { ledger = value; } } },
+    waitUntil: () => {},
+  } as unknown as DurableObjectState, env);
+  env.GEMINI_BUDGET = { getByName: () => ({
+    fetch: (url: string, init?: RequestInit) => guard.fetch(new Request(url, init)),
+  }) } as unknown as DurableObjectNamespace;
   b = new BusinessStore(env.DB);
   progress = new ProgressStore(env.DB);
   await b.save("customers", { name: "Learner A", phone: "0500000001", source: "test", preferred_bot: "", notes: "" }, "learner-a");
@@ -79,6 +88,27 @@ beforeEach(async () => {
   }));
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); db.sql.close(); });
+
+it("blocks browser, PBX, and text calls at the shared budget without connecting to Gemini", async () => {
+  env.GEMINI_DAILY_BUDGET_USD = "0.01";
+  const connect = vi.spyOn(GeminiLive.prototype, "connect");
+  const browser = { send: vi.fn(), close: vi.fn() };
+  const phone = { send: vi.fn(), close: vi.fn() };
+  const tutor = (socket: typeof browser, customerId?: string) => new TutorSession(
+    socket as unknown as WebSocket, env, settings(env), crypto.randomUUID(), null, customerId ? { customerId, teacherId: "" } : undefined,
+  );
+  const start = { type: "start", format: "pcm16;rate=8000;ch=1" };
+  await tutor(browser, "learner-a").run(JSON.stringify({ ...start, token: "portal", callId: "web-budget" }), "student", false);
+  await tutor(phone).run(JSON.stringify({ ...start, token: "test-channel", callId: "phone-budget", caller: "0500000002" }), "student", false);
+  expect(browser.send).toHaveBeenCalledWith(JSON.stringify({ type: "hangup", reason: "gemini_budget_reached" }));
+  expect(phone.send).toHaveBeenCalledTimes(1);
+  expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(429);
+  expect(connect).not.toHaveBeenCalled();
+  expect((await request("/v1/admin/gemini-budget")).status).toBe(401);
+  expect(await (await request("/v1/admin/gemini-budget", env.ADMIN_BEARER_SECRET)).json()).toMatchObject({
+    daily_budget_usd: 0.01, active_jobs: 0, alert_state: "pending",
+  });
+});
 
 describe("approved pricing catalog", () => {
   it("seeds the approved school catalog and mirrors accurate billing types", async () => {
