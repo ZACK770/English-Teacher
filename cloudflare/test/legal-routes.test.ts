@@ -20,10 +20,10 @@ describe("public legal page SPA routing", () => {
     expect(api.status).toBe(401);
     expect(api.headers.get("Location")).toBeNull();
   });
-  it("combines the legacy hostname and portal redirects", async () => {
+  it("keeps speakcall.app on its own host for the portal alias", async () => {
     const response = await worker.fetch(new Request("https://speakcall.app/english/portal?invite=a%2Fb"), {} as Env);
     expect(response.status).toBe(302);
-    expect(response.headers.get("Location")).toBe("https://speakool.net/english/learn?invite=a%2Fb");
+    expect(response.headers.get("Location")).toBe("https://speakcall.app/english/learn?invite=a%2Fb");
   });
   it.each(["/terms", "/privacy", "/accessibility", "/english/accessibility", "/terms/"])("serves the SPA on direct load of %s", async (path) => {
     const fetch = vi.fn(async (request: Request) => new URL(request.url).pathname === "/index.html"
