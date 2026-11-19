@@ -149,6 +149,40 @@ describe("website checkout", () => {
     expect(db.sql.prepare("SELECT next_date FROM standing_orders").get()?.next_date).toBe("15/02/26");
   });
 
+  it("compensates lost pause and resume responses without changing local state", async () => {
+    const { o, store } = await monthly();
+    const active = await store.get(o.id);
+    const billing = db.sql.prepare("SELECT * FROM standing_orders").get();
+    const actions: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const action = new URLSearchParams(String(init.body)).get("Action")!;
+      actions.push(action);
+      if (action === "DisableKeva") throw new Error("response lost");
+      return Response.json({ NextDate: "15/02/26" });
+    }));
+    await expect(store.pause(o.id, 7)).rejects.toMatchObject({ status: 502 });
+    expect(actions).toEqual(["DisableKeva", "EnableKevaNew"]);
+    expect(await store.get(o.id)).toEqual(active);
+    expect(db.sql.prepare("SELECT * FROM standing_orders").get()).toEqual(billing);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("OK")));
+    await store.pause(o.id, 7);
+    const paused = await store.get(o.id);
+    actions.length = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const action = new URLSearchParams(String(init.body)).get("Action")!;
+      actions.push(action);
+      if (action === "EnableKevaNew") throw new Error("response lost");
+      return new Response("OK");
+    }));
+    await expect(store.resume(o.id)).rejects.toMatchObject({ status: 502 });
+    expect(actions).toEqual(["EnableKevaNew", "DisableKeva"]);
+    expect(await store.get(o.id)).toEqual(paused);
+    expect(db.sql.prepare("SELECT * FROM standing_orders").get()).toEqual(billing);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+    await expect(store.resume(o.id)).rejects.toMatchObject({ status: 502 });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_resume_recovery'").get()?.n).toBe(1);
+  });
+
   it("rejects concurrent billing changes and pending Kevas without provider calls", async () => {
     const { o, store } = await monthly();
     db.sql.prepare("INSERT INTO subscription_billing_locks VALUES (?,'other',?)").run(o.id, new Date().toISOString());

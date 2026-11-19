@@ -124,15 +124,14 @@ export class SubscriptionStore {
       const yearEnd = addMonths(sub.started_at, (new Date(year).getUTCFullYear() - new Date(sub.started_at).getUTCFullYear() + 1) * 12);
       const daysThisYear = Math.min(days, (Date.parse(yearEnd) - Date.parse(at)) / DAY);
       if (sub.status !== "active" || !Number.isInteger(days) || days < 1 || days > 60 || used + daysThisYear > 60) throw new Error("Pause limit exceeded or subscription not active");
-      if (standing) await disableKeva(this.env!, standing.keva_id);
       try {
+        if (standing) await disableKeva(this.env!, standing.keva_id);
         const changed = await this.db.prepare("UPDATE subscriptions SET status='paused',resume_status='active',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
         if (!changed.meta.changes) throw new Error("Subscription status changed");
       } catch (error) {
         if (standing) {
           try {
-            const nextDate = await enableKeva(this.env!, standing.keva_id);
-            await this.db.prepare("UPDATE standing_orders SET next_date=? WHERE id=?").bind(nextDate, standing.id).run();
+            await enableKeva(this.env!, standing.keva_id);
           } catch { await this.billingIssue(id, "keva_pause_recovery", at); }
         }
         throw error;
@@ -147,14 +146,16 @@ export class SubscriptionStore {
       if (sub.status !== "paused") throw new Error("Subscription is not paused");
       if (at < sub.paused_at) throw new Error("Resume precedes pause");
       if (standing) {
-        const nextDate = await enableKeva(this.env!, standing.keva_id);
+        let scheduled = false;
         try {
+          const nextDate = await enableKeva(this.env!, standing.keva_id);
           await this.db.prepare("UPDATE standing_orders SET next_date=?,updated_at=? WHERE id=?").bind(nextDate, iso(at), standing.id).run();
+          scheduled = true;
           return await this.resumeEntitlement(id, at, true, sub);
         } catch (error) {
           try {
             await disableKeva(this.env!, standing.keva_id);
-            await this.db.prepare("UPDATE standing_orders SET next_date=? WHERE id=?").bind(standing.next_date, standing.id).run();
+            if (scheduled) await this.db.prepare("UPDATE standing_orders SET next_date=?,updated_at=? WHERE id=?").bind(standing.next_date, standing.updated_at, standing.id).run();
           } catch { await this.billingIssue(id, "keva_resume_recovery", at); }
           throw error;
         }
