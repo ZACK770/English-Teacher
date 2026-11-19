@@ -628,7 +628,7 @@ describe("IVR voicemail CRM", () => {
 
   it("prompts briefly for a message, then ingests a hangup exactly once and serves private audio", async () => {
     const prompt = await callback(undefined, "0500000001", { PBXcallStatus: "CALL" });
-    const body = await prompt.json();
+    const body = await prompt.json() as { files: unknown[] };
     expect(body).toMatchObject({ type: "record", hangupSave: "yes" });
     expect(body.files).toHaveLength(1);
     expect(JSON.stringify(body)).not.toContain("תוקלט");

@@ -14,10 +14,10 @@ const recordings = new Map<string, string>([
   ["שלום, הגעתם לספיקול. לא ניתן להשתמש בשירות ממספר חסוי. אנא התקשרו ממספר גלוי. תודה.", "hidden_caller-84c1d772f23b.wav"],
 ]);
 
-export function withRecordedAudio<T extends IVRResponse>(result: T, publicBaseUrl?: string): T {
-  if (!publicBaseUrl || !("files" in result) || !result.files) return result;
+export function withRecordedAudio(result: IVRResponse, publicBaseUrl?: string): IVRResponse {
+  if (!publicBaseUrl || !Array.isArray(result.files)) return result;
   const base = publicBaseUrl.replace(/\/$/, "");
-  result.files = result.files.map((file) => {
+  result.files = result.files.map((file: { text?: string }) => {
     const name = file.text && recordings.get(file.text.trim());
     return name ? { fileLink: `${base}/brand/phone/${name}` } : file;
   });
