@@ -1,3 +1,4 @@
+import { attribution, track } from '../../analytics';
 type CallbackRequest = {
   name: string;
   phone: string;
@@ -14,10 +15,11 @@ async function postCallback(request: CallbackRequest, source: 'pricing_join' | '
   const response = await fetch(prefix + '/v1/public/callback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...request, source, website: '' }),
+    body: JSON.stringify({ ...request, source, website: '', attribution: attribution() }),
   });
   const result = await response.json().catch(() => null);
   if (!response.ok || result?.ok !== true) throw new Error('לא הצלחנו לשלוח את הבקשה. נסו שוב.');
+  if (!result.duplicate) track('generate_lead', { reference: result.id }, result.id);
   return {
     duplicate: result.duplicate === true,
     status: result.status === 'dialing' || result.status === 'dialed' ? 'dialed' as const : 'queued' as const,

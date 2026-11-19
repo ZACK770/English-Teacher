@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { conversion } from "./analytics";
 import { BusinessStore, normalizedPhone } from "./business";
 import { type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex, tokenUrlsafe } from "./env";
 import { learnerBody, requireLearner } from "./learner";
@@ -76,7 +77,7 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     return Response.json({ challenge, expires_in: 300 }, { headers: noCache });
   }
   if (path === "/v1/portal/auth/verify") {
-    const input = await learnerBody(request, z.object({ challenge: z.string().regex(/^[a-f0-9]{48}$/), code: z.string().regex(/^\d{6}$/) }));
+    const input = await learnerBody(request, z.object({ challenge: z.string().regex(/^[a-f0-9]{48}$/), code: z.string().regex(/^\d{6}$/), attribution: z.unknown().optional() }));
     const key = "portal-auth:" + input.challenge;
     const row = await env.DB.prepare(`UPDATE console_settings SET body=json_set(body,'$.attempts',json_extract(body,'$.attempts')+1)
       WHERE id=? AND json_extract(body,'$.attempts')<5 AND json_extract(body,'$.expires')>?
@@ -99,7 +100,8 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     if (!existing) await b.save("customers", { name: "לקוח מהטלפון", phone: challenge.phone, source: "portal", preferred_bot: "", notes: "" }, customerId);
     const token = tokenUrlsafe(32);
     await env.DB.prepare("INSERT INTO portal_tokens VALUES (?,?,?)").bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00")).run();
-    return Response.json({ token }, { headers: noCache });
+    if (!existing) await conversion(env, "sign_up", input.attribution, customerId, customerId).catch(error => console.error("Analytics signup failed", error));
+    return Response.json({ token, new_account: !existing }, { headers: noCache });
   }
   throw new HttpError(404, "Not found");
 }

@@ -7,6 +7,8 @@ import { type Env } from "../src/env";
 import worker from "../src/index";
 import { standingOrderStart } from "../src/checkout";
 import { SubscriptionStore, addMonths } from "../src/subscriptions";
+import { attribution } from "./analytics-fixture";
+import { PaymentStore } from "../src/payments";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -49,6 +51,83 @@ async function hook(data: Record<string, unknown>) {
   return worker.fetch(new Request("https://speakcall.app/v1/payments/nedarim/webhook", { method: "POST", body: raw, headers: { "x-nedarim-timestamp": ts, "x-nedarim-signature": "v1=" + sig } }), env);
 }
 let keva: Record<string, string> = {};
+
+it.each([false, true])("attributes reconciled payments without failing settlement on analytics errors (%s)", async failAnalytics => {
+  const order = await (await req("/v1/portal/checkout", { package_id: "school-foundations", attribution })).json() as any;
+  const store = new PaymentStore(b);
+  const charge = { TransactionId: "98768", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id };
+  vi.spyOn(store, "providerRows").mockImplementation(async (_env, action) => action === "GetHistoryJson" ? [charge] : []);
+  if (failAnalytics) db.sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(await store.reconcile(env)).toMatchObject({ GetHistoryJson: { received: 1, matched: 1 }, GetErrorLogsJson: { received: 0, matched: 0 } });
+    expect(db.sql.prepare("SELECT state FROM payment_orders WHERE id=?").get(order.id)?.state).toBe("paid");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE kind='settlement_review'").get()?.n).toBe(0);
+    if (failAnalytics) expect(logged).toHaveBeenCalledWith("Analytics purchase failed", expect.any(Error));
+    else {
+      expect(db.sql.prepare("SELECT order_id,value,first_touch FROM analytics_events WHERE event='purchase'").all()).toEqual([
+        expect.objectContaining({ order_id: order.id, value: order.amount_ils, first_touch: JSON.stringify(attribution.first_touch) }),
+      ]);
+      db.sql.exec("UPDATE payment_sync SET attempted_at=0");
+      await store.reconcile(env);
+      expect(db.sql.prepare("SELECT COUNT(*) AS n FROM analytics_events WHERE event='purchase'").get()?.n).toBe(1);
+    }
+  } finally { logged.mockRestore(); }
+});
+
+it("returns a paid webhook result when analytics inserts fail without creating settlement review", async () => {
+  const order = await (await req("/v1/portal/checkout", { package_id: "school-foundations", attribution })).json() as any;
+  db.sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await hook({ MosadNumber: "7019554", TransactionId: "98766", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ paid: true, customer_id: "c1", amount_ils: order.amount_ils });
+    expect(db.sql.prepare("SELECT state FROM payment_orders WHERE id=?").get(order.id)?.state).toBe("paid");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE kind='settlement_review'").get()?.n).toBe(0);
+    expect(logged).toHaveBeenCalledWith("Analytics purchase failed", expect.any(Error));
+  } finally { logged.mockRestore(); }
+});
+
+it("keeps a paid webhook successful when attribution lookup fails", async () => {
+  const order = await (await req("/v1/portal/checkout", { package_id: "school-foundations", attribution })).json() as any;
+  db.sql.exec("DROP TABLE analytics_attribution");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await hook({ MosadNumber: "7019554", TransactionId: "98767", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ paid: true });
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE kind='settlement_review'").get()?.n).toBe(0);
+    expect(logged).toHaveBeenCalledWith("Analytics purchase attribution failed", expect.any(Error));
+  } finally { logged.mockRestore(); }
+});
+
+it("creates checkout despite an analytics insert failure", async () => {
+  db.sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await req("/v1/portal/checkout", { package_id: "school-foundations", attribution });
+    expect(response.status).toBe(200);
+    const order = await response.json() as any;
+    expect(db.sql.prepare("SELECT customer_id FROM payment_orders WHERE id=?").get(order.id)?.customer_id).toBe("c1");
+    expect(logged).toHaveBeenCalledWith("Analytics checkout failed", expect.any(Error));
+  } finally { logged.mockRestore(); }
+});
+
+it("attributes signed purchases to the stored checkout even without a browser and deduplicates webhook retries", async () => {
+  const response = await req("/v1/portal/checkout", { package_id: "school-foundations", attribution });
+  expect(response.status).toBe(200);
+  const order = await response.json() as any;
+  expect(db.sql.prepare("SELECT customer_id,reference,first_touch FROM analytics_events WHERE event='begin_checkout'").get()).toMatchObject({ customer_id: "c1", reference: order.id, first_touch: JSON.stringify(attribution.first_touch) });
+  const charge = { MosadNumber: "7019554", TransactionId: "98765", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id };
+  expect((await hook({ ...charge, Amount: "1" })).status).toBe(400);
+  expect(db.sql.prepare("SELECT COUNT(*) AS n FROM analytics_events WHERE event='purchase'").get()?.n).toBe(0);
+  expect((await hook(charge)).status).toBe(200);
+  expect((await hook(charge)).status).toBe(200);
+  expect(db.sql.prepare("SELECT customer_id,order_id,value,currency,first_touch,last_touch FROM analytics_events WHERE event='purchase'").all()).toEqual([
+    expect.objectContaining({ customer_id: "c1", order_id: order.id, value: order.amount_ils, currency: "ILS", first_touch: JSON.stringify(attribution.first_touch), last_touch: JSON.stringify(attribution.last_touch) }),
+  ]);
+});
 beforeEach(async () => {
   db = new SqlD1();
   env = { DB: db, ADMIN_BEARER_SECRET: "a", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "npk_x", NEDARIM_WEBHOOK_SECRET: "whsec_test", NEDARIM_API_VALID: "valid12345" } as unknown as Env;

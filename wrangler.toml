@@ -4,6 +4,10 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+[vars]
+GA_MEASUREMENT_ID = ""
+CF_BEACON_TOKEN = "9bbae75ae72c4010961886b5be1e0df9"
+
 # Release: v1.1.0 - Shochi AI Robot Teacher, Learning Games, Excel Unit Economics & Merhav CRM Sync
 [assets]
 directory = "./dist"

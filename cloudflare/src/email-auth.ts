@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { conversion } from "./analytics";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex, tokenUrlsafe } from "./env";
 import { learnerBody, requireLearner } from "./learner";
@@ -9,7 +10,7 @@ const invalidCode = "הקוד שגוי, פג תוקפו או שנוצלו חמש
 const conflict = "הפרט הזה כבר מחובר לחשבון אחר. אפשר להיכנס דרכו או לפנות לתמיכה.";
 const emailLookup = "SELECT id FROM console_records WHERE kind='customers' AND lower(trim(json_extract(body,'$.email')))=?";
 
-async function emailOwner(db: D1Database, email: string, linkCustomer?: string): Promise<string> {
+async function emailOwner(db: D1Database, email: string, linkCustomer?: string): Promise<{ customerId: string; newAccount: boolean }> {
   const now = nowIso();
   if (linkCustomer) {
     const linked = await db.prepare(`UPDATE console_records SET body=json_set(body,'$.email',?), updated_at=?
@@ -17,7 +18,7 @@ async function emailOwner(db: D1Database, email: string, linkCustomer?: string):
         AND NOT EXISTS (SELECT 1 FROM (${emailLookup}) WHERE id<>?)
       RETURNING id`).bind(email, now, linkCustomer, email, email, linkCustomer).first<{ id: string }>();
     if (!linked) throw new HttpError(409, conflict);
-    return linked.id;
+    return { customerId: linked.id, newAccount: false };
   }
   const emailCustomer = "email-" + randomHex(16);
   await db.batch([
@@ -30,7 +31,7 @@ async function emailOwner(db: D1Database, email: string, linkCustomer?: string):
   ]);
   const owner = await db.prepare(emailLookup + " ORDER BY created_at,id LIMIT 1").bind(email).first<{ id: string }>();
   if (!owner) throw new HttpError(503, "לא הצלחנו לחבר את המייל. אפשר לנסות שוב.");
-  return owner.id;
+  return { customerId: owner.id, newAccount: owner.id === emailCustomer };
 }
 
 export async function emailAuth(request: Request, env: Env, path: string): Promise<Response | null> {
@@ -68,7 +69,7 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     return Response.json({ challenge, expires_in: 600, retry_after: 60 }, { headers });
   }
   if (path === "/v1/portal/auth/email/verify") {
-    const input = await learnerBody(request, z.object({ challenge: z.string().regex(/^[a-f0-9]{48}$/), code: z.string().regex(/^\d{6}$/) }));
+    const input = await learnerBody(request, z.object({ challenge: z.string().regex(/^[a-f0-9]{48}$/), code: z.string().regex(/^\d{6}$/), attribution: z.unknown().optional() }));
     const key = prefix + input.challenge;
     const row = await env.DB.prepare(`UPDATE console_settings SET body=json_set(body,'$.attempts',json_extract(body,'$.attempts')+1)
       WHERE id=? AND json_extract(body,'$.attempts')<5 AND json_extract(body,'$.expires')>?
@@ -77,14 +78,15 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     if (!claim || !secureEqual(await sha256Hex(input.challenge + ":" + input.code), claim.hash)) throw new HttpError(401, invalidCode);
     if (claim.linkCustomer && await requireLearner(request, env) !== claim.linkCustomer) throw new HttpError(403, "הקוד שייך לחשבון אחר.");
     if (!await env.DB.prepare("DELETE FROM console_settings WHERE id=? RETURNING id").bind(key).first()) throw new HttpError(401, invalidCode);
-    const customerId = await emailOwner(env.DB, claim.email, claim.linkCustomer);
+    const { customerId, newAccount } = await emailOwner(env.DB, claim.email, claim.linkCustomer);
     if (claim.linkCustomer) return Response.json({ linked: true }, { headers });
     const token = tokenUrlsafe(32);
     const issued = await env.DB.prepare(`INSERT INTO portal_tokens
       SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM (${emailLookup}) WHERE id=?) RETURNING customer_id`)
       .bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00"), claim.email, customerId).first();
     if (!issued) throw new HttpError(401, invalidCode);
-    return Response.json({ token }, { headers });
+    if (newAccount) await conversion(env, "sign_up", input.attribution, customerId, customerId).catch(error => console.error("Analytics signup failed", error));
+    return Response.json({ token, new_account: newAccount }, { headers });
   }
   throw new HttpError(404, "Not found");
 }

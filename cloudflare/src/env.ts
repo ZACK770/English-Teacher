@@ -1,4 +1,6 @@
 export interface Env {
+  GA_MEASUREMENT_ID?: string;
+  CF_BEACON_TOKEN?: string;
   DB: D1Database;
   CALLS: DurableObjectNamespace;
   ASSETS: Fetcher;
