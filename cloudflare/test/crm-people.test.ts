@@ -56,6 +56,13 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM customer reset", () => {
+  it.each(["issued", "awaiting_settlement", "selected", "paid"])("handles %s payment orders before reset", async state => {
+    customer();
+    insert("payment_orders", { id: "order", call_id: "payment-call", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state, created_at: now, updated_at: now });
+    const blocked = ["issued", "awaiting_settlement"].includes(state);
+    expect((await reset()).status).toBe(blocked ? 409 : 200);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()).toMatchObject({ n: blocked ? 1 : 0 });
+  });
   it("requires admin, owner role, exact confirmation, and returns 404 after reset", async () => {
     customer();
     expect((await reset("0501234567", "person1", {})).status).toBe(401);

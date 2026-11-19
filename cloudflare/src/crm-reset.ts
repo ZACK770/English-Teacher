@@ -10,6 +10,7 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   if (body?.confirm !== (person.phone || person.id)) throw new HttpError(400, "האישור אינו תואם. יש להקליד את הטלפון או את מזהה הלקוח כפי שמוצג בכרטיס.");
   const id = person.id;
   const rows = async (query: string, ...args: unknown[]) => (await env.DB.prepare(query).bind(...args).all<Row>()).results;
+  if ((await rows("SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם תשלום הממתין לסליקה. יש להמתין להשלמת התשלום או לביטולו.");
   const callRows = await rows(`SELECT call_id FROM call_customers WHERE customer_id=? UNION SELECT call_id FROM sessions WHERE student_id=?
     UNION SELECT call_id FROM usage_allocations WHERE customer_id=? UNION SELECT call_id FROM payment_orders WHERE customer_id=?
     UNION SELECT call_id FROM learning_lessons WHERE customer_id=? UNION SELECT last_call_id FROM navigation_trips WHERE customer_id=?
