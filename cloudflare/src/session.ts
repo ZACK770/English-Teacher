@@ -174,7 +174,7 @@ export class TutorSession {
         if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
         this.stop("hard_time_limit");
       }, (allowance.seconds + 20) * 1000);
-      await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
+      if (this.controls.store_transcripts) await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
       if (allowance.mode === "basic") {
         this.controls = { ...this.controls, model: this.s.basicTranslatorModel };
         this.meteredAt = Date.now();
