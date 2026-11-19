@@ -626,11 +626,12 @@ describe("IVR voicemail CRM", () => {
     vi.stubGlobal("fetch", download);
   });
 
-  it("discloses recording and transcription, then ingests a hangup exactly once and serves private audio", async () => {
+  it("prompts briefly for a message, then ingests a hangup exactly once and serves private audio", async () => {
     const prompt = await callback(undefined, "0500000001", { PBXcallStatus: "CALL" });
-    expect(await prompt.json()).toMatchObject({
-      type: "record", hangupSave: "yes", files: [{ text: expect.stringContaining("תוקלט ותתומלל") }, { text: expect.any(String) }],
-    });
+    const body = await prompt.json();
+    expect(body).toMatchObject({ type: "record", hangupSave: "yes" });
+    expect(body.files).toHaveLength(1);
+    expect(JSON.stringify(body)).not.toContain("תוקלט");
     expect(await (await callback("pbx-file-1")).json()).toEqual({ type: "hangup" });
     expect(await (await callback("pbx-file-1")).json()).toEqual({ type: "hangup" });
     const [job] = await items();

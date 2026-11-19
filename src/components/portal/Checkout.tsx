@@ -39,7 +39,7 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
       await new Promise(r => setTimeout(r, 1500));
     }
     setBusy(false);
-    setError("התשלום התקבל ומחכה לאישור סופי מנדרים פלוס. המסלול ייפתח אוטומטית בדקות הקרובות, אין צורך לשלם שוב.");
+    setError("התשלום התקבל ומחכה לאישור סופי מחברת הסליקה. המסלול ייפתח אוטומטית בדקות הקרובות, אין צורך לשלם שוב.");
   };
 
   useEffect(() => {
@@ -80,7 +80,7 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
       <div className="sk-card-frame"><iframe ref={frame} id="NedarimFrame" title="פרטי כרטיס אשראי" src={order.iframe_url} scrolling="no" style={{ width: "100%", height, border: 0, display: "block" }} onLoad={() => post({ Name: "GetHeight" })} /></div>
       {error && <p role="alert" className="sk-access is-empty">{error}</p>}
       <button className="sk-primary" disabled={busy || !order.steps.length} onClick={pay}><CreditCard size={18} />{busy ? "מאשרים מול חברת האשראי…" : "לתשלום ₪" + order.amount_ils}</button>
-      <p className="sk-muted"><Lock size={13} /> פרטי הכרטיס מוקלדים ישירות בדף המאובטח של נדרים פלוס ואינם עוברים דרכנו.</p>
+      <p className="sk-muted"><Lock size={13} /> פרטי הכרטיס מוקלדים ישירות בדף התשלום המאובטח ואינם עוברים דרכנו.</p>
     </>}
   </section>;
 }

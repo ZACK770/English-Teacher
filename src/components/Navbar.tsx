@@ -111,10 +111,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, logoHre
           <a
             href="tel:0765673575"
             className="flex items-center gap-2 px-3.5 py-1.5 bg-[#8fd14f] hover:bg-[#c0f67d] text-[#111a1a] font-bold rounded-xl text-xs transition shadow-sm"
-            title="חיוג ישיר למרכזיית טכנוליין שלוחה 99"
+            title="חיוג ישיר לקו הטלפוני"
           >
             <PhoneCall className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">קו טכנוליין:</span>
+            <span className="hidden sm:inline">קו טלפוני:</span>
             <span className="font-mono">076-567-3575 #99</span>
           </a>
         </div>
