@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
-import { useApp } from '../../store/AppContext';
+import { submitCallback } from './callbackApi';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
 export const JoinLanding: React.FC = () => {
-  const { submitCallbackRequest } = useApp();
-
   // Campaign variation toggle (A: Shochi Robot Direct, B: Parents & Urgency)
   const [variation, setVariation] = useState<'A' | 'B'>('A');
 
@@ -20,7 +18,7 @@ export const JoinLanding: React.FC = () => {
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -39,18 +37,22 @@ export const JoinLanding: React.FC = () => {
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      submitCallbackRequest({
+    try {
+      await submitCallback({
         name,
         phone: cleanPhone,
         for_whom: forWhom,
         goal,
         timing,
-        preferred_time: timing === 'scheduled' ? preferredTime : undefined
+        preferred_time: timing === 'scheduled' ? preferredTime : '',
+        consent: true
       });
-      setIsSubmitting(false);
       setSubmittedSuccess(true);
-    }, 500);
+    } catch {
+      setErrorMessage('לא הצלחנו לשלוח את הבקשה. נסו שוב.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
