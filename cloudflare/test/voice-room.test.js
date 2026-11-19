@@ -75,6 +75,9 @@ describe("voice socket closure", () => {
       audioWorklet = { addModule };
       createMediaStreamSource = node;
       createGain = () => ({ ...node(), gain: { value: 1 } });
+      createBuffer = (_channels, count, rate) => ({ duration: count / rate, getChannelData: () => new Float32Array(count) });
+      createBufferSource = () => ({ ...node(), start: vi.fn() });
+      currentTime = 0;
       async close() { this.state = "closed"; }
     });
   });
@@ -162,9 +165,10 @@ describe("voice socket closure", () => {
     expect(render()).toContain("חזרה לאזור האישי");
     expect(stop).toHaveBeenCalled();
   });
-  it("still offers retry if the socket closes after ready but before the teacher speaks", async () => {
+  it("still offers retry if the socket closes after ready and silent audio", async () => {
     const socket = await connect();
     socket.onmessage({ data: JSON.stringify({ type: "ready" }) });
+    socket.onmessage({ data: new Int16Array(160).buffer });
     socket.onmessage({ data: JSON.stringify({ type: "hangup", reason: "idle_timeout" }) });
     socket.onclose({ code: 1000, reason: "session ended", wasClean: true });
     expect(render()).toContain("החיבור לשיחה נסגר לפני שהמורה התחיל לדבר");
