@@ -114,7 +114,7 @@ export const LearnerPortal: React.FC = () => {
   const defaultWeb = defaultBase || webTeachers.find(b => b.id === "isaac-basic") || webTeachers[0];
   const teacherName = active?.name || DEFAULT_NAME;
   const hasDirection = !!(p.plan || active || p.trial_setup === "selected");
-  const needsQuickDirection = account && !checkoutPlan && !hasDirection && !account.teachers.length && !p.trial_setup
+  const needsQuickDirection = account && webBotId && !checkoutPlan && !hasDirection && !account.teachers.length && !p.trial_setup
     && !account.progress.session_count && !remainingMinutes(account)
     && !account.subscriptions?.some(s => s.status === "active");
   const talk = (teacher?: Teacher, bot?: { id: string; label: string }) => {
@@ -159,7 +159,7 @@ export const LearnerPortal: React.FC = () => {
         <h2>השיחה הבאה שלך</h2>
         <p>{teacherName} כבר על הקו · {p.minutes || p.plan?.minutes || 10} דקות · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}</p>
         {p.track !== "grammar" && activeMaterial?.target_count === 0 && <p role="status" className="sk-notice">לרשימה ״{activeMaterial.name}״ עוד אין יעדי אנגלית, אז מדברים בלי ציוני מילים. <button className="sk-link" onClick={() => navigate("materials")}>לרשימות</button></p>}
-        <div className="sk-actions"><button className="sk-primary" onClick={() => talk()}><Mic size={18} />להתחיל שיחה</button><button className="sk-link" onClick={() => setPhoneOpen(true)}>לדבר בטלפון</button></div>
+        <div className="sk-actions">{webBotId && <button className="sk-primary" onClick={() => talk()}><Mic size={18} />להתחיל שיחה</button>}<button className={webBotId ? "sk-link" : "sk-primary"} onClick={() => setPhoneOpen(true)}>לדבר בטלפון</button></div>
       </div>
       <div className="sk-hero-art"><ConversationArt /></div>
     </section>
