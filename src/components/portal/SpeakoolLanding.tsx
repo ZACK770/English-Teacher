@@ -21,7 +21,7 @@ const faq = [
   ["צריך אינטרנט?", "לא. מספיק טלפון רגיל, גם כשר. מי שרוצה יכול לדבר גם מהמחשב."],
   ["למה השיחה מוגבלת בזמן?", "שיחות קצרות ותכופות נדבקות יותר משיעור ארוך פעם בשבוע. במסלולים הגבוהים השיחה ארוכה יותר."],
   ["מה קורה כשהזמן נגמר?", "המורה מודיע לפני הסוף, מסכם, שומר את מה שלמדת ונפרד. שום דבר לא הולך לאיבוד."],
-  ["איך משלמים?", "בכרטיס אשראי באתר, בדף המאובטח של נדרים פלוס: מנוי חודשי מתחדש בהוראת קבע וניתן לביטול בכל עת, ומסלולי השליטה אפשר לחלק לתשלומים. תוספת דקות ותרגומון אפשר לרכוש גם בטלפון, מקש 3."],
+  ["איך משלמים?", "בכרטיס אשראי באתר, בדף המאובטח של נדרים פלוס: מנוי חודשי מתחדש בהוראת קבע וניתן לביטול בכל עת, ומסלולי השליטה אפשר לחלק לתשלומים. תוספת דקות אפשר לרכוש גם בטלפון, מקש 3."],
 ];
 
 const domains = [
@@ -174,7 +174,7 @@ export function SpeakoolLanding() {
         </article>)}</div>
         <p>{MASTERY_GUARANTEE}</p>
         <h3>תוספות ורכישה חד־פעמית</h3>
-        <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.automated_purchase).map(p => <article key={p.id}>
+        <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.product === "school" && p.automated_purchase).map(p => <article key={p.id}>
           <h3>{p.name}</h3><div className="sk-land-price"><strong>₪{p.price_ils}</strong><span>חד־פעמי</span></div>
           <p>{p.minutes} דקות · תוקף {p.validity_days} ימים</p><p>{p.tagline}</p>
           {p.product === "school" && <p>עד {p.max_call_minutes} דקות לשיחה</p>}
