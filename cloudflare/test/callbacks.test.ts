@@ -201,7 +201,10 @@ describe("callback requests", () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     const run = vi.fn().mockResolvedValue({});
     const insert = vi.fn().mockReturnValue({ run });
-    const prepare = vi.fn().mockReturnValueOnce({ bind: () => ({ first: async () => null }) }).mockReturnValueOnce({ bind: insert });
+    const prepare = vi.fn()
+      .mockReturnValueOnce({ bind: () => ({ first: async () => null }) })
+      .mockReturnValueOnce({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) })
+      .mockReturnValueOnce({ bind: insert });
     const request = new Request("https://example.test/v1/public/callback", { method: "POST", body: JSON.stringify({ name: "Test", phone: "0501234567", for_whom: "self", consent: true, ...schedule }) });
     expect((await submitCallback(request, { DB: { prepare } } as unknown as Env)).status).toBe(201);
     expect(insert.mock.calls[0].at(-1)).toBe(expected);
