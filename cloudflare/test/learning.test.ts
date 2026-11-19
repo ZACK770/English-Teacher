@@ -229,8 +229,10 @@ describe("learner settings to Gemini", () => {
   });
   it("bases a web-only intake teacher on a phone teacher and keeps the chosen voice", async () => {
     const progress = new ProgressStore(db as unknown as D1Database);
-    const make = (id: string, phone: boolean) => progress.createBot({ id, label: id, role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: phone, web_enabled: true, enabled: true }, controlsFromSettings(false));
+    const make = (id: string, phone: boolean, web = true) => progress.createBot({ id, label: id, role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: phone, web_enabled: web, enabled: true }, controlsFromSettings(false));
     await make("web-only", false);
+    await make("phone-only", true, false);
+    expect(await phoneTeacherFor(progress, "phone-only")).toBe("phone-only");
     expect(await phoneTeacherFor(progress, "web-only")).toBeNull();
     expect(await saveIntake(b, "bob", null, { goal: "travel", level: "beginner" })).toBe(true);
     expect(await b.list(teachersKind("bob"))).toEqual([]);

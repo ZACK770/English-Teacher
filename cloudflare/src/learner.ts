@@ -290,7 +290,9 @@ const IntakeSchema = PlanSchema.extend({
 
 export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
   const bots = (await progress.listBots()).filter(bot => bot.enabled && bot.phone_enabled && bot.role === "teacher");
-  return [botId, "isaac-basic"].find(id => bots.some(bot => bot.id === id)) || bots[0]?.id || null;
+  if (bots.some(bot => bot.id === botId)) return botId;
+  const both = bots.filter(bot => bot.web_enabled);
+  return both.find(bot => bot.id === "isaac-basic")?.id || both[0]?.id || null;
 }
 
 export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
