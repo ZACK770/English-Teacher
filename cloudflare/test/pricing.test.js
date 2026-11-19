@@ -33,7 +33,7 @@ describe("site and dashboard pricing", () => {
     expect(source).not.toContain("20 דקות מתנה");
     expect(source).not.toContain("₪220");
     expect(FREE_TIER_TEXT).toContain("10 דקות");
-    expect(MONTHLY_TERMS).toContain("₪29");
+    expect(MONTHLY_TERMS).not.toContain("₪29");
     expect(PRICING_PACKAGES.filter(p => p.anchor_price_ils).map(p => p.anchor_price_ils)).toEqual([1194, 2388]);
   });
 });

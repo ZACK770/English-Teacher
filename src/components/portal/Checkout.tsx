@@ -69,7 +69,7 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
   return <section className="sk-step-card sk-checkout" dir="rtl">
     <h2>{done ? "ברוך הבא למסלול " + order.package_name + "." : "מסלול " + order.package_name}</h2>
     {done ? <><p>התשלום אושר. {order.minutes} דקות שיחה מחכות לך{sub ? ", והחיוב החודשי יתחדש אוטומטית." : "."}</p><button className="sk-primary" onClick={onDone}>בוא נדבר</button></> : <>
-      <p>{sub ? <>חודש ראשון ב-₪{order.amount_ils}, ואחר כך ₪{sub.monthly_ils} לחודש בהוראת קבע, החל מ-{sub.next_date}. אפשר לבטל בכל עת.</> : order.installments > 1 ? <>₪{order.amount_ils}, עד {order.installments} תשלומים בכרטיס אשראי.</> : <>₪{order.amount_ils}, תשלום אחד.</>} {order.minutes} דקות שיחה, בתוקף ל-{order.validity_days} ימים.</p>
+      <p>{sub ? <>₪{sub.monthly_ils} לחודש בהוראת קבע: החודש הראשון עכשיו, והחיוב הבא ב-{sub.next_date}. אפשר לבטל בכל עת.</> : order.installments > 1 ? <>₪{order.amount_ils}, עד {order.installments} תשלומים בכרטיס אשראי.</> : <>₪{order.amount_ils}, תשלום אחד.</>} {order.minutes} דקות שיחה, בתוקף ל-{order.validity_days} ימים.</p>
       <div className="sk-card-frame"><iframe ref={frame} id="NedarimFrame" title="פרטי כרטיס אשראי" src={order.iframe_url} scrolling="no" style={{ width: "100%", height, border: 0, display: "block" }} onLoad={() => post({ Name: "GetHeight" })} /></div>
       {error && <p role="alert" className="sk-access is-empty">{error}</p>}
       <button className="sk-primary" disabled={busy || !order.steps.length} onClick={pay}><CreditCard size={18} />{busy ? "מאשרים מול חברת האשראי…" : "לתשלום ₪" + order.amount_ils}</button>

@@ -63,8 +63,8 @@ export function SpeakoolLanding() {
         <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.billing === "monthly").map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>
           {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p className="sk-land-line">{p.tagline}</p>
           <div className="sk-land-price"><strong>{p.price_ils}</strong><span>₪ לחודש</span></div>
-          <ul><li>{p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li><li>חודש ראשון ₪29 · מלוא הדקות</li><li>שנתי: ₪{p.annual_price_ils} · מחיר של 10 חודשים</li></ul>
-          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={learn + "?plan=" + p.id}>להצטרפות · ₪{p.first_month_price_ils ?? p.price_ils} לחודש הראשון</a>
+          <ul><li>{p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li><li>שנתי: ₪{p.annual_price_ils} · מחיר של 10 חודשים</li></ul>
+          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={learn + "?plan=" + p.id}>להצטרפות · ₪{p.price_ils} לחודש</a>
         </article>)}</div>
         <h3>מסלול שליטה · מחיר קבוע, אפשרות לתשלומים</h3>
         <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.duration_months).map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>

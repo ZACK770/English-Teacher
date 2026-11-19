@@ -93,9 +93,9 @@ describe("website checkout", () => {
 
   it("opens a monthly plan: first month now, standing order verified with Nedarim, monthly charges renew once each", async () => {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any;
-    expect(o).toMatchObject({ amount_ils: 29, subscription: { state: "pending", monthly_ils: 119 } });
+    expect(o).toMatchObject({ amount_ils: 119, subscription: { state: "pending", monthly_ils: 119 } });
     expect(o.steps.map((s: any) => s.kind)).toEqual(["charge", "keva"]);
-    await hook({ MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" });
+    await hook({ MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "119", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" });
     expect((await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any)).toMatchObject({ id: o.id, steps: [{ kind: "keva" }] });
     expect((await req("/v1/portal/subscriptions/" + o.subscription.id + "/cancel", {})).status).toBe(409);
     expect(calls[1]).toMatchObject({ PaymentType: "HK", Amount: "119", Tashlumim: "", Groupe: "dibura-" + o.subscription.id, ...standingOrderStart() });
@@ -104,7 +104,7 @@ describe("website checkout", () => {
     keva.KevaGroupe = "dibura-" + o.subscription.id;
     const confirmed = await (await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" })).json() as any;
     expect(confirmed.subscription).toMatchObject({ state: "active", next_date: "01/01/2027" });
-    await hook({ MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" });
+    await hook({ MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "119", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" });
     const month = { MosadNumber: "7019554", TransactionId: "2", Confirmation: "6", Amount: "119", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
     expect((await hook(month)).status).toBe(200);
     expect((await hook(month)).status).toBe(200);

@@ -16,7 +16,7 @@ export const checkoutConfigured = (env: Env) =>
 
 export function webTerms(pkg: Pkg) {
   if (!pkg.active || pkg.price_ils <= 0 || pkg.billing === "yearly") return null;
-  if (pkg.billing === "monthly") return { now: pkg.first_month_price_ils ?? pkg.price_ils, monthly: pkg.price_ils, installments: 1 };
+  if (pkg.billing === "monthly") return { now: pkg.price_ils, monthly: pkg.price_ils, installments: 1 };
   return { now: pkg.price_ils, monthly: 0, installments: pkg.duration_months ?? 1 };
 }
 
