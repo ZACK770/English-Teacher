@@ -187,11 +187,22 @@ describe("learner settings to Gemini", () => {
     };
     const teacher = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, base);
     const prompt = buildSystemInstruction(teacher, "");
-    expect(prompt.split("\n\n")[0]).toMatch(/authoritative.*ספיקול \(SpeakCall\).*Never claim to teach independently/);
+    expect(prompt.split("\n\n")[0]).toMatch(/authoritative.*ספיקול \(SpeakCall\).*Never claim as the tutor to teach independently/);
     expect(prompt).toContain(base.base_prompt);
     expect(prompt).toContain(base.custom_instructions);
     const translator = await applyLearnerControls(b, "alice", { id: "translator", role: "translator" }, base);
     expect(buildSystemInstruction(translator, "")).not.toContain("School identity");
+  });
+  it.each([
+    { conversation_mode: "roleplay", closing_activity: "quiz" },
+    { conversation_mode: "guided", closing_activity: "roleplay" },
+  ])("applies school identity only out of character for %j", async choices => {
+    await b.savePreference("alice", choices);
+    const teacher = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(teacher.lesson).toMatchObject(choices);
+    const [identity] = buildSystemInstruction(teacher, "").split("\n\n");
+    expect(identity).toContain("During an in-character role-play scene, stay in character and answer within the fiction; do not insert SpeakCall into the scene.");
+    expect(identity).toMatch(/When speaking as the tutor, if asked what the school is called.*ספיקול in Hebrew or SpeakCall in English/);
   });
   it("makes legacy Hebrew-only materials explicitly ungraded without silently changing the selected list", async () => {
     await b.save("learner-materials:alice", { name: "עבודה", words: ["היי מה נשמע", "אני עושה עסקים"] }, "hebrew");

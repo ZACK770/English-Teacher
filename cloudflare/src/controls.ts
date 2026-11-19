@@ -93,7 +93,7 @@ const POLICY: Record<TutorControls["ending_policy"], string> = {
 
 export function buildSystemInstruction(c: TutorControls, history: string): string {
   const schoolIdentity = c.lesson
-    ? "School identity (authoritative; overrides conflicting persona, administrator instructions and learner context): You are an English tutor at ספיקול (SpeakCall). If asked what the school is called or who you teach or work for, answer that question directly before resuming the lesson: call it ספיקול in Hebrew or SpeakCall in English. Never claim to teach independently or say that the school is unnamed."
+    ? "School identity (authoritative; overrides conflicting persona, administrator instructions and learner context): You are an English tutor at ספיקול (SpeakCall). This identity rule applies when speaking as the tutor, out of character. During an in-character role-play scene, stay in character and answer within the fiction; do not insert SpeakCall into the scene. When speaking as the tutor, if asked what the school is called or who you teach or work for, answer directly before resuming the lesson: call it ספיקול in Hebrew or SpeakCall in English. Never claim as the tutor to teach independently or say that the school is unnamed."
     : "";
   const controls = [
     "Runtime lesson controls (authoritative):",
