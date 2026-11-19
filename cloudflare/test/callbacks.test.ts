@@ -120,11 +120,11 @@ describe("Israeli calling hours", () => {
     ["2026-01-04T19:59:00Z", "2026-01-04T19:59:00Z"],
     ["2026-01-04T20:00:00Z", "2026-01-04T20:00:00Z"],
     ["2026-01-04T01:00:00Z", "2026-01-04T01:00:00Z"],
-    ["2026-01-09T13:00:00Z", "2026-01-10T22:00:00Z"],
-    ["2026-03-27T12:00:00Z", "2026-03-28T21:00:00Z"],
+    ["2026-01-09T13:00:00Z", "2026-01-10T18:00:00Z"],
+    ["2026-03-27T12:00:00Z", "2026-03-28T17:00:00Z"],
     ["2026-07-05T00:00:00Z", "2026-07-05T00:00:00Z"],
-    ["2026-03-28T20:59:00Z", "2026-03-28T21:00:00Z"],
-    ["2026-03-28T21:00:00Z", "2026-03-28T21:00:00Z"],
+    ["2026-03-28T16:59:00Z", "2026-03-28T17:00:00Z"],
+    ["2026-03-28T17:00:00Z", "2026-03-28T17:00:00Z"],
     ["2026-10-24T21:00:00Z", "2026-10-24T21:00:00Z"],
     ["2026-01-09T11:59:00Z", "2026-01-09T11:59:00Z"],
   ])("moves %s to %s", (input, expected) => {
@@ -186,7 +186,7 @@ describe("callback retries", () => {
     expect(callbackFailure(3, now)).toEqual({ status: "failed", nextAttemptAt: null });
   });
   it("defers retries across Shabbat", () => {
-    expect(callbackFailure(1, new Date("2026-01-09T11:50:00Z")).nextAttemptAt).toBe("2026-01-10T22:00:00.000Z");
+    expect(callbackFailure(1, new Date("2026-01-09T11:50:00Z")).nextAttemptAt).toBe("2026-01-10T18:00:00.000Z");
   });
   it("does not touch the queue without a dialer", async () => {
     expect(await dispatchCallbacks({} as Env)).toEqual({ skipped: "dialer not configured" });
@@ -205,7 +205,7 @@ describe("callback retries", () => {
 
 describe("callback requests", () => {
   it.each([
-    [{ timing: "scheduled", preferred_at: "2026-01-09T13:00:00Z" }, "2026-01-10T22:00:00.000Z"],
+    [{ timing: "scheduled", preferred_at: "2026-01-09T13:00:00Z" }, "2026-01-10T18:00:00.000Z"],
     [{ timing: "scheduled", preferred_time: "מחר בערב" }, "2026-01-05T17:00:00.000Z"],
     [{ timing: "scheduled", preferred_time: "" }, "2026-01-04T10:00:00.000Z"],
     [{ timing: "now" }, "2026-01-04T10:00:00.000Z"],

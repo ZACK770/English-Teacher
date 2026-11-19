@@ -51,10 +51,9 @@ export function nextCallingSlot(date: Date): Date {
   const local = localDate(date);
   const day = local.getUTCDay();
   const hour = local.getUTCHours();
-  if (day !== 6 && !(day === 5 && hour >= 14)) return new Date(date);
-  local.setUTCDate(local.getUTCDate() + 1);
-  local.setUTCHours(0, 0, 0, 0);
-  if (local.getUTCDay() === 6) local.setUTCDate(local.getUTCDate() + 1);
+  if (!(day === 5 && hour >= 14) && !(day === 6 && hour < 20)) return new Date(date);
+  if (day === 5) local.setUTCDate(local.getUTCDate() + 1);
+  local.setUTCHours(20, 0, 0, 0);
   return fromLocal(local);
 }
 
