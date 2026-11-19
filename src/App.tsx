@@ -8,21 +8,31 @@ import { SpeakoolLanding } from './components/portal/SpeakoolLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
 import { LegalPage } from './components/legal/LegalPage';
 import { LegalFooter } from './components/legal/LegalFooter';
-import { legalPageForPath } from './legalRoutes';
+import { legalBasePath, legalPageForPath } from './legalRoutes';
 import { AdminAuthGate } from './components/dashboard/AdminAuthGate';
 
+type View = 'dashboard' | 'learn' | 'join' | 'legacy' | 'home';
+
+function viewForPath(pathname: string): View {
+  const path = pathname.slice(legalBasePath(pathname).length);
+  if (path.startsWith('/dashboard/legacy')) return 'legacy';
+  if (path.startsWith('/dashboard')) return 'dashboard';
+  if (path.startsWith('/join')) return 'join';
+  if (path.startsWith('/learn')) return 'learn';
+  return 'home';
+}
+
 export const AppContent: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy' | 'home'>(() => !location.hash && !/\/(learn|join|dashboard)/.test(location.pathname) ? 'home' : 'learn');
+  const [currentView, setCurrentView] = useState<View>(() => viewForPath(location.pathname));
   const [dashboardTab, setDashboardTab] = useState('overview');
 
   // Sync hash routing
   useEffect(() => {
     const handleHash = () => {
-      const path = window.location.pathname.replace(/^\/english/, '');
-      const fallback = path.startsWith('/dashboard/legacy') ? 'legacy' : path.startsWith('/dashboard') ? 'dashboard' : path.startsWith('/join') ? 'join' : path.startsWith('/learn') ? 'learn' : 'home';
+      const fallback = viewForPath(location.pathname);
       const hash = window.location.hash.replace('#', '') || fallback;
-      if (['learn', 'join', 'legacy', 'home'].includes(hash)) {
-        setCurrentView(hash as any);
+      if (hash === 'learn' || hash === 'join' || hash === 'legacy' || hash === 'home') {
+        setCurrentView(hash);
       } else if (hash === 'dashboard') {
         setCurrentView('dashboard');
         setDashboardTab('overview');
@@ -43,6 +53,8 @@ export const AppContent: React.FC = () => {
       ) {
         setCurrentView('dashboard');
         setDashboardTab(hash);
+      } else {
+        setCurrentView(fallback);
       }
     };
 
@@ -51,7 +63,7 @@ export const AppContent: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
 
-  const navigateTo = (view: 'dashboard' | 'learn' | 'join' | 'legacy' | 'home') => {
+  const navigateTo = (view: View) => {
     setCurrentView(view);
     if (view === 'dashboard') {
       window.location.hash = dashboardTab;

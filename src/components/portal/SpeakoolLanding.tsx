@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowUpRight, Phone } from "lucide-react";
 import { PHONE_LINE } from "./LearnerPortal";
 import { LegalFooter } from "../legal/LegalFooter";
@@ -32,6 +32,10 @@ export function SpeakoolLanding() {
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
   const [domain, setDomain] = useState(0);
   const progress = domains[domain];
+  useEffect(() => {
+    const section = document.getElementById(location.hash.slice(1));
+    if (section?.closest(".sk-land")) section.scrollIntoView();
+  }, []);
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"}><img src={logo} width={708} height={170} alt="SpeakCall — עמוד הבית" /></a>
