@@ -28,6 +28,7 @@ export class TutorSession {
   private reconnecting: Promise<void> | null = null;
   private reconnectAttempts = 0;
   private lastGeminiError = "";
+  private geminiFailure = "";
   private failureStarted: number | null = null;
   private failureGapMs = 0;
   private finalMessage: string | null = null;
@@ -252,7 +253,7 @@ export class TutorSession {
         }
       }
     } finally {
-      if (geminiConnected) void reportGeminiOutcome(this.env, this.reason !== "gemini_reconnect_exhausted", "Gemini reconnect exhausted: " + this.lastGeminiError);
+      if (geminiConnected) void reportGeminiOutcome(this.env, !this.geminiFailure, this.geminiFailure);
       this.settling = true;
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (hardLimit !== undefined) clearTimeout(hardLimit);
@@ -295,6 +296,10 @@ export class TutorSession {
 
   private async runTasks(tasks: Promise<void>[]) {
     try { await Promise.race(tasks); }
+    catch (error) {
+      if (!this.abort.signal.aborted && isGeminiError(error)) this.geminiFailure = (error as Error).message.split(this.s.geminiKey).join("[redacted]").slice(0, 200);
+      throw error;
+    }
     finally {
       this.abort.abort(new Error("bridge_finished"));
       this.ai?.close();
@@ -418,6 +423,7 @@ export class TutorSession {
         if (!handle) replacement.startGreeting("Continue the interrupted lesson without repeating the greeting. Recent conversation: " + JSON.stringify(this.meter.transcript.slice(-20)));
         this.failureGapMs += Date.now() - this.failureStarted!;
         this.failureStarted = null;
+        this.lastGeminiError = "";
         this.lastHuman = Date.now();
         await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnected", { attempt, resumed: !!handle }).catch(() => {});
         return;
@@ -429,6 +435,7 @@ export class TutorSession {
     }
     if (this.abort.signal.aborted) return;
     this.reason = "gemini_reconnect_exhausted";
+    this.geminiFailure = "Gemini reconnect exhausted: " + this.lastGeminiError;
     this.finalMessage = CALL_FAILURE_MESSAGE;
     await this.progress.logDiagnostic(this.profileId, this.callId, this.reason, { attempts: this.reconnectAttempts }).catch(() => {});
   }
