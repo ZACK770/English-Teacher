@@ -87,6 +87,17 @@ describe("CRM read-only endpoints", () => {
     expect((await (await request("people?q=yael&source=pirsumofon-news&status=trial")).json() as any).items).toHaveLength(1);
     expect((await (await request("people?q=missing")).json() as any).items).toEqual([]);
   });
+  it("falls back to saved preference email for cards and search without replacing profile email", async () => {
+    customer();
+    sql.prepare("INSERT INTO console_settings VALUES ('ivr:preferences:person1',?)").run(JSON.stringify({ email: "phone@example.test" }));
+    expect((await (await request("people/person1")).json() as any).email).toBe("yael@example.test");
+    sql.prepare("UPDATE console_records SET body=? WHERE kind='customers' AND id='person1'").run(JSON.stringify({ name: "יעל", phone: "0501234567" }));
+    expect((await (await request("people/person1")).json() as any).email).toBe("phone@example.test");
+    expect((await (await request("people?q=PHONE%40example.test")).json() as any).items).toHaveLength(1);
+    sql.prepare("UPDATE console_settings SET body='not-json' WHERE id='ivr:preferences:person1'").run();
+    expect((await (await request("people/person1")).json() as any).email).toBe("");
+    expect((await (await request("people?q=phone%40example.test")).json() as any).items).toEqual([]);
+  });
   it("derives callback/offer/payer from persisted records and preserves precedence", async () => {
     customer(); event("ivr-events", { route: "sales" });
     expect((await (await request("people")).json() as any).items[0].status).toBe("offer_no_buy");

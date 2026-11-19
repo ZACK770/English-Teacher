@@ -40,9 +40,10 @@ async function load(env: Env) {
     "SELECT * FROM customer_phones",
     `SELECT r.*,s.customer_id FROM subscription_renewals r JOIN subscriptions s ON s.id=r.subscription_id`,
     `SELECT m.*,s.customer_id AS owner_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id`,
+    "SELECT id,body FROM console_settings WHERE id LIKE 'ivr:preferences:%'",
   ];
   const [results, economics] = await Promise.all([env.DB.batch<Row>(queries.map(q => env.DB.prepare(q))), new BusinessStore(env.DB).economics()]);
-  const [typed, records, sessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members] = results.map(r => r.results);
+  const [typed, records, sessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members, preferences] = results.map(r => r.results);
   const people = new Map<string, Row>();
   for (const r of typed) people.set(r.id, { ...r, phone: r.primary_phone || "" });
   const events: Row[] = [], aliases = new Map<string, string>();
@@ -58,6 +59,11 @@ async function load(env: Env) {
     else events.push({ ...body, id: r.id, kind: r.kind, at: body.at || r.created_at });
   }
   for (const p of phones) { aliases.set(phoneKey(p.phone), p.customer_id); const person = people.get(p.customer_id); if (person && !person.phone) person.phone = p.phone; }
+  for (const row of preferences) {
+    const person = people.get(row.id.slice("ivr:preferences:".length));
+    const email = parse(row.body).email;
+    if (person && !person.email && typeof email === "string") person.email = email;
+  }
   for (const p of people.values()) if (p.phone) aliases.set(phoneKey(p.phone), p.id);
   for (const c of callbacks) c.customer_id = aliases.get(phoneKey(c.phone));
   const group = (rows: Row[], key: string) => { const map = new Map<string, Row[]>(); for (const row of rows) { const id = row[key]; if (id) { if (!map.has(id)) map.set(id, []); map.get(id)!.push(row); } } return map; };
