@@ -229,6 +229,12 @@ describe("learner settings to Gemini", () => {
     expect(goalFromLearnerSpeech("other", "not for work, just family")).toBe("other");
     expect(goalFromLearnerSpeech("study", "For example, I need English for travel")).toBe("travel");
   });
+  it("keeps saved minutes and topic when a phone intake gives only goal and level", async () => {
+    await b.savePreference("alice", { minutes: 20, topic: "business" });
+    expect(await saveIntake(b, "alice", null, { goal: "work", level: "intermediate" })).toBe(true);
+    const p = await b.loadContext("preferences:alice");
+    expect(p).toMatchObject({ minutes: 20, topic: "business", plan: { goal: "work", level: "intermediate", minutes: 20, topic: "business", difficulty: "speaking" } });
+  });
   it("saves a partial phone intake with defaults and marks the first call as pending until then", async () => {
     const before = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
     expect(before.intake_pending).toBe(true);

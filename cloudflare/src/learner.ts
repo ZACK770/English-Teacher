@@ -308,7 +308,10 @@ export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
 }
 
 export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
-  const parsed = IntakeSchema.safeParse(args);
+  const given = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const prior = await b.loadContext("preferences:" + customerId);
+  const kept = (key: "minutes" | "topic" | "difficulty", value: unknown) => given[key] ?? (PlanSchema.shape[key].safeParse(value).success ? value : undefined);
+  const parsed = IntakeSchema.safeParse({ ...given, minutes: kept("minutes", prior.minutes), topic: kept("topic", prior.topic), difficulty: kept("difficulty", prior.plan?.difficulty) });
   if (!parsed.success) return false;
   const { learner_name, personality, teacher_gender, ...plan } = parsed.data;
   await b.savePreference(customerId, { plan, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });

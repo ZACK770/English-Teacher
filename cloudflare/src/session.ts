@@ -357,7 +357,7 @@ export class TutorSession {
       return saved;
     }
     if (call.name === "end_session") {
-      if (this.controls?.intake_pending && !this.intakeReminded) {
+      if (this.controls?.intake_pending && !this.intakeReminded && args.reason !== "caller_requested" && args.reason !== "no_response" && !args.destination) {
         this.intakeReminded = true;
         await this.progress.logDiagnostic(this.profileId, this.callId, "intake_missing_at_end").catch(() => {});
         this.ai?.addContext("APPLICATION NOTE: the first-call intake was not saved. Do not hang up yet: call save_intake now with the goal and level the learner gave (omit unknown answers), then say goodbye and call end_session again.");
