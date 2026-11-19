@@ -236,7 +236,8 @@ export const LearnerPortal: React.FC = () => {
 };
 
 function PhoneInstructions({ account, teacherName }: { account: Account; teacherName: string }) {
-  return <><p>מתקשרים מהמספר שמחובר לחשבון שלך, ומגיעים אל {teacherName}.</p><a className="sk-phone-number" href={"tel:" + account.phone} dir="ltr">{account.phone.replace(/(\d{3})(\d{3})(\d+)/, "$1-$2-$3")}<Phone size={23} /></a><p>מקישים <strong>1</strong> ונכנסים ישר לשיעור. מקש <strong>2</strong> הוא האזור האישי: מורה, סוג שיעור וחבילות. ובאמצע שיחה אפשר פשוט לבקש מהמורה לשנות כיוון — זה נשמר גם כאן.</p><div className="sk-phone-note"><Check size={16} />המורה, ההעדפות והמילים שלך כבר מחכים שם.</div><small>המספר המחובר: <bdi>{account.customer.phone || "טרם חובר מספר טלפון — אפשר להוסיף מספר בהעדפות"}</bdi></small></>;
+  const callerNumber = account.customer.phone || account.phones[0]?.phone;
+  return <><p>מתקשרים מהמספר שמחובר לחשבון שלך, ומגיעים אל {teacherName}.</p><a className="sk-phone-number" href={"tel:" + account.phone} dir="ltr">{account.phone.replace(/(\d{3})(\d{3})(\d+)/, "$1-$2-$3")}<Phone size={23} /></a><p>מקישים <strong>1</strong> ונכנסים ישר לשיעור. מקש <strong>2</strong> הוא האזור האישי: מורה, סוג שיעור וחבילות. ובאמצע שיחה אפשר פשוט לבקש מהמורה לשנות כיוון — זה נשמר גם כאן.</p><div className="sk-phone-note"><Check size={16} />המורה, ההעדפות והמילים שלך כבר מחכים שם.</div><small>המספר המחובר: <bdi>{callerNumber}</bdi></small></>;
 }
 
 function Empty({ icon, title, text, action, actionLabel }: { icon: React.ReactNode; title: string; text: string; action?: () => void; actionLabel?: string }) {
