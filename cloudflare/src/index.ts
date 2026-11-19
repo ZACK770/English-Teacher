@@ -8,6 +8,7 @@ import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callb
 import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
+import { blogHtml, blogRoute, isBlogPath } from "../../src/blog/routes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
@@ -103,7 +104,11 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     }
 
     const legalPage = request.method === "GET" ? legalPageForPath(rawPath) : undefined;
-    if (!legalPage) {
+    const blogPage = request.method === "GET" ? blogRoute(rawPath) : undefined;
+    if (request.method === "GET" && isBlogPath(rawPath) && !blogPage) {
+      return Response.redirect(new URL(`${legalBasePath(rawPath)}/blog`, request.url).toString(), 302);
+    }
+    if (!legalPage && !blogPage) {
       const exactResp = await env.ASSETS.fetch(request);
       if (exactResp.status < 400) return exactResp;
     }
@@ -112,6 +117,7 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
       const indexResp = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
       if (indexResp.ok) {
         let html = await indexResp.text();
+        if (blogPage) html = blogHtml(html, blogPage);
         if (legalPage) {
           html = html.replace('<link rel="canonical" href="https://speakool.net/"', `<link rel="canonical" href="https://speakool.net/${legalPage}"`)
             .replace('<meta property="og:url" content="https://speakool.net/"', `<meta property="og:url" content="https://speakool.net/${legalPage}"`);
