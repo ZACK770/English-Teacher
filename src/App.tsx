@@ -81,7 +81,7 @@ export const AppContent: React.FC = () => {
 
   const content = (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
-      {currentView !== 'learn' && currentView !== 'home' && <Navbar currentView={currentView} onNavigate={navigateTo} />}
+      {currentView !== 'learn' && currentView !== 'home' && <Navbar currentView={currentView} onNavigate={navigateTo} logoHref={currentView === 'join' ? `${legalBasePath(window.location.pathname)}/` : undefined} />}
 
       <div className="flex-1">
         {currentView === 'dashboard' && (
