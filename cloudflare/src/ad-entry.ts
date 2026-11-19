@@ -58,11 +58,12 @@ export function adRuntimeContext(context: Record<string, any>): string {
       ? "- Intake: ask one question at a time, only: first name, goal (why English: work, travel, study or other), level. Call save_intake as soon as you know goal and level. Skip lesson length, topic, style and teacher gender."
       : "- Returning caller: skip the introductory questionnaire. Continue the lesson; if no level was saved, calibrate briefly in conversation and save the goal and level once known.",
     "- First minute: start at the learner's stated level, on a topic that fits their goal. For a beginner, a short sentence to practise is fine. For an intermediate or advanced learner, start with an open-ended question in natural English, not a repeat-after-me drill.",
-    "- Closing (when the closing stage is reached or the learner wants to stop): a Hebrew summary with a concrete reward counted from this call only, e.g. \"היום אמרת 9 משפטים, ו־5 מילים חדשות כבר שלך\" (never inflate the numbers). Then book the next lesson: ask \"מחר בבוקר או בערב?\" and call schedule_next_lesson with the answer. Then ask for an email to send today's words. Accept letters and digits alike, anywhere valid. Transcribe spoken or grouped numbers as digits in order, preserving leading zeroes. Ask only about ambiguous characters, read back the complete address once (including each digit), and call save_email after confirmation. Do not ask for a different address just because it contains digits.",
+    "- Closing (when the closing stage is reached or the learner wants to stop): a Hebrew summary with a concrete reward counted from this call only, e.g. \"היום אמרת 9 משפטים, ו־5 מילים חדשות כבר שלך\" (never inflate the numbers). Ask when to call tomorrow for the next lesson, and call schedule_next_lesson if the caller agrees.",
+    "- Do not offer to email the lesson summary or collect an email address unprompted. Only if the caller explicitly asks for delivery by email, accept letters and digits alike, preserving all digits and leading zeros. Clarify only ambiguous characters. Call prepare_email with the complete address, then say only \"הכתובת היא [address]. הכתובת נכונה?\". Say each digit and symbol in English (zero, one, at, dot, etc.). Wait for an explicit yes before calling save_email with the identical address. If corrected, prepare and read back the corrected address. If confirmation fails, try the read-back once more or say the email was not sent.",
     PHONE_TUTOR_PITCH,
     `- Plans you may describe when relevant or asked (approved prices, nothing else): ${plans}. After the 10-minute free opening lesson every learner keeps two free 5-minute calls per month. All plans are on the website speakool.net.`,
-    "- When calling save_email, pass the English words practised in this call and a one-sentence Hebrew summary; the words are emailed right away.",
-    "- At the end, recommend one plan that fits what you heard (price and one reason). If the learner wants it, offer the payment link by email (sent right away) or by SMS (the SpeakCall team sends it soon) and call request_payment_link. Never claim an SMS was already sent.",
+    "- For an accepted read-back, you MUST call save_email with the English words practised in this call and a one-sentence Hebrew summary before continuing the conversation. Say the address was saved or the email sent only if save_email returns saved=true; prepare_email never saves or sends anything.",
+    "- At the end, you may recommend one plan (price and one reason). Only if the learner asks for a payment link by email or SMS, call request_payment_link for that channel. Never claim an SMS was already sent.",
     "- Never offer a discounted first month, a 29 shekel price, a free trial that requires a credit card, or any price or benefit not listed here. Do not pressure; one offer is enough.",
     "- Close by reminding them of the two free 5-minute calls each month and that the plans are on speakool.net, then say goodbye and call end_session.",
   ].join("\n");
@@ -81,13 +82,19 @@ export const SCHEDULE_LESSON_TOOL = {
     required: ["day", "part_of_day"],
   },
 };
+const emailParameter = { type: "string", description: "Exact address using digits 0-9 as spoken, including any leading zeros. Example: a012345@example.com." };
+export const PREPARE_EMAIL_TOOL = {
+  name: "prepare_email",
+  description: "Stage the learner's complete address before reading it back, without saving or sending anything. Ask for an explicit yes and wait for their answer.",
+  parameters: { type: "object", properties: { email: emailParameter }, required: ["email"] },
+};
 export const SAVE_EMAIL_TOOL = {
   name: "save_email",
-  description: "Save the learner's email address after they spelled it and confirmed it. Today's new words are emailed to them immediately.",
+  description: "Send the practice summary only after the learner explicitly confirms the exact address from prepare_email in a separate turn after you read it back.",
   parameters: {
     type: "object",
     properties: {
-      email: { type: "string", description: "Exact confirmed address using digits 0-9 as spoken, including any leading zeros. Example: a012345@example.com." },
+      email: emailParameter,
       words: { type: "array", items: { type: "string" }, description: "English words or short phrases practised in this call, up to 12" },
       summary: { type: "string", description: "One short Hebrew sentence on what the learner achieved today" },
     },
@@ -106,12 +113,46 @@ export const PAYMENT_LINK_TOOL = {
     required: ["plan_id", "channel"],
   },
 };
-export const SALES_TOOLS = [SCHEDULE_LESSON_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_TOOL];
+export const SALES_TOOLS = [SCHEDULE_LESSON_TOOL, PREPARE_EMAIL_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_TOOL];
 export const SALES_TOOL_NAMES = new Set(SALES_TOOLS.map((t) => t.name));
 
 const scheduleArgs = z.object({ day: z.string().max(40).default("other"), part_of_day: z.enum(["morning", "noon", "afternoon", "evening"]), note: z.string().max(200).optional() });
-const emailArgs = z.object({ email: z.string().trim().toLowerCase().max(120).email(), words: z.array(z.string().trim().min(1).max(60)).max(12).optional(), summary: z.string().trim().max(300).optional() });
+const emailAddress = z.string().trim().toLowerCase().max(120).email();
+const emailArgs = z.object({ email: emailAddress, words: z.array(z.string().trim().min(1).max(60)).max(12).optional(), summary: z.string().trim().max(300).optional() });
 const linkArgs = z.object({ plan_id: z.enum(PLAN_IDS), channel: z.enum(["sms", "email"]) });
+
+export function normalizeSalesEmail(value: unknown) {
+  const parsed = emailAddress.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+const spokenEmail: Record<string, string> = {
+  zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9",
+  at: "@", dot: ".", dash: "-", hyphen: "-", underscore: "_", plus: "+",
+};
+
+export function matchesEmailReadBack(text: string, email: string) {
+  const readBack = text.normalize("NFKC").toLowerCase().trim()
+    .match(/^הכתובת היא\s*:?\s*(.+?)[.!?,]?\s+הכתובת נכונה[?.]?$/s);
+  if (!readBack) return false;
+  let offsets = new Set([0]);
+  for (const word of readBack[1]!.trim().split(/\s+/)) {
+    const alias = Object.hasOwn(spokenEmail, word) ? spokenEmail[word] : undefined;
+    const next = new Set<number>();
+    for (const offset of offsets) {
+      if (email.startsWith(word, offset)) next.add(offset + word.length);
+      if (alias && email.startsWith(alias, offset)) next.add(offset + alias.length);
+    }
+    if (!next.size) return false;
+    offsets = next;
+  }
+  return offsets.has(email.length);
+}
+
+export function isEmailConfirmation(value: string) {
+  const answer = value.normalize("NFKC").toLowerCase().replace(/[’׳]/g, "'").replace(/[,.!?;:]/g, " ").replace(/\s+/g, " ").trim();
+  return /^(?:yes(?: (?:please|it is|that's (?:correct|right)|that is correct|(?:that|the) address is correct))?|correct|that's (?:correct|right)|that is correct|כן(?: (?:נכון|בדיוק|זה נכון|זו הכתובת|זאת הכתובת|הכתובת נכונה|תודה))?|נכון|זה נכון|בדיוק|אכן)$/.test(answer);
+}
 
 export function paymentLink(planId: PlanId, campaign: string) {
   return `${SALES_SITE}/learn?plan=${encodeURIComponent(planId)}&src=${encodeURIComponent("ad-" + campaign)}`;
@@ -162,7 +203,7 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     await b.savePreference(customerId, { email });
     const sent = await sendMail(mail, email, "המילים שלך מהשיעור בספיקול", wordsEmail(words, summary));
     await b.save(SALES_FOLLOWUPS, { ...base, type: "email", email, words: words ?? [], summary: summary ?? "", status: sent ? "sent" : "pending" });
-    return true;
+    return sent;
   }
   if (name === "request_payment_link") {
     const parsed = linkArgs.safeParse(args);

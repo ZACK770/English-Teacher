@@ -8,11 +8,11 @@ import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, quickOpening, runtimeContext, startSchool } from "../src/pbx";
-import { adCampaignReport, recordSalesTool } from "../src/ad-entry";
+import { adCampaignReport, matchesEmailReadBack, recordSalesTool } from "../src/ad-entry";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { transferCommand } from "../src/technoline";
-import { GeminiLive } from "../src/gemini";
+import { GeminiLive, type GeminiEvent } from "../src/gemini";
 import { BUDGET_GUARD_NAME, GeminiBudget } from "../src/gemini-budget";
 import { cleanupPortalAuth } from "../src/portal-auth";
 import worker from "../src/index";
@@ -1225,7 +1225,8 @@ describe("real learner portal", () => {
     expect(runtime).toContain("59 ש\"ח לחודש");
     expect(runtime).toContain("1,490 ש\"ח");
     expect(runtime).toContain("Never offer a discounted first month");
-    expect(runtime).toContain("preserving leading zeroes");
+    expect(runtime).toContain("preserving all digits and leading zeros");
+    expect(runtime).toContain("Do not offer to email the lesson summary or collect an email address unprompted.");
     expect(runtime).toContain("not a repeat-after-me drill");
     expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בקצב שלך");
     expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited free minutes");
@@ -1253,6 +1254,74 @@ describe("real learner portal", () => {
     expect(report.followups.every((f) => f.phone === "0501112233")).toBe(true);
     expect(report.followups.find((f) => f.type === "payment_link")).toMatchObject({ channel: "sms", link: "https://speakool.net/learn?plan=school-step&src=ad-radio-news", status: "pending" });
   });
+  it.each([
+    { name: "Hebrew confirmation", address: "a012@example.com", answer: ["כן, זה נכון."], confirmed: true },
+    { name: "English confirmation of a spelled address", address: "a zero one two at example dot com", answer: ["Yes, that address is correct."], confirmed: true },
+    { name: "rejection", address: "a012@example.com", answer: ["לא, זה לא נכון."] },
+    { name: "correction", address: "a012@example.com", answer: ["Yes", ", but the last digit is wrong."] },
+    { name: "missing read-back", address: null, answer: ["כן"] },
+    { name: "incomplete read-back", address: "a12@example.com", answer: ["כן"] },
+    { name: "no learner reply", address: "a012@example.com", answer: [] },
+    { name: "unspoken read-back", address: "a012@example.com", answer: ["כן"], noAudio: true },
+    { name: "interrupted read-back", address: "a012@example.com", answer: ["כן"], interrupted: true },
+    { name: "changed address at send time", address: "a012@example.com", answer: ["כן"], sendTo: "a12@example.com" },
+  ])("gates email delivery on the actual voice turn: $name", async ({ address, answer, confirmed, noAudio, interrupted, sendTo }) => {
+      const send = vi.fn(async () => ({ messageId: "m" }));
+      env.PORTAL_EMAIL = { send } as unknown as SendEmail;
+      const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null) as any;
+      session.profileId = "student"; session.customerId = "learner-a"; session.callId = "qa-email";
+      session.controls = { ...controlsFromSettings(false), sales: true };
+      const tool = (name: string, email = "a012@example.com"): GeminiEvent => ({ type: "tool_call", calls: [{ name, args: { email } }] });
+      const events: GeminiEvent[] = [
+        tool("save_email"),
+        { type: "transcript", role: "learner", text: "a zero one two at example dot com" },
+        tool("prepare_email"),
+        { type: "turn_complete" },
+        ...(!noAudio ? [{ type: "audio", pcm24k: new Uint8Array(960) } as const] : []),
+        ...(address ? ["הכתו", "בת היא " + address, ". הכתובת נכונה?"].map(text => ({ type: "transcript", role: "tutor", text } as const)) : []),
+        ...(interrupted ? [{ type: "interrupted" } as const] : []),
+        { type: "turn_complete" },
+        ...answer.map(text => ({ type: "transcript", role: "learner", text } as const)),
+        tool("save_email", sendTo),
+        tool("save_email"),
+      ];
+      const submitToolResult = vi.fn();
+      session.ai = { submitToolResult, next: async () => {
+        if (!events.length) session.abort.abort();
+        return events.shift();
+      } };
+      await session.aiToOutput();
+      expect(submitToolResult.mock.calls.map(call => call[1])).toEqual([false, true, !!confirmed, false]);
+      expect(submitToolResult.mock.calls[1]![2]).toMatchObject({ prepared: true });
+      expect(submitToolResult.mock.calls[1]![2]).not.toHaveProperty("saved");
+      expect(send).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+      if (confirmed) expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "a012@example.com" }));
+      expect((await b.loadContext("preferences:learner-a")).email).toBe(confirmed ? "a012@example.com" : undefined);
+  });
+
+  it("reports delivery failure rather than telling a learner the email was sent", async () => {
+    const send = vi.fn(async () => { throw new Error("mail unavailable"); });
+    expect(await recordSalesTool(b, "learner-a", "qa-no-mail", "save_email", { email: "a012@example.com" }, { send } as unknown as SendEmail)).toBe(false);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("dispatches an email confirmation tool before completion of the same Gemini turn", async () => {
+    const gemini = new GeminiLive("", "", {});
+    const calls = [{ name: "save_email", args: { email: "012@example.com" } }];
+    (gemini as any).dispatch({ serverContent: { inputTranscription: { text: "Yes." }, turnComplete: true }, toolCall: { functionCalls: calls } });
+    await expect(gemini.next()).resolves.toMatchObject({ type: "transcript", role: "learner" });
+    await expect(gemini.next()).resolves.toEqual({ type: "tool_call", calls });
+    await expect(gemini.next()).resolves.toEqual({ type: "turn_complete" });
+  });
+
+  it.each([
+    ["one at example dot com", "one@example.com", true],
+    ["one zero one two at five dot net", "one012@five.net", true],
+    ["one twelve at example dot com", "1012@example.com", false],
+  ] as const)("matches spoken read-back %s to the complete address %s", (spoken, email, matches) => {
+    expect(matchesEmailReadBack(`הכתובת היא ${spoken}. הכתובת נכונה?`, email)).toBe(matches);
+  });
+
   it("authenticates form-only PBX callbacks independently of the legacy URL credential", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "legacy", TLIVR_CALLBACK_BODY_SECRET: "body-secret" };
     const fields = "PBXcallId=body-call&PBXnum=0765673575&PBXextensionPath=%2F99&PBXphone=0500000001&isaacMain=1";
