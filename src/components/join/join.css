@@ -1,0 +1,16 @@
+.join-pulse {
+  --paper: #111a1a;
+  --card: #1b2726;
+  --ink: #f0f5ef;
+  --quiet: #a9bbb4;
+  --line: #35423e;
+  --accent: #c0f67d;
+  --sage: #25362d;
+  color-scheme: dark;
+}
+.join-pulse ::selection { background: var(--accent); color: var(--paper); }
+.join-pulse input[type=checkbox] { accent-color: var(--accent); }
+.join-pulse :is(button,a,input,select):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.join-pulse button:disabled { opacity: .65; cursor: wait; }
+.join-pulse > footer { border-color: var(--line); color: var(--quiet); }
+.join-pulse > footer a:is(:hover,:focus-visible) { color: var(--accent); outline-color: var(--accent); }

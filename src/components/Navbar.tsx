@@ -15,9 +15,10 @@ import { SpeakCallLogo } from './brand/SpeakCallLogo';
 interface NavbarProps {
   currentView: 'dashboard' | 'learn' | 'join' | 'legacy';
   onNavigate: (view: 'dashboard' | 'learn' | 'join' | 'legacy') => void;
+  logoHref?: string;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
+export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, logoHref }) => {
   const { currentCustomer, streak, triggerIntakeCall } = useApp();
 
   return (
@@ -25,12 +26,14 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
       <div className="max-w-7xl mx-auto h-full flex items-center justify-between">
         {/* Brand and Logo */}
         <div className="flex items-center gap-6">
-          <button
+          {logoHref ? <a href={logoHref} aria-label="SpeakCall — עמוד הבית" className="flex items-center gap-2.5 cursor-pointer group">
+            <SpeakCallLogo />
+          </a> : <button
             onClick={() => onNavigate('dashboard')}
             className="flex items-center gap-2.5 cursor-pointer group"
           >
             <SpeakCallLogo />
-          </button>
+          </button>}
 
           {/* Nav Links */}
           <nav className="hidden md:flex items-center gap-1 bg-[#1b2726]/80 p-1 rounded-xl border border-[#35423e]">
