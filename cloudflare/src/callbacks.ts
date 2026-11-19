@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BusinessStore } from "./business";
-import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
+import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
 
 const CALLBACK_IP_PREFIX = "public-callback:ip:";
@@ -111,6 +111,33 @@ export function normalizePhone(raw: string): string | null {
   return /^0(5[0-9]|7[0-9])[0-9]{7}$/.test(digits) ? digits : null;
 }
 
+type CallbackExtension = { id: string; name: string | null; path: string };
+let cachedExtension: { apiKey: string; extension: CallbackExtension } | undefined;
+
+export async function resolveCallbackExtension(env: Env): Promise<CallbackExtension> {
+  const path = settings(env).projectPath;
+  if (env.TLIVR_CALLBACK_EXTENSION_ID) return { id: env.TLIVR_CALLBACK_EXTENSION_ID, name: null, path };
+  const apiKey = env.TLIVR_SYSTEM_API_KEY;
+  if (!apiKey) throw new HttpError(503, "Technoline dialer not configured");
+  if (cachedExtension?.apiKey === apiKey && cachedExtension.extension.path === path) return cachedExtension.extension;
+  try {
+    const url = "https://api.tlivr.com/ivrFilesApi.php?" + new URLSearchParams({ apiKey, action: "folderSettings", path });
+    const response = await fetch(url, {
+      method: "GET", headers: { "User-Agent": "speakcall-callbacks/1.0", Accept: "application/json" },
+      signal: AbortSignal.timeout(15000),
+    });
+    const data: unknown = await response.json();
+    const result = data && typeof data === "object" ? data as Record<string, unknown> : {};
+    const id = typeof result.id === "number" || typeof result.id === "string" ? String(result.id) : "";
+    if (!response.ok || String(result.status).toUpperCase() === "ERROR" || !/^[0-9]+$/.test(id)) throw new Error("Invalid extension");
+    const extension = { id, name: typeof result.name === "string" ? result.name : null, path };
+    cachedExtension = { apiKey, extension };
+    return extension;
+  } catch {
+    throw new HttpError(502, "Technoline extension resolution failed");
+  }
+}
+
 export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: string, now: Date, demo = false) {
   const retryAt = new Date(now.getTime() + 30 * 60000);
   const localNow = localDate(now);
@@ -121,7 +148,7 @@ export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: 
   return {
     action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY, phones: [phone],
     title: "SpeakCall callback", messagesType: "extensionActivation",
-    extensionActivation: env.TLIVR_CALLBACK_EXTENSION_ID ?? "11937",
+    extensionActivation: env.TLIVR_CALLBACK_EXTENSION_ID,
     dialRetries: sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "yes",
     externalID: requestId, ...(demo ? { demo: "yes" } : {}),
   };
@@ -129,11 +156,12 @@ export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: 
 
 export async function dialTechnolineCallback(env: Env, phone: string, requestId: string, demo = false) {
   if (!env.TLIVR_SYSTEM_API_KEY) throw new HttpError(503, "Technoline dialer not configured");
+  const extension = await resolveCallbackExtension(env);
   const response = await fetch("https://api.tlivr.com/campaignApi.php", {
     method: "POST",
     headers: { "User-Agent": "speakcall-callbacks/1.0", "Content-Type": "application/json", Accept: "application/json" },
     signal: AbortSignal.timeout(15000),
-    body: JSON.stringify(buildTechnolineCallbackBody(env, phone, requestId, new Date(), demo)),
+    body: JSON.stringify(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: extension.id }, phone, requestId, new Date(), demo)),
   });
   const data: unknown = await response.json().catch(() => null);
   const result = data && typeof data === "object" ? data as Record<string, unknown> : {};
@@ -143,6 +171,7 @@ export async function dialTechnolineCallback(env: Env, phone: string, requestId:
     campaignId: result.campaignId == null ? null : String(result.campaignId),
     billing: result.billing ?? null,
     httpStatus: response.status,
+    extension,
   };
 }
 
@@ -151,8 +180,8 @@ export async function testCallbackDial(request: Request, env: Env) {
   const phone = parsed.success ? normalizePhone(parsed.data.phone) : null;
   if (!phone) throw new HttpError(422, "Invalid phone");
   try {
-    const { ok, errorCode, campaignId, billing } = await dialTechnolineCallback(env, phone, "dial-test-" + randomHex(16), true);
-    return { ok, errorCode, campaignId, billing };
+    const { ok, errorCode, campaignId, billing, extension } = await dialTechnolineCallback(env, phone, "dial-test-" + randomHex(16), true);
+    return { ok, errorCode, campaignId, billing, extension };
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw new HttpError(502, "Technoline unreachable");
