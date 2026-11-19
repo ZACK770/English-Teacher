@@ -56,16 +56,20 @@ function mp3Seconds(bytes: Uint8Array): number {
 }
 
 class InvalidAudio extends Error {}
+class DownloadResponseError extends Error {
+  constructor(readonly status: number) { super("Unexpected Technoline download response"); }
+}
 
 async function download(fileId: string, apiKey: string): Promise<Uint8Array> {
   const params = new URLSearchParams({ action: "fileDownload", audio: fileId, apiKey });
   const response = await fetch(`https://api.tlivr.com/ivrFilesApi.php?${params}`, {
-    signal: AbortSignal.timeout(15_000), redirect: "error",
+    headers: { "User-Agent": "speakcall-voicemails/1.0", Accept: "audio/mpeg, audio/mp3" },
+    signal: AbortSignal.timeout(15_000), redirect: "manual",
   });
   const mime = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
   if (!response.ok || !response.body || (mime !== "audio/mp3" && mime !== "audio/mpeg")) {
     await response.body?.cancel();
-    throw new Error("Audio unavailable");
+    throw new DownloadResponseError(response.status);
   }
   if (Number(response.headers.get("Content-Length")) > MAX_BYTES) {
     await response.body.cancel();
@@ -100,15 +104,28 @@ export async function processVoicemail(env: Env, id: string) {
   if (!job) return;
 
   const stillFetching = "WHERE id=? AND status='fetching' AND fetch_attempts=?";
+  const fail = (status: "invalid_audio" | "download_failed" | "storage_failed") =>
+    env.DB.prepare(`UPDATE ivr_voicemails SET status=? ${stillFetching}`)
+      .bind(status !== "invalid_audio" && job.fetch_attempts < FETCH_ATTEMPTS ? "pending" : status, id, job.fetch_attempts).run();
   let audio: Uint8Array, seconds: number;
   try {
     audio = await download(job.file_id, env.TLIVR_SYSTEM_API_KEY);
     seconds = mp3Seconds(audio);
     if (!seconds) throw new InvalidAudio();
-    await env.VOICEMAIL_AUDIO.put(key(id), audio, { httpMetadata: { contentType: "audio/mpeg" } });
   } catch (e) {
-    const status = e instanceof InvalidAudio ? "invalid_audio" : job.fetch_attempts >= FETCH_ATTEMPTS ? "audio_failed" : "pending";
-    await env.DB.prepare(`UPDATE ivr_voicemails SET status=? ${stillFetching}`).bind(status, id, job.fetch_attempts).run();
+    if (e instanceof InvalidAudio) {
+      await fail("invalid_audio");
+    } else {
+      console.warn("Voicemail download failed", e instanceof DownloadResponseError ? { http_status: e.status } : {});
+      await fail("download_failed");
+    }
+    return;
+  }
+  try {
+    await env.VOICEMAIL_AUDIO.put(key(id), audio, { httpMetadata: { contentType: "audio/mpeg" } });
+  } catch {
+    console.warn("Voicemail R2 write failed");
+    await fail("storage_failed");
     return;
   }
 
