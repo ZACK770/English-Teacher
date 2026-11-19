@@ -68,6 +68,17 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
+  it("adopts a legacy paid standing order without crediting its first receipt again", async () => {
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    await hook({ MosadNumber: "7019554", TransactionId: "80", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    db.sql.exec("UPDATE standing_orders SET entitlement_id=NULL,state='active',keva_id='4242'; UPDATE payment_orders SET entitlement_id=NULL; UPDATE sales_receipts SET subscription_id=NULL,valid_from=NULL; DELETE FROM subscriptions;");
+    const charge = { MosadNumber: "7019554", TransactionId: "81", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
+    expect((await hook(charge)).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
+    expect(await new SubscriptionStore(env.DB).get(o.id)).toMatchObject({ period_number: 2, price_agorot: 5900 });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(2);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE subscription_id=?").get(o.id)?.n).toBe(2);
+  });
   it("charges a mastery track in installments with the price fixed server-side and the validation key never returned", async () => {
     expect((await req("/v1/portal/checkout", { package_id: "school-mastery" })).status).toBe(422);
     expect((await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "unknown" })).status).toBe(422);

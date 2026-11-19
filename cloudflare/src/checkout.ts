@@ -176,8 +176,21 @@ export class CheckoutStore {
       await this.activate(sub.id, kevaId, "");
     }
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
-    if (!sub.entitlement_id) throw new Error("First payment must settle before renewal");
     const subscriptions = new SubscriptionStore(this.db);
+    if (!sub.entitlement_id) {
+      const order = await this.db.prepare("SELECT o.id,r.id AS receipt_id,r.created_at FROM payment_orders o JOIN sales_receipts r ON r.id=o.receipt_id AND r.customer_id=o.customer_id WHERE o.id=? AND o.channel='web' AND o.state='paid'").bind(sub.first_order_id).first<{ id: string; receipt_id: string; created_at: string }>();
+      if (!order || sub.state === "cancelled") throw new Error("First payment must settle before renewal");
+      const pkg = PackageSchema.parse(JSON.parse(sub.snapshot));
+      const entitlement = await subscriptions.create(sub.customer_id, sub.package_id, order.created_at, undefined, {
+        id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: null, grantFirstPeriod: false,
+        statements: [
+          this.db.prepare("UPDATE sales_receipts SET subscription_id=?,valid_from=COALESCE(valid_from,created_at) WHERE id=?").bind(order.id, order.receipt_id),
+          this.db.prepare("UPDATE payment_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.id),
+          this.db.prepare("UPDATE standing_orders SET entitlement_id=? WHERE id=?").bind(order.id, sub.id),
+        ],
+      });
+      sub.entitlement_id = entitlement.id;
+    }
     const reference = `nedarim-keva:${kevaId}:${transactionId}`;
     const existing = await this.db.prepare("SELECT r.id,r.amount_ils FROM subscription_renewals n JOIN sales_receipts r ON r.subscription_id=n.subscription_id AND r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=? AND n.subscription_id=?").bind(reference, sub.entitlement_id).first<{ id: string; amount_ils: number }>();
     if (existing) {
