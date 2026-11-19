@@ -143,7 +143,7 @@ export const LearnerPortal: React.FC = () => {
   const botId = [active?.base_bot, p.selected_bot, account?.customer.preferred_bot, "isaac-basic"].find(id => baseTeachers.some(b => b.id === id)) || baseTeachers[0]?.id;
   const defaultBase = baseTeachers.find(b => b.id === "isaac-basic") || baseTeachers[0];
   const webBotId = [active?.base_bot, p.selected_bot, account?.customer.preferred_bot, "isaac-basic"].find(id => webTeachers.some(b => b.id === id)) || webTeachers[0]?.id;
-  const defaultWeb = webTeachers.find(b => b.id === "isaac-basic") || webTeachers[0];
+  const defaultWeb = defaultBase || webTeachers.find(b => b.id === "isaac-basic") || webTeachers[0];
   const teacherName = active?.name || DEFAULT_NAME;
   const talk = (teacher?: Teacher, bot?: { id: string; label: string }) => {
     const id = teacher?.base_bot || bot?.id || webBotId;
