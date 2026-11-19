@@ -61,9 +61,13 @@ export function nextCallingSlot(date: Date): Date {
 export function parsePreferredTime(text: string, now: Date): Date | null {
   const local = localDate(now);
   let hasDay = false;
+  const normalizedText = text.replace(/\b(\d{1,2})\.(\d{2})\b/g, (token, hour: string, minute: string, offset: number) => {
+    const markedTime = /(?:בשעה|ב[-־]?)\s*$/.test(text.slice(0, offset));
+    return markedTime || +minute === 0 || +minute > 12 ? `${hour}:${minute}` : token;
+  });
   const dateToken = /\b(\d{1,2})[/.](\d{1,2})\b/g;
-  const date = new RegExp(dateToken).exec(text);
-  const timeText = text.replace(dateToken, " ");
+  const date = new RegExp(dateToken).exec(normalizedText);
+  const timeText = normalizedText.replace(dateToken, " ");
   const weekdays = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
   const weekday = weekdays.findIndex(day => text.includes(day));
   if (date) {
