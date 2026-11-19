@@ -10,6 +10,7 @@ import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolic
 import { isFemale, TeacherMark } from "./LineTeacher";
 export { TeacherMark } from "./LineTeacher";
 import "./portal.css";
+import "./logo-breathing.css";
 
 type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan" | "checkout";
 const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "בקצב טבעי", fast: "אפשר להגביר" };
