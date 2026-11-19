@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowUpRight, Phone, Monitor, Ear, Mic, RefreshCw } from "lucide-react";
 import { EmailLogin } from "./EmailLogin";
 import { DirectVoice } from "./DirectVoice";
+import { resumeLearnerSession } from "./portalApi";
 import { PHONE_LINE } from "./LearnerPortal";
 import { LegalFooter } from "../legal/LegalFooter";
 import { legalBasePath } from "../../legalRoutes";
@@ -31,6 +32,20 @@ export function SpeakoolLanding() {
   const [voiceToken, setVoiceToken] = useState("");
   const base = legalBasePath(location.pathname);
   const learn = base + "/learn";
+  useEffect(() => {
+    let disposed = false;
+    const resume = () => {
+      if (location.pathname === learn) return;
+      void resumeLearnerSession().then(valid => {
+        if (!valid || disposed) return;
+        history.replaceState(null, "", learn);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+    };
+    resume();
+    window.addEventListener("popstate", resume);
+    return () => { disposed = true; window.removeEventListener("popstate", resume); };
+  }, [learn]);
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
   const [domain, setDomain] = useState(0);
   const progress = domains[domain];

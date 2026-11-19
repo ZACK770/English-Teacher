@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { portalRequest } from "./portalApi";
+import { saveLearnerToken } from "./learnerToken";
 
 export function EmailLogin({ onToken }: { onToken: (token: string) => void }) {
   const [email, setEmail] = useState("");
@@ -26,7 +27,7 @@ export function EmailLogin({ onToken }: { onToken: (token: string) => void }) {
       if (!challenge || resend) await send();
       else {
         const result = await portalRequest<{ token: string }>("/v1/portal/auth/email/verify", "", { challenge, code });
-        sessionStorage.setItem("learnerToken", result.token);
+        saveLearnerToken(result.token);
         onToken(result.token);
       }
     } catch (e) { setError(e instanceof Error ? e.message : "לא הצלחנו להתחבר. נסו שוב."); }
