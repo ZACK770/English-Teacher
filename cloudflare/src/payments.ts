@@ -382,7 +382,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 && !canPurchaseAutomatically(p)).sort((a, b) => a.price_ils - b.price_ils);
   const describe = (p: Record<string, any>) => p.billing === "monthly"
     ? `${p.name}, ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
-    : `${p.name}, ${p.minutes} דקות למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
+    : `${p.name}, ${p.minutes} דקות בכל חודש למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
   const monthly = plans.filter((p) => p.billing === "monthly").map(describe);
   const courses = plans.filter((p) => p.billing !== "monthly").map(describe);
   const intro = [
