@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
@@ -33,6 +33,31 @@ const request = (path: string, body?: unknown, headers: Record<string, string> =
 }), env);
 
 describe("analytics ingestion and funnel", () => {
+  it("accepts a lead despite a failing analytics insert", async () => {
+    sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await request("/v1/public/callback", { name: "Test", phone: "0501234567", for_whom: "self", timing: "now", consent: true, attribution });
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({ ok: true });
+      expect(sql.prepare("SELECT COUNT(*) AS n FROM callback_requests").get()?.n).toBe(1);
+      expect(logged).toHaveBeenCalledWith("Analytics lead failed", expect.any(Error));
+    } finally { logged.mockRestore(); }
+  });
+  it.each(["email", "phone"])("completes %s verification despite a failing analytics insert", async method => {
+    const challenge = "1".repeat(48), code = "123456";
+    const claim = { email: "test@example.com", phone: "0501234567", hash: await sha256Hex(challenge + ":" + code), attempts: 0, expires: Date.now() + 60000 };
+    sql.prepare("INSERT INTO console_settings(id,body) VALUES (?,?)").run((method === "email" ? "portal-email:" : "portal-auth:") + challenge, JSON.stringify(claim));
+    sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await request("/v1/portal/auth/" + (method === "email" ? "email/" : "") + "verify", { challenge, code, attribution });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ token: expect.any(String), new_account: true });
+      expect(sql.prepare("SELECT COUNT(*) AS n FROM portal_tokens").get()?.n).toBe(1);
+      expect(logged).toHaveBeenCalledWith("Analytics signup failed", expect.any(Error));
+    } finally { logged.mockRestore(); }
+  });
   it.each(["page_view", "phone_click", "generate_lead", "sign_up", "begin_checkout", "purchase"])("accepts and persists allowlisted %s", async name => {
     expect((await request("/v1/public/events", { ...event(), event: name, value: 59, currency: "ILS" })).status).toBe(204);
     const row = sql.prepare("SELECT * FROM analytics_events").get()!;

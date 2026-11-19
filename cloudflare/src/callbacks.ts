@@ -215,7 +215,7 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   await env.DB.prepare(
     "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,?,?,?,?,'queued',0,?,?,?)",
   ).bind(id, phone, body.name, body.for_whom, body.goal, body.timing, body.preferred_time || null, body.source || "landing", now, now, now, nextAttempt).run();
-  await conversion(env, "generate_lead", body.attribution, id);
+  await conversion(env, "generate_lead", body.attribution, id).catch(error => console.error("Analytics lead failed", error));
   const shabbat = nextAttempt !== scheduled.toISOString();
   const status = body.timing === "now" && !shabbat && dialerConfigured(env)
     ? await dialCallbackRow(env, { id, phone, attempts: 0 }, new Date(now))

@@ -81,7 +81,7 @@ export async function purchaseAttribution(env: Env, receiptId: unknown) {
       SELECT s.first_order_id FROM standing_orders s WHERE s.entitlement_id=r.subscription_id LIMIT 1)
     JOIN analytics_attribution a ON a.kind='begin_checkout' AND a.reference=o.id WHERE r.id=?`)
     .bind(receiptId).first<{ id: string; customer_id: string; amount_ils: number; order_id: string; attribution: string }>();
-  if (row) await conversion(env, "purchase", JSON.parse(row.attribution), row.id, row.customer_id, row.amount_ils, row.order_id);
+  if (row) await conversion(env, "purchase", JSON.parse(row.attribution), row.id, row.customer_id, row.amount_ils, row.order_id).catch(error => console.error("Analytics purchase failed", error));
 }
 
 export async function analyticsSummary(request: Request, env: Env) {

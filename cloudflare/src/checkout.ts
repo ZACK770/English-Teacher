@@ -268,7 +268,7 @@ export async function checkoutRoutes(request: Request, env: Env, path: string, c
   if (path === "/v1/portal/checkout" && request.method === "POST") {
     const input = await json(z.object({ package_id: z.string().regex(/^[a-z0-9-]{1,40}$/), domain: z.string().max(40).optional(), attribution: z.unknown().optional() }));
     const order = await store.start(env, customerId, input.package_id, input.domain);
-    await conversion(env, "begin_checkout", input.attribution, order.id, customerId, order.amount_ils);
+    await conversion(env, "begin_checkout", input.attribution, order.id, customerId, order.amount_ils).catch(error => console.error("Analytics checkout failed", error));
     return Response.json(order, { headers: noCache });
   }
   const order = path.match(/^\/v1\/portal\/checkout\/([a-f0-9]{32})(\/keva)?$/);

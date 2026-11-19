@@ -51,6 +51,45 @@ async function hook(data: Record<string, unknown>) {
 }
 let keva: Record<string, string> = {};
 
+it("returns a paid webhook result when analytics inserts fail without creating settlement review", async () => {
+  const order = await (await req("/v1/portal/checkout", { package_id: "school-foundations", attribution })).json() as any;
+  db.sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await hook({ MosadNumber: "7019554", TransactionId: "98766", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ paid: true, customer_id: "c1", amount_ils: order.amount_ils });
+    expect(db.sql.prepare("SELECT state FROM payment_orders WHERE id=?").get(order.id)?.state).toBe("paid");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE kind='settlement_review'").get()?.n).toBe(0);
+    expect(logged).toHaveBeenCalledWith("Analytics purchase failed", expect.any(Error));
+  } finally { logged.mockRestore(); }
+});
+
+it("keeps a paid webhook successful when attribution lookup fails", async () => {
+  const order = await (await req("/v1/portal/checkout", { package_id: "school-foundations", attribution })).json() as any;
+  db.sql.exec("DROP TABLE analytics_attribution");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await hook({ MosadNumber: "7019554", TransactionId: "98767", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ paid: true });
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE kind='settlement_review'").get()?.n).toBe(0);
+    expect(logged).toHaveBeenCalledWith("Analytics purchase attribution failed", expect.any(Error));
+  } finally { logged.mockRestore(); }
+});
+
+it("creates checkout despite an analytics insert failure", async () => {
+  db.sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const response = await req("/v1/portal/checkout", { package_id: "school-foundations", attribution });
+    expect(response.status).toBe(200);
+    const order = await response.json() as any;
+    expect(db.sql.prepare("SELECT customer_id FROM payment_orders WHERE id=?").get(order.id)?.customer_id).toBe("c1");
+    expect(logged).toHaveBeenCalledWith("Analytics checkout failed", expect.any(Error));
+  } finally { logged.mockRestore(); }
+});
+
 it("attributes signed purchases to the stored checkout even without a browser and deduplicates webhook retries", async () => {
   const response = await req("/v1/portal/checkout", { package_id: "school-foundations", attribution });
   expect(response.status).toBe(200);

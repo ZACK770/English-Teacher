@@ -58,7 +58,7 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     }
     const token = tokenUrlsafe(32);
     await env.DB.prepare("INSERT INTO portal_tokens VALUES (?,?,?)").bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00")).run();
-    if (!existing) await conversion(env, "sign_up", input.attribution, customerId, customerId);
+    if (!existing) await conversion(env, "sign_up", input.attribution, customerId, customerId).catch(error => console.error("Analytics signup failed", error));
     return Response.json({ token, new_account: !existing }, { headers });
   }
   throw new HttpError(404, "Not found");
