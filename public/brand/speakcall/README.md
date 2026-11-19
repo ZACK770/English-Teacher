@@ -4,15 +4,17 @@
 
 ## הטמעה
 - להעתיק את החבילה אל public/brand/speakcall/ (ללא תיקיות עוטפות).
-- ראשי: logo-en.svg. להציג למשל ברוחב 174–220px; גובה אוטומטי, ללא מתיחה.
-- עברית: logo-he.svg. גרסאות reverse מיועדות לרקע כהה; black/white לשימוש בצבע אחד.
-- symbol.svg לסמל מערכת; app-icon.svg למשטח ריבועי. אין להוסיף אייקון נפרד ליד הלוגו האנגלי — ה־C כבר משולבת בו.
-- favicon.svg או favicon.ico; לשמור type נכון. favicon-16/32/48.png הם רסטרים מקוריים, לא דוגמאות מוגדלות.
+- באתר משתמשים ברכיב SpeakCallLogo עם SVG מוטמע, ללא בקשת קובץ SVG חיצונית, לתאימות NetFree.
+- ראשי: logo-en.png. להציג למשל ברוחב 174–220px; גובה אוטומטי, ללא מתיחה.
+- עברית: logo-he.png. גרסאות reverse מיועדות לרקע כהה; black/white לשימוש בצבע אחד.
+- symbol.png לסמל מערכת; app-icon.png למשטח ריבועי. אין להוסיף אייקון נפרד ליד הלוגו האנגלי — ה־C כבר משולבת בו.
+- לכל גרסאות הלוגו, הסמל ואייקון האפליקציה יש PNG ברזולוציית פי שניים. קובצי SVG נשארים זמינים להורדה.
+- favicon-32.png או favicon.ico; לשמור type נכון. favicon-16/32/48.png הם רסטרים מקוריים, לא דוגמאות מוגדלות.
 - apple-touch-icon.png בגודל 180px. site.webmanifest מכוון לנתיבי /brand/speakcall/; אם משנים מיקום, לשנות נתיבים בהתאם.
 - כל האותיות מומרות למסלולים. אין תלות בפונטים, סקריפטים או משאבים חיצוניים.
 
 ## דוגמה ל־head
-<link rel="icon" type="image/svg+xml" href="/brand/speakcall/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/brand/speakcall/favicon-32.png">
 <link rel="alternate icon" href="/brand/speakcall/favicon.ico">
 <link rel="apple-touch-icon" href="/brand/speakcall/apple-touch-icon.png">
 <link rel="manifest" href="/brand/speakcall/site.webmanifest">

@@ -1,9 +1,12 @@
 .sc-logo { display: inline-block; width: clamp(128px, 17vw, 174px); max-width: 100%; vertical-align: middle; flex-shrink: 0; }
-.sc-logo img { display: block; width: 100%; height: auto; }
+.sc-logo svg { display: block; width: 100%; height: auto; }
+.sc-logo .sc-logo-compact { display: none; }
 .sc-logo-symbol { width: 34px; }
 .sk-land-brand .sc-logo { width: 100%; }
 .sk-brand .sc-logo { width: 174px; }
+.sk-side .sk-brand > .sc-logo { display: inline-block; }
 @media (max-width: 960px) {
   .sk-brand .sc-logo-collapse { width: 34px; }
-  .sc-logo-collapse img { aspect-ratio: 1; }
+  .sc-logo-collapse .sc-logo-full { display: none; }
+  .sc-logo-collapse .sc-logo-compact { display: block; }
 }
