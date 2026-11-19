@@ -22,10 +22,14 @@ export class SessionMeter {
   private thoughts = 0;
 
   recordUsage(usage: Record<string, unknown>) {
-    this.inputText += modality(usage.promptTokensDetails, "TEXT");
-    this.inputAudio += modality(usage.promptTokensDetails, "AUDIO");
-    this.outputText += modality(usage.responseTokensDetails, "TEXT");
-    this.outputAudio += modality(usage.responseTokensDetails, "AUDIO");
+    const inputText = modality(usage.promptTokensDetails, "TEXT");
+    const inputAudio = modality(usage.promptTokensDetails, "AUDIO");
+    const outputText = modality(usage.responseTokensDetails, "TEXT");
+    const outputAudio = modality(usage.responseTokensDetails, "AUDIO");
+    this.inputText += inputText;
+    this.inputAudio += Math.max(inputAudio, number(usage.promptTokenCount) - inputText);
+    this.outputText += outputText;
+    this.outputAudio += Math.max(outputAudio, number(usage.responseTokenCount) - outputText);
     this.thoughts += number(usage.thoughtsTokenCount);
   }
 

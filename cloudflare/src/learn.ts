@@ -5,6 +5,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
 import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
+import { acquireGeminiBudget, GeminiBudgetError } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
 import { ProgressStore } from "./progress";
@@ -13,7 +14,7 @@ import { LearningStore } from "./learning";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; startedAt: number | null }
 
-async function runLive(s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>, intake?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
+async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>, intake?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -21,6 +22,11 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
   let size = 0;
   let startedAt: number | null = null;
   const ai = new GeminiLive(s.geminiLiveUrl, s.geminiKey, setup);
+  let budgetError: GeminiBudgetError | undefined;
+  const release = await acquireGeminiBudget(env, () => meter.usage(s).estimated_cost_usd, reason => {
+    budgetError = new GeminiBudgetError(reason);
+    ai.close();
+  });
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), timeoutMs); });
   const work = (async () => {
@@ -30,6 +36,7 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
     ai.startGreeting(opening);
     for (;;) {
       const event = await ai.next();
+      if (budgetError) throw budgetError;
       if (event.type === "audio") {
         if (size + event.pcm24k.byteLength > 24000 * 2 * maxSeconds) break;
         if (!size) await progress.logLatency(profileId, callId, "first_gemini_audio", Date.now() - t0, 0);
@@ -54,7 +61,16 @@ async function runLive(s: Settings, progress: ProgressStore, profileId: string, 
       else if (event.type === "closed" || event.type === "go_away") break;
     }
   })();
-  try { await Promise.race([work, deadline]); } finally { clearTimeout(timer!); ai.close(); }
+  try {
+    await Promise.race([work, deadline]);
+    if (budgetError) throw budgetError;
+  } catch (error) {
+    throw budgetError ?? error;
+  } finally {
+    clearTimeout(timer!);
+    ai.close();
+    await release();
+  }
   return { audio: concat(parts), text: output.join(" "), meter, startedAt };
 }
 
@@ -89,27 +105,31 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const artifact = await compilePrompt({ ...controls, opening_message: text }, history, botId, s);
   const startedAt = new Date();
   let result: LiveResult | null = null;
+  let limited = false;
   try {
     if (controls.store_transcripts) {
       await progress.savePromptSnapshot(botId, callId, artifact);
       await progress.logTurn(botId, callId, "input", text);
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
-    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined, async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args));
+    result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined, async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args));
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
+    if (error instanceof GeminiBudgetError) { limited = true; throw error; }
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");
   } finally {
     const elapsed = result?.startedAt ? (Date.now() - result.startedAt) / 1000 : 0;
     await b.settleCall(callId, elapsed);
-    const meter = result?.meter ?? new SessionMeter();
-    meter.learnerTurns = 1;
-    await progress.saveSession({
-      student_id: customerId, call_id: callId, started_at: startedAt, learner_turns: 1, tutor_turns: meter.tutorTurns,
-      observations: meter.observations, transcript: controls.store_transcripts ? [{ role: "learner", text }, { role: "tutor", text: result?.text ?? "" }] : null,
-      summary: meter.summary(), usage: meter.usage(s), model: controls.model,
-    });
+    if (!limited) {
+      const meter = result?.meter ?? new SessionMeter();
+      meter.learnerTurns = 1;
+      await progress.saveSession({
+        student_id: customerId, call_id: callId, started_at: startedAt, learner_turns: 1, tutor_turns: meter.tutorTurns,
+        observations: meter.observations, transcript: controls.store_transcripts ? [{ role: "learner", text }, { role: "tutor", text: result?.text ?? "" }] : null,
+        summary: meter.summary(), usage: meter.usage(s), model: controls.model,
+      });
+    }
   }
   return Response.json({ call_id: callId, text: result.text, audio_wav_base64: b64encode(wav(result.audio, 24000)) });
 }
@@ -130,12 +150,15 @@ export async function renderVoicePreview(request: Request, env: Env, s: Settings
   const controls = { ...controlsFromSettings(false), base_prompt: ANNOUNCER, opening_message: text, voice: parsed.data.voice, language_code: "en-US" };
   const artifact = await compilePrompt(controls, "", s.studentId, s);
   try {
-    const result = await runLive(s, progress, s.studentId, "preview-" + randomHex(12), artifact.setup_message, text, 15, 30000, false);
+    const result = await runLive(env, s, progress, s.studentId, "preview-" + randomHex(12), artifact.setup_message, text, 15, 30000, false);
     if (!result.audio.length) throw new Error("No audio");
     const file = wav(result.audio, 24000);
     await b.saveAudio(cacheId, await sha256Hex(text), file);
     return Response.json({ audio_wav_base64: b64encode(file) });
-  } catch { throw new HttpError(502, "הדוגמה לא נטענה. אפשר לנסות שוב, או פשוט להתחיל שיחה."); }
+  } catch (error) {
+    if (error instanceof GeminiBudgetError) throw error;
+    throw new HttpError(502, "הדוגמה לא נטענה. אפשר לנסות שוב, או פשוט להתחיל שיחה.");
+  }
 }
 
 export async function renderNarration(env: Env, s: Settings, narrationId: string): Promise<Response> {
@@ -151,9 +174,10 @@ export async function renderNarration(env: Env, s: Settings, narrationId: string
   await progress.savePromptSnapshot(profileId, callId, artifact);
   let result: LiveResult;
   try {
-    result = await runLive(s, progress, profileId, callId, artifact.setup_message, record.text, 120, 120_000);
+    result = await runLive(env, s, progress, profileId, callId, artifact.setup_message, record.text, 120, 120_000);
     if (!result.audio.byteLength) throw new Error("No audio received");
   } catch (error) {
+    if (error instanceof GeminiBudgetError) throw error;
     await progress.logDiagnostic(profileId, callId, "narration_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "לא ניתן לייצר קריינות כרגע; בדוק את לוג הבוט");
   }

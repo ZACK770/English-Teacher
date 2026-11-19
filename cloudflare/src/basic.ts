@@ -17,7 +17,7 @@ export interface Translation { heard: string; text: string; language: string; in
 export class BasicTranslator {
   constructor(private env: Env, private s: Settings, private targetLanguage = "") {}
 
-  async translate(pcm8k: Uint8Array): Promise<Translation> {
+  async translate(pcm8k: Uint8Array, signal: AbortSignal): Promise<Translation> {
     const target = this.targetLanguage
       ? `The caller selected ${this.targetLanguage} as the target language; translate into it unless the caller speaks it, then translate into Hebrew. `
       : "";
@@ -26,10 +26,11 @@ export class BasicTranslator {
       url,
       {
         contents: [{ role: "user", parts: [{ text: PROMPT.replace("{target}", target) }, { inline_data: { mime_type: "audio/wav", data: b64encode(wav(pcm8k, 8000)) } }] }],
-        generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: SCHEMA, thinkingConfig: { thinkingLevel: "minimal" } },
+        generationConfig: { temperature: 0, maxOutputTokens: 2048, responseMimeType: "application/json", responseSchema: SCHEMA, thinkingConfig: { thinkingLevel: "minimal" } },
       },
       {},
       20000,
+      signal,
     );
     const parts = result.candidates?.[0]?.content?.parts ?? [];
     const data = JSON.parse(parts.map((p: { text?: string }) => p.text ?? "").join("") || "{}");
@@ -39,7 +40,7 @@ export class BasicTranslator {
       text: String(data.translation ?? "").trim(),
       language: String(data.language ?? "").trim() || "he-IL",
       input_tokens: Number(usage.promptTokenCount ?? 0),
-      output_tokens: Number(usage.candidatesTokenCount ?? 0),
+      output_tokens: Number(usage.candidatesTokenCount ?? 0) + Number(usage.thoughtsTokenCount ?? 0),
     };
   }
 

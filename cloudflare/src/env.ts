@@ -3,6 +3,12 @@ export interface Env {
   CALLS: DurableObjectNamespace;
   ASSETS: Fetcher;
   GEMINI_API_KEY: string;
+  GEMINI_BUDGET: DurableObjectNamespace;
+  GEMINI_MAX_CONCURRENT?: string;
+  GEMINI_DAILY_BUDGET_USD?: string;
+  GEMINI_RESERVE_USD_PER_MINUTE?: string;
+  GEMINI_BUDGET_EMAIL?: SendEmail;
+  GEMINI_BUDGET_EMAIL_TO?: string;
   ADMIN_BEARER_SECRET: string;
   GOOGLE_TTS_SERVICE_ACCOUNT_JSON?: string;
   GOOGLE_TTS_PROJECT?: string;
