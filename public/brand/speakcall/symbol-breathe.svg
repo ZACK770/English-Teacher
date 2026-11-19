@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300" role="img" aria-label="SpeakCall — סמל נושם"><title>SpeakCall — סמל נושם</title><style>
+@keyframes sc-breathe {0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.025)}}
+@keyframes sc-halo {0%,100%{opacity:.35;transform:scale(.98)}50%{opacity:.7;transform:scale(1.025)}}
+.sc-breathe{transform-box:fill-box;transform-origin:center;animation:sc-breathe 4s ease-in-out infinite}
+.sc-halo{transform-box:fill-box;transform-origin:center;animation:sc-halo 4s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){.sc-breathe,.sc-halo{animation:none!important}}
+</style><g class="sc-halo" fill="none" stroke="#3156D8" stroke-width="1.25"><circle cx="150" cy="150" r="105"/><circle cx="150" cy="150" r="130" opacity=".3"/></g><g transform="translate(99 92)"><g class="sc-breathe"><path fill="#3156D8" d="M90 19C79 6 65 0 48 0C20 0 2 20 2 50C2 80 20 100 48 100C60 100 70 97 79 90L96 111V75L79 63C73 76 62 83 48 83C30 83 20 70 20 50C20 30 30 17 48 17C60 17 70 23 77 33Z"/><path fill="#148F95" d="M79 90L96 111V85Z"/></g></g></svg>

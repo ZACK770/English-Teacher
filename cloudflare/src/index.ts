@@ -73,6 +73,11 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
   if (portal) return portal;
   if (path.startsWith("/v1/")) return Response.json({ detail: "Not found" }, { status: 404 });
   if (env.ASSETS) {
+    if (path.startsWith("/brand/speakcall/")) {
+      const brandUrl = new URL(request.url);
+      brandUrl.pathname = path;
+      return env.ASSETS.fetch(new Request(brandUrl, request));
+    }
     const rawPath = url.pathname;
     const isAsset = rawPath.includes("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|map)$/i.test(rawPath);
 
