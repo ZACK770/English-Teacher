@@ -33,7 +33,7 @@ beforeEach(() => {
   };
   env = { DB: db, ADMIN_BEARER_SECRET: "crm-test-secret" } as unknown as Env;
 });
-afterEach(() => sql.close());
+afterEach(() => { sql.close(); vi.restoreAllMocks(); });
 const now = new Date().toISOString();
 function customer(id = "person1", phone = "0501234567") {
   sql.prepare("INSERT INTO customers(id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?)").run(id, "שם מוקלד", phone, now, now);
@@ -152,18 +152,28 @@ describe("CRM customer reset", () => {
   });
   it("rolls back all D1 deletions and audit if a later deletion fails", async () => {
     customer(); session();
+    insert("ivr_voicemails", { id: "vm", system_phone: "system", file_id: "file", customer_id: "person1", caller_key: "hash", created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
+    const deleteAudio = vi.fn(); env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
     sql.exec("CREATE TRIGGER prevent_delete BEFORE DELETE ON customers BEGIN SELECT RAISE(ABORT,'test failure'); END");
     expect((await reset()).status).toBe(500);
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toMatchObject({ n: 1 });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
+    expect(deleteAudio).not.toHaveBeenCalled();
   });
-  it("does not delete D1 records when R2 deletion fails", async () => {
+  it.each([true, false])("succeeds and logs best-effort audio cleanup failure with R2 binding %s", async binding => {
     customer();
     insert("ivr_voicemails", { id: "vm", system_phone: "system", file_id: "file", customer_id: "person1", caller_key: "hash", created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
-    env.VOICEMAIL_AUDIO = { delete: vi.fn().mockRejectedValue(new Error("unavailable")) } as any;
-    expect((await reset()).status).toBe(503);
-    expect(sql.prepare("SELECT id FROM customers").get()).toMatchObject({ id: "person1" });
-    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
+    if (binding) env.VOICEMAIL_AUDIO = { delete: vi.fn().mockImplementation(async () => {
+      expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 0 });
+      throw new Error("unavailable");
+    }) } as any;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const response = await reset();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ r2_objects: 0 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 0 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 1 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("crm_reset_audio_cleanup_failed"));
   });
   it("deletes the full linked history in FK-safe order and makes the phone a fresh caller", async () => {
     customer("other", "0507654321");

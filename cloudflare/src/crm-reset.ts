@@ -65,18 +65,21 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   const detach = [
     ["invoices", "subscription_id"], ["sales_receipts", "subscription_id"], ["standing_orders", "entitlement_id"], ["payment_orders", "entitlement_id"],
   ].map(([table, column]) => env.DB.prepare(`UPDATE ${table} SET ${column}=NULL WHERE customer_id<>? AND ${column} ${inSubs}`).bind(id, subs));
-  if (voicemails.some(v => v.audio_ready) && !env.VOICEMAIL_AUDIO) throw new HttpError(503, "אחסון ההודעות הקוליות אינו זמין. הלקוח לא נמחק.");
-  if (voicemails.length && env.VOICEMAIL_AUDIO) {
-    try { await env.VOICEMAIL_AUDIO.delete(voicemails.map(v => `voicemails/${v.id}.mp3`)); }
-    catch { throw new HttpError(503, "מחיקת ההודעות הקוליות נכשלה. הלקוח לא נמחק; נסו שוב."); }
-  }
   const result = await env.DB.batch([
     env.DB.prepare(`INSERT INTO console_audit(action,entity_id,created_at) SELECT json_object('action','crm_customer_reset','actor',?,'counts',json_object(${removals.map(r => `'${r.table}',(SELECT COUNT(*) FROM ${r.table} WHERE ${r.where})`).join(",")})),?,?`)
       .bind(actor.username, ...removals.flatMap(r => r.args), id, new Date().toISOString()),
     ...detach,
     ...removals.map(r => env.DB.prepare(`DELETE FROM ${r.table} WHERE ${r.where}`).bind(...r.args)),
   ]);
+  let r2Objects = 0;
+  if (voicemails.length) {
+    try {
+      if (!env.VOICEMAIL_AUDIO) throw new Error("R2 unavailable");
+      await env.VOICEMAIL_AUDIO.delete(voicemails.map(v => `voicemails/${v.id}.mp3`));
+      r2Objects = voicemails.length;
+    } catch { console.warn(JSON.stringify({ event: "crm_reset_audio_cleanup_failed", customer_id: id, voicemail_ids: voicemails.map(v => v.id) })); }
+  }
   const deleted: Record<string, number> = {};
   removals.forEach((r, i) => { deleted[r.table] = (deleted[r.table] || 0) + Number(result[1 + detach.length + i].meta.changes || 0); });
-  return Response.json({ id, deleted, r2_objects: env.VOICEMAIL_AUDIO ? voicemails.length : 0 }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json({ id, deleted, r2_objects: r2Objects }, { headers: { "Cache-Control": "no-store" } });
 }
