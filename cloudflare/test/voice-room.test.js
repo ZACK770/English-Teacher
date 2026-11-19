@@ -85,8 +85,8 @@ describe("voice socket closure", () => {
     expect(render()).toContain("החיבור לשיחה נסגר לפני שהמורה התחיל לדבר");
     expect(render()).not.toContain("יתרת הדקות");
     expect(render()).not.toContain("שיחות הטעימה נוצלו");
-    expect(render()).toContain("נסו שוב");
-    expect(render()).toContain("בחזרה לפורטל");
+    expect(render()).toContain("לנסות שוב");
+    expect(render()).toContain("חזרה לאזור האישי");
     expect(stop).toHaveBeenCalled();
   });
   it("preserves a real server access rejection instead of replacing it with the generic error", async () => {
@@ -115,9 +115,9 @@ afterEach(() => { cleanup?.(); cleanup = undefined; vi.unstubAllGlobals(); });
 describe("voice entry recovery", () => {
   it("shows microphone permission guidance with retry and a working exit", async () => {
     cleanup = hooks.effects[0]();
-    await vi.waitFor(() => expect(render()).toContain("אין גישה למיקרופון – אפשרו גישה בדפדפן ונסו שוב"));
-    expect(render()).toContain("נסו שוב");
-    expect(render()).toContain("בחזרה לפורטל");
+    await vi.waitFor(() => expect(render()).toContain("כדי לדבר כאן צריך לאפשר גישה למיקרופון בדפדפן."));
+    expect(render()).toContain("לנסות שוב");
+    expect(render()).toContain("חזרה לאזור האישי");
     expect(render()).not.toContain("התחל לדבר");
     hooks.refs[0].current();
     await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
@@ -128,7 +128,7 @@ describe("voice entry recovery", () => {
     resume.mockRejectedValueOnce(new DOMException("Gesture required", "NotAllowedError"));
     cleanup = hooks.effects[0]();
     await vi.waitFor(() => expect(render()).toContain("התחל לדבר"));
-    expect(render()).toContain("בחזרה לפורטל");
+    expect(render()).toContain("חזרה לאזור האישי");
     expect(getUserMedia).not.toHaveBeenCalled();
     hooks.refs[1].current();
     expect(done).toHaveBeenCalledOnce();
@@ -136,7 +136,7 @@ describe("voice entry recovery", () => {
   it("keeps exit visible while microphone permission is pending", () => {
     getUserMedia.mockImplementation(() => new Promise(() => {}));
     cleanup = hooks.effects[0]();
-    expect(render()).toContain("בחזרה לפורטל");
+    expect(render()).toContain("חזרה לאזור האישי");
     expect(render()).not.toContain('role="alert"');
   });
 });

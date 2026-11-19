@@ -74,7 +74,7 @@ export const LESSON_SUMMARY_TOOL = {
 
 export const INTAKE_TOOL = {
   "name": "save_intake",
-  "description": "Save the learner's lesson direction: the first-call intake answers before the lesson starts, or later when the learner asks to change direction (send goal and level plus only what changed).",
+  "description": "Save the learner's lesson direction. For first-call intake send goal and level. After intake, send the goal and only the fields the learner asked to change.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -89,7 +89,7 @@ export const INTAKE_TOOL = {
       "conversation_mode": { "type": "string", "enum": ["guided", "conversation", "roleplay"], "description": "guided: learn together with Hebrew help; conversation: learn through conversation; roleplay: just talk" },
       "teacher_gender": { "type": "string", "enum": ["male", "female"] }
     },
-    "required": ["goal", "level"]
+    "required": ["goal"]
   }
 };
 

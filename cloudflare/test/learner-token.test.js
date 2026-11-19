@@ -35,11 +35,12 @@ describe("persistent learner authentication", () => {
     expect(readLearnerToken()).toBe("legacy-token");
     expect(sessionStorage.getItem("learnerToken")).toBeNull();
   });
-  it("stores invite tokens durably and removes them from the URL", () => {
+  it("stores invite tokens durably and removes only the token from a checkout link", () => {
     location.hash = "#" + "a".repeat(40);
+    location.search = "?plan=starter";
     expect(initialToken()).toBe("a".repeat(40));
     expect(localStorage.getItem("learnerToken")).toBe("a".repeat(40));
-    expect(history.replaceState).toHaveBeenCalledWith(null, "", "/learn");
+    expect(history.replaceState).toHaveBeenCalledWith(null, "", "/learn?plan=starter");
   });
   it("keeps an existing token when the fragment is malformed", () => {
     saveLearnerToken("durable-token");
