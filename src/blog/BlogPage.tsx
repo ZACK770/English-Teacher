@@ -49,7 +49,7 @@ export function BlogPage() {
             return <p key={i}>{block.text}</p>;
           })}</div>
           {article.sources.length > 0 && <section className="sk-blog-sources" aria-labelledby="sources-title"><h2 id="sources-title">מקורות</h2><ol>{article.sources.map((source, i) => <li key={i}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.label} ↗</a></li>)}</ol></section>}
-          <aside className="sk-blog-cta"><p className="sk-land-kicker">עכשיו תור הפה</p><h2>מהקריאה לשיחה.</h2><p>שיעור ראשון של עשר דקות בחינם, בטלפון או במחשב.</p><a className="sk-primary" href={`${base}/#free-lesson`}>לשיעור ראשון בחינם <ArrowLeft size={18} aria-hidden="true" /></a></aside>
+          <aside className="sk-blog-cta"><p className="sk-land-kicker">עכשיו תור הפה</p><h2>מהקריאה לשיחה.</h2><p>שיעור ראשון של שבע דקות בחינם, בטלפון או במחשב.</p><a className="sk-primary" href={`${base}/#free-lesson`}>לשיעור ראשון בחינם <ArrowLeft size={18} aria-hidden="true" /></a></aside>
         </article>
         {others.length > 0 && <section className="sk-blog-related" aria-labelledby="related-title"><h2 id="related-title">עוד רעיונות לשיחה הבאה</h2><div className="sk-blog-grid">{others.map(item => <ArticleCard key={item.slug} article={item} base={base} />)}</div></section>}
       </> : <>

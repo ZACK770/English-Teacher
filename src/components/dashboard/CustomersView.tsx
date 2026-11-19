@@ -145,7 +145,7 @@ export const CustomersView: React.FC = () => {
                       ) : (
                         <div className="flex flex-col gap-1 items-start">
                           <span className="bg-[#f5f6f8] text-[#718087] px-2 py-0.5 rounded text-[11px]">
-                            שיעור פתיחה 10 דק׳ + 2 שיחות של 5 דקות בחודש
+                            שיעור פתיחה 7 דק׳ + 2 שיחות של 5 דקות בחודש
                           </span>
                           <span className="bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px]">
                             🔥 ליד חם לשדרוג

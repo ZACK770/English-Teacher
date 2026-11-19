@@ -3,12 +3,13 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
+import { BasicTranslator } from "../src/basic";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, quickOpening, runtimeContext, startSchool } from "../src/pbx";
-import { adCampaignReport, matchesEmailReadBack, recordSalesTool } from "../src/ad-entry";
+import { adCampaignReport, matchesEmailReadBack, recordSalesTool, wordsEmail } from "../src/ad-entry";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { transferCommand } from "../src/technoline";
@@ -23,7 +24,7 @@ import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
 import { syncCrm } from "../src/crm";
 import { FRAME_BYTES, wav } from "../src/audio";
-import { cleanupCallbackQuota, dispatchCallbacks } from "../src/callbacks";
+import { callWithLessonSummary, cleanupCallbackQuota, dispatchCallbacks } from "../src/callbacks";
 
 it("defaults new teachers to a male voice without overriding an explicit female choice", () => {
   const teacher = { name: "מורה", base_bot: "student" };
@@ -433,6 +434,29 @@ describe("lesson callback scheduling", () => {
     expect(await dispatchCallbacks(env)).toEqual({ sent: 0, queued: 0 });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it.each([false, true])("skips an exact-time callback when all minutes are exhausted (has receipt: %s)", async paid => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    const args = { day: "tomorrow", part_of_day: "evening", time: "19:35" };
+    expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", { ...args, time: "23:10" })).toBe(false);
+    expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", args)).toBe(true);
+    expect(db.sql.prepare("SELECT next_attempt_at FROM callback_requests").get()?.next_attempt_at).toBe("2026-01-05T17:35:00.000Z");
+    for (const [id, product] of [["intro", "school-opening"], ["free-1", "school"], ["free-2", "school"]]) {
+      db.sql.prepare("INSERT INTO usage_allocations VALUES (?,'learner-a',?,NULL,300,300,'2026-01-04T08:00:00Z')").run(id, product);
+    }
+    if (paid) {
+      const receipt = await b.receipt({ customer_id: "learner-a", package_id: "school-topup", reference: "test-paid", amount_ils: 39 });
+      expect(await b.hasSchoolCallbackMinutes("learner-a")).toBe(true);
+      db.sql.prepare("INSERT INTO usage_allocations VALUES ('spent','learner-a','school',?,3600,3600,'2026-01-04T08:00:00Z')").run(receipt.id);
+      expect(await b.hasPaidAccess("learner-a")).toBe(true);
+    }
+    env.TLIVR_SYSTEM_API_KEY = "mock";
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    vi.setSystemTime(new Date("2026-01-05T17:40:00Z"));
+    expect(await dispatchCallbacks(env)).toEqual({ sent: 0, queued: 1 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(db.sql.prepare("SELECT status FROM callback_requests").get()?.status).toBe("failed");
+  });
   it("does not enqueue malformed or anonymous requests", async () => {
     expect(await recordSalesTool(b, "learner-a", "bad", "schedule_next_lesson", {})).toBe(false);
     expect(await recordSalesTool(b, "anonymous-1", "bad", "schedule_next_lesson", { day: "today", part_of_day: "morning" })).toBe(false);
@@ -700,6 +724,15 @@ describe("IVR voicemail CRM", () => {
 });
 
 describe("approved pricing catalog", () => {
+  it("migrates the old opening allowance without changing other products, overrides, or monthly calls", async () => {
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, opening_seconds: 600 }, "legacy");
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, opening_seconds: 180 }, "custom");
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, product: "translator", opening_seconds: 600 }, "translator");
+    db.sql.exec(readFileSync(new FileURL("../migrations/0019_seven_minute_opening.sql", import.meta.url), "utf8"));
+    expect(await b.record("policies", "legacy")).toMatchObject({ opening_seconds: 420, free_calls_month: 2, free_call_seconds: 300 });
+    expect(await b.record("policies", "custom")).toMatchObject({ opening_seconds: 180 });
+    expect(await b.record("policies", "translator")).toMatchObject({ opening_seconds: 600 });
+  });
   it("seeds the approved school catalog and mirrors accurate billing types", async () => {
     for (const pkg of PRICING_PACKAGES.filter(p => p.product === "school")) {
       expect(PackageSchema.parse(await b.record("packages", pkg.id))).toEqual(PackageSchema.parse(pkg));
@@ -748,9 +781,9 @@ describe("approved pricing catalog", () => {
   it("grants one opening lesson across teachers then two five-minute calls each month", async () => {
     await b.save("policies", SCHOOL_FREE_POLICY, "student");
     await b.save("policies", SCHOOL_FREE_POLICY, "another-teacher");
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
-    expect(await b.reserveCall("learner-a", "student", "opening", 1800)).toMatchObject({ seconds: 600, mode: "free" });
-    await b.settleCall("opening", 600);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
+    expect(await b.reserveCall("learner-a", "student", "opening", 1800)).toMatchObject({ seconds: 420, mode: "free" });
+    await b.settleCall("opening", 420);
     expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
     for (const id of ["free-a", "free-b"]) {
       expect(await b.reserveCall("learner-a", "another-teacher", id, 1800)).toMatchObject({ seconds: 300, mode: "free" });
@@ -766,7 +799,7 @@ describe("approved pricing catalog", () => {
     expect(await b.reserveCall("anonymous-hidden", "student", "hidden", 1800)).toMatchObject({ seconds: 0 });
     await b.reserveCall("learner-a", "student", "failed-opening", 1800);
     await b.settleCall("failed-opening", 0);
-    expect(await b.reserveCall("learner-a", "student", "retry", 1800)).toMatchObject({ seconds: 600 });
+    expect(await b.reserveCall("learner-a", "student", "retry", 1800)).toMatchObject({ seconds: 420 });
     expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], max_call_minutes: 0 }).success).toBe(false);
     expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], billing: "invalid" }).success).toBe(false);
     expect(PackageSchema.safeParse({}).success).toBe(false);
@@ -776,8 +809,8 @@ describe("approved pricing catalog", () => {
     await b.reserveCall("learner-a", "student", "short-opening", 1800);
     expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
     await b.settleCall("short-opening", seconds);
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
-    expect(await b.reserveCall("learner-a", "student", "retry-opening", 1800)).toMatchObject({ seconds: 600 });
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
+    expect(await b.reserveCall("learner-a", "student", "retry-opening", 1800)).toMatchObject({ seconds: 420 });
   });
 
   it("redeems the opening lesson at sixty billed seconds", async () => {
@@ -794,12 +827,12 @@ describe("approved pricing catalog", () => {
   });
 
   it("uses the free fallback only when no school policy exists", async () => {
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10, free_calls_left: 2 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 7, free_calls_left: 2 });
     await b.save("policies", { product: "translator", enabled: false }, "translator");
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 7 });
     await b.save("policies", { ...SCHOOL_FREE_POLICY, enabled: false }, "student");
     await b.save("policies", SCHOOL_FREE_POLICY, "another-teacher");
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 7 });
   });
 
   it("keeps the opening lesson available after text allowances are used", async () => {
@@ -807,9 +840,9 @@ describe("approved pricing catalog", () => {
       expect(await b.reserveCall("learner-a", "student", id, 120, "text")).toMatchObject({ seconds: 120 });
       await b.settleCall(id, 120);
     }
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
     expect(await b.reserveCall("learner-a", "student", "text-c", 120, "text")).toMatchObject({ seconds: 0 });
-    expect(await b.reserveCall("learner-a", "student", "voice-opening", 1800)).toMatchObject({ seconds: 600 });
+    expect(await b.reserveCall("learner-a", "student", "voice-opening", 1800)).toMatchObject({ seconds: 420 });
   });
 });
 
@@ -917,12 +950,12 @@ describe("call minute reservations", () => {
     await b.save("policies", SCHOOL_FREE_POLICY, "student");
     expect(await b.reserveCall("learner-a", "student", "first-monthly", 120, "text")).toMatchObject({ mode: "free", seconds: 120 });
     await b.settleCall("first-monthly", 120);
-    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 600 });
+    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 420 });
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
 
     const whileOpening = await Promise.all([reserve("held-one", 600), reserve("held-two", 600)]);
     expect(whileOpening.map(call => call.mode)).toEqual(["busy", "busy"]);
-    await b.settleCall("opening", 600);
+    await b.settleCall("opening", 420);
     const calls = await Promise.all([reserve("voice-one", 600), reserve("voice-two", 600)]);
     expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 300]);
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0 });
@@ -1220,7 +1253,8 @@ describe("real learner portal", () => {
     const first = await b.loadContext("ad-1");
     expect(first).toMatchObject({ entry: "ad", campaign: "radio-news", ad_new_caller: true, quick_entry: "school" });
     expect(first.selected_bot).toBeTruthy();
-    expect(await quickOpening(b, "ad-1")).toContain("עשר הדקות הראשונות עלינו");
+    expect(await quickOpening(b, "ad-1")).toContain("Do not mention a duration");
+    expect(await quickOpening(b, "ad-1")).not.toContain("עשר הדקות");
     const runtime = await runtimeContext(b, "ad-1");
     expect(runtime).toContain("59 ש\"ח לחודש");
     expect(runtime).toContain("1,490 ש\"ח");
@@ -1228,14 +1262,21 @@ describe("real learner portal", () => {
     expect(runtime).toContain("preserving all digits and leading zeros");
     expect(runtime).toContain("Do not offer to email the lesson summary or collect an email address unprompted.");
     expect(runtime).toContain("not a repeat-after-me drill");
+    expect(runtime).toContain("הפעם האחרונה שהבנת שאתה חייב לדעת אנגלית");
+    expect(runtime).toContain("after the application signals 90 seconds of practice");
     expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בקצב שלך");
     expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited free minutes");
     const customerId = (await b.customerForCall("ad-1"))!;
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" })).toBe(false);
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "not an email" })).toBe(false);
     const mail = { send: vi.fn(async () => ({ messageId: "m" })) } as unknown as SendEmail;
+    await b.savePreference(customerId, { learner_name: "<יצחק>" });
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner001@Example42.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner001@example42.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
+    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("שלום <יצחק>, זה דוד המורה שלך מספיקול."),
+      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה דוד המורה שלך מספיקול."),
+    }));
     expect(await recordSalesTool(b, customerId, "ad-1", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "trial-29", channel: "sms" })).toBe(false);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" }, mail)).toBe(true);
@@ -1253,6 +1294,91 @@ describe("real learner portal", () => {
     expect(report.followups).toHaveLength(2);
     expect(report.followups.every((f) => f.phone === "0501112233")).toBe(true);
     expect(report.followups.find((f) => f.type === "payment_link")).toMatchObject({ channel: "sms", link: "https://speakool.net/learn?plan=school-step&src=ad-radio-news", status: "pending" });
+  });
+  it("uses the active teacher's name without inventing a learner name", () => {
+    expect(wordsEmail([], "", "יוסף").text[0]).toBe("שלום, זה יוסף המורה שלך מספיקול.");
+    expect(wordsEmail([], "", "אסתי", "יצחק", true).text[0]).toBe("שלום יצחק, זו אסתי המורה שלך מספיקול.");
+  });
+  it("starts the sales timer after intake and the first practice response, not at connection", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const session = new TutorSession({} as WebSocket, env, settings(env), "owner");
+    session["controls"] = { sales: true, intake_pending: true } as NonNullable<typeof session["controls"]>;
+    session["learnerSeen"] = true;
+    const start = Date.now();
+    expect(await session["recordTool"]({ name: "start_ad_practice" })).toBe(false);
+    vi.setSystemTime(start + 120000);
+    session["maybeOpenSalesWindow"](Date.now());
+    expect(session["salesWindowOpen"]).toBe(false);
+    session["controls"].intake_pending = false;
+    expect(await session["recordTool"]({ name: "start_ad_practice" })).toBe(true);
+    vi.setSystemTime(start + 209999);
+    session["maybeOpenSalesWindow"](Date.now());
+    expect(session["salesWindowOpen"]).toBe(false);
+    session["maybeOpenSalesWindow"](Date.now() + 1);
+    expect(session["salesWindowOpen"]).toBe(true);
+  });
+  it("never retries a summary campaign after an ambiguous response or sends from another line", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    Object.assign(env, { TLIVR_SYSTEM_API_KEY: "mock", GOOGLE_TTS_SERVICE_ACCOUNT_JSON: "mock", TLIVR_SYSTEM_PHONE: "0765673575" });
+    const makeAudio = vi.fn(async () => new Uint8Array(100000));
+    const fetcher = vi.fn().mockRejectedValue(new Error("ambiguous provider response"));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await callWithLessonSummary({ ...env, TLIVR_SYSTEM_PHONE: "0765674434" }, "0500000001", "wrong-line", makeAudio)).toBe(false);
+    expect(await callWithLessonSummary(env, "0500000001", "same-call", makeAudio)).toBe(false);
+    expect(await callWithLessonSummary(env, "0500000001", "same-call", makeAudio)).toBe(false);
+    expect(makeAudio).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(db.sql.prepare("SELECT source,status,attempts FROM callback_requests").all()).toEqual([{ source: "lesson_summary", status: "failed", attempts: 1 }]);
+  });
+
+  it.each([
+    ["אני רוצה שיחת סיכום.", true, false],
+    ["כן", false, false],
+    ["אני לא רוצה שיחת סיכום", false, false],
+    ["אני רוצה שיחת סיכום.", false, true],
+  ] as const)("only dials after closing, with unrevoked consent: %s / expected=%s", async (speech, accepted, revoked) => {
+    const at = new Date("2026-01-04T10:00:00Z");
+    vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(at);
+    Object.assign(env, {
+      TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "pbx-key", TLIVR_SYSTEM_PHONE: "0765673575, 0765674434",
+      TLIVR_ROUTER_CHANNEL: "router-channel", TLIVR_SYSTEM_API_KEY: "mock-key", GOOGLE_TTS_SERVICE_ACCOUNT_JSON: "mock-tts",
+    });
+    const s = settings(env);
+    expect((await handleCallback(new Request("https://x/v1/technoline/ivr/main?key=pbx-key&PBXcallId=qa-recap&PBXnum=0765673575&PBXextensionPath=%2F99&PBXphone=0500000001&isaacMain=1"), env, s, "main")).goTo).toBe("/99/7");
+    vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue(undefined);
+    vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "close").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "submitToolResult").mockImplementation(() => {});
+    const next = vi.spyOn(GeminiLive.prototype, "next").mockResolvedValue({ type: "closed" })
+      .mockResolvedValueOnce({ type: "transcript", role: "learner", text: speech })
+      .mockResolvedValueOnce({ type: "tool_call", calls: [{ name: "request_summary_callback" }] })
+      .mockResolvedValueOnce({ type: "turn_complete" });
+    if (revoked) next.mockResolvedValueOnce({ type: "transcript", role: "learner", text: "לא רוצה שיחת סיכום" });
+    next.mockResolvedValueOnce({ type: "tool_call", calls: [
+      { name: "record_lesson_summary", args: { summary_he: "סיכום", success_he: "הצלחה", next_step_he: "המשך", points: 42 } },
+      { name: "end_session", args: { reason: "caller_requested" } },
+    ] });
+    const tts = vi.spyOn(BasicTranslator.prototype, "speak").mockResolvedValue(new Uint8Array(100000));
+    const close = vi.fn();
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(close).toHaveBeenCalledOnce();
+      const form = init.body as FormData;
+      expect(form.get("callId")).toBe("0765673575");
+      expect(form.get("phones")).toBe("0500000001");
+      expect(form.get("dialRetries")).toBe("0");
+      expect(form.get("betweenRetries")).toBe("20");
+      expect((form.get("audioFile") as File).type).toBe("audio/wav");
+      return Response.json({ status: "OK", errorCode: 0 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const session = new TutorSession({ send: vi.fn(), close } as unknown as WebSocket, env, s, "owner");
+    await session.run(JSON.stringify({ type: "start", token: "router-channel", callId: "qa-recap", caller: "0500000001", format: "pcm16;rate=8000;ch=1" }), null, true);
+    expect(fetcher).toHaveBeenCalledTimes(accepted ? 1 : 0);
+    if (accepted) {
+      expect(tts).toHaveBeenCalledWith(expect.stringContaining("42 נקודות"), "he-IL", "Standard-B", false);
+      expect(db.sql.prepare("SELECT status FROM callback_requests").get()?.status).toBe("dialed");
+    } else expect(tts).not.toHaveBeenCalled();
   });
   it.each([
     { name: "Hebrew confirmation", address: "a012@example.com", answer: ["כן, זה נכון."], confirmed: true },
@@ -1476,7 +1602,7 @@ describe("real learner portal", () => {
     const result = await request("/v1/bots/student/turn", tokenA, { text });
     expect(result.status).toBe(502);
     expect(db.sql.prepare("SELECT product FROM usage_allocations").all()).toEqual([{ product: "school" }]);
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
     const snapshots = db.sql.prepare("SELECT opening_message,setup_json FROM prompt_snapshots").all();
     expect(snapshots.length).toBe(enabled ? 1 : 0);
     expect(JSON.stringify(snapshots).includes(text)).toBe(enabled);

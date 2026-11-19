@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { submitCallback } from './callbackApi';
+import { FREE_TIER_TEXT } from '../../pricing';
 import { LegalFooter } from '../legal/LegalFooter';
 import { PhoneCall, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
@@ -207,7 +208,7 @@ export const JoinLanding: React.FC = () => {
                   </div>
                   <div>
                     <h4 className="font-extrabold text-sm text-[var(--accent)]">
-                      שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש
+                      {FREE_TIER_TEXT}
                     </h4>
                     <p className="text-[var(--quiet)] mt-0.5">
                       התנסות טלפונית וממוחשבת ישירה ללא שום עלות וללא צורך בהזנת כרטיס אשראי.
@@ -247,7 +248,7 @@ export const JoinLanding: React.FC = () => {
                   </div>
                   <div>
                     <h4 className="font-extrabold text-sm text-[var(--ink)]">
-                      שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש
+                      {FREE_TIER_TEXT}
                     </h4>
                     <p className="text-[var(--quiet)] mt-0.5">
                       שיחת היכרות ישירה ללא התחייבות.
@@ -280,7 +281,7 @@ export const JoinLanding: React.FC = () => {
                 <div>
                   <h3 className="text-xl font-extrabold text-[var(--ink)]">הרישום הושלם בהצלחה!</h3>
                   <p className="text-xs text-[var(--quiet)] leading-relaxed max-w-xs mx-auto mt-1">
-                    שלום <strong>{name}</strong>, בקשת ההצטרפות נשלחה עבור המספר <strong>{phone}</strong>. ההתנסות כוללת שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש.
+                    שלום <strong>{name}</strong>, בקשת ההצטרפות נשלחה עבור המספר <strong>{phone}</strong>. ההתנסות כוללת {FREE_TIER_TEXT}.
                   </p>
                 </div>
 

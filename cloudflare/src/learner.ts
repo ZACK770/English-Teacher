@@ -171,6 +171,8 @@ export async function applyLearnerControls(
   ].filter(Boolean).join("\n");
   return {
     ...controls, ...privacy, lesson,
+    teacher_name: teacher?.name || DEFAULT_TEACHER_NAME,
+    teacher_female: isFemaleVoice(teacher?.voice || DEFAULT_TEACHER_VOICE),
     intake_pending: intakePending,
     ...(teacher ? { voice: teacher.voice } : bot.role === "teacher" ? { voice: DEFAULT_TEACHER_VOICE } : {}),
     target_lesson_minutes: p.minutes || (plan.success ? plan.data.minutes : controls.target_lesson_minutes),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { wav } from "./audio";
 import { analyticsInput, conversion } from "./analytics";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./env";
@@ -7,6 +8,7 @@ import { visiblePhone } from "./phone";
 const CALLBACK_IP_PREFIX = "public-callback:ip:";
 const CALLBACK_IP_LIMIT = 3;
 const HOUR_MS = 60 * 60 * 1000;
+export const SPEAKCALL_PHONE = "0765673575";
 
 const callbackHour = (now: number) => new Date(now).toISOString().slice(0, 13);
 
@@ -25,7 +27,7 @@ const RequestSchema = z.object({
   preferred_time: z.string().trim().max(80).default(""),
   preferred_at: z.string().datetime({ offset: true }).optional(),
   consent: z.literal(true),
-  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).refine(source => source !== "lesson_followup").default(""),
+  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).refine(source => !["lesson_followup", "lesson_summary"].includes(source)).default(""),
   website: z.string().max(0).default(""),
 });
 
@@ -85,6 +87,15 @@ export function followupLessonTime(day: string, part: string, now: Date): Date {
     while ([5, 6].includes(local.getUTCDay())) local.setUTCDate(local.getUTCDate() + 1);
   }
   return nextCallingSlot(fromLocal(local));
+}
+
+export function tomorrowAt(time: string, now: Date): Date | null {
+  const [hour, minute] = time.split(":").map(Number);
+  const local = localDate(now);
+  local.setUTCDate(local.getUTCDate() + 1);
+  local.setUTCHours(hour!, minute!, 0, 0);
+  const at = fromLocal(local);
+  return nextCallingSlot(at).getTime() === at.getTime() ? at : null;
 }
 
 export async function enqueueLessonCallback(b: BusinessStore, customerId: string, followupId: string, at: Date, now: string, callerPhone = "") {
@@ -214,6 +225,59 @@ export async function dialTechnolineCallback(env: Env, phone: string, requestId:
   };
 }
 
+export function canCallWithLessonSummary(env: Env, phone: string, now = new Date()) {
+  const recipient = normalizePhone(phone);
+  return !!env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON && !!env.TLIVR_SYSTEM_API_KEY && !!env.TLIVR_SYSTEM_PHONE?.split(",").some(number => number.trim() === SPEAKCALL_PHONE)
+    && !!recipient && recipient !== SPEAKCALL_PHONE && nextCallingSlot(now).getTime() === now.getTime();
+}
+
+export function lessonSummaryAudioText(points: number | undefined, learnerTurns: number) {
+  const result = points === undefined
+    ? `השתתפת היום ב-${learnerTurns} תורות דיבור. תודה שתרגלת איתנו.`
+    : `צברת ${points} נקודות מתוך מאה בתרגול. תודה שתרגלת איתנו.`;
+  return `שלום, כאן ספיקול עם סיכום קצר של השיעור. ${result} אפשר לשמור את המספר שמופיע אצלך ולחייג אלינו להמשך האימון. להתראות!`;
+}
+
+export async function callWithLessonSummary(env: Env, phone: string, callId: string, makeAudio: () => Promise<Uint8Array>, now = new Date()) {
+  if (!canCallWithLessonSummary(env, phone, now)) return false;
+  const recipient = normalizePhone(phone)!;
+  const id = (await sha256Hex("lesson-summary:" + callId)).slice(0, 32);
+  const at = now.toISOString();
+  const claim = await env.DB.prepare(`INSERT OR IGNORE INTO callback_requests
+    (id,phone,name,for_whom,goal,timing,source,consent_at,status,attempts,created_at,updated_at)
+    VALUES (?,?,'','self','סיכום קולי בסיום שיעור','now','lesson_summary',?,'dialing',1,?,?)`).bind(id, recipient, at, at, at).run();
+  if (claim.meta.changes !== 1) return false;
+  let ok = false;
+  let campaignId: string | null = null;
+  try {
+    const pcm = await makeAudio();
+    if (pcm.byteLength < 5 * 8000 * 2 || !canCallWithLessonSummary(env, phone)) return false;
+    const body = new FormData();
+    for (const [key, value] of Object.entries({
+      action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY!,
+      title: "SpeakCall lesson summary", messagesType: "audioFile", callId: SPEAKCALL_PHONE,
+      dialRetries: "0", betweenRetries: "20", reasonableHours: "yes", externalID: id,
+    })) body.set(key, value);
+    body.set("phones", recipient);
+    body.set("audioFile", new Blob([new Uint8Array(wav(pcm, 8000))], { type: "audio/wav" }), "summary.wav");
+    const response = await fetch("https://api.tlivr.com/campaignApi.php", {
+      method: "POST",
+      headers: { "User-Agent": "speakcall-callbacks/1.0", Accept: "application/json" },
+      signal: AbortSignal.timeout(10000),
+      body,
+    });
+    const result = await response.json() as Record<string, unknown> | null;
+    ok = response.ok && String(result?.status).toUpperCase() === "OK" && String(result?.errorCode) === "0";
+    if (ok && result?.campaignId != null) campaignId = String(result.campaignId);
+  } catch {
+    ok = false;
+  } finally {
+    await env.DB.prepare("UPDATE callback_requests SET status=?,provider_ref=?,last_error=?,updated_at=? WHERE id=?")
+      .bind(ok ? "dialed" : "failed", campaignId, ok ? null : "Voice summary call not accepted", nowIso(), id).run();
+  }
+  return ok;
+}
+
 export async function testCallbackDial(request: Request, env: Env) {
   const parsed = z.object({ phone: z.string().max(20) }).safeParse(await request.json().catch(() => null));
   const phone = parsed.success ? normalizePhone(parsed.data.phone) : null;
@@ -239,7 +303,7 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   if (preferred && (preferred.getTime() < Date.parse(now) || preferred.getTime() > Date.parse(now) + 30 * 86400000)) throw new HttpError(422, "Invalid preferred_at");
   const scheduled = body.timing === "now" ? new Date(now) : preferred ?? parsePreferredTime(body.preferred_time, new Date(now)) ?? new Date(now);
   const nextAttempt = (body.timing === "now" ? nextImmediateSlot(scheduled) : nextCallingSlot(scheduled)).toISOString();
-  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND NOT (source='lesson_followup' AND timing='scheduled') LIMIT 1")
+  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND source NOT IN ('lesson_followup','lesson_summary') LIMIT 1")
     .bind(phone, new Date(time - 86400000).toISOString()).first<{ id: string }>();
   if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
   const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "unknown");
@@ -279,6 +343,15 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
     await env.DB.prepare("UPDATE callback_requests SET next_attempt_at=?,updated_at=? WHERE id=? AND status='queued'")
       .bind(slot.toISOString(), nowIso(), item.id).run();
     return "queued";
+  }
+  if (item.source === "lesson_followup") {
+    const b = new BusinessStore(env.DB);
+    const followup = await b.record("sales-followups", item.id);
+    if (!followup || !await b.hasSchoolCallbackMinutes(followup.customer_id)) {
+      await env.DB.prepare("UPDATE callback_requests SET status='failed',last_error='No school minutes available',next_attempt_at=NULL,updated_at=? WHERE id=? AND status='queued'")
+        .bind(nowIso(), item.id).run();
+      return "failed";
+    }
   }
   const useRelay = !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET;
   const provider = useRelay ? "relay" : "technoline";
@@ -321,7 +394,7 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
 export async function dispatchCallbacks(env: Env): Promise<Record<string, unknown>> {
   if (!dialerConfigured(env)) return { skipped: "dialer not configured" };
   const now = new Date();
-  await env.DB.prepare("UPDATE callback_requests SET status='queued',next_attempt_at=?,updated_at=? WHERE status='dialing' AND updated_at<?")
+  await env.DB.prepare("UPDATE callback_requests SET status='queued',next_attempt_at=?,updated_at=? WHERE status='dialing' AND source!='lesson_summary' AND updated_at<?")
     .bind(now.toISOString(), now.toISOString(), new Date(now.getTime() - 15 * 60000).toISOString()).run();
   const slot = nextCallingSlot(now);
   if (slot.getTime() !== now.getTime()) {
@@ -330,7 +403,7 @@ export async function dispatchCallbacks(env: Env): Promise<Record<string, unknow
     return { skipped: "outside calling hours" };
   }
   const { results } = await env.DB.prepare(
-    "SELECT id,phone,attempts,timing,source FROM callback_requests WHERE status='queued' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 20",
+    "SELECT id,phone,attempts,timing,source FROM callback_requests WHERE status='queued' AND source!='lesson_summary' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 20",
   ).bind(now.toISOString()).all<{ id: string; phone: string; attempts: number; timing: string; source: string }>();
   let sent = 0;
   for (const item of results) {

@@ -1,10 +1,11 @@
-import { isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, recordSalesTool, SALES_TOOL_NAMES } from "./ad-entry";
+import { isEmailConfirmation, isSummaryCallConsent, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
+import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText, normalizePhone } from "./callbacks";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
-import { type Env, type Settings, bearer, extensionPath, HttpError, randomHex, secureEqual, withinBase } from "./env";
+import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
 import { geminiKeyForCall } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
@@ -44,6 +45,10 @@ export class TutorSession {
   private reason = "";
   private intakeReminded = false;
   private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
+  private summaryCallbackRequested = false;
+  private summaryCallbackSpeech = "";
+  private salesWindowOpen = false;
+  private practiceStarted: { at: number; failureGapMs: number } | null = null;
   private returnPath: string | null = null;
   private pbxBase: string | null = null;
 
@@ -173,8 +178,18 @@ export class TutorSession {
       this.controls = await this.progress.loadControls(profileId, defaults);
       this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone");
       const opening = await quickOpening(this.b, this.callId);
-      const adCall = (await this.b.loadContext(this.callId)).entry === "ad";
+      const callContext = await this.b.loadContext(this.callId);
+      const adCall = callContext.entry === "ad";
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
+      if (this.controls.lesson && !this.portal) {
+        const phonePayments = paymentsConfigured(this.env) && adCall
+          ? ' If asked to pay by card on the phone, let them know they can use option 3 (packages and payment) from the main menu after the lesson. Do not take card details.' : "";
+        this.controls.custom_instructions += "\n" + PHONE_NUMBER_GUIDANCE + phonePayments;
+      }
+      if (this.controls.lesson && shared && !this.portal && !testChannel && canCallWithLessonSummary(this.env, this.callerPhone)
+        && this.controls.session_end_action === "hangup" && callContext.summary_callback_caller === await sha256Hex(normalizePhone(this.callerPhone)!)) {
+        this.controls = { ...this.controls, summary_callback: true, custom_instructions: this.controls.custom_instructions + "\n" + SUMMARY_CALLBACK_GUIDANCE };
+      }
       if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson && !adCall ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
@@ -229,7 +244,7 @@ export class TutorSession {
         await this.latency("gemini_connected");
         geminiConnected = true;
         ai.startGreeting(this.controls.opening_message);
-        if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
+        if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). " + (this.controls.lesson ? "Do not announce this in the opening; answer briefly if asked." : "Mention this once, briefly and warmly in Hebrew, early in the call."));
         await this.latency("greeting_sent");
         clearTimeout(hardLimit);
         hardLimit = setTimeout(() => {
@@ -265,6 +280,7 @@ export class TutorSession {
       this.input.end();
       this.ai?.close();
       const budgetRelease = releaseBudget?.();
+      let willCallWithSummary = false;
       try {
         if (this.finalMessage && !this.disconnected) await this.speakFinalMessage(this.finalMessage);
         if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
@@ -285,15 +301,22 @@ export class TutorSession {
         }
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
+        const target = this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
         if (!this.disconnected) {
-          const target = this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
+        willCallWithSummary = this.summaryCallbackRequested && !target && ["model:task_completed", "model:caller_requested", "caller_disconnected"].includes(this.reason);
       } finally {
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
         this.output = [];
         try { this.pbx.close(1000, "session ended"); } catch { /* peer already closed */ }
+      }
+      if (willCallWithSummary) {
+        const text = lessonSummaryAudioText(this.meter.lessonSummary?.points, this.meter.learnerTurns);
+        const accepted = await callWithLessonSummary(this.env, this.callerPhone, this.leaseCallId,
+          () => new BasicTranslator(this.env, this.s).speak(text, "he-IL", "Standard-B", false)).catch(() => false);
+        await this.progress.logDiagnostic(this.profileId, this.callId, "summary_callback", { accepted }).catch(() => {});
       }
     }
   }
@@ -372,6 +395,7 @@ export class TutorSession {
         this.enqueue(pcm);
       } else if (event.type === "interrupted") {
         this.pendingEmail = null;
+        this.summaryCallbackSpeech = "";
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
@@ -387,11 +411,16 @@ export class TutorSession {
         this.meter.transcript.push({ role: event.role, text: event.text });
         if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
         if (event.role === "learner") {
+          if (this.controls?.summary_callback) {
+            this.summaryCallbackSpeech = (this.summaryCallbackSpeech + (event.rawText ?? event.text)).slice(0, 512);
+            if (/(?:אל תתקשר|אל תשלח|לא רוצה שיחת סיכום|בלי שיחת סיכום|בטל את שיחת הסיכום)/.test(this.summaryCallbackSpeech)) this.summaryCallbackRequested = false;
+          }
           this.lastHuman = Date.now();
           if (!this.learnerSeen) this.meter.learnerTurns++;
           this.learnerSeen = true;
         }
       } else if (event.type === "turn_complete") {
+        this.summaryCallbackSpeech = "";
         const pending = this.pendingEmail;
         // Gemini can finish a tool-only turn before speaking the read-back.
         if (pending?.phase !== "readback" || pending.audio || pending.text) {
@@ -426,6 +455,7 @@ export class TutorSession {
 
   private async reconnectGemini(preservePlayback = false) {
     this.pendingEmail = null;
+    this.summaryCallbackSpeech = "";
     this.failureStarted ??= Date.now();
     const handle = this.ai?.resumeHandle;
     this.ai?.close();
@@ -480,6 +510,17 @@ export class TutorSession {
 
   private async recordTool(call: ToolCall): Promise<boolean> {
     const args = call.args ?? {};
+    if (call.name === "request_summary_callback") {
+      if (!this.controls?.summary_callback || !isSummaryCallConsent(this.summaryCallbackSpeech) ||
+        !canCallWithLessonSummary(this.env, this.callerPhone)) return false;
+      this.summaryCallbackRequested = true;
+      return true;
+    }
+    if (call.name === "start_ad_practice") {
+      if (!this.controls?.sales || this.controls.intake_pending || !this.learnerSeen) return false;
+      this.practiceStarted ??= { at: Date.now(), failureGapMs: this.failureGapMs };
+      return true;
+    }
     if (call.name === "report_learning_batch") {
       if (!this.controls?.lesson) return false;
       try {
@@ -506,7 +547,9 @@ export class TutorSession {
           this.pendingEmail = null;
           allowed = pending?.phase === "answer" && normalizeSalesEmail(args.email) === pending.email && isEmailConfirmation(pending.text);
         }
-        if (allowed) saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone).catch(() => false);
+        if (call.name === "schedule_next_lesson" && !this.salesWindowOpen) allowed = false;
+        if (allowed) saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone,
+          { name: this.controls.teacher_name, female: this.controls.teacher_female }).catch(() => false);
       }
       await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, saved }).catch(() => {});
       return saved;
@@ -579,6 +622,7 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (!this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
+      this.maybeOpenSalesWindow(Date.now());
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
@@ -591,6 +635,14 @@ export class TutorSession {
         this.finalSent = true;
       }
       await sleep(500, this.abort.signal);
+    }
+  }
+
+  private maybeOpenSalesWindow(now: number) {
+    if (this.practiceStarted && !this.salesWindowOpen && !this.reconnecting && !this.output.length &&
+      now - this.practiceStarted.at - (this.failureGapMs - this.practiceStarted.failureGapMs) >= 90000) {
+      this.ai?.addContext("APPLICATION CLOCK: the 90-second practice milestone has passed. At a natural pause, offer tomorrow's lesson only if the learner shows interest in continuing.");
+      this.salesWindowOpen = true;
     }
   }
 

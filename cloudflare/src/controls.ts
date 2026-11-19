@@ -64,7 +64,7 @@ export const TutorControlsSchema = z
   })
   .refine((c) => c.context_target_tokens < c.context_trigger_tokens, "context target must be smaller than trigger");
 
-export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan; intake_pending?: boolean; sales?: boolean };
+export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan; intake_pending?: boolean; sales?: boolean; summary_callback?: boolean; teacher_name?: string; teacher_female?: boolean };
 
 export function controlsFromSettings(storeTranscripts: boolean): TutorControls {
   return TutorControlsSchema.parse({ store_transcripts: storeTranscripts });
