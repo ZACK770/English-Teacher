@@ -472,7 +472,7 @@ describe("real learner portal", () => {
   });
   it("authenticates form-only PBX callbacks independently of the legacy URL credential", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "legacy", TLIVR_CALLBACK_BODY_SECRET: "body-secret" };
-    const fields = "PBXcallId=body-call&PBXnum=0765673575&PBXextensionPath=%2F99&isaacMain=1";
+    const fields = "PBXcallId=body-call&PBXnum=0765673575&PBXextensionPath=%2F99&PBXphone=0500000001&isaacMain=1";
     const call = (form: string, query = "", liveEnv = pbxEnv) => handleCallback(new Request("https://x/v1/technoline/ivr/main" + query, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
