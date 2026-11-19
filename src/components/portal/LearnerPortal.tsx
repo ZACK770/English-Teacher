@@ -130,7 +130,7 @@ export const LearnerPortal: React.FC = () => {
     setError("");
     try {
       const input: Preferences = choices
-        ? { ...choices, selected_bot: webBotId, mode: "free", trial_setup: "selected" }
+        ? { ...choices, trial_setup: "selected" }
         : { trial_setup: "skipped" };
       await save(input);
       setAccount(current => current && ({ ...current, preferences: { ...current.preferences, ...input } }));
