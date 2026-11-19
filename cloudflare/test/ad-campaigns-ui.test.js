@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { followupText } from "../../src/components/dashboard/AdCampaignsPanel";
+
+vi.mock("../../src/components/portal/portalApi", () => ({ portalRequest: vi.fn() }));
 
 describe("lesson follow-up labels", () => {
   it.each([
