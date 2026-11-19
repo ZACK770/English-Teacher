@@ -301,6 +301,10 @@ export class BusinessStore {
     return { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
   }
 
+  async cancelCallReservation(callId: string) {
+    await this.db.prepare("DELETE FROM usage_allocations WHERE call_id=? AND billed_seconds IS NULL").bind(callId).run();
+  }
+
   async settleCall(callId: string, seconds: number) {
     await this.db
       .prepare("UPDATE usage_allocations SET billed_seconds=MIN(reserved_seconds,?) WHERE call_id=? AND billed_seconds IS NULL")

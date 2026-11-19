@@ -95,6 +95,7 @@ export class TutorSession {
 
   async run(raw: string, requestedProfile: string | null, shared: boolean) {
     let claimed = false;
+    let reserved = false;
     let releaseBudget: (() => Promise<void>) | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let hardLimit: ReturnType<typeof setTimeout> | undefined;
@@ -161,9 +162,8 @@ export class TutorSession {
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
       if (this.abort.signal.aborted) return;
-      releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason));
-      if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      reserved = allowance.seconds > 0 && allowance.mode !== "unrestricted";
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
@@ -171,6 +171,9 @@ export class TutorSession {
         this.reason = "access_blocked";
         return;
       }
+      if (this.abort.signal.aborted) return;
+      releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason));
+      if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
         await this.latency("learning_plan_ready", { vocabulary_targets: this.controls.lesson.vocabulary.length, grammar_targets: this.controls.lesson.grammar.length, material_rows: this.controls.lesson.material_status?.rows ?? null, material_targets: this.controls.lesson.material_status?.target_count ?? null });
@@ -228,6 +231,7 @@ export class TutorSession {
       this.input.end();
       this.ai?.close();
       try {
+        if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
         if (releaseBudget && this.callId && this.customerId && this.controls) {
           await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
           await this.drainFinalAudio();

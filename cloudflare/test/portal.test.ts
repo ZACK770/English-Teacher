@@ -10,6 +10,7 @@ import { ProgressStore } from "../src/progress";
 import { handleCallback, startSchool } from "../src/pbx";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
+import { transferCommand } from "../src/technoline";
 import { GeminiLive } from "../src/gemini";
 import { GeminiBudget } from "../src/gemini-budget";
 import { cleanupPortalAuth } from "../src/portal-auth";
@@ -102,12 +103,25 @@ it("blocks browser, PBX, and text calls at the shared budget without connecting 
   await tutor(phone).run(JSON.stringify({ ...start, token: "test-channel", callId: "phone-budget", caller: "0500000002" }), "student", false);
   expect(browser.send).toHaveBeenCalledWith(JSON.stringify({ type: "hangup", reason: "gemini_budget_reached" }));
   expect(phone.send).toHaveBeenCalledTimes(1);
+  expect(db.sql.prepare("SELECT call_id FROM usage_allocations WHERE call_id IN ('web-budget','phone-budget')").all()).toEqual([]);
   expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(429);
   expect(connect).not.toHaveBeenCalled();
   expect((await request("/v1/admin/gemini-budget")).status).toBe(401);
   expect(await (await request("/v1/admin/gemini-budget", env.ADMIN_BEARER_SECRET)).json()).toMatchObject({
     daily_budget_usd: 0.01, active_jobs: 0, alert_state: "pending",
   });
+});
+
+it("routes a caller out of minutes to the quota menu even when Gemini is unavailable", async () => {
+  env.GEMINI_BUDGET = { getByName: vi.fn() } as unknown as DurableObjectNamespace;
+  await b.save("policies", { enabled: true, blocked_extension: "/99/3" }, "student");
+  const socket = { send: vi.fn(), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, settings(env), crypto.randomUUID());
+  await tutor.run(JSON.stringify({
+    type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "phone-no-minutes", caller: "0500000002",
+  }), "student", false);
+  expect(socket.send).toHaveBeenCalledWith(transferCommand("/99/3"));
+  expect(env.GEMINI_BUDGET.getByName).not.toHaveBeenCalled();
 });
 
 describe("approved pricing catalog", () => {
