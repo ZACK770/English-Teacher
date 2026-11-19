@@ -46,8 +46,8 @@ describe("public legal page SPA routing", () => {
     const response = await worker.fetch(new Request(`https://example.com${path}?source=test`), { ASSETS: { fetch } } as unknown as Env);
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(`https://speakcall.app${canonicalPath}`);
-    expect(html.match(/<meta property="og:url" content="([^"]+)"/)?.[1]).toBe(`https://speakcall.app${canonicalPath}`);
+    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(`https://speakool.net${canonicalPath}`);
+    expect(html.match(/<meta property="og:url" content="([^"]+)"/)?.[1]).toBe(`https://speakool.net${canonicalPath}`);
     if (path.startsWith("/english/")) expect(html).toContain('"/english/assets/app.js"');
   });
 });

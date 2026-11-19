@@ -965,7 +965,7 @@ describe("real learner portal", () => {
     await progress.createBot({ id: "phone-only", label: "Phone", role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: true, web_enabled: false, enabled: true }, controlsFromSettings(false));
     expect((await request("/v1/portal/voice-ticket", tokenA, { bot_id: "phone-only" })).status).toBe(404);
   });
-  it.each(["speakcall.app", "www.speakcall.app"])("serves the SpeakCall landing page on %s", async (host) => {
+  it.each(["speakool.net", "www.speakool.net"])("serves the SpeakCall landing page on %s", async (host) => {
     const index = readFileSync(new FileURL("../../index.html", import.meta.url), "utf8");
     env.ASSETS = { fetch: async (r: Request) => new URL(r.url).pathname === "/index.html"
       ? new Response(index, { headers: { "Content-Type": "text/html" } })
@@ -974,9 +974,9 @@ describe("real learner portal", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("<title>SpeakCall — פשוט לדבר.</title>");
-    expect(html).toContain('<link rel="canonical" href="https://speakcall.app/" />');
+    expect(html).toContain('<link rel="canonical" href="https://speakool.net/" />');
     expect(html).toContain('<meta property="og:title" content="SpeakCall — פשוט לדבר." />');
-    expect(html).toContain('<meta property="og:url" content="https://speakcall.app/" />');
+    expect(html).toContain('<meta property="og:url" content="https://speakool.net/" />');
   });
   it("loads the learner bundle under the existing impact.net /english path", async () => {
     env.ASSETS = { fetch: async (r: Request) => new URL(r.url).pathname === "/index.html"

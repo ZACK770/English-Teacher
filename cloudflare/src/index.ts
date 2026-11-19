@@ -113,8 +113,8 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
       if (indexResp.ok) {
         let html = await indexResp.text();
         if (legalPage) {
-          html = html.replace('<link rel="canonical" href="https://speakcall.app/"', `<link rel="canonical" href="https://speakcall.app/${legalPage}"`)
-            .replace('<meta property="og:url" content="https://speakcall.app/"', `<meta property="og:url" content="https://speakcall.app/${legalPage}"`);
+          html = html.replace('<link rel="canonical" href="https://speakool.net/"', `<link rel="canonical" href="https://speakool.net/${legalPage}"`)
+            .replace('<meta property="og:url" content="https://speakool.net/"', `<meta property="og:url" content="https://speakool.net/${legalPage}"`);
         }
         if (legalBasePath(rawPath)) html = html.replaceAll('"/assets/', '"/english/assets/');
         return new Response(html, {
@@ -136,9 +136,12 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if ((url.hostname === "speakool.net" || url.hostname === "www.speakool.net") && (request.method === "GET" || request.method === "HEAD")) {
+    const sitePath = url.pathname.replace(/^\/english(\/|$)/, "/");
+    const isPageRequest = (request.method === "GET" || request.method === "HEAD") && !request.headers.get("Upgrade")
+      && !/^\/(v1|api)(\/|$)/.test(sitePath) && !["/healthz", "/status", "/readyz"].includes(sitePath);
+    if ((url.hostname === "speakcall.app" || url.hostname === "www.speakcall.app") && isPageRequest) {
       url.protocol = "https:";
-      url.host = "speakcall.app";
+      url.host = "speakool.net";
       return Response.redirect(url.toString(), 301);
     }
     const path = url.pathname.replace(/^\/english(\/|$)/, "/");
