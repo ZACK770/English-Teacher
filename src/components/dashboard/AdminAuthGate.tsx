@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { SpeakCallLogo } from '../brand/SpeakCallLogo';
+import { legalBasePath } from '../../legalRoutes';
 
 type Identity = { username: string; role: 'owner' | 'staff' };
 type AdminUser = Identity & { id: string; display_name: string; disabled: number };
@@ -77,7 +78,7 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
     e.preventDefault(); setLoading(true); setError('');
     try { setIdentity(await adminApi('auth/login', 'POST', { username, password })); setPassword(''); } catch (err) { setError((err as Error).message); } finally { setLoading(false); }
   }}>
-    <a href="/" aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
+    <a href={`${legalBasePath(window.location.pathname)}/`} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
     <h1 className="text-2xl">כניסה למרכז הניהול</h1>
     <label className="block">שם משתמש<input className="block w-full bg-slate-800 p-3" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label>
     <label className="block">סיסמה<input className="block w-full bg-slate-800 p-3" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>

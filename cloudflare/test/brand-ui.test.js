@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 import { SpeakCallLogo } from "../../src/components/brand/SpeakCallLogo";
 
 describe("SpeakCall Pulse branding", () => {
+  it.each(["join/JoinLanding.tsx", "dashboard/AdminAuthGate.tsx"])("keeps %s logo home links within the deployment base", file => {
+    const source = readFileSync(new URL(`../../src/components/${file}`, import.meta.url), "utf8");
+    expect(source).toContain('href={`${legalBasePath(window.location.pathname)}/`}');
+  });
+
   it.each([
     [{}, "logo-en-reverse.svg"],
     [{ reverse: false }, "logo-en.svg"],
