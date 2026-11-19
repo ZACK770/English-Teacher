@@ -758,6 +758,7 @@ describe("real learner portal", () => {
     expect((await request("/v1/portal/learning/history?kind=unknown&id=a")).status).toBe(422);
   });
   it("applies a changed intake level even when the learner and active teacher already have an explicit level", async () => {
+    db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('pro','learner-a','school-pace','school','pro',119,0,200,'2999-01-01','2020-01-01')").run();
     const teacher = await (await request("/v1/portal/teachers", tokenA, { ...config, level: "beginner", topic: "business" })).json() as any;
     await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });
     const plan = { goal: "work", level: "fluent", difficulty: "speaking", minutes: 10, topic: "business" };
@@ -844,6 +845,7 @@ describe("real learner portal", () => {
     expect((await request("/v1/portal/not-real")).status).toBe(404);
   });
   it("saves vocabulary and one active teacher and actually applies them to the telephone tutor", async () => {
+    db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('pro','learner-a','school-pace','school','pro',119,0,200,'2999-01-01','2020-01-01')").run();
     const material = await (await request("/v1/portal/materials", tokenA, { name: "עבודה", words: ["appointment", "opportunity", "appointment"] })).json() as any;
     const teacher = await (await request("/v1/portal/teachers", tokenA, { ...config, material_id: material.id })).json() as any;
     const activated = await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });

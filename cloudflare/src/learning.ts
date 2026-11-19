@@ -169,12 +169,14 @@ export class LearningStore {
     return new Map((await this.stats(customerId)).map(r => [r.target_id, r]));
   }
 
-  async recommend(customerId: string, level: LessonPlan["level"], goal: string | undefined, count: number) {
+  async recommend(customerId: string, level: LessonPlan["level"], goal: string | undefined, count: number, allowedDomains?: string[], maxLevel?: LessonPlan["level"]) {
     const stats = await this.statsById(customerId);
     const mastered = (t: LearningTarget) => { const r = stats.get(t.id); return r?.score != null && r.score >= 80 && Number(r.independent_calls) >= 2; };
-    const { primary, rest } = recommendedDomains(level, goal);
+    const recommended = recommendedDomains(level, goal);
+    const primary = recommended.primary.filter(d => !allowedDomains || allowedDomains.includes(d));
+    const rest = recommended.rest.filter(d => !allowedDomains || allowedDomains.includes(d));
     const rank = (l: string) => levelOrder.indexOf(l as LessonPlan["level"]);
-    const levels = levelOrder.slice(rank(level));
+    const levels = levelOrder.slice(rank(level), maxLevel ? rank(maxLevel) + 1 : undefined);
     const pick = (domains: string[], limit: number, taken: LearningTarget[], within = levels) => {
       const out: LearningTarget[] = [];
       for (const l of within) for (const domain of domains) {
@@ -184,7 +186,7 @@ export class LearningStore {
       }
       return out;
     };
-    const goalPicks = level === "beginner" ? pick(goalDomains[goal || ""] || [], Math.floor(count / 3), [], [level]) : [];
+    const goalPicks = level === "beginner" ? pick((goalDomains[goal || ""] || []).filter(d => !allowedDomains || allowedDomains.includes(d)), Math.floor(count / 3), [], [level]) : [];
     const main = pick(primary, count - goalPicks.length, goalPicks);
     main.push(...pick(rest, count - goalPicks.length - main.length, [...goalPicks, ...main]));
     const chosen = [...main, ...goalPicks];
