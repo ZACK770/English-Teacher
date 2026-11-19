@@ -10,7 +10,7 @@ import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
 import { renderNarration, renderVoicePreview } from "./learn";
 import { syncCrm } from "./crm";
-import { dispatchCallbacks, listCallbacks } from "./callbacks";
+import { dispatchCallbacks, listCallbacks, testCallbackDial } from "./callbacks";
 
 const ROLES = ["teacher", "translator", "sales", "service", "custom"] as const;
 const channel = z.string().max(200).nullable().optional().transform((v) => (v ?? "").trim() || null);
@@ -139,6 +139,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   if (path === "/v1/admin/crm/sync" && method === "POST") return ok(await syncCrm(env));
   if (path === "/v1/admin/callbacks" && method === "GET") return ok(await listCallbacks(env));
   if (path === "/v1/admin/callbacks/dispatch" && method === "POST") return ok(await dispatchCallbacks(env));
+  if (path === "/v1/admin/callbacks/dial-test" && method === "POST") return ok(await testCallbackDial(request, env));
 
   if (path === "/v1/admin/profiles" && method === "GET") return ok({ profiles: await progress.listBots() });
 

@@ -111,6 +111,54 @@ export function normalizePhone(raw: string): string | null {
   return /^0(5[0-9]|7[0-9])[0-9]{7}$/.test(digits) ? digits : null;
 }
 
+export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: string, now: Date, demo = false) {
+  const retryAt = new Date(now.getTime() + 30 * 60000);
+  const localNow = localDate(now);
+  const localRetry = localDate(retryAt);
+  const sameStretch = localNow.toISOString().slice(0, 10) === localRetry.toISOString().slice(0, 10)
+    && nextCallingSlot(now).getTime() === now.getTime()
+    && nextCallingSlot(retryAt).getTime() === retryAt.getTime();
+  return {
+    action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY, phones: [phone],
+    title: "SpeakCall callback", messagesType: "extensionActivation",
+    extensionActivation: env.TLIVR_CALLBACK_EXTENSION_ID ?? "11937",
+    dialRetries: sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "yes",
+    externalID: requestId, ...(demo ? { demo: "yes" } : {}),
+  };
+}
+
+export async function dialTechnolineCallback(env: Env, phone: string, requestId: string, demo = false) {
+  if (!env.TLIVR_SYSTEM_API_KEY) throw new HttpError(503, "Technoline dialer not configured");
+  const response = await fetch("https://api.tlivr.com/campaignApi.php", {
+    method: "POST",
+    headers: { "User-Agent": "speakcall-callbacks/1.0", "Content-Type": "application/json", Accept: "application/json" },
+    signal: AbortSignal.timeout(15000),
+    body: JSON.stringify(buildTechnolineCallbackBody(env, phone, requestId, new Date(), demo)),
+  });
+  const data: unknown = await response.json().catch(() => null);
+  const result = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  return {
+    ok: response.ok && String(result.status).toUpperCase() === "OK" && String(result.errorCode) === "0",
+    errorCode: typeof result.errorCode === "string" || typeof result.errorCode === "number" ? result.errorCode : null,
+    campaignId: result.campaignId == null ? null : String(result.campaignId),
+    billing: result.billing ?? null,
+    httpStatus: response.status,
+  };
+}
+
+export async function testCallbackDial(request: Request, env: Env) {
+  const parsed = z.object({ phone: z.string().max(20) }).safeParse(await request.json().catch(() => null));
+  const phone = parsed.success ? normalizePhone(parsed.data.phone) : null;
+  if (!phone) throw new HttpError(422, "Invalid phone");
+  try {
+    const { ok, errorCode, campaignId, billing } = await dialTechnolineCallback(env, phone, "dial-test-" + randomHex(16), true);
+    return { ok, errorCode, campaignId, billing };
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(502, "Technoline unreachable");
+  }
+}
+
 export async function submitCallback(request: Request, env: Env): Promise<Response> {
   if (Number(request.headers.get("Content-Length") ?? 0) > 4096) throw new HttpError(413, "Request too large");
   const parsed = RequestSchema.safeParse(await request.json().catch(() => null));
@@ -146,11 +194,13 @@ export async function listCallbacks(env: Env): Promise<Record<string, unknown>> 
   const { results } = await env.DB.prepare(
     "SELECT id,phone,name,for_whom,goal,timing,preferred_time,source,status,attempts,last_error,created_at,updated_at,next_attempt_at FROM callback_requests ORDER BY created_at DESC LIMIT 200",
   ).all();
-  return { items: results, dialer_configured: !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET };
+  return { items: results, dialer_configured: !!(env.CALLBACK_RELAY_URL && env.CALLBACK_RELAY_SECRET) || !!env.TLIVR_SYSTEM_API_KEY };
 }
 
 export async function dispatchCallbacks(env: Env): Promise<Record<string, unknown>> {
-  if (!env.CALLBACK_RELAY_URL || !env.CALLBACK_RELAY_SECRET) return { skipped: "dialer not configured" };
+  const useRelay = !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET;
+  if (!useRelay && !env.TLIVR_SYSTEM_API_KEY) return { skipped: "dialer not configured" };
+  const provider = useRelay ? "relay" : "technoline";
   const now = new Date();
   await env.DB.prepare("UPDATE callback_requests SET status='queued',next_attempt_at=?,updated_at=? WHERE status='dialing' AND updated_at<?")
     .bind(now.toISOString(), now.toISOString(), new Date(now.getTime() - 15 * 60000).toISOString()).run();
@@ -164,21 +214,33 @@ export async function dispatchCallbacks(env: Env): Promise<Record<string, unknow
       .bind(nowIso(), item.id, now.toISOString(), item.attempts).run();
     if (claimed.meta.changes !== 1) continue;
     try {
-      const response = await fetch(env.CALLBACK_RELAY_URL, {
-        method: "POST",
-        headers: { Authorization: "Bearer " + env.CALLBACK_RELAY_SECRET, "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: item.id, phone: item.phone }),
-      });
-      const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-      const ok = response.ok && result.ok === true;
+      let ok: boolean;
+      let providerRef: string | null;
+      let lastError: string;
+      if (useRelay) {
+        const response = await fetch(env.CALLBACK_RELAY_URL!, {
+          method: "POST",
+          headers: { Authorization: "Bearer " + env.CALLBACK_RELAY_SECRET, "Content-Type": "application/json" },
+          body: JSON.stringify({ request_id: item.id, phone: item.phone }),
+        });
+        const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        ok = response.ok && result.ok === true;
+        providerRef = ok ? String(result.campaign_id ?? "") : null;
+        lastError = "relay " + response.status;
+      } else {
+        const result = await dialTechnolineCallback(env, item.phone, item.id);
+        ok = result.ok;
+        providerRef = ok ? String(result.campaignId ?? "") : null;
+        lastError = "technoline " + (result.errorCode || result.httpStatus);
+      }
       const failure = callbackFailure(item.attempts + 1, new Date());
       await env.DB.prepare("UPDATE callback_requests SET status=?,provider_ref=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
-        .bind(ok ? "dialed" : failure.status, ok ? String(result.campaign_id ?? "") : null, ok ? null : "relay " + response.status, nowIso(), ok ? null : failure.nextAttemptAt, item.id).run();
+        .bind(ok ? "dialed" : failure.status, providerRef, ok ? null : lastError, nowIso(), ok ? null : failure.nextAttemptAt, item.id).run();
       if (ok) sent++;
     } catch {
       const failure = callbackFailure(item.attempts + 1, new Date());
-      await env.DB.prepare("UPDATE callback_requests SET status=?,last_error='relay unreachable',updated_at=?,next_attempt_at=? WHERE id=?")
-        .bind(failure.status, nowIso(), failure.nextAttemptAt, item.id).run();
+      await env.DB.prepare("UPDATE callback_requests SET status=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
+        .bind(failure.status, provider + " unreachable", nowIso(), failure.nextAttemptAt, item.id).run();
     }
   }
   return { sent, queued: results.length };

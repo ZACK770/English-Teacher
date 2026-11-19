@@ -1,10 +1,79 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { callbackFailure, dispatchCallbacks, nextCallingSlot, parsePreferredTime, submitCallback } from "../src/callbacks";
+import { buildTechnolineCallbackBody, callbackFailure, dialTechnolineCallback, dispatchCallbacks, listCallbacks, nextCallingSlot, parsePreferredTime, submitCallback, testCallbackDial } from "../src/callbacks";
 import type { Env } from "../src/env";
+import worker from "../src/index";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("Technoline callback dialer", () => {
+  const env = { TLIVR_SYSTEM_API_KEY: "test-key" } as Env;
+  it.each([
+    ["2026-01-04T10:00:00Z", 2],
+    ["2026-01-04T19:29:00Z", 2],
+    ["2026-01-04T19:30:00Z", 0],
+    ["2026-01-09T11:29:00Z", 2],
+    ["2026-01-09T11:30:00Z", 0],
+    ["2026-01-04T05:45:00Z", 0],
+    ["2026-03-27T10:30:00Z", 0],
+    ["2026-01-10T10:00:00Z", 0],
+  ])("limits retries at %s", (now, expected) => {
+    expect(buildTechnolineCallbackBody(env, "0501234567", "req-1", new Date(now)).dialRetries).toBe(expected);
+  });
+  it("builds the default campaign without demo and supports an extension override", () => {
+    const now = new Date("2026-01-04T10:00:00Z");
+    expect(buildTechnolineCallbackBody(env, "0501234567", "req-1", now)).toEqual({
+      action: "campaignRun", apiKey: "test-key", phones: ["0501234567"], title: "SpeakCall callback",
+      messagesType: "extensionActivation", extensionActivation: "11937", dialRetries: 2,
+      betweenRetries: 15, reasonableHours: "yes", externalID: "req-1",
+    });
+    expect(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: "123" }, "0501234567", "req-1", now, true))
+      .toMatchObject({ demo: "yes", extensionActivation: "123" });
+  });
+  it.each([
+    [200, { status: "OK", errorCode: 0, campaignId: "demo", billing: 0 }, true],
+    [200, { status: "ok", errorCode: "0", campaignId: 123 }, true],
+    [403, { status: "OK", errorCode: 0 }, false],
+    [200, { status: "ERROR", errorCode: 5 }, false],
+    [200, { status: "OK" }, false],
+    [200, null, false],
+  ])("parses status %s and %j", async (status, body, expected) => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json(body, { status }));
+    vi.stubGlobal("fetch", fetcher);
+    const result = await dialTechnolineCallback(env, "0501234567", "req-1");
+    expect(result.ok).toBe(expected);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe("https://api.tlivr.com/campaignApi.php");
+    expect(init).toMatchObject({ method: "POST", headers: { "User-Agent": "speakcall-callbacks/1.0", "Content-Type": "application/json", Accept: "application/json" } });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+  it("returns only demo result fields and never the provider's credential", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "OK", errorCode: 0, campaignId: "demo", billing: 0, apiKey: "test-key" }));
+    vi.stubGlobal("fetch", fetcher);
+    const result = await testCallbackDial(new Request("https://example.test", { method: "POST", body: JSON.stringify({ phone: "+972501234567" }) }), env);
+    expect(result).toEqual({ ok: true, errorCode: 0, campaignId: "demo", billing: 0 });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ demo: "yes", phones: ["0501234567"] });
+  });
+  it("rejects malformed phones without fetching", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(testCallbackDial(new Request("https://example.test", { method: "POST", body: '{"phone":"bad"}' }), env)).rejects.toMatchObject({ status: 422 });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("sanitizes transport errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("sensitive provider details")));
+    await expect(testCallbackDial(new Request("https://example.test", { method: "POST", body: '{"phone":"0501234567"}' }), env)).rejects.toMatchObject({ status: 502, detail: "Technoline unreachable" });
+  });
+  it("requires admin bearer authentication for dial-test", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/admin/callbacks/dial-test", { method: "POST", body: '{"phone":"0501234567"}' }), { ...env, ADMIN_BEARER_SECRET: "admin-test" } as Env);
+    expect(response.status).toBe(401);
+  });
+  it("reports a built-in dialer as configured", async () => {
+    const DB = { prepare: () => ({ all: async () => ({ results: [] }) }) };
+    expect(await listCallbacks({ ...env, DB } as unknown as Env)).toEqual({ items: [], dialer_configured: true });
+  });
 });
 
 describe("Israeli calling hours", () => {
