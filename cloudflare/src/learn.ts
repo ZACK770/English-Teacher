@@ -12,7 +12,7 @@ import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
 import { LearningStore } from "./learning";
 
-interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; startedAt: number | null }
+interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; elapsedSeconds: number }
 
 async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>, intake?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
   const meter = new SessionMeter();
@@ -21,6 +21,7 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
   const t0 = Date.now();
   let size = 0;
   let startedAt: number | null = null;
+  let elapsedSeconds = 0;
   const ai = new GeminiLive(s.geminiLiveUrl, s.geminiKey, setup);
   let budgetError: GeminiBudgetError | undefined;
   const release = await acquireGeminiBudget(env, () => meter.usage(s).estimated_cost_usd, reason => {
@@ -68,10 +69,11 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
     throw budgetError ?? error;
   } finally {
     clearTimeout(timer!);
+    if (startedAt !== null) elapsedSeconds = (Date.now() - startedAt) / 1000;
     ai.close();
     await release();
   }
-  return { audio: concat(parts), text: output.join(" "), meter, startedAt };
+  return { audio: concat(parts), text: output.join(" "), meter, elapsedSeconds };
 }
 
 function defaults(s: Settings, id: string): TutorControls {
@@ -119,8 +121,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");
   } finally {
-    const elapsed = result?.startedAt ? (Date.now() - result.startedAt) / 1000 : 0;
-    await b.settleCall(callId, elapsed);
+    await b.settleCall(callId, result?.elapsedSeconds ?? 0);
     if (!limited) {
       const meter = result?.meter ?? new SessionMeter();
       meter.learnerTurns = 1;
