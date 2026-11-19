@@ -57,7 +57,7 @@ export function SpeakoolLanding() {
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
-      <nav aria-label="ניווט ראשי"><a href="#free-lesson">שיעור ראשון</a><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
+      <nav aria-label="ניווט ראשי"><a href="#free-lesson">שיעור ראשון</a><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-blog" href={base + "/blog"}>מאמרים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
     </header>
     <main>
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
@@ -172,7 +172,7 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><a className="sk-primary" href="#free-lesson">לשיעור ראשון בחינם <ArrowLeft aria-hidden="true" size={18} /></a></section>
     </main>
-    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
+    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href={base + "/blog"}>מאמרים</a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
     <LegalFooter />
   </div>;
 }

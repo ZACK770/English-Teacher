@@ -186,6 +186,7 @@
   .sk-land .sk-land-head { top: 8px; min-height: 50px; padding-inline: 13px; }
   .sk-land #lesson-phone { scroll-margin-top: 104px; }
   .sk-land-head nav a:not(.sk-land-login) { display: none; }
+  .sk-land-head nav a.sk-land-blog { display: inline; }
   .sk-land-hero { padding-block: 26px; gap: 21px; }
   .sk-land-hero h1 { margin-block: 12px; }
   .sk-land-callback { margin-top: 15px; }
