@@ -227,7 +227,7 @@ export async function dialTechnolineCallback(env: Env, phone: string, requestId:
 
 export function canCallWithLessonSummary(env: Env, phone: string, now = new Date()) {
   const recipient = normalizePhone(phone);
-  return !!env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON && !!env.TLIVR_SYSTEM_API_KEY && env.TLIVR_SYSTEM_PHONE?.trim() === SPEAKCALL_PHONE
+  return !!env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON && !!env.TLIVR_SYSTEM_API_KEY && !!env.TLIVR_SYSTEM_PHONE?.split(",").some(number => number.trim() === SPEAKCALL_PHONE)
     && !!recipient && recipient !== SPEAKCALL_PHONE && nextCallingSlot(now).getTime() === now.getTime();
 }
 
@@ -256,13 +256,13 @@ export async function callWithLessonSummary(env: Env, phone: string, callId: str
     for (const [key, value] of Object.entries({
       action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY!,
       title: "SpeakCall lesson summary", messagesType: "audioFile", callId: SPEAKCALL_PHONE,
-      dialRetries: "0", externalID: id,
+      dialRetries: "0", betweenRetries: "20", reasonableHours: "yes", externalID: id,
     })) body.set(key, value);
     body.set("phones", recipient);
     body.set("audioFile", new Blob([new Uint8Array(wav(pcm, 8000))], { type: "audio/wav" }), "summary.wav");
     const response = await fetch("https://api.tlivr.com/campaignApi.php", {
       method: "POST",
-      headers: { Accept: "application/json" },
+      headers: { "User-Agent": "speakcall-callbacks/1.0", Accept: "application/json" },
       signal: AbortSignal.timeout(10000),
       body,
     });

@@ -1316,7 +1316,7 @@ describe("real learner portal", () => {
     const at = new Date("2026-01-04T10:00:00Z");
     vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(at);
     Object.assign(env, {
-      TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "pbx-key", TLIVR_SYSTEM_PHONE: "0765673575",
+      TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "pbx-key", TLIVR_SYSTEM_PHONE: "0765673575, 0765674434",
       TLIVR_ROUTER_CHANNEL: "router-channel", TLIVR_SYSTEM_API_KEY: "mock-key", GOOGLE_TTS_SERVICE_ACCOUNT_JSON: "mock-tts",
     });
     const s = settings(env);
@@ -1343,6 +1343,7 @@ describe("real learner portal", () => {
       expect(form.get("callId")).toBe("0765673575");
       expect(form.get("phones")).toBe("0500000001");
       expect(form.get("dialRetries")).toBe("0");
+      expect(form.get("betweenRetries")).toBe("20");
       expect((form.get("audioFile") as File).type).toBe("audio/wav");
       return Response.json({ status: "OK", errorCode: 0 });
     });
