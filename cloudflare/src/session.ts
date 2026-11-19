@@ -4,7 +4,7 @@ import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_F
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
-import { type Env, type Settings, bearer, extensionPath, randomHex, secureEqual, withinBase } from "./env";
+import { type Env, type Settings, bearer, extensionPath, HttpError, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
 import { acquireGeminiBudget, GeminiBudgetError } from "./gemini-budget";
 import { SessionMeter } from "./meter";
@@ -467,7 +467,10 @@ export class TutorSession {
       await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) this.controls = { ...this.controls, intake_pending: false };
       if (saved) {
-        const effective = this.controls ? await applyLearnerControls(this.b, this.customerId, { id: this.profileId || "", role: "teacher" }, this.controls, previewTeacher) : null;
+        const effective = this.controls ? await applyLearnerControls(this.b, this.customerId, { id: this.profileId || "", role: "teacher" }, this.controls, previewTeacher).catch(error => {
+          if (previewTeacher && error instanceof HttpError && error.status === 404) return this.controls;
+          throw error;
+        }) : null;
         this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(effective?.lesson?.topic)}, level=${JSON.stringify(effective?.lesson?.level)}; these override the requested direction when access is limited. The full saved plan applies from the next call. Start or continue the lesson now.`);
       }
       return saved;

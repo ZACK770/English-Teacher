@@ -3,7 +3,7 @@ import { FREE_DOMAINS, resolveFreeSelection } from "./pro-access";
 import { BusinessStore } from "./business";
 import type { TutorControls } from "./controls";
 import { VOICE_OPTIONS } from "./controls";
-import { bearer, type Env, HttpError, randomHex, type Settings } from "./env";
+import { bearer, type Env, HttpError, nowIso, randomHex, type Settings } from "./env";
 import { ProgressStore, type Bot } from "./progress";
 import { SCHOOL_SESSION_FILTER } from "./school-history";
 import { grammarCatalog, grammarIds, learningChoices, LearningStore, materialTargets, RECOMMENDED_TOPIC, recommendedDomains, vocabularyCatalog, vocabularyDomains, type LessonPlan } from "./learning";
@@ -108,7 +108,6 @@ export function resolveLessonChoices(p: Record<string, any>, botId: string, teac
 async function lessonTeacher(b: BusinessStore, customerId: string, botId: string | null, p: Record<string, any>, previewTeacher?: string) {
   const raw = await b.record(teachersKind(customerId), previewTeacher ?? p.active_teacher ?? "");
   const parsed = TeacherSchema.safeParse(raw);
-  if (previewTeacher && !parsed.success) throw new HttpError(404, "המורה לא נמצא.");
   return parsed.success && parsed.data.base_bot === botId ? parsed.data : null;
 }
 
@@ -119,6 +118,7 @@ export async function applyLearnerControls(
   const privacy = { store_transcripts: p.store_transcripts === true };
   if (bot.role !== "teacher") return { ...controls, ...privacy };
   const teacher = await lessonTeacher(b, customerId, bot.id, p, previewTeacher);
+  if (previewTeacher && !teacher) throw new HttpError(404, "המורה לא נמצא.");
   const customer = await b.record("customers", customerId);
   const customerName = String(customer?.name || "").trim();
   const learnerName = String(p.learner_name || (customerName === PHONE_SIGNUP_NAME ? "" : customerName)).trim().slice(0, 40);
@@ -300,10 +300,13 @@ export async function syncActiveTeacher(b: BusinessStore, customerId: string, in
 }
 
 async function syncTeacherDirection(b: BusinessStore, customerId: string, teacherId: string, input: Record<string, any>) {
-  const teacher = await b.record(teachersKind(customerId), teacherId);
-  if (!teacher) return;
+  const kind = teachersKind(customerId);
+  const teacher = await b.record(kind, teacherId);
+  if (!teacher) return false;
   for (const key of DIRECTION_KEYS) if (input[key] !== undefined) teacher[key] = input[key];
-  await b.save(teachersKind(customerId), TeacherSchema.parse(teacher), teacherId);
+  const updated = await b.db.prepare("UPDATE console_records SET body=?, updated_at=? WHERE kind=? AND id=? RETURNING id")
+    .bind(JSON.stringify(TeacherSchema.parse(teacher)), nowIso(), kind, teacherId).first();
+  return !!updated;
 }
 
 const IntakeSchema = PlanSchema.extend({
@@ -343,6 +346,7 @@ export async function saveIntake(
   const given = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const prior = await b.loadContext("preferences:" + customerId);
   const teacher = await lessonTeacher(b, customerId, lessonBotId, prior, previewTeacher);
+  if (previewTeacher && !teacher) return false;
   const kept = (key: "level" | "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
   let level = given.level;
   if (level === undefined) {
@@ -355,8 +359,9 @@ export async function saveIntake(
   const { learner_name, personality: requestedStyle, teacher_gender, pace, conversation_mode, ...plan } = parsed.data;
   const direction = { ...(given.level !== undefined ? { level: plan.level } : {}), ...(given.topic ? { topic: plan.topic } : {}), ...(pace ? { pace } : {}), ...(conversation_mode ? { conversation_mode } : {}) };
   const style = requestedStyle ? { personality: requestedStyle } : {};
-  if (previewTeacher && teacher) await syncTeacherDirection(b, customerId, previewTeacher, { ...direction, ...style });
-  else if (!previewTeacher) await syncActiveTeacher(b, customerId, { ...direction, ...style });
+  if (previewTeacher) {
+    if (!await syncTeacherDirection(b, customerId, previewTeacher, { ...direction, ...style })) return false;
+  } else await syncActiveTeacher(b, customerId, { ...direction, ...style });
   await b.savePreference(customerId, { plan, ...direction, ...style, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
   if (!phoneBotId || (await b.list(teachersKind(customerId))).length) return true;
   const fluent = plan.level === "fluent";
