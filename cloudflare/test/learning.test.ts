@@ -121,15 +121,27 @@ describe("Pro access and free fallback", () => {
     expect(effective.vocabulary).toHaveLength(1);
     expect(effective.vocabulary[0]).toMatchObject({ text: "invoice", domain: "material:work", level: "custom" });
   });
-  it("requires current, unspent, school receipts and exposes the same access flag", async () => {
+  it("requires current school receipts and exposes the same access flag regardless of balance", async () => {
     expect(await b.hasPaidAccess("alice")).toBe(false);
     expect(await b.accessSummary("alice", [])).toMatchObject({ paid: false });
     grant();
     expect(await b.accessSummary("alice", [])).toMatchObject({ paid: true });
-    for (const assignment of ["expires_at='2020-01-01'", "valid_from='2999-01-01'", "minutes=0", "product='translator'"]) {
+    db.sql.exec("UPDATE sales_receipts SET minutes=0");
+    expect(await b.hasPaidAccess("alice")).toBe(true);
+    for (const assignment of ["expires_at='2020-01-01'", "valid_from='2999-01-01'", "product='translator'"]) {
       db.sql.exec("UPDATE sales_receipts SET expires_at='2999-01-01',valid_from=NULL,minutes=200,product='school'");
       db.sql.exec("UPDATE sales_receipts SET " + assignment);
       expect(await b.hasPaidAccess("alice")).toBe(false);
+    }
+  });
+  it("keeps a prepaid lesson paid when its entire balance is reserved or billed", async () => {
+    grant();
+    db.sql.exec("INSERT INTO usage_allocations(call_id,customer_id,product,receipt_id,reserved_seconds,created_at) VALUES ('prepaid','alice','school','paid',12000,'2020-01-01')");
+    for (const billed of [false, true]) {
+      if (billed) db.sql.exec("UPDATE usage_allocations SET billed_seconds=12000");
+      expect(await b.accessSummary("alice", [])).toMatchObject({ paid: true });
+      await saveIntake(b, "alice", null, { goal: "work", topic: "business", level: "fluent" });
+      expect(await lesson()).toMatchObject({ topic: "business", level: "fluent" });
     }
   });
   it("allows an active school subscription even when its receipt is exhausted, but not expired, trial or paused", async () => {
@@ -142,6 +154,10 @@ describe("Pro access and free fallback", () => {
       expect(await b.hasPaidAccess("alice")).toBe(false);
     }
     db.sql.exec("UPDATE subscriptions SET status='active',current_period_end='2020-01-01'");
+    expect(await b.hasPaidAccess("alice")).toBe(false);
+    grant();
+    db.sql.exec("UPDATE sales_receipts SET subscription_id='sub'");
+    db.sql.exec("UPDATE subscriptions SET status='paused',current_period_end='2999-01-01'");
     expect(await b.hasPaidAccess("alice")).toBe(false);
   });
   it("propagates access lookup failures rather than granting Pro", async () => {
