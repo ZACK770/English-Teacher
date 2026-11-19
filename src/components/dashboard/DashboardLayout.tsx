@@ -22,7 +22,6 @@ import { OverviewView } from './OverviewView';
 import { CampaignsView } from './CampaignsView';
 import { EconomicsExcelView } from './EconomicsExcelView';
 import { BotsView } from './BotsView';
-import { CustomersView } from './CustomersView';
 import { CoursesView } from './CoursesView';
 import { PackagesView } from './PackagesView';
 import { NarrationsView } from './NarrationsView';
@@ -149,7 +148,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
           {currentTab === 'campaigns' && <CampaignsView />}
           {currentTab === 'economics' && <EconomicsExcelView />}
           {currentTab === 'bots' && <BotsView />}
-          {currentTab === 'customers' && <CustomersView />}
           {currentTab === 'courses' && <CoursesView />}
           {currentTab === 'packages' && <PackagesView />}
           {currentTab === 'narrations' && <NarrationsView />}
