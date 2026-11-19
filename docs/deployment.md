@@ -4,7 +4,7 @@
 
 Worker secrets: `GEMINI_API_KEY` is the default Gemini key. Optionally set
 `GEMINI_PAID_TEACHER_API_KEY` with `wrangler secret put GEMINI_PAID_TEACHER_API_KEY`
-from `cloudflare/` (use `--env sandbox` for the isolated sandbox).
+from `cloudflare/` (use `--env staging` for the isolated sandbox).
 Phone/browser voice and web text turns use it only when their active minutes
 allocation references a receipt with `amount_ils > 0`. Zero-cost grants, free/basic
 quotas, unmetered previews/narration, and advertisement-entry calls use the default
