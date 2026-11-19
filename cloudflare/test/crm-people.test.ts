@@ -56,6 +56,25 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM customer reset", () => {
+  it("keeps every prepared statement within the D1 binding limit", async () => {
+    customer(); session();
+    const prepare = env.DB.prepare.bind(env.DB);
+    const bindings: { query: string; count: number }[] = [];
+    vi.spyOn(env.DB, "prepare").mockImplementation(query => {
+      const statement = prepare(query), bind = statement.bind.bind(statement);
+      vi.spyOn(statement, "bind").mockImplementation((...args) => {
+        bindings.push({ query, count: args.length });
+        expect(args.length, query).toBeLessThanOrEqual(100);
+        return bind(...args);
+      });
+      return statement;
+    });
+    expect((await reset()).status).toBe(200);
+    expect(bindings.length).toBeGreaterThan(40);
+    expect(bindings.find(b => b.query.includes("INSERT INTO console_audit"))?.count).toBe(4);
+    const audit = sql.prepare("SELECT action FROM console_audit").get() as any;
+    expect(JSON.parse(audit.action).counts).toMatchObject({ customers: 1, sessions: 1 });
+  });
   beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse(now) + 11 * 60 * 1000); });
   it.each(["session", "ivr-events", "ad-entries", "menu", "call_customers"].flatMap(source => [1, 9, 11].map(minutes => ({ source, minutes }))))("handles $source activity $minutes minutes ago", async ({ source, minutes }) => {
     customer();
@@ -173,7 +192,11 @@ describe("CRM customer reset", () => {
     insert("ivr_voicemails", { id: "vm", system_phone: "system", file_id: "file", customer_id: "person1", caller_key: "hash", created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
     const deleteAudio = vi.fn(); env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
     sql.exec("CREATE TRIGGER prevent_delete BEFORE DELETE ON customers BEGIN SELECT RAISE(ABORT,'test failure'); END");
-    expect((await reset()).status).toBe(500);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await reset();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ detail: "מחיקת הלקוח נכשלה עקב שגיאת שרת. נסו שוב או פנו לתמיכה." });
+    expect(log).toHaveBeenCalledWith("crm_customer_reset_failed", expect.objectContaining({ message: "test failure" }));
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toMatchObject({ n: 1 });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
     expect(deleteAudio).not.toHaveBeenCalled();

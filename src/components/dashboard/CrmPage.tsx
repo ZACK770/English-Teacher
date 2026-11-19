@@ -20,6 +20,16 @@ async function read<T,>(path: string, signal?: AbortSignal): Promise<T> {
   return response.json();
 }
 function Badge({ person }: { person: Person }) { return <span className={'crm-badge crm-' + person.status}>{person.status_label}</span>; }
+export function resetErrorMessage(body: unknown) {
+  if (body && typeof body === 'object') {
+    const result = body as Record<string, unknown>;
+    for (const value of [result.detail, result.message, result.error]) if (typeof value === 'string' && /[\u0590-\u05ff]/.test(value)) return value;
+  }
+  return 'מחיקת הלקוח נכשלה. נסו שוב או פנו לתמיכה.';
+}
+export function ResetConfirmationHint({ confirm, expected }: { confirm: string; expected: string }) {
+  return confirm !== expected ? <p id="crm-reset-hint" role="status">האישור אינו תואם. יש להקליד את הטלפון או המזהה בדיוק כפי שמוצג למעלה.</p> : null;
+}
 export function DeleteCustomer({ person }: { person: Pick<Person, 'id' | 'phone'> }) {
   const identity = useAdminIdentity();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -30,13 +40,13 @@ export function DeleteCustomer({ person }: { person: Pick<Person, 'id' | 'phone'
     try {
       const response = await fetch(prefix + '/v1/admin/crm/people/' + encodeURIComponent(person.id), { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm }) });
       const result = await response.json().catch(() => null);
-      if (!response.ok) { setError(typeof result?.detail === 'string' ? result.detail : 'מחיקת הלקוח נכשלה. נסו שוב.'); return; }
+      if (!response.ok) { setError(resetErrorMessage(result)); return; }
       location.href = base + '?reset=success';
     } catch { setError('מחיקת הלקוח נכשלה. בדקו את החיבור ונסו שוב.'); }
     finally { setBusy(false); }
   }
   if (identity?.role !== 'owner') return null;
-  return <><button className="crm-button crm-danger" onClick={() => { setConfirm(''); setError(''); dialog.current?.showModal(); }}>מחיקת לקוח</button><dialog className="crm-reset-dialog" ref={dialog} aria-labelledby="crm-reset-title" onCancel={e => { if (busy) e.preventDefault(); }}><form onSubmit={e => void remove(e)}><h2 id="crm-reset-title">איפוס למתקשר חדש</h2><p>פעולה זו מוחקת לצמיתות את כל היסטוריית הלקוח, ההעדפות והשיחות, כדי שהטלפון יתחיל כמתקשר חדש. לא ניתן לבטל את המחיקה.</p><p>המחיקה אינה מבטלת חיובים אצל ספק התשלום. הוראת קבע או חיוב מתחדש פעיל יש לבטל אצל הספק לפני המחיקה.</p><label htmlFor="crm-reset-confirm">לאישור, הקלידו את {person.phone ? 'מספר הטלפון' : 'מזהה הלקוח'}: <b dir="ltr">{expected}</b></label><input id="crm-reset-confirm" dir="ltr" autoComplete="off" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy} autoFocus />{error && <p role="alert">{error}</p>}<div className="crm-between"><button className="crm-button" type="button" disabled={busy} onClick={() => dialog.current?.close()}>ביטול</button><button className="crm-button crm-danger" type="submit" disabled={busy || confirm !== expected}>{busy ? 'מוחקים…' : 'מחיקה לצמיתות'}</button></div></form></dialog></>;
+  return <><button className="crm-button crm-danger" onClick={() => { setConfirm(''); setError(''); dialog.current?.showModal(); }}>מחיקת לקוח</button><dialog className="crm-reset-dialog" ref={dialog} aria-labelledby="crm-reset-title" onCancel={e => { if (busy) e.preventDefault(); }}><form onSubmit={e => void remove(e)}><h2 id="crm-reset-title">איפוס למתקשר חדש</h2><p>פעולה זו מוחקת לצמיתות את כל היסטוריית הלקוח, ההעדפות והשיחות, כדי שהטלפון יתחיל כמתקשר חדש. לא ניתן לבטל את המחיקה.</p><p>המחיקה אינה מבטלת חיובים אצל ספק התשלום. הוראת קבע או חיוב מתחדש פעיל יש לבטל אצל הספק לפני המחיקה.</p><label htmlFor="crm-reset-confirm">לאישור, הקלידו את {person.phone ? 'מספר הטלפון' : 'מזהה הלקוח'}: <b dir="ltr">{expected}</b></label><input id="crm-reset-confirm" dir="ltr" autoComplete="off" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy} autoFocus />{error && <p role="alert">{error}</p>}<div className="crm-between"><button className="crm-button" type="button" disabled={busy} onClick={() => dialog.current?.close()}>ביטול</button><button className="crm-button crm-danger" type="submit" aria-describedby={confirm !== expected ? 'crm-reset-hint' : undefined} disabled={busy || confirm !== expected}>{busy ? 'מוחקים…' : 'מחיקה לצמיתות'}</button></div><ResetConfirmationHint confirm={confirm} expected={expected} /></form></dialog></>;
 }
 function Kpis({ items }: { items: [string, string][] }) { return <div className="crm-kpis">{items.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>; }
 function CallCard({ call }: { call: Call }) {

@@ -5,6 +5,15 @@ type Row = Record<string, any>;
 type Removal = { table: string; where: string; args: unknown[] };
 
 export async function resetCustomer(request: Request, env: Env, person: Row, actor?: { role: string; username: string }) {
+  try { return await performReset(request, env, person, actor); }
+  catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error("crm_customer_reset_failed", error);
+    throw new HttpError(500, "מחיקת הלקוח נכשלה עקב שגיאת שרת. נסו שוב או פנו לתמיכה.");
+  }
+}
+
+async function performReset(request: Request, env: Env, person: Row, actor?: { role: string; username: string }) {
   if (actor?.role !== "owner") throw new HttpError(403, "רק בעל החשבון רשאי למחוק לקוח");
   const body = await request.json().catch(() => null) as { confirm?: unknown } | null;
   if (body?.confirm !== (person.phone || person.id)) throw new HttpError(400, "האישור אינו תואם. יש להקליד את הטלפון או את מזהה הלקוח כפי שמוצג בכרטיס.");
@@ -69,9 +78,11 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   const detach = [
     ["invoices", "subscription_id"], ["sales_receipts", "subscription_id"], ["standing_orders", "entitlement_id"], ["payment_orders", "entitlement_id"],
   ].map(([table, column]) => env.DB.prepare(`UPDATE ${table} SET ${column}=NULL WHERE customer_id<>? AND ${column} ${inSubs}`).bind(id, subs));
+  let argumentIndex = 0;
+  const counts = removals.map(r => `'${r.table}',(SELECT COUNT(*) FROM ${r.table} WHERE ${r.where.replace(/\?/g, () => `json_extract((SELECT body FROM reset_args),'$[${argumentIndex++}]')`)})`).join(",");
   const result = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO console_audit(action,entity_id,created_at) SELECT json_object('action','crm_customer_reset','actor',?,'counts',json_object(${removals.map(r => `'${r.table}',(SELECT COUNT(*) FROM ${r.table} WHERE ${r.where})`).join(",")})),?,?`)
-      .bind(actor.username, ...removals.flatMap(r => r.args), id, new Date().toISOString()),
+    env.DB.prepare(`WITH reset_args AS (SELECT ? AS body) INSERT INTO console_audit(action,entity_id,created_at) SELECT json_object('action','crm_customer_reset','actor',?,'counts',json_object(${counts})),?,?`)
+      .bind(JSON.stringify(removals.flatMap(r => r.args)), actor.username, id, new Date().toISOString()),
     ...detach,
     ...removals.map(r => env.DB.prepare(`DELETE FROM ${r.table} WHERE ${r.where}`).bind(...r.args)),
   ]);
