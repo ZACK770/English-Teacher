@@ -193,6 +193,23 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("lesson callback scheduling", () => {
+  it("reschedules a correction in the same call without adding a second callback", async () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    await recordSalesTool(b, "learner-a", "correction", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" });
+    const original = (await b.list("sales-followups"))[0];
+    expect(await recordSalesTool(b, "learner-a", "correction", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
+    expect(await b.list("sales-followups")).toEqual([expect.objectContaining({ id: original.id, part_of_day: "evening", scheduled_at: "2026-01-05T17:00:00.000Z" })]);
+    expect(db.sql.prepare("SELECT id,next_attempt_at,preferred_time FROM callback_requests").all()).toEqual([{ id: original.callback_id, next_attempt_at: "2026-01-05T17:00:00.000Z", preferred_time: "2026-01-05T17:00:00.000Z" }]);
+  });
+  it.each(["dialing", "dialed", "failed"])("does not change a callback already %s", async status => {
+    await recordSalesTool(b, "learner-a", "closed", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" });
+    db.sql.prepare("UPDATE callback_requests SET status=?").run(status);
+    const original = db.sql.prepare("SELECT * FROM callback_requests").get();
+    const followups = await b.list("sales-followups");
+    expect(await recordSalesTool(b, "learner-a", "closed", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(false);
+    expect(db.sql.prepare("SELECT * FROM callback_requests").get()).toEqual(original);
+    expect(await b.list("sales-followups")).toEqual(followups);
+  });
   it("enqueues once, preserves its link and dispatches only when due", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     const args = { day: "tomorrow", part_of_day: "morning" };
@@ -203,7 +220,7 @@ describe("lesson callback scheduling", () => {
     expect(row).toMatchObject({ id: followups[0].callback_id, timing: "scheduled", source: "lesson_followup", next_attempt_at: "2026-01-05T08:00:00.000Z", attempts: 0, status: "queued" });
     vi.setSystemTime(new Date("2026-01-04T11:00:00Z"));
     await recordSalesTool(b, "learner-a", "followup-call", "schedule_next_lesson", args);
-    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([row]);
+    expect(db.sql.prepare("SELECT id,next_attempt_at FROM callback_requests").all()).toEqual([{ id: row.id, next_attempt_at: row.next_attempt_at }]);
     expect(await b.list("sales-followups")).toHaveLength(1);
     env.TLIVR_SYSTEM_API_KEY = "mock";
     env.TLIVR_CALLBACK_EXTENSION_ID = "456";
@@ -248,14 +265,15 @@ describe("lesson callback scheduling", () => {
     const original = b.db.prepare.bind(b.db);
     const prepare = vi.spyOn(b.db, "prepare");
     prepare.mockImplementation(query => {
-      if (query.startsWith("INSERT OR IGNORE INTO callback_requests")) throw new Error("database unavailable");
+      if (query.startsWith("INSERT INTO callback_requests")) throw new Error("database unavailable");
       return original(query);
     });
     const args = { day: "other", part_of_day: "evening" };
     await expect(recordSalesTool(b, "learner-a", "interrupted", "schedule_next_lesson", args)).rejects.toThrow("database unavailable");
     prepare.mockRestore();
-    const existing = (await b.list("sales-followups"))[0];
+    expect(await b.list("sales-followups")).toEqual([]);
     await recordSalesTool(b, "learner-a", "interrupted", "schedule_next_lesson", args);
+    const existing = (await b.list("sales-followups"))[0];
     expect(db.sql.prepare("SELECT id,next_attempt_at FROM callback_requests").all()).toEqual([{ id: existing.callback_id, next_attempt_at: existing.scheduled_at }]);
   });
   it("defers queued requests of every type overnight, including stale claims and retries", async () => {

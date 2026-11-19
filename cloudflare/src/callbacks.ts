@@ -89,9 +89,10 @@ export async function enqueueLessonCallback(b: BusinessStore, customerId: string
   const customer = await b.record("customers", customerId);
   const phone = normalizePhone(customer?.phone ?? "");
   if (!phone) throw new HttpError(422, "A visible phone is required for a lesson callback");
-  await b.db.prepare(
-    "INSERT OR IGNORE INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,'scheduled',?,?,?,'queued',0,?,?,?)",
+  const result = await b.db.prepare(
+    "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,'scheduled',?,?,?,'queued',0,?,?,?) ON CONFLICT(id) DO UPDATE SET preferred_time=excluded.preferred_time,next_attempt_at=excluded.next_attempt_at,updated_at=excluded.updated_at WHERE callback_requests.status='queued'",
   ).bind(followupId, phone, customer?.name || "", "self", "שיעור המשך", at.toISOString(), "lesson_followup", now, now, now, at.toISOString()).run();
+  return result.meta.changes === 1;
 }
 
 export function parsePreferredTime(text: string, now: Date): Date | null {

@@ -145,10 +145,11 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     if (!parsed.success) return false;
     const id = (await sha256Hex("lesson:" + customerId + ":" + callId)).slice(0, 32);
     const existing = await b.record(SALES_FOLLOWUPS, id);
-    const at = existing?.scheduled_at ? new Date(existing.scheduled_at) : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
+    const unchanged = existing && existing.day === parsed.data.day && existing.part_of_day === parsed.data.part_of_day;
+    const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at) : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
+    if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at)) return false;
     await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at, scheduled_at: at.toISOString(), callback_id: id } });
-    if (!existing) await b.save(SALES_FOLLOWUPS, { ...base, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);
-    await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at);
+    await b.save(SALES_FOLLOWUPS, { ...base, at: existing?.at ?? base.at, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);
     return true;
   }
   if (name === "save_email") {
