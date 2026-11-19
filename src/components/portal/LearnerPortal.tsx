@@ -12,6 +12,8 @@ import { ConversationArt } from "./ConversationArt";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
 import { isFemale, TeacherMark } from "./LineTeacher";
+import { ProAccessProvider, ProChoices, ProNote, SelectionBadge, useProAccess } from "./ProBadge";
+import { isProLevel, isProSelection } from "../../../cloudflare/src/pro-access";
 export { TeacherMark } from "./LineTeacher";
 import "./portal.css";
 import "./logo-breathing.css";
@@ -40,7 +42,7 @@ function Options({ values, value, onChange }: { values: Record<string, string>; 
 }
 const nextWords = (topic?: string) => topic && topic !== "recommended" && topics[topic] ? "בשיחה הבאה: מילים מעולם " + topics[topic] : "בשיחה הבאה: מילים שנבחרות לפי הרמה, המטרה וההתקדמות שלך";
 function TopicPicker({ value, onChange, recommended = ["recommended", "everyday", "travel", "business"] }: { value?: string; onChange: (v: string) => void; recommended?: string[] }) {
-  return <><Options value={value} values={Object.fromEntries(recommended.map(k => [k, topics[k]]))} onChange={onChange} /><details className="sk-more"><summary>יש לי משהו אחר בראש <ChevronDown size={14} /></summary><Options value={value} values={Object.fromEntries(Object.entries(topics).filter(([k]) => !recommended.includes(k)))} onChange={onChange} /></details></>;
+  return <><ProChoices kind="domain" label="תחום לשיחה" value={value} values={Object.fromEntries(recommended.map(k => [k, topics[k]]))} onChange={onChange} /><details className="sk-more"><summary>יש לי משהו אחר בראש <ChevronDown size={14} /></summary><ProChoices kind="domain" label="תחומים נוספים" value={value} values={Object.fromEntries(Object.entries(topics).filter(([k]) => !recommended.includes(k)))} onChange={onChange} /></details></>;
 }
 
 function Login({ onToken, error }: { onToken: (token: string) => void; error: string }) {
@@ -52,6 +54,7 @@ function Login({ onToken, error }: { onToken: (token: string) => void; error: st
 const quickLevels = { beginner: "צעדים ראשונים", intermediate: "מסתדר בשיחה", fluent: "מדבר ורוצה לדייק" };
 
 function QuickDirection({ busy, error, onStart }: { busy: boolean; error: string; onStart: (choices?: { level: string; personality: string }) => void }) {
+  const { selectPro } = useProAccess();
   const [level, setLevel] = useState("");
   const [personality, setPersonality] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
@@ -59,7 +62,7 @@ function QuickDirection({ busy, error, onStart }: { busy: boolean; error: string
   return <main className="sk-quick-direction">
     <h1 ref={heading} tabIndex={-1}>להתאים את המורה</h1>
     <form onSubmit={e => { e.preventDefault(); if (!busy && level && personality) onStart({ level, personality }); }}>
-      <fieldset disabled={busy}><legend>מה רמת האנגלית שלך?</legend>{Object.entries(quickLevels).map(([id, label]) => <label key={id}><input type="radio" name="quick-level" checked={level === id} onChange={() => setLevel(id)} />{label}</label>)}</fieldset>
+      <fieldset disabled={busy}><legend>מה רמת האנגלית שלך?</legend>{Object.entries(quickLevels).map(([id, label]) => <label key={id}><input type="radio" name="quick-level" checked={level === id} onChange={() => { setLevel(id); if (isProLevel(id)) selectPro(); }} />{label}<SelectionBadge level={id} /></label>)}</fieldset>
       <fieldset disabled={busy}><legend>איזה סגנון מתאים לך?</legend>{Object.entries(personalities).map(([id, label]) => <label key={id}><input type="radio" name="quick-style" checked={personality === id} onChange={() => setPersonality(id)} />{label}</label>)}</fieldset>
       <button className="sk-primary" disabled={busy || !level || !personality}>להתחיל לדבר</button>
       <button type="button" className="sk-link" disabled={busy} onClick={() => onStart()}>להתנסות בלי התאמה</button>
@@ -157,7 +160,7 @@ export const LearnerPortal: React.FC = () => {
     <section className="sk-hero">
       <div>
         <h2>השיחה הבאה שלך</h2>
-        <p>{teacherName} כבר על הקו · {p.minutes || p.plan?.minutes || 10} דקות · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}</p>
+        <p>{teacherName} כבר על הקו · {p.minutes || p.plan?.minutes || 10} דקות · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /></p>
         {p.track !== "grammar" && activeMaterial?.target_count === 0 && <p role="status" className="sk-notice">לרשימה ״{activeMaterial.name}״ עוד אין יעדי אנגלית, אז מדברים בלי ציוני מילים. <button className="sk-link" onClick={() => navigate("materials")}>לרשימות</button></p>}
         <div className="sk-actions">{webBotId && <button className="sk-primary" onClick={() => talk()}><Mic size={18} />להתחיל שיחה</button>}<button className={webBotId ? "sk-link" : "sk-primary"} onClick={() => setPhoneOpen(true)}>לדבר בטלפון</button></div>
       </div>
@@ -175,11 +178,11 @@ export const LearnerPortal: React.FC = () => {
       <button className="sk-panel-card" onClick={() => navigate("achievements")}><strong>המילים שלך</strong><p>{activeMaterial ? "בשיחה הבאה: " + activeMaterial.name : nextWords(p.topic || p.plan?.topic)}</p><p>ציון מתעדכן רק כשמילה נבדקה באמת בשיחה.</p></button>
     </div>
   </>;
-  if (needsQuickDirection && !voice) return <div className="speakool" dir="rtl"><div className="sk-shell">
+  if (needsQuickDirection && !voice) return <ProAccessProvider paid={account.access?.paid === true}><div className="speakool" dir="rtl"><div className="sk-shell">
     <header className="sk-header"><a className="sk-brand" href={legalBasePath(location.pathname) + "/"} aria-label="ספיקול"><SpeakCallLogo /></a></header>
     <QuickDirection busy={busy} error={error} onStart={choices => void startQuick(choices)} />
-  </div></div>;
-  return <div className="speakool" dir="rtl">
+  </div></div></ProAccessProvider>;
+  return <ProAccessProvider paid={account?.access?.paid === true}><div className="speakool" dir="rtl">
     <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
         <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
@@ -195,10 +198,10 @@ export const LearnerPortal: React.FC = () => {
               await save({ active_teacher: created.id });
             }
           }, account.teachers.length ? "הכיוון נשמר. ככה " + teacherName + (isFemale(active?.voice) ? " תלמד" : " ילמד") + " גם בטלפון." : (d.teacher_gender === "female" ? "הכרנו לך את " + FEMALE_NAME + ". היא כבר מחכה בטלפון." : "הכרנו לך את " + DEFAULT_NAME + ". הוא כבר מחכה בטלפון."))) navigate("plan"); }} />}
-          {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "recommended"]}<span className="sk-accent">, בוא נדבר.</span></h2><p>{teacherName} · {p.minutes || p.plan?.minutes || 10} דקות בכל פעם</p><p>{directionSummary(p, active)}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />התחל בטלפון</button><button className="sk-link" onClick={() => talk()}>התחל כאן <ArrowUpLeft size={15} /></button></div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button><p className="sk-muted">אותו כיוון גם בטלפון: אפשר פשוט לבקש מהמורה בשיחה לשנות אותו.</p></div><ConversationArt /></div>}
+          {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "recommended"]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /><span className="sk-accent">, בוא נדבר.</span></h2><p>{teacherName} · {p.minutes || p.plan?.minutes || 10} דקות בכל פעם</p><p>{directionSummary(p, active)}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />התחל בטלפון</button><button className="sk-link" onClick={() => talk()}>התחל כאן <ArrowUpLeft size={15} /></button></div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button><p className="sk-muted">אותו כיוון גם בטלפון: אפשר פשוט לבקש מהמורה בשיחה לשנות אותו.</p></div><ConversationArt /></div>}
           {page === "teachers" && <>
             <div className="sk-section-intro"><p>כל מורה, שילוב אחר. רק אחד מקבל את השיחה הבאה שלך.</p><button className="sk-secondary" onClick={() => setBuilder(true)} disabled={!baseTeachers.length}><Plus size={16} />מורה חדש</button></div>
-            <div className="sk-teacher-grid">{account.teachers.map((teacher, index) => <article key={teacher.id} className={"sk-teacher-card " + (active?.id === teacher.id ? "is-current" : "")}><div className="sk-card-top"><span className="sk-tag">{active?.id === teacher.id ? <><span className="sk-status-dot" />בטלפון שלך</> : personalities[teacher.personality]}</span><IconButton label={"מחיקת " + teacher.name} onClick={() => { if (confirm("למחוק את המורה " + teacher.name + "?")) void run(async () => { await portalRequest("/v1/portal/teachers/" + teacher.id, token, undefined, "DELETE"); }); }}><Trash2 size={15} /></IconButton></div><div className="sk-teacher-art"><TeacherMark teacher={teacher} index={index} /></div><h2>{teacher.name}</h2><p>{paceNames[teacher.pace]} · {topics[teacher.topic] || teacher.topic}</p><button className="sk-primary" onClick={() => talk(teacher)}><Mic size={16} />שוחח עכשיו</button>{active?.id !== teacher.id && <button className="sk-link" onClick={() => void run(() => save({ active_teacher: teacher.id }), "זה המורה שיחכה לך בטלפון.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
+            <div className="sk-teacher-grid">{account.teachers.map((teacher, index) => <article key={teacher.id} className={"sk-teacher-card " + (active?.id === teacher.id ? "is-current" : "")}><div className="sk-card-top"><span className="sk-tag">{active?.id === teacher.id ? <><span className="sk-status-dot" />בטלפון שלך</> : personalities[teacher.personality]}</span><IconButton label={"מחיקת " + teacher.name} onClick={() => { if (confirm("למחוק את המורה " + teacher.name + "?")) void run(async () => { await portalRequest("/v1/portal/teachers/" + teacher.id, token, undefined, "DELETE"); }); }}><Trash2 size={15} /></IconButton></div><div className="sk-teacher-art"><TeacherMark teacher={teacher} index={index} /></div><h2>{teacher.name}<SelectionBadge domain={teacher.topic} level={teacher.level || p.level || p.plan?.level} /></h2><p>{paceNames[teacher.pace]} · {topics[teacher.topic] || teacher.topic}</p><button className="sk-primary" onClick={() => talk(teacher)}><Mic size={16} />שוחח עכשיו</button>{active?.id !== teacher.id && <button className="sk-link" onClick={() => void run(() => save({ active_teacher: teacher.id }), "זה המורה שיחכה לך בטלפון.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
               {(defaultWeb ? [defaultWeb] : []).map((bot, index) => <article className={"sk-teacher-card sk-base-teacher " + (!active && botId === bot.id ? "is-current" : "")} key={bot.id}><span className="sk-tag">{!active && botId === bot.id ? "בטלפון שלך" : "מצוות ספיקול"}</span><div className="sk-teacher-art"><TeacherMark index={index} /></div><h2>{DEFAULT_NAME}</h2><p>נקודת פתיחה טובה. פשוט להתחיל.</p><button className="sk-primary" onClick={() => talk(undefined, { ...bot, label: DEFAULT_NAME })}><Mic size={16} />שוחח עכשיו</button>{bot.phone_enabled && (active || botId !== bot.id) && <button className="sk-link" onClick={() => void run(() => save({ selected_bot: bot.id, active_teacher: "", mode: "free" }), "המורה שלך בטלפון עודכן.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
             </div>{!webTeachers.length && <Empty icon={<Users />} title="המורים עוד לא כאן." text="אין כרגע מורה זמין. אפשר לנסות שוב מאוחר יותר." />}
           </>}
@@ -227,7 +230,7 @@ export const LearnerPortal: React.FC = () => {
     {builder && account && <Modal title="מורה. בדיוק בראש שלך." error={error} busy={busy} onClose={() => setBuilder(false)}><Direction purpose="teacher" initial={directionDraft(p, active)} materials={account.materials} saving={busy} onFinish={async d => { if (await run(async () => { const saved = await portalRequest<Teacher>("/v1/portal/teachers", token, { name: d.name.trim(), base_bot: botId || baseTeachers[0]?.id || "", personality: d.personality, voice: d.voice, explanation: "hebrew", pace: d.pace, corrections: "gentle", topic: d.topic, material_id: d.material_id, level: d.level, conversation_mode: d.conversation_mode, learning_load: d.learning_load || "light", correction_policy: d.correction_policy, closing_activity: d.closing_activity || "roleplay" }); await save({ active_teacher: saved.id }); }, "נעים להכיר. המורה החדש שלך כבר בטלפון.")) setBuilder(false); }} onPreview={voiceName => {
       void run(async () => { const r = await portalRequest<{ audio_wav_base64: string }>("/v1/portal/voice-preview", token, { voice: voiceName }); const audio = new Audio("data:audio/wav;base64," + r.audio_wav_base64); await audio.play(); });
     }} /></Modal>}
-  </div>;
+  </div></ProAccessProvider>;
 };
 
 function PhoneInstructions({ account, teacherName }: { account: Account; teacherName: string }) {
@@ -277,6 +280,7 @@ function directionSteps(d: DirectionDraft, purpose: "plan" | "teacher", askTeach
   return keys.map(k => all[k]);
 }
 function Direction({ initial, purpose, askTeacher = false, editing = false, materials = [], saving, onFinish, onPreview }: { initial: DirectionDraft; purpose: "plan" | "teacher"; askTeacher?: boolean; editing?: boolean; materials?: Material[]; saving: boolean; onFinish: (d: DirectionDraft) => Promise<void>; onPreview?: (voice: string) => void }) {
+  const { paid } = useProAccess();
   const [d, setD] = useState(initial);
   const [step, setStep] = useState(0);
   const [named, setNamed] = useState(purpose === "teacher" || !!initial.learner_name);
@@ -296,7 +300,7 @@ function Direction({ initial, purpose, askTeacher = false, editing = false, mate
     {purpose === "teacher" && <div className="sk-builder-mark"><TeacherMark teacher={{ name: d.name || "מורה", voice: d.voice }} /></div>}
     <h2>{q?.title || (topicStep ? "על מה בא לך לדבר?" : "איך נקרא למורה שלך?")}</h2>
     {(q?.key === "conversation_mode" || q?.key === "pace") && <p>{q.sub}</p>}
-    {q ? <Options value={String(d[q.key] ?? "")} values={q.values} onChange={v => choose(q.key, v)} />
+    {q ? q.key === "level" ? <ProChoices kind="level" label="רמת האנגלית" value={d.level} values={q.values} onChange={v => choose(q.key, v)} /> : <Options value={String(d[q.key] ?? "")} values={q.values} onChange={v => choose(q.key, v)} />
       : topicStep ? <TopicPicker value={d.topic} onChange={v => purpose === "plan" ? finish({ ...d, topic: v }) : (setD(x => ({ ...x, topic: v })), setStep(n => n + 1))} recommended={recommended} />
       : <form className="sk-name-form" onSubmit={e => { e.preventDefault(); if (d.name.trim()) finish(d); }}>
         <input id="teacher-name" name="teacher_name" aria-label="שם למורה" maxLength={40} value={d.name} onChange={e => setD(x => ({ ...x, name: e.target.value }))} placeholder="שם שכיף לך לשמוע" autoFocus />
@@ -304,6 +308,7 @@ function Direction({ initial, purpose, askTeacher = false, editing = false, mate
         <button className="sk-primary" type="submit" disabled={!d.name.trim() || saving}>נעים להכיר. שומרים.<ArrowLeft size={16} /></button>
       </form>}
     {q?.key === "voice" && onPreview && <button className="sk-link" onClick={() => onPreview(d.voice)}><AudioLines size={16} />בוא נשמע רגע</button>}
+    {!paid && isProSelection(d.topic, d.level) && <ProNote />}
     {q?.key === "goal" && <button className="sk-quiet-link" onClick={() => choose("goal", "other")}>משהו אחר <MoreHorizontal size={14} /></button>}
     {step > 0 && <button className="sk-quiet-link" onClick={() => setStep(n => n - 1)}><ArrowRight size={13} />רגע, אחורה</button>}
     {editing && purpose === "plan" && !topicStep && <button className="sk-quiet-link" onClick={() => finish(d)}><Check size={13} />זה הכול, שומרים</button>}
