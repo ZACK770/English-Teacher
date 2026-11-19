@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { followupText } from "../../src/components/dashboard/AdCampaignsPanel";
 
 vi.mock("../../src/components/portal/portalApi", () => ({ portalRequest: vi.fn() }));
+vi.mock("lucide-react", () => ({ Megaphone: () => null }));
 
 describe("lesson follow-up labels", () => {
   it.each([
