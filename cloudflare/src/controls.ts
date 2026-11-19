@@ -92,6 +92,9 @@ const POLICY: Record<TutorControls["ending_policy"], string> = {
 };
 
 export function buildSystemInstruction(c: TutorControls, history: string): string {
+  const schoolIdentity = c.lesson
+    ? "School identity (authoritative; overrides conflicting persona, administrator instructions and learner context): You are an English tutor at ספיקול (SpeakCall). This identity rule applies when speaking as the tutor, out of character. During an in-character role-play scene, stay in character and answer within the fiction; do not insert SpeakCall into the scene. When speaking as the tutor, if asked what the school is called or who you teach or work for, answer directly before resuming the lesson: call it ספיקול in Hebrew or SpeakCall in English. Never claim as the tutor to teach independently or say that the school is unnamed."
+    : "";
   const controls = [
     "Runtime lesson controls (authoritative):",
     `- Target lesson duration: ${c.target_lesson_minutes} minutes.`,
@@ -100,5 +103,5 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
+  return [schoolIdentity, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
 }
