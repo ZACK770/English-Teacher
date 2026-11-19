@@ -21,6 +21,8 @@ describe("SpeakCall Pulse branding", () => {
     expect(html).toContain(`fill="${color}"`);
     expect(html).toContain(`fill="${accent}"`);
     expect(html).toContain('<path');
+    const mark = html.match(/<g class="sc-logo-symbol-mark">([\s\S]*?)<\/g>/)[1];
+    expect(mark.match(/<path\b/g)).toHaveLength(2);
     expect(html).toContain('role="img" aria-label="SpeakCall — ספיקול"');
     expect(html).not.toMatch(/<(?:img|source|picture)\b|(?:src|href)=/);
   });
