@@ -4,7 +4,7 @@ import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api"
 import { handleWebhook } from "./payments";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
-import { dispatchCallbacks, submitCallback } from "./callbacks";
+import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
 import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 export { CallSession } from "./call";
@@ -118,6 +118,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
+    ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
   },
 };

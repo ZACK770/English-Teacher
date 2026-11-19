@@ -18,6 +18,7 @@ form.addEventListener("submit", async (event) => {
       name: form.name.value, phone, for_whom: form.for_whom.value, goal: form.goal.value, timing: form.timing.value,
       preferred_time: form.preferred_time.value, consent: true, source, website: form.website.value,
     }) });
+    if (response.status === 429) return say("התקבלו יותר מדי בקשות מהחיבור הזה. אפשר לנסות שוב מאוחר יותר.", "err");
     if (!response.ok) throw new Error(String(response.status));
     const scheduled = form.timing.value === "scheduled";
     form.reset(); whenRow.hidden = true;

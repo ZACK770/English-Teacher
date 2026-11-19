@@ -27,8 +27,22 @@ TLIVR_PROJECT_ENABLED=true; TLIVR_PROJECT_PATH=/99; TLIVR_SYSTEM_PHONE=076567357
 System API https://api.tlivr.com/ivrFilesApi.php requires apiKey IN QUERY on this
 host. POST-body-only auth incorrectly returned Unrecognized system for valid keys.
 Writes are POST form encoded, with apiKey/action in query.
-Never log URLs, secrets, raw provider exceptions or card fields. Callback access
-logs redact query strings; callback events allowlist selected fields.
+Never log URLs, secrets, raw provider exceptions or card fields. Both Worker
+configs redact URL query strings in Cloudflare logs and traces; callback events
+allowlist selected fields. Redaction does not remove already-retained logs.
+
+### Moving the live Worker callbacks out of the URL
+
+Keep the existing query credential during the cutover. Provision a separate
+`TLIVR_CALLBACK_BODY_SECRET` in the Worker, then canary a Technoline API extension
+with a query-free URL, `method: POST`, and the secret as a fixed `callback_key`
+field via `addParams`. Verify that the provider sends it in the form body, that it
+does not appear in provider logs, and that both the initial and chained callbacks
+work during a real call. See the [Technoline API module docs](https://pbx.tlivr.com/apiModuleDocs.html).
+Snapshot existing extension settings without secret values before any edit.
+After all live callback extensions are verified, remove the Worker's legacy
+`TLIVR_CALLBACK_SECRET` to invalidate the original credential. This does not
+change the separate WebSocket channel or its token.
 
 Pre-change backups are outside Git in the current chat work/pbx-backups.
 Server reconciliation saves redacted per-extension snapshots before writes.
@@ -144,4 +158,3 @@ https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
 https://pbx.tlivr.com/streamingApiDocs.html
 https://app.tlivr.com/pbxDocsCenter.html
-

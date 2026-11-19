@@ -17,6 +17,7 @@ import { LearningStore } from "../src/learning";
 import { PackageSchema } from "../src/business";
 import { PaymentStore } from "../src/payments";
 import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
+import { cleanupCallbackQuota } from "../src/callbacks";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -193,6 +194,30 @@ describe("approved pricing catalog", () => {
   });
 });
 
+describe("public callback quota", () => {
+  it("atomically limits valid submissions per connecting IP across hostnames", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-12-12T10:15:30Z"));
+    const submit = (i: number, ip: string, isValid = true) => worker.fetch(new Request(
+      "https://" + (i % 2 ? "www.speakcall.app/english" : "speakcall.app") + "/v1/public/callback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip, "X-Forwarded-For": "198.51.100." + i },
+        body: JSON.stringify({ name: "Callback test", phone: "050000000" + i, timing: "scheduled", for_whom: "self", consent: isValid }),
+      }), env);
+    expect((await submit(0, "192.0.2.1", false)).status).toBe(422);
+    const responses = await Promise.all([1, 2, 3, 4, 5].map(i => submit(i, "192.0.2.1")));
+    expect(responses.map(r => r.status).sort()).toEqual([201, 201, 201, 429, 429]);
+    expect(responses.find(r => r.status === 429)?.headers.get("Retry-After")).toBe("2670");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM callback_requests").get()?.n).toBe(3);
+    expect((await submit(6, "192.0.2.2")).status).toBe(201);
+    await cleanupCallbackQuota(env);
+    expect((await submit(7, "192.0.2.1")).status).toBe(429);
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-12-12T11:00:00Z"));
+    await cleanupCallbackQuota(env);
+    expect(db.sql.prepare("SELECT api FROM api_quota").all()).toEqual([]);
+    expect((await submit(8, "192.0.2.1")).status).toBe(201);
+  });
+});
+
 describe("real learner portal", () => {
   it("keeps deleted-list assessments discoverable without selecting deleted material for new lessons", async () => {
     const material = await (await request("/v1/portal/materials", tokenA, { name: "A practiced list", words: ["invoice — חשבונית", "receipt — קבלה"] })).json() as any;
@@ -267,6 +292,27 @@ describe("real learner portal", () => {
     expect(await session.recordTool({ name: "record_learning_observation", args: { skill: "vocabulary", result: "test", correction: "", score: 5 } })).toBe(false);
     expect((await new LearningStore(env.DB).history("learner-a", "vocabulary", target))[0]).toMatchObject({ score: 50 });
   });
+  it.each(["direct", "legacy", "shared", "test", "web"] as const)("enforces phone activation for the %s stream", async (stream) => {
+    env.TLIVR_ROUTER_CHANNEL = "router-channel";
+    env.TEST_TEACHER_CHANNEL_ID = "test-teacher-channel";
+    env.TEST_TEACHER_BEARER_SECRET = "test-bearer";
+    await env.DB.prepare("UPDATE bots SET phone_enabled=0 WHERE id='student'").run();
+    const send = vi.fn();
+    const claim = vi.spyOn(ProgressStore.prototype, "claimCall").mockResolvedValue(false);
+    const shared = stream === "shared";
+    const web = stream === "web";
+    const token = shared ? env.TLIVR_ROUTER_CHANNEL : web ? "portal" : stream === "test" ? env.TEST_TEACHER_CHANNEL_ID : "test-channel";
+    if (shared) await b.saveContext("activation-test", { selected_bot: "student" });
+    const session = new TutorSession({ send, close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner",
+      stream === "test" ? "Bearer test-bearer" : null, web ? { customerId: "learner-a", teacherId: "" } : undefined);
+    await session.run(JSON.stringify({ type: "start", token, callId: "activation-test", format: "pcm16;rate=8000;ch=1" }),
+      stream === "direct" || web ? "student" : null, shared);
+    if (web) expect(claim).toHaveBeenCalledOnce();
+    else {
+      expect(claim).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "hangup" }));
+    }
+  });
   it("signals a closing activity once from the server clock, without ending the call", async () => {
     vi.useFakeTimers();
     try {
@@ -338,6 +384,27 @@ describe("real learner portal", () => {
     expect((await call("0765673575", "/99", "old-call", "&isaacMain=1")).goTo).toBe("/99/7");
     await expect(call("0765673575", "/5", "taxi-call")).rejects.toMatchObject({ status: 403 });
     await expect(call("0700000000", "/", "foreign-call")).rejects.toMatchObject({ status: 400 });
+  });
+  it("authenticates form-only PBX callbacks independently of the legacy URL credential", async () => {
+    const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "legacy", TLIVR_CALLBACK_BODY_SECRET: "body-secret" };
+    const fields = "PBXcallId=body-call&PBXnum=0765673575&PBXextensionPath=%2F99&isaacMain=1";
+    const call = (form: string, query = "", liveEnv = pbxEnv) => handleCallback(new Request("https://x/v1/technoline/ivr/main" + query, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form,
+    }), liveEnv, settings(liveEnv), "main");
+    expect((await call(fields + "&callback_key=body-secret")).goTo).toBe("/99/7");
+    expect((await call(fields, "?key=legacy")).goTo).toBe("/99/7");
+    expect((await call(fields + "&callback_key=body-secret", "", { ...pbxEnv, TLIVR_CALLBACK_SECRET: "" })).goTo).toBe("/99/7");
+    await expect(call(fields, "?key=legacy", { ...pbxEnv, TLIVR_CALLBACK_SECRET: "" })).rejects.toMatchObject({ status: 401 });
+    await expect(call(fields, "?callback_key=body-secret")).rejects.toMatchObject({ status: 401 });
+    await expect(call(fields, "?key=body-secret")).rejects.toMatchObject({ status: 401 });
+    await expect(call(fields + "&callback_key=legacy")).rejects.toMatchObject({ status: 401 });
+    await expect(call(fields + "&callback_key=body-secret&callback_key=body-secret")).rejects.toMatchObject({ status: 401 });
+    await expect(call(fields + "&callback_key=body-secret&too_large=" + "x".repeat(16384))).rejects.toMatchObject({ status: 413 });
+    const log = JSON.stringify(await b.list("ivr-events"));
+    expect(log).not.toContain("body-secret");
+    expect(log).not.toContain("legacy");
   });
   it("offers named learner teachers plus a default on the phone and gives the tutor both names", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" } as Env;
