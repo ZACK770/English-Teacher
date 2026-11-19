@@ -38,6 +38,12 @@ CREATE INDEX idx_subscriptions_customer ON subscriptions(customer_id,created_at 
 ALTER TABLE plans ADD COLUMN domains_json TEXT NOT NULL DEFAULT '[]';
 UPDATE plans SET domains_json='[{"domain":"everyday","levels":["beginner"]}]' WHERE id='school-foundations';
 UPDATE plans SET domains_json='[{"domain":"everyday","levels":["beginner"]},{"domain":"everyday","levels":["intermediate","fluent"]}]' WHERE id='school-mastery';
+UPDATE subscriptions SET
+  monthly_minutes=COALESCE((SELECT included_minutes FROM plans WHERE id=subscriptions.plan_id),0),
+  current_period_start=started_at,
+  current_period_end=COALESCE(current_period_end,strftime('%Y-%m-%dT%H:%M:%f+00:00',started_at,'+1 month')),
+  pause_year_start=started_at,
+  domains_json=COALESCE((SELECT domains_json FROM plans WHERE id=subscriptions.plan_id),'[]');
 ALTER TABLE sales_receipts ADD COLUMN subscription_id TEXT REFERENCES subscriptions(id);
 CREATE INDEX idx_receipts_subscription ON sales_receipts(subscription_id,expires_at);
 CREATE TABLE subscription_members (

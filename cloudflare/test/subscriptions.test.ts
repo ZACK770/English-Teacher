@@ -253,16 +253,17 @@ describe("subscription promises against production SQL", () => {
   it("preserves existing subscriptions and invoice references when migrating the status constraint", () => {
     const legacy = new DatabaseSync(":memory:");
     try {
-      for (const name of readdirSync(new FileURL("../migrations/", import.meta.url)).filter(n => n.endsWith(".sql") && n < "0013").sort()) legacy.exec(readFileSync(new FileURL("../migrations/" + name, import.meta.url), "utf8"));
+      for (const name of readdirSync(new FileURL("../migrations/", import.meta.url)).filter(n => n.endsWith(".sql") && n < "0015").sort()) legacy.exec(readFileSync(new FileURL("../migrations/" + name, import.meta.url), "utf8"));
       legacy.exec("PRAGMA foreign_keys=ON");
       legacy.prepare("INSERT INTO customers(id,created_at,updated_at) VALUES ('legacy',?,?)").run(at, at);
       legacy.prepare("INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at) VALUES ('legacy-sub','legacy','school-step','active',5900,?,?,?)").run(at, at, at);
       legacy.prepare("INSERT INTO invoices(id,customer_id,subscription_id,amount_agorot,status,issued_at,created_at) VALUES ('invoice','legacy','legacy-sub',5900,'paid',?,?)").run(at, at);
       legacy.exec("BEGIN");
-      legacy.exec(readFileSync(new FileURL("../migrations/0013_subscriptions.sql", import.meta.url), "utf8"));
+      legacy.exec(readFileSync(new FileURL("../migrations/0015_subscriptions.sql", import.meta.url), "utf8"));
       legacy.exec("COMMIT");
       expect(legacy.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(legacy.prepare("SELECT subscription_id FROM invoices WHERE id='invoice'").get()?.subscription_id).toBe("legacy-sub");
+      expect(legacy.prepare("SELECT monthly_minutes,current_period_start,current_period_end,pause_year_start FROM subscriptions WHERE id='legacy-sub'").get()).toMatchObject({ monthly_minutes: 60, current_period_start: at, current_period_end: addMonths(at, 1), pause_year_start: at });
       legacy.exec("UPDATE subscriptions SET status='paused' WHERE id='legacy-sub'");
       expect(legacy.prepare("SELECT price_agorot FROM subscriptions WHERE id='legacy-sub'").get()?.price_agorot).toBe(5900);
     } finally { legacy.close(); }
