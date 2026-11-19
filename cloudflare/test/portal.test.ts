@@ -67,6 +67,23 @@ describe("email login", () => {
     expect((await b.record("customers", "learner-a"))!.phone).toBe("0500000001");
   });
 
+  it("lets administrators edit email-only learners without losing email or creating an empty phone identity", async () => {
+    const { challenge } = await (await start()).json() as any;
+    const { token } = await (await verify(challenge, sentCode())).json() as any;
+    const customerId = (await b.portalCustomer(token))!;
+    const customer = (await b.record("customers", customerId))!;
+    const path = "/v1/admin/business/customers/" + customerId;
+    expect((await request(path, env.ADMIN_BEARER_SECRET, { ...customer, notes: "Edited in console" }, "PUT")).status).toBe(200);
+    expect(await b.record("customers", customerId)).toMatchObject({ name: "", phone: "", email: "learner@example.com", notes: "Edited in console" });
+    expect(db.sql.prepare("SELECT primary_phone FROM customers WHERE id=?").get(customerId)!.primary_phone).toBeNull();
+    expect(db.sql.prepare("SELECT * FROM customer_phones WHERE customer_id=?").all(customerId)).toHaveLength(0);
+    expect((await request(path, env.ADMIN_BEARER_SECRET, { ...customer, name: "Learner", phone: "0500000088" }, "PUT")).status).toBe(200);
+    expect(db.sql.prepare("SELECT phone FROM customer_phones WHERE customer_id=?").get(customerId)!.phone).toBe("0500000088");
+    for (const invalid of [{ ...customer, email: "" }, { ...customer, email: "invalid" }, { ...customer, phone: "123" }, { ...customer, phone: "0500000088" }]) {
+      expect((await request(path, env.ADMIN_BEARER_SECRET, invalid, "PUT")).status).toBe(422);
+    }
+  });
+
   it("rejects wrong codes and locks after five attempts even with the correct code", async () => {
     const { challenge } = await (await start()).json() as any;
     const wrong = sentCode() === "000000" ? "111111" : "000000";
