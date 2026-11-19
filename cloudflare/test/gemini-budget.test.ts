@@ -154,10 +154,10 @@ it("applies the caller's current concurrency limit even when the guard started w
 it("emails the failure alert address when Gemini calls keep failing", async () => {
   const send = vi.fn().mockResolvedValue({});
   const { caller, tasks } = memoryGuard({ GEMINI_BUDGET_EMAIL: { send } as unknown as SendEmail, GEMINI_BUDGET_EMAIL_TO: "ops@example.com", GEMINI_FAILURE_EMAIL_TO: "owner@example.com" });
-  for (let i = 0; i < 3; i++) await reportGeminiOutcome(caller, false, "Gemini closed during setup (1011): Your prepayment credits are depleted");
+  for (let i = 0; i < 3; i++) await reportGeminiOutcome(caller, false, "Gemini closed during setup (1011): quota-detail-7731");
   await reportGeminiOutcome(caller, false, "Gemini closed during setup (1011)");
   await Promise.all(tasks);
   expect(send).toHaveBeenCalledOnce();
   expect(send.mock.calls[0][0]).toMatchObject({ to: "owner@example.com", from: "alerts@speakcall.app" });
-  expect(send.mock.calls[0][0].text).toContain("prepayment credits are depleted");
+  expect(send.mock.calls[0][0].text).toContain("quota-detail-7731");
 });
