@@ -161,17 +161,18 @@ def install_portal_api(app, static_path):
         audio = bytearray()
         started = None
         try:
-            await app.state.progress.save_prompt_snapshot(
-                profile_id=bot_id,
-                call_id=call_id,
-                artifact=artifact,
-            )
-            await app.state.progress.log_conversation_turn(
-                profile_id=bot_id,
-                call_id=call_id,
-                direction="input",
-                text=text,
-            )
+            if session.settings.store_transcripts:
+                await app.state.progress.save_prompt_snapshot(
+                    profile_id=bot_id,
+                    call_id=call_id,
+                    artifact=artifact,
+                )
+                await app.state.progress.log_conversation_turn(
+                    profile_id=bot_id,
+                    call_id=call_id,
+                    direction="input",
+                    text=text,
+                )
             await session._latency("session_started", {"channel": "web"})
             async with (
                 asyncio.timeout(min(120, allowance["seconds"]) + 15),
@@ -193,12 +194,13 @@ def install_portal_api(app, static_path):
                         session.output_audio_bytes += len(event["pcm24k"])
                     elif event["type"] == "transcript" and event["role"] == "tutor":
                         output.append(event["text"])
-                        await app.state.progress.log_conversation_turn(
-                            profile_id=bot_id,
-                            call_id=call_id,
-                            direction="output",
-                            text=event["text"],
-                        )
+                        if session.settings.store_transcripts:
+                            await app.state.progress.log_conversation_turn(
+                                profile_id=bot_id,
+                                call_id=call_id,
+                                direction="output",
+                                text=event["text"],
+                            )
                     elif event["type"] == "usage":
                         session._record_usage(event["usage"])
                     elif event["type"] == "tool_call":
@@ -233,7 +235,7 @@ def install_portal_api(app, static_path):
                 transcript=[
                     {"role": "learner", "text": text},
                     {"role": "tutor", "text": " ".join(output)},
-                ],
+                ] if session.settings.store_transcripts else None,
                 summary=session.lesson_summary or session._fallback_summary(),
                 usage=session._usage_totals(),
                 model=controls.model,
