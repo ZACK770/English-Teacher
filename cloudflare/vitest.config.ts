@@ -1,3 +1,11 @@
 import { defineConfig } from "vitest/config";
+import { createRequire } from "node:module";
 
-export default defineConfig({ test: { include: ["test/**/*.test.{ts,js}"] } });
+const require = createRequire(import.meta.url);
+export default defineConfig({
+  resolve: { alias: [
+    { find: /^react$/, replacement: require.resolve("react") },
+    { find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") },
+  ] },
+  test: { include: ["test/**/*.test.{ts,js}"] },
+});
