@@ -54,6 +54,12 @@ several bots in one PBX call do not overwrite traces or collide in reservations.
 
 ## Telephone tree
 
+Live (2026-11-19): english-engine serves system 0765673575 at base "/" with the
+Speakool layout (/1 school, /2 personal area = options, /2/1 teacher, /2/2 lesson
+type, /3 packages, /4 messages, /7 stream, /8 quota). The /99 Dibura subtree below
+still calls the suspended Render service, not the Worker; its key9->/9 layout is
+legacy and not served by cloudflare/src/pbx.ts.
+
 - /99 entry: 1 starts learning, 2 starts translation, 9 opens options.
 - /99/1 direct school entry; /99/1/1 optional dynamic teacher selection.
 - /99/2 translator, /99/2/1 select translator, /99/2/9 language choice.

@@ -483,6 +483,17 @@ describe("real learner portal", () => {
     expect((await connect()).status).toBe(401);
     expect(forward).toHaveBeenCalledOnce();
   });
+  it("lets web-only teachers take browser calls but not the phone teacher slot", async () => {
+    await progress.createBot({ id: "web-only", label: "Web", role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: false, web_enabled: true, enabled: true }, controlsFromSettings(false));
+    const created = await (await request("/v1/portal/voice-ticket", tokenA, { bot_id: "web-only" })).json() as any;
+    const forward = vi.fn(async (r: Request) => Response.json({ bot: r.headers.get("X-Profile") }));
+    env.CALLS = { newUniqueId: () => "test-object", get: () => ({ fetch: forward }) } as unknown as DurableObjectNamespace;
+    const res = await worker.fetch(new Request("https://school.example/v1/portal/voice?ticket=" + created.ticket, { headers: { Upgrade: "websocket" } }), env);
+    expect(await res.json()).toEqual({ bot: "web-only" });
+    expect((await request("/v1/portal/teachers", tokenA, { name: "Web", base_bot: "web-only" })).status).toBe(404);
+    await progress.createBot({ id: "phone-only", label: "Phone", role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: true, web_enabled: false, enabled: true }, controlsFromSettings(false));
+    expect((await request("/v1/portal/voice-ticket", tokenA, { bot_id: "phone-only" })).status).toBe(404);
+  });
   it.each(["speakcall.app", "www.speakcall.app"])("serves the SpeakCall landing page on %s", async (host) => {
     const index = readFileSync(new FileURL("../../index.html", import.meta.url), "utf8");
     env.ASSETS = { fetch: async (r: Request) => new URL(r.url).pathname === "/index.html"
