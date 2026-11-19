@@ -1,5 +1,17 @@
 import { z } from "zod";
-import { type Env, HttpError, nowIso, randomHex } from "./env";
+import { BusinessStore } from "./business";
+import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
+
+const CALLBACK_IP_PREFIX = "public-callback:ip:";
+const CALLBACK_IP_LIMIT = 3;
+const HOUR_MS = 60 * 60 * 1000;
+
+const callbackHour = (now: number) => new Date(now).toISOString().slice(0, 13);
+
+export function cleanupCallbackQuota(env: Env) {
+  return env.DB.prepare("DELETE FROM api_quota WHERE api GLOB ? AND api < ?")
+    .bind(CALLBACK_IP_PREFIX + "*", CALLBACK_IP_PREFIX + callbackHour(Date.now())).run();
+}
 
 const RequestSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -27,9 +39,18 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   const body = parsed.data;
   const phone = normalizePhone(body.phone);
   if (!phone) throw new HttpError(422, "Invalid phone");
+  const time = Date.now();
   const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? LIMIT 1")
-    .bind(phone, new Date(Date.now() - 86400000).toISOString()).first<{ id: string }>();
+    .bind(phone, new Date(time - 86400000).toISOString()).first<{ id: string }>();
   if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
+  const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "unknown");
+  const key = CALLBACK_IP_PREFIX + callbackHour(time) + ":" + ipHash;
+  if (!await new BusinessStore(env.DB).consumeMonthlyQuota(key, CALLBACK_IP_LIMIT)) {
+    return Response.json({ detail: "Too many callback requests" }, {
+      status: 429,
+      headers: { "Retry-After": String(Math.ceil((HOUR_MS - time % HOUR_MS) / 1000)), "Cache-Control": "no-store" },
+    });
+  }
   const id = randomHex(16);
   const now = nowIso();
   await env.DB.prepare(

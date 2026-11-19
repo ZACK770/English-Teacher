@@ -197,18 +197,51 @@ export async function narrationForSlot(b: BusinessStore, slot: string, content: 
   return { id, hash: await sha256Hex(audio.wav), wav: audio.wav };
 }
 
-export async function handleCallback(request: Request, env: Env, s: Settings, route: string): Promise<IVRResponse> {
-  const url = new URL(request.url);
-  if (!s.projectEnabled || !secureEqual(url.searchParams.get("key"), s.callbackSecret)) throw new HttpError(401, "Unauthorized");
-  const clock = Date.now();
-  const p = Object.fromEntries(url.searchParams);
-  if (request.method === "POST") {
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > 16384) throw new HttpError(413, "Callback too large");
-    const form = [...new URLSearchParams(raw)];
-    if (form.length > 100) throw new HttpError(400, "Invalid callback");
-    Object.assign(p, Object.fromEntries(form));
+async function callbackForm(request: Request): Promise<URLSearchParams> {
+  if (request.method !== "POST" || !request.body) return new URLSearchParams();
+  const limit = 16384;
+  if (Number(request.headers.get("Content-Length")) > limit) throw new HttpError(413, "Callback too large");
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let raw = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        void reader.cancel().catch(() => undefined);
+        throw new HttpError(413, "Callback too large");
+      }
+      raw += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
   }
+  const form = new URLSearchParams(raw + decoder.decode());
+  if (form.size > 100) throw new HttpError(400, "Invalid callback");
+  return form;
+}
+
+export async function handleCallback(request: Request, env: Env, s: Settings, route: string): Promise<IVRResponse> {
+  const query = new URL(request.url).searchParams;
+  const legacy = query.getAll("key");
+  const legacyAuth = legacy.length === 1 && secureEqual(legacy[0], s.callbackSecret);
+  const bodySecret = env.TLIVR_CALLBACK_BODY_SECRET ?? "";
+  const contentType = request.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  const canUseBodyAuth = !!bodySecret && request.method === "POST" && contentType === "application/x-www-form-urlencoded"
+    && legacy.length === 0 && !query.has("callback_key");
+  if (!s.projectEnabled || (!legacyAuth && !canUseBodyAuth)) throw new HttpError(401, "Unauthorized");
+  const clock = Date.now();
+  const form = await callbackForm(request);
+  const credentials = form.getAll("callback_key");
+  if (canUseBodyAuth && (credentials.length !== 1 || !secureEqual(credentials[0], bodySecret))) throw new HttpError(401, "Unauthorized");
+  query.delete("key");
+  query.delete("callback_key");
+  form.delete("key");
+  form.delete("callback_key");
+  const p = { ...Object.fromEntries(query), ...Object.fromEntries(form) };
   const callId = p.PBXcallId ?? "";
   const system = s.systems.find((x) => x.phone === p.PBXnum);
   if (!callId || callId.length > 200 || !system) throw new HttpError(400, "Unexpected system or call");

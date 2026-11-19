@@ -120,7 +120,7 @@ export class TutorSession {
         profileId = bots.find((bot) => bot.channel_id && bot.channel_id === initial.token)?.id ?? this.s.studentId;
       }
       const bot = await this.progress.getBot(profileId);
-      if (!bot || !bot.enabled || (shared && !bot.phone_enabled)) throw new Error("Tutor unavailable");
+      if (!bot || !bot.enabled || !(this.portal ? bot.web_enabled : bot.phone_enabled)) throw new Error("Tutor unavailable");
       this.profileId = profileId;
       const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannels : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");

@@ -276,7 +276,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
     if (seg[3] === "config" && method === "GET") {
       return ok({
         copy: await getCopy(b), phone: s.systemPhone, project_path: s.projectPath, enabled: s.projectEnabled,
-        api_configured: !!env.TLIVR_SYSTEM_API_KEY, callback_configured: !!s.callbackSecret, payment_configured: paymentsConfigured(env),
+        api_configured: !!env.TLIVR_SYSTEM_API_KEY, callback_configured: !!(s.callbackSecret || env.TLIVR_CALLBACK_BODY_SECRET), payment_configured: paymentsConfigured(env),
         live_dtmf_supported: false, managed_channel_configured: !!s.routerChannel, audio_bindings: await b.loadContext("audio-bindings"),
       });
     }

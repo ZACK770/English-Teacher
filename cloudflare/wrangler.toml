@@ -29,6 +29,7 @@ crons = ["*/10 * * * *"]
 
 [observability]
 enabled = true
+redact_query_string = true
 
 # Isolated sandbox for web/AI development. Separate D1, secrets and URL; no cron, no PBX traffic.
 [env.staging]

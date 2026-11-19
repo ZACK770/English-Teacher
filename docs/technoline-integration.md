@@ -27,8 +27,27 @@ TLIVR_PROJECT_ENABLED=true; TLIVR_PROJECT_PATH=/99; TLIVR_SYSTEM_PHONE=076567357
 System API https://api.tlivr.com/ivrFilesApi.php requires apiKey IN QUERY on this
 host. POST-body-only auth incorrectly returned Unrecognized system for valid keys.
 Writes are POST form encoded, with apiKey/action in query.
-Never log URLs, secrets, raw provider exceptions or card fields. Callback access
-logs redact query strings; callback events allowlist selected fields.
+Never log URLs, secrets, raw provider exceptions or card fields. Both Worker
+configs redact URL query strings in Cloudflare logs and traces; callback events
+allowlist selected fields. Redaction does not remove already-retained logs.
+
+### Moving callbacks to body-only authentication
+
+Cloudflare redaction only protects requests that reach the Worker. Read back
+the PBX extension settings first: the callback URL can point to a different
+origin from the streaming channel, including the legacy Render service.
+
+For extensions that use the Worker, keep the legacy credential during cutover.
+Provision a distinct `TLIVR_CALLBACK_BODY_SECRET`, snapshot existing settings
+without secret values, and canary an extension with a query-free URL, POST, and
+the secret in `addParams.callback_key`. The [Technoline API module docs](https://pbx.tlivr.com/apiModuleDocs.html)
+describe POST moving provider parameters to the form body but leaving the
+configured URL unchanged. Verify the actual request and provider logs, plus
+the initial and chained callbacks in a real call, before migrating other
+extensions. Do not use the legacy Render reconcile operation for this migration;
+it writes query credentials. Once no live extensions use the old key, remove
+`TLIVR_CALLBACK_SECRET` to invalidate it. This does not change the WebSocket
+channel or its token.
 
 Pre-change backups are outside Git in the current chat work/pbx-backups.
 Server reconciliation saves redacted per-extension snapshots before writes.
@@ -144,4 +163,3 @@ https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
 https://pbx.tlivr.com/streamingApiDocs.html
 https://app.tlivr.com/pbxDocsCenter.html
-
