@@ -393,8 +393,11 @@ export class TutorSession {
         }
       } else if (event.type === "turn_complete") {
         const pending = this.pendingEmail;
-        this.pendingEmail = pending?.phase === "readback" && pending.audio && matchesEmailReadBack(pending.text, pending.email)
-          ? { ...pending, phase: "answer", text: "" } : null;
+        // Gemini can finish a tool-only turn before speaking the read-back.
+        if (pending?.phase !== "readback" || pending.audio || pending.text) {
+          this.pendingEmail = pending?.phase === "readback" && pending.audio && matchesEmailReadBack(pending.text, pending.email)
+            ? { ...pending, phase: "answer", text: "" } : null;
+        }
         this.meter.tutorTurns++;
         this.learnerSeen = false;
         this.firstAudio = false;
@@ -408,7 +411,6 @@ export class TutorSession {
           const saved = await this.recordTool(call);
           this.ai!.submitToolResult(call, saved, call.name === "prepare_email" ? {
             prepared: saved,
-            saved: false,
             next_step: saved ? "Read back the email and wait. After the caller confirms, call save_email." : "Ask the caller to clarify the address.",
           } : undefined);
           if (call.name === "end_session" && saved) return;

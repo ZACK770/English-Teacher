@@ -1275,6 +1275,7 @@ describe("real learner portal", () => {
         tool("save_email"),
         { type: "transcript", role: "learner", text: "a zero one two at example dot com" },
         tool("prepare_email"),
+        { type: "turn_complete" },
         ...(!noAudio ? [{ type: "audio", pcm24k: new Uint8Array(960) } as const] : []),
         ...(address ? ["הכתו", "בת היא " + address, ". הכתובת נכונה?"].map(text => ({ type: "transcript", role: "tutor", text } as const)) : []),
         ...(interrupted ? [{ type: "interrupted" } as const] : []),
@@ -1290,7 +1291,8 @@ describe("real learner portal", () => {
       } };
       await session.aiToOutput();
       expect(submitToolResult.mock.calls.map(call => call[1])).toEqual([false, true, !!confirmed, false]);
-      expect(submitToolResult.mock.calls[1]![2]).toMatchObject({ prepared: true, saved: false });
+      expect(submitToolResult.mock.calls[1]![2]).toMatchObject({ prepared: true });
+      expect(submitToolResult.mock.calls[1]![2]).not.toHaveProperty("saved");
       expect(send).toHaveBeenCalledTimes(confirmed ? 1 : 0);
       if (confirmed) expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "a012@example.com" }));
       expect((await b.loadContext("preferences:learner-a")).email).toBe(confirmed ? "a012@example.com" : undefined);
