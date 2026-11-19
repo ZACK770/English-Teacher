@@ -143,7 +143,7 @@ export default {
     catch (error) {
       response = error instanceof HttpError ? Response.json({ detail: error.detail }, { status: error.status }) : Response.json({ detail: "Request failed" }, { status: 500 });
     }
-    if (log) await audit(env, request, path, actor, response.status);
+    if (log) await audit(env, request, path, actor, response.status).catch(() => undefined);
     return response;
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
