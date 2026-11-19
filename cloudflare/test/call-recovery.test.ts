@@ -68,14 +68,17 @@ it("reconnects with the same setup and resumption handle and excludes the gap", 
   expect(tutor.finalMessage).toBeNull();
 });
 
-it("restores recent conversation when no resumption handle exists", async () => {
+it.each([[], [{ role: "learner", text: "hello" }]])("prompts an audible continuation without a resumption handle and with history %j", async (history) => {
   const { tutor } = session();
   tutor.ai.resumeHandle = null;
-  tutor.meter.transcript.push({ role: "learner", text: "hello" });
+  tutor.meter.transcript.push(...history);
   vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
-  const context = vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  const send = vi.spyOn(GeminiLive.prototype, "send").mockImplementation(() => {});
   await tutor.reconnectGemini();
-  expect(context).toHaveBeenCalledWith(expect.stringContaining("hello"));
+  expect(send).toHaveBeenCalledWith({ clientContent: {
+    turns: [{ role: "user", parts: [{ text: "Continue the interrupted lesson without repeating the greeting. Recent conversation: " + JSON.stringify(history) }] }],
+    turnComplete: true,
+  } });
 });
 
 it("unexpected closure retries twice, records exhaustion, and selects a spoken apology", async () => {

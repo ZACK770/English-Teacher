@@ -388,7 +388,7 @@ export class TutorSession {
       try {
         await replacement.connect(5000);
         if (this.abort.signal.aborted) { replacement.close(); return; }
-        if (!handle) replacement.addContext("Continue the interrupted lesson without repeating the greeting. Recent conversation: " + JSON.stringify(this.meter.transcript.slice(-20)));
+        if (!handle) replacement.startGreeting("Continue the interrupted lesson without repeating the greeting. Recent conversation: " + JSON.stringify(this.meter.transcript.slice(-20)));
         this.failureGapMs += Date.now() - this.failureStarted!;
         this.failureStarted = null;
         this.lastHuman = Date.now();
