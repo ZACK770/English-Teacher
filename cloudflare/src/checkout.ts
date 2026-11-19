@@ -2,6 +2,8 @@ import { z } from "zod";
 import { BusinessStore, PackageSchema } from "./business";
 import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
+import { SubscriptionStore } from "./subscriptions";
+import { vocabularyCatalog } from "./learning";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -21,15 +23,6 @@ export function webTerms(pkg: Pkg) {
 }
 
 const MONTH_MS = 30 * 86400_000;
-const iso = (ms: number) => new Date(ms).toISOString().replace("Z", "+00:00");
-
-// Monthly plans carry unused minutes over for one month; mastery tracks grant their minutes one month at a time.
-export function receiptDays(pkg: Pkg, channel: string) {
-  if (channel !== "web") return pkg.validity_days;
-  if (pkg.billing === "monthly") return pkg.validity_days * 2;
-  return pkg.duration_months ? 30 : pkg.validity_days;
-}
-
 const ddmmyyyy = (d: Date) => [d.getUTCDate(), d.getUTCMonth() + 1].map((n) => String(n).padStart(2, "0")).join("/") + "/" + d.getUTCFullYear();
 
 export function standingOrderStart(now = new Date()) {
@@ -68,13 +61,14 @@ export class CheckoutStore {
     this.db = business.db;
   }
 
-  async start(env: Env, customerId: string, packageId: string) {
+  async start(env: Env, customerId: string, packageId: string, domain?: string) {
     if (!checkoutConfigured(env)) throw new HttpError(503, "התשלום באתר עוד לא פתוח. אפשר להצטרף דרך נציג.");
     if (customerId.startsWith("anonymous-")) throw new HttpError(403, "כדי לשלם צריך להתחבר עם מספר טלפון.");
     const body = await this.business.record("packages", packageId);
     const customer = await this.business.record("customers", customerId);
     if (!body || !customer) throw new HttpError(404, "המסלול לא נמצא.");
     const pkg = PackageSchema.parse(body);
+    if (pkg.duration_months === 12 && (!domain || domain === "everyday" || !vocabularyCatalog.some(t => t.domain === domain))) throw new HttpError(422, "יש לבחור תחום אוצר מילים נוסף למסלול שליטה מלאה.");
     const terms = webTerms(pkg);
     if (!terms) throw new HttpError(422, "המסלול הזה לא פתוח לרכישה באתר.");
     const cutoff = new Date(Date.now() - ORDER_TTL_MS).toISOString().replace("Z", "+00:00");
@@ -106,7 +100,7 @@ export class CheckoutStore {
     const statements = [
       this.db.prepare(
         "INSERT INTO payment_orders (id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at,channel,installments,provider_ref,subscription_id) VALUES (?,?,?,?,?,?,?,'issued',?,?,'web',?,?,?)",
-      ).bind(orderId, "web-" + orderId, customerId, packageId, JSON.stringify(pkg), amount, vat, now, now, terms.installments, charge, subscriptionId),
+      ).bind(orderId, "web-" + orderId, customerId, packageId, JSON.stringify({ ...pkg, guarantee_domain: domain }), amount, vat, now, now, terms.installments, charge, subscriptionId),
     ];
     if (subscriptionId) {
       statements.push(this.db.prepare(
@@ -182,21 +176,22 @@ export class CheckoutStore {
       await this.activate(sub.id, kevaId, "");
     }
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
-    if (agorot(data.Amount) !== sub.monthly_agorot) throw new Error("Payment amount mismatch");
-    const reference = `nedarim:${mosadId}:${transactionId}`;
-    const existing = await this.db.prepare("SELECT id FROM sales_receipts WHERE reference=?").bind(reference).first<{ id: string }>();
-    if (existing) return { paid: true, receipt_id: existing.id, duplicate: true };
-    const pkg = PackageSchema.parse(JSON.parse(sub.snapshot));
-    const receiptId = randomHex(10);
+    if (!sub.entitlement_id) throw new Error("First payment must settle before renewal");
+    const subscriptions = new SubscriptionStore(this.db);
+    const reference = `nedarim-keva:${kevaId}:${transactionId}`;
+    const existing = await this.db.prepare("SELECT r.id,r.amount_ils FROM subscription_renewals n JOIN sales_receipts r ON r.subscription_id=n.subscription_id AND r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=? AND n.subscription_id=?").bind(reference, sub.entitlement_id).first<{ id: string; amount_ils: number }>();
+    if (existing) {
+      if (agorot(data.Amount) !== agorot(existing.amount_ils)) throw new Error("Payment amount mismatch");
+      return { paid: true, receipt_id: existing.id, duplicate: true };
+    }
+    if (agorot(data.Amount) !== await subscriptions.renewalAmount(sub.entitlement_id)) throw new Error("Payment amount mismatch");
     const now = nowIso();
-    const expires = iso(Date.now() + receiptDays(pkg, "web") * 86400_000);
-    const vat = (await this.business.economics()).vat_rate;
-    await this.db.batch([
-      this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(receiptId, sub.customer_id, sub.package_id, pkg.product, reference, sub.monthly_agorot / 100, vat, pkg.minutes, expires, now),
+    const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate, statements: [
       this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(now, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:keva_charge", sub.id, now),
-    ]);
-    return { paid: true, receipt_id: receiptId, customer_id: sub.customer_id, subscription_id: sub.id };
+    ] });
+    const receipt = await this.db.prepare("SELECT r.id FROM subscription_renewals n JOIN sales_receipts r ON r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=?").bind(reference).first<{ id: string }>();
+    return { paid: true, receipt_id: receipt?.id, customer_id: sub.customer_id, subscription_id: renewed.id };
   }
 
   async kevaRefused(data: Record<string, any>) {
@@ -206,6 +201,7 @@ export class CheckoutStore {
     await this.db.batch([
       this.db.prepare("INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("keva_refusal:" + JSON.stringify(data))).slice(0, 32), sub.first_order_id, "keva_refusal", safeMessage(data.Message ?? "חיוב הוראת הקבע סורב"), now),
       this.db.prepare("UPDATE standing_orders SET state='past_due',updated_at=? WHERE id=? AND state='active'").bind(now, sub.id),
+      this.db.prepare("UPDATE subscriptions SET status=CASE WHEN status='paused' THEN 'paused' ELSE 'past_due' END,resume_status='past_due',updated_at=? WHERE id=? AND status IN ('active','paused')").bind(now, sub.entitlement_id),
     ]);
     return { recorded: true };
   }
@@ -213,40 +209,20 @@ export class CheckoutStore {
   async cancel(env: Env, subscriptionId: string, customerId: string) {
     const sub = await this.db.prepare("SELECT * FROM standing_orders WHERE id=? AND customer_id=?").bind(subscriptionId, customerId).first<Record<string, any>>();
     if (!sub) throw new HttpError(404, "המנוי לא נמצא.");
-    if (sub.state === "cancelled") return { cancelled: true };
+    if (sub.state === "cancelled") {
+      if (sub.entitlement_id) await new SubscriptionStore(this.db).cancel(sub.entitlement_id);
+      return { cancelled: true };
+    }
     if (!sub.keva_id) throw new HttpError(409, "הוראת הקבע עוד לא הוקמה. אם חויבת, פנה אלינו ונבטל ידנית.");
     {
       const text = (await manage(env, { Action: "DeleteKeva", KevaId: sub.keva_id }).catch(() => "")).trim();
       if (text !== "OK") throw new HttpError(502, "לא הצלחנו לבטל מול נדרים פלוס כרגע. נסו שוב או פנו לשירות.");
     }
     const now = nowIso();
+    if (sub.entitlement_id) await new SubscriptionStore(this.db).cancel(sub.entitlement_id, now);
     await this.db.prepare("UPDATE standing_orders SET state='cancelled',cancelled_at=?,updated_at=? WHERE id=?").bind(now, now, sub.id).run();
     await this.business.audit("payment:keva_cancelled", sub.id);
     return { cancelled: true };
-  }
-
-  // Statements that schedule months 2..N of a mastery track; run in the settlement batch.
-  grantStatements(order: Record<string, any>, pkg: Pkg) {
-    if (order.channel !== "web" || pkg.billing === "monthly" || !pkg.duration_months || pkg.duration_months < 2) return [];
-    const start = Date.now();
-    return Array.from({ length: pkg.duration_months - 1 }, (_, i) =>
-      this.db.prepare("INSERT OR IGNORE INTO installment_grants (order_id,month_index,due_at) VALUES (?,?,?)").bind(order.id, i + 2, iso(start + (i + 1) * MONTH_MS)));
-  }
-
-  async issueDueGrants(now = Date.now()) {
-    const due = await this.db.prepare(
-      "SELECT g.order_id,g.month_index,g.due_at,o.customer_id,o.package_id,o.snapshot,o.vat_rate,o.transaction_id FROM installment_grants g JOIN payment_orders o ON o.id=g.order_id WHERE g.receipt_id IS NULL AND g.due_at<=? AND o.state='paid' LIMIT 50",
-    ).bind(iso(now)).all<Record<string, any>>();
-    for (const g of due.results) {
-      const pkg = PackageSchema.parse(JSON.parse(g.snapshot));
-      const receiptId = randomHex(10);
-      await this.db.batch([
-        this.db.prepare("UPDATE installment_grants SET receipt_id=? WHERE order_id=? AND month_index=? AND receipt_id IS NULL").bind(receiptId, g.order_id, g.month_index),
-        this.db.prepare("INSERT INTO sales_receipts SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM installment_grants WHERE order_id=? AND month_index=? AND receipt_id=?)").bind(
-          receiptId, g.customer_id, g.package_id, pkg.product, `grant:${g.order_id}:${g.month_index}`, 0, g.vat_rate, pkg.minutes, iso(Date.parse(g.due_at) + MONTH_MS), nowIso(), g.order_id, g.month_index, receiptId),
-      ]);
-    }
-    return due.results.length;
   }
 
   async billing(customerId: string) {
@@ -268,8 +244,8 @@ export async function checkoutRoutes(request: Request, env: Env, path: string, c
   };
   if (path === "/v1/portal/billing" && request.method === "GET") return Response.json(await store.billing(customerId), { headers: noCache });
   if (path === "/v1/portal/checkout" && request.method === "POST") {
-    const input = await json(z.object({ package_id: z.string().regex(/^[a-z0-9-]{1,40}$/) }));
-    return Response.json(await store.start(env, customerId, input.package_id), { headers: noCache });
+    const input = await json(z.object({ package_id: z.string().regex(/^[a-z0-9-]{1,40}$/), domain: z.string().max(40).optional() }));
+    return Response.json(await store.start(env, customerId, input.package_id, input.domain), { headers: noCache });
   }
   const order = path.match(/^\/v1\/portal\/checkout\/([a-f0-9]{32})(\/keva)?$/);
   if (order && !order[2] && request.method === "GET") return Response.json(await store.view(order[1], customerId), { headers: noCache });

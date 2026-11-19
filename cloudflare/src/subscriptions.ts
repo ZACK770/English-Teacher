@@ -34,27 +34,29 @@ export class SubscriptionStore {
     return (await this.db.prepare(`SELECT DISTINCT s.* FROM subscriptions s LEFT JOIN subscription_members m ON m.subscription_id=s.id AND m.removed_at IS NULL ${customerId ? "WHERE s.customer_id=? OR m.customer_id=?" : ""} ORDER BY s.created_at DESC`)
       .bind(...(customerId ? [customerId, customerId] : [])).all<Subscription>()).results;
   }
-  async create(customerId: string, planId: string, at = new Date().toISOString(), domains?: Domain[]) {
+  async create(customerId: string, planId: string, at = new Date().toISOString(), domains?: Domain[], source?: { id: string; priceAgorot: number; monthlyMinutes: number; termMonths: number | null; receiptId?: string; chargeAgorot?: number; vatRate?: number; statements?: D1PreparedStatement[] }) {
     at = iso(at);
-    const plan = await this.db.prepare("SELECT * FROM plans WHERE id=? AND active=1 AND product='school'").bind(planId).first<Subscription>();
+    const plan = await this.db.prepare("SELECT * FROM plans WHERE id=? AND (active=1 OR ?=1) AND product='school'").bind(planId, source ? 1 : 0).first<Subscription>();
     const pkg = await new BusinessStore(this.db).record("packages", planId);
     if (!plan || !pkg || !(await this.db.prepare("SELECT id FROM customers WHERE id=?").bind(customerId).first())) throw new Error("Unknown customer or plan");
-    const term = pkg.duration_months ?? null;
-    if (plan.billing !== "monthly" && ![6, 12].includes(term)) throw new Error("Not a subscription plan");
+    const term = source ? source.termMonths : pkg.duration_months ?? null;
+    const minutes = source?.monthlyMinutes ?? plan.included_minutes;
+    if (!source && plan.billing !== "monthly" && ![6, 12].includes(term)) throw new Error("Not a subscription plan");
     const selected = z.array(DomainSchema).parse(domains ?? JSON.parse(plan.domains_json));
     if (term && (!selected.length || selected.some(d => !vocabularyCatalog.some(t => t.domain === d.domain && (!d.levels || d.levels.includes(t.level as any)))))) throw new Error("Guarantee domains must have measurable vocabulary");
     if (term === 12 && !selected.some(d => d.domain !== "everyday")) throw new Error("Choose an additional vocabulary domain for mastery");
-    const id = randomHex(12), end = addMonths(at, 1);
+    const id = source?.id ?? randomHex(12), end = addMonths(at, 1);
     await this.db.batch([
-      this.db.prepare(`INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_start,current_period_end,created_at,updated_at,term_months,pause_year_start,guarantee_status,domains_json,monthly_minutes,term_end)
-        VALUES (?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, customerId, planId, plan.price_agorot, at, at, end, at, at, term, at, term ? "pending" : null, JSON.stringify(selected), plan.included_minutes, term ? addMonths(at, term) : null),
-      this.grantStatement({ id, customer_id: customerId, plan_id: planId, monthly_minutes: plan.included_minutes, current_period_start: at, current_period_end: end }, at),
+      this.db.prepare(`INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_start,current_period_end,created_at,updated_at,term_months,pause_year_start,guarantee_status,domains_json,monthly_minutes,term_end)
+        VALUES (?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, customerId, planId, source?.priceAgorot ?? plan.price_agorot, at, at, end, at, at, term, at, term ? "pending" : null, JSON.stringify(selected), minutes, term ? addMonths(at, term) : null),
+      this.grantStatement({ id, customer_id: customerId, plan_id: planId, monthly_minutes: minutes, current_period_start: at, current_period_end: end, receipt_id: source?.receiptId, charge_agorot: source?.chargeAgorot, vat_rate: source?.vatRate }, at),
+      ...(source?.statements ?? []),
     ]);
     return this.get(id);
   }
   private grantStatement(sub: Subscription, at: string) {
     return this.db.prepare(`INSERT OR IGNORE INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id,valid_from)
-      VALUES (?,?,?,'school',?,0,0,?,?,?,?,?)`).bind(randomHex(10), sub.customer_id, sub.plan_id, `subscription:${sub.id}:${sub.current_period_start}`, sub.monthly_minutes, addMonths(sub.current_period_end, 1), at, sub.id, sub.current_period_start);
+      SELECT ?,?,?,'school',?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND current_period_start=? AND status IN ('active','paused','past_due'))`).bind(sub.receipt_id ?? randomHex(10), sub.customer_id, sub.plan_id, `subscription:${sub.id}:${sub.current_period_start}`, (sub.charge_agorot ?? 0) / 100, sub.vat_rate ?? 0, sub.monthly_minutes, addMonths(sub.current_period_end, 1), at, sub.id, sub.current_period_start, sub.id, sub.current_period_start);
   }
   async grantPeriod(id: string, at = new Date().toISOString()) {
     const sub = await this.get(id);
@@ -67,7 +69,7 @@ export class SubscriptionStore {
     const count = await this.db.prepare("SELECT COUNT(*) AS n FROM subscription_members WHERE subscription_id=? AND removed_at IS NULL").bind(id).first<{ n: number }>();
     return sub.price_agorot + sub.family_addon_agorot * (count?.n ?? 0);
   }
-  async recordRenewal(id: string, at: string, reference: string) {
+  async recordRenewal(id: string, at: string, reference: string, charge?: { amountAgorot: number; vatRate: number; statements?: D1PreparedStatement[] }) {
     if (!reference.trim() || reference.length > 150) throw new Error("Invalid renewal reference");
     const existing = await this.db.prepare("SELECT subscription_id FROM subscription_renewals WHERE reference=?").bind(reference).first<{ subscription_id: string }>();
     if (existing) {
@@ -75,17 +77,19 @@ export class SubscriptionStore {
       return this.get(id);
     }
     const sub = await this.get(id);
-    if (sub.status !== "active") throw new Error("Subscription is not active");
+    if (!["active", "paused", "past_due"].includes(sub.status)) throw new Error("Subscription is not renewable");
     const start = sub.current_period_end;
     const pausedMs = Date.parse(start) - Date.parse(addMonths(sub.started_at, sub.period_number));
     const end = shift(addMonths(sub.started_at, sub.period_number + 1), pausedMs);
     if (sub.term_months && sub.period_number >= sub.term_months + sub.extension_months) throw new Error("Term has ended");
     try {
-      await this.db.batch([
-        this.db.prepare("INSERT INTO subscription_renewals VALUES (?,?,?,?)").bind(reference, id, start, iso(at)),
-        this.db.prepare("UPDATE subscriptions SET current_period_start=?,current_period_end=?,period_number=period_number+1,updated_at=? WHERE id=?").bind(start, end, iso(at), id),
-        this.grantStatement({ ...sub, current_period_start: start, current_period_end: end }, iso(at)),
+      const changes = await this.db.batch([
+        this.db.prepare("INSERT INTO subscription_renewals SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND status=? AND current_period_end=?)").bind(reference, id, start, iso(at), id, sub.status, sub.current_period_end),
+        this.db.prepare("UPDATE subscriptions SET current_period_start=?,current_period_end=?,period_number=period_number+1,status=CASE WHEN status='past_due' THEN 'active' ELSE status END,resume_status='active',updated_at=? WHERE id=? AND status=? AND current_period_end=? RETURNING id").bind(start, end, iso(at), id, sub.status, sub.current_period_end),
+        this.grantStatement({ ...sub, current_period_start: start, current_period_end: end, charge_agorot: charge?.amountAgorot, vat_rate: charge?.vatRate }, iso(at)),
+        ...(charge?.statements ?? []),
       ]);
+      if (!changes[1].results.length) throw new Error("Subscription status changed");
     } catch (error) {
       const credited = await this.db.prepare("SELECT subscription_id FROM subscription_renewals WHERE reference=?").bind(reference).first<{ subscription_id: string }>();
       if (credited?.subscription_id !== id) throw error;
@@ -99,7 +103,7 @@ export class SubscriptionStore {
     const yearEnd = addMonths(sub.started_at, (new Date(year).getUTCFullYear() - new Date(sub.started_at).getUTCFullYear() + 1) * 12);
     const daysThisYear = Math.min(days, (Date.parse(yearEnd) - Date.parse(at)) / DAY);
     if (sub.status !== "active" || !Number.isInteger(days) || days < 1 || days > 60 || used + daysThisYear > 60) throw new Error("Pause limit exceeded or subscription not active");
-    const changed = await this.db.prepare("UPDATE subscriptions SET status='paused',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
+    const changed = await this.db.prepare("UPDATE subscriptions SET status='paused',resume_status='active',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
     if (!changed.meta.changes) throw new Error("Subscription status changed");
     return this.get(id);
   }
@@ -112,10 +116,10 @@ export class SubscriptionStore {
     if (elapsed < 0) throw new Error("Resume precedes pause");
     const year = yearStart(sub.started_at, until);
     const used = (sub.pause_year_start === year ? sub.pause_days_used : 0) + (Date.parse(until) - Date.parse(sub.paused_at > year ? sub.paused_at : year)) / DAY;
-    const receipts = (await this.db.prepare("SELECT id,expires_at FROM sales_receipts WHERE subscription_id=? AND expires_at>?").bind(id, sub.paused_at).all<Subscription>()).results;
+    const receipts = (await this.db.prepare("SELECT id,expires_at,valid_from FROM sales_receipts WHERE subscription_id=? AND expires_at>?").bind(id, sub.paused_at).all<Subscription>()).results;
     const changes = await this.db.batch([
-      ...receipts.map(r => this.db.prepare("UPDATE sales_receipts SET expires_at=? WHERE id=? AND EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND status='paused' AND paused_at=?)").bind(shift(r.expires_at, elapsed), r.id, id, sub.paused_at)),
-      this.db.prepare("UPDATE subscriptions SET status='active',current_period_end=?,term_end=?,paused_at=NULL,pause_until=NULL,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='paused' AND paused_at=? RETURNING id").bind(shift(sub.current_period_end, elapsed), sub.term_end ? shift(sub.term_end, elapsed) : null, year, used, at, id, sub.paused_at),
+      ...receipts.map(r => this.db.prepare("UPDATE sales_receipts SET expires_at=?,valid_from=? WHERE id=? AND EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND status='paused' AND paused_at=? AND current_period_end=?)").bind(shift(r.expires_at, elapsed), r.valid_from && r.valid_from > sub.paused_at ? shift(r.valid_from, elapsed) : r.valid_from, r.id, id, sub.paused_at, sub.current_period_end)),
+      this.db.prepare("UPDATE subscriptions SET status=resume_status,current_period_start=?,current_period_end=?,term_end=?,paused_at=NULL,pause_until=NULL,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='paused' AND paused_at=? AND current_period_end=? RETURNING id").bind(sub.current_period_start > sub.paused_at ? shift(sub.current_period_start, elapsed) : sub.current_period_start, shift(sub.current_period_end, elapsed), sub.term_end ? shift(sub.term_end, elapsed) : null, year, used, at, id, sub.paused_at, sub.current_period_end),
     ]);
     if (!changes[changes.length - 1].results.length) throw new Error("Subscription status changed");
     return this.get(id);
@@ -166,16 +170,14 @@ export class SubscriptionStore {
   }
   async summary(customerId: string, at = new Date().toISOString()) {
     return Promise.all((await this.list(customerId)).map(async sub => {
-      const balance = await this.db.prepare(`SELECT COALESCE(SUM(MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))),0)/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND r.reference<? AND r.expires_at>?`)
-        .bind(sub.id, `subscription:${sub.id}:${sub.current_period_start}`, sub.status === "paused" ? sub.paused_at : iso(at)).first<{ minutes: number }>();
-      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND r.reference<? AND r.expires_at>? ORDER BY r.expires_at`)
-        .bind(sub.id, `subscription:${sub.id}:${sub.current_period_start}`, sub.status === "paused" ? sub.paused_at : iso(at)).all<{ expires_at: string; minutes: number }>()).results.filter(r => r.minutes > 0);
+      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND COALESCE(r.valid_from,r.created_at)<? AND r.expires_at>? ORDER BY r.expires_at`)
+        .bind(sub.id, sub.current_period_start, sub.status === "paused" ? sub.paused_at : iso(at)).all<{ expires_at: string; minutes: number }>()).results.filter(r => r.minutes > 0);
       const plan = await this.db.prepare("SELECT name FROM plans WHERE id=?").bind(sub.plan_id).first<{ name: string }>();
       const members = (await this.db.prepare("SELECT m.customer_id,c.name,c.primary_phone AS phone FROM subscription_members m JOIN customers c ON c.id=m.customer_id WHERE m.subscription_id=? AND m.removed_at IS NULL").bind(sub.id).all()).results;
       const year = yearStart(sub.started_at, iso(at));
       const ongoing = sub.status === "paused" ? Math.max(0, (Date.parse(iso(at) < sub.pause_until ? iso(at) : sub.pause_until) - Date.parse(sub.paused_at > year ? sub.paused_at : year)) / DAY) : 0;
       const { notes, ...publicSub } = sub;
-      return { ...publicSub, plan_name: plan?.name ?? sub.plan_id, members, owner: sub.customer_id === customerId, renewal_amount_agorot: await this.renewalAmount(sub.id), rollover_minutes: balance?.minutes ?? 0, rollover, pause_days_remaining: Math.max(0, 60 - (sub.pause_year_start === year ? sub.pause_days_used : 0) - ongoing) };
+      return { ...publicSub, plan_name: plan?.name ?? sub.plan_id, members, owner: sub.customer_id === customerId, renewal_amount_agorot: await this.renewalAmount(sub.id), rollover_minutes: rollover.reduce((sum, r) => sum + r.minutes, 0), rollover, pause_days_remaining: Math.max(0, 60 - (sub.pause_year_start === year ? sub.pause_days_used : 0) - ongoing) };
     }));
   }
   async tick(at = new Date().toISOString()) {

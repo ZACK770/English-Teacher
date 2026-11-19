@@ -16,6 +16,7 @@ CREATE TABLE subscriptions_new (
   current_period_start TEXT,
   paused_at TEXT,
   pause_until TEXT,
+  resume_status TEXT NOT NULL DEFAULT 'active' CHECK(resume_status IN ('active','past_due')),
   pause_days_used REAL NOT NULL DEFAULT 0,
   pause_year_start TEXT,
   guarantee_status TEXT CHECK(guarantee_status IN ('pending','granted','not_eligible')),
@@ -47,6 +48,8 @@ UPDATE subscriptions SET
 ALTER TABLE sales_receipts ADD COLUMN subscription_id TEXT REFERENCES subscriptions(id);
 ALTER TABLE sales_receipts ADD COLUMN valid_from TEXT;
 CREATE INDEX idx_receipts_subscription ON sales_receipts(subscription_id,expires_at);
+ALTER TABLE standing_orders ADD COLUMN entitlement_id TEXT REFERENCES subscriptions(id);
+ALTER TABLE payment_orders ADD COLUMN entitlement_id TEXT REFERENCES subscriptions(id);
 CREATE TABLE subscription_members (
   subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
   customer_id TEXT NOT NULL REFERENCES customers(id),

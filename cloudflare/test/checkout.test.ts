@@ -5,7 +5,8 @@ import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { type Env } from "../src/env";
 import worker from "../src/index";
-import { CheckoutStore, standingOrderStart } from "../src/checkout";
+import { standingOrderStart } from "../src/checkout";
+import { SubscriptionStore, addMonths } from "../src/subscriptions";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -64,18 +65,20 @@ beforeEach(async () => {
     return Response.json({});
   }));
 });
-afterEach(() => { vi.unstubAllGlobals(); db.sql.close(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
   it("charges a mastery track in installments with the price fixed server-side and the validation key never returned", async () => {
-    const r = await req("/v1/portal/checkout", { package_id: "school-mastery" });
+    expect((await req("/v1/portal/checkout", { package_id: "school-mastery" })).status).toBe(422);
+    expect((await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "unknown" })).status).toBe(422);
+    const r = await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "travel" });
     const o = await r.json() as any;
     expect(r.status).toBe(200);
     expect(JSON.stringify(o)).not.toContain("valid12345");
     expect(o).toMatchObject({ amount_ils: 1490, installments: 12, subscription: null, steps: [{ kind: "charge" }] });
     expect(o.iframe_url).toContain("MaxPayments=12");
     expect(calls[0]).toMatchObject({ PaymentType: "Ragil", Amount: "1490", Tashlumim: "12", Groupe: "dibura-" + o.id, ApiValid: "valid12345" });
-    const again = await (await req("/v1/portal/checkout", { package_id: "school-mastery" })).json() as any;
+    const again = await (await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "travel" })).json() as any;
     expect(again.id).toBe(o.id);
     const paid = { MosadNumber: "7019554", TransactionId: "9001", Confirmation: "77", Amount: "1490", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" };
     expect((await hook({ ...paid, Amount: "1" })).status).toBe(400);
@@ -83,19 +86,32 @@ describe("website checkout", () => {
     expect((await hook(paid)).status).toBe(200);
     expect(db.sql.prepare("SELECT COUNT(*) n, MAX(minutes) m FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 1, m: 300 });
     expect((await (await req("/v1/portal/checkout/" + o.id)).json() as any).state).toBe("paid");
-    const store = new CheckoutStore(b);
-    expect(await store.issueDueGrants()).toBe(0);
-    await store.issueDueGrants(Date.now() + 31 * 86400_000);
-    await store.issueDueGrants(Date.now() + 31 * 86400_000);
+    const store = new SubscriptionStore(env.DB);
+    const sub = await store.get(o.id);
+    expect(sub).toMatchObject({ term_months: 12, monthly_minutes: 300, period_number: 1, price_agorot: 149000 });
+    expect(JSON.parse(sub.domains_json)).toContainEqual({ domain: "travel" });
+    expect(db.sql.prepare("SELECT entitlement_id FROM payment_orders WHERE id=?").get(o.id)?.entitlement_id).toBe(sub.id);
+    await store.tick(addMonths(sub.started_at, 1));
+    await store.tick(addMonths(sub.started_at, 1));
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 2 });
-    expect(db.sql.prepare("SELECT COUNT(*) n FROM installment_grants").get()).toMatchObject({ n: 11 });
+    await store.tick(addMonths(sub.started_at, 11));
+    await store.tick(addMonths(sub.started_at, 11));
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 12 });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM installment_grants").get()).toMatchObject({ n: 0 });
   });
 
   it("opens a monthly plan: first month now, standing order verified with Nedarim, monthly charges renew once each", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const o = await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any;
     expect(o).toMatchObject({ amount_ils: 119, subscription: { state: "pending", monthly_ils: 119 } });
     expect(o.steps.map((s: any) => s.kind)).toEqual(["charge", "keva"]);
-    await hook({ MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "119", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" });
+    const first = { MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "119", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" };
+    expect((await hook(first)).status).toBe(200);
+    expect((await hook(first)).status).toBe(200);
+    const store = new SubscriptionStore(env.DB);
+    expect(await store.get(o.id)).toMatchObject({ price_agorot: 11900, status: "active", period_number: 1 });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(1);
+    expect(db.sql.prepare("SELECT entitlement_id FROM standing_orders").get()?.entitlement_id).toBe(o.id);
     expect((await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any)).toMatchObject({ id: o.id, steps: [{ kind: "keva" }] });
     expect((await req("/v1/portal/subscriptions/" + o.subscription.id + "/cancel", {})).status).toBe(409);
     expect(calls[1]).toMatchObject({ PaymentType: "HK", Amount: "119", Tashlumim: "", Groupe: "dibura-" + o.subscription.id, ...standingOrderStart() });
@@ -106,19 +122,71 @@ describe("website checkout", () => {
     expect(confirmed.subscription).toMatchObject({ state: "active", next_date: "01/01/2027" });
     await hook({ MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "119", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" });
     const month = { MosadNumber: "7019554", TransactionId: "2", Confirmation: "6", Amount: "119", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
+    vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
     expect((await hook(month)).status).toBe(200);
     expect((await hook(month)).status).toBe(200);
     expect((await hook({ ...month, TransactionId: "3", Amount: "1" })).status).toBe(400);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 2 });
+    expect(await store.get(o.id)).toMatchObject({ period_number: 2 });
+    expect((await store.summary("c1"))[0]).toMatchObject({ rollover_minutes: 200 });
+    expect(db.sql.prepare("SELECT reference FROM subscription_renewals").get()?.reference).toBe("nedarim-keva:4242:2");
     expect(db.sql.prepare("SELECT next_date FROM standing_orders").get()?.next_date).toBe(standingOrderStart().StartFrom);
     const refusal = { MosadNumber: "7019554", Status: "Error", Source: "Keva", KevaId: "4242", Message: "סירוב" };
     await hook(refusal);
     await hook(refusal);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_refusal'").get()).toMatchObject({ n: 1 });
     expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toMatchObject({ state: "past_due" });
+    expect((await store.get(o.id)).status).toBe("past_due");
     expect((await req("/v1/portal/subscriptions/" + o.subscription.id + "/cancel", {})).status).toBe(200);
     expect(calls.at(-1)).toMatchObject({ Action: "DeleteKeva", KevaId: "4242" });
     expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toMatchObject({ state: "cancelled" });
+    expect((await store.get(o.id)).status).toBe("cancelled");
+    expect((await hook({ ...month, TransactionId: "999" })).status).toBe(400);
+  });
+
+  it("records charges during a pause, shifts future availability on resume and validates the family renewal amount", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "10", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id })).status).toBe(200);
+    keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
+    expect((await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" })).status).toBe(200);
+    const store = new SubscriptionStore(env.DB);
+    await store.addMember(o.id, "0502223333", "Family");
+    const charge = { MosadNumber: "7019554", TransactionId: "11", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
+    expect((await hook(charge)).status).toBe(400);
+    expect((await store.get(o.id)).period_number).toBe(1);
+    vi.setSystemTime(new Date("2026-01-30T00:00:00Z"));
+    expect((await req("/v1/portal/subscriptions/" + o.id + "/pause", { days: 7 })).status).toBe(200);
+    vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
+    expect((await hook({ ...charge, Amount: "98" })).status).toBe(200);
+    expect((await hook({ ...charge, Amount: "98" })).status).toBe(200);
+    expect(await store.get(o.id)).toMatchObject({ status: "paused", period_number: 2 });
+    vi.setSystemTime(new Date("2026-02-06T00:00:00Z"));
+    expect((await req("/v1/portal/subscriptions/" + o.id + "/resume", {})).status).toBe(200);
+    expect(await store.get(o.id)).toMatchObject({ status: "active", current_period_start: "2026-02-08T00:00:00.000+00:00", current_period_end: "2026-03-08T00:00:00.000+00:00", pause_days_used: 7 });
+    expect(db.sql.prepare("SELECT valid_from FROM sales_receipts ORDER BY valid_from DESC LIMIT 1").get()?.valid_from).toBe("2026-02-08T00:00:00.000+00:00");
+    expect((await store.summary("c1"))[0].rollover_minutes).toBe(60);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(2);
+    const request = new Request("https://speakcall.app/v1/admin/business/subscriptions/" + o.id + "/cancel", { method: "POST", headers: { Authorization: "Bearer a" }, body: "{}" });
+    expect((await worker.fetch(request, env)).status).toBe(200);
+    expect((await store.get(o.id)).status).toBe("cancelled");
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()?.state).toBe("cancelled");
+    expect(calls.at(-1)).toMatchObject({ Action: "DeleteKeva", KevaId: "4242" });
+  });
+
+  it("keeps a refused paused subscription frozen and resumes it as past due", async () => {
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    await hook({ MosadNumber: "7019554", TransactionId: "20", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
+    await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" });
+    await req("/v1/portal/subscriptions/" + o.id + "/pause", { days: 7 });
+    expect((await hook({ MosadNumber: "7019554", Status: "Error", KevaId: "4242", Message: "refused" })).status).toBe(200);
+    const store = new SubscriptionStore(env.DB);
+    expect(await store.get(o.id)).toMatchObject({ status: "paused", resume_status: "past_due" });
+    await req("/v1/portal/subscriptions/" + o.id + "/resume", {});
+    expect((await store.get(o.id)).status).toBe("past_due");
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "21", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" })).status).toBe(200);
+    expect((await store.get(o.id)).status).toBe("active");
   });
 
   it("is closed without the iframe validation key and refuses other customers' orders", async () => {

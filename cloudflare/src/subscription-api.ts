@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { HttpError } from "./env";
+import { HttpError, type Env } from "./env";
+import { CheckoutStore } from "./checkout";
+import { BusinessStore } from "./business";
 import { DomainSchema, SubscriptionStore } from "./subscriptions";
 
-export async function subscriptionApi(request: Request, store: SubscriptionStore, segments: string[], customerId?: string): Promise<Response> {
+export async function subscriptionApi(request: Request, store: SubscriptionStore, segments: string[], customerId?: string, env?: Env): Promise<Response> {
   const [id, action, memberId] = segments;
   const method = request.method;
   try {
@@ -29,8 +31,15 @@ export async function subscriptionApi(request: Request, store: SubscriptionStore
       return Response.json(await store.pause(id, input.days, at));
     }
     if (action === "resume") return Response.json(await store.resume(id, at));
+    if (action === "cancel") {
+      const standing = await store.db.prepare("SELECT id FROM standing_orders WHERE entitlement_id=?").bind(id).first<{ id: string }>();
+      if (standing) {
+        if (!env) throw new HttpError(503, "Billing service required");
+        await new CheckoutStore(new BusinessStore(store.db)).cancel(env, standing.id, sub.customer_id);
+      } else await store.cancel(id, at);
+      return Response.json(await store.get(id));
+    }
     if (customerId) throw new HttpError(403, "Admin action required");
-    if (action === "cancel") return Response.json(await store.cancel(id, at));
     if (action === "evaluate-guarantee") return Response.json(await store.evaluateGuarantee(id, at));
     if (action === "renewal") {
       const input = z.object({ reference: z.string().min(1).max(150) }).parse(await request.json());
