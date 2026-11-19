@@ -634,6 +634,25 @@ describe("approved pricing catalog", () => {
 });
 
 describe("public callback quota", () => {
+  it("does not let a scheduled lesson swallow an immediate website callback", async () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    await recordSalesTool(b, "learner-a", "booked", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" });
+    env.TLIVR_SYSTEM_API_KEY = "mock";
+    env.TLIVR_CALLBACK_EXTENSION_ID = "456";
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "OK", errorCode: 0 }));
+    vi.stubGlobal("fetch", fetcher);
+    const body = { name: "Callback test", phone: "0500000001", timing: "now", source: "home_landing", for_whom: "self", consent: true };
+    const first = await request("/v1/public/callback", tokenA, body);
+    expect(first.status).toBe(201);
+    const result = await first.json() as any;
+    expect(result).toMatchObject({ status: "dialed" });
+    expect(result.duplicate).toBeUndefined();
+    expect(db.sql.prepare("SELECT id FROM callback_requests").all()).toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const duplicate = await (await request("/v1/public/callback", tokenA, body)).json();
+    expect(duplicate).toMatchObject({ duplicate: true, id: result.id });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("does not spend the quota on repeat submissions for an existing callback", async () => {
     const submit = (number: number) => request("/v1/public/callback", tokenA, {
       name: "Callback test", phone: "050000000" + number, timing: "now", for_whom: "self", consent: true,
