@@ -3,6 +3,7 @@ import { submitCallback } from './callbackApi';
 import { LegalFooter } from '../legal/LegalFooter';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
+const SHOW_SCHEDULED_CALLBACK = false;
 const scheduleWindow = 30 * 86400000;
 const localDateTime = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
@@ -41,7 +42,8 @@ export const JoinLanding: React.FC = () => {
       return;
     }
 
-    const preferredAt = timing === 'scheduled' ? new Date(preferredTime) : null;
+    const callbackTiming = SHOW_SCHEDULED_CALLBACK ? timing : 'now';
+    const preferredAt = callbackTiming === 'scheduled' ? new Date(preferredTime) : null;
     if (preferredAt && preferredAt.getTime() > Date.now() + scheduleWindow) {
       setErrorMessage('אפשר לתאם שיחה עד 30 יום מראש');
       return;
@@ -57,7 +59,7 @@ export const JoinLanding: React.FC = () => {
         phone: cleanPhone,
         for_whom: forWhom,
         goal,
-        timing,
+        timing: callbackTiming,
         preferred_time: readableTime,
         preferred_at: preferredAt?.toISOString(),
         consent: true
@@ -366,12 +368,12 @@ export const JoinLanding: React.FC = () => {
                       className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-xs text-slate-200"
                     >
                       <option value="now">עכשיו (מיידי!)</option>
-                      <option value="scheduled">בשעה אחרת</option>
+                      {SHOW_SCHEDULED_CALLBACK && <option value="scheduled">בשעה אחרת</option>}
                     </select>
                   </div>
                 </div>
 
-                {timing === 'scheduled' && (
+                {SHOW_SCHEDULED_CALLBACK && timing === 'scheduled' && (
                   <div>
                     <label className="font-bold text-slate-300 block mb-1">מתי נוח לכם שנתקשר?</label>
                     <input
