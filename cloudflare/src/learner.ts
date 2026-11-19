@@ -115,7 +115,7 @@ export async function applyLearnerControls(
   b: BusinessStore, customerId: string, bot: Pick<Bot, "id" | "role">, controls: TutorControls, previewTeacher?: string,
 ): Promise<TutorControls> {
   const p = await b.loadContext("preferences:" + customerId);
-  const privacy = { store_transcripts: p.store_transcripts === true };
+  const privacy = { store_transcripts: typeof p.store_transcripts === "boolean" ? p.store_transcripts : controls.store_transcripts };
   if (bot.role !== "teacher") return { ...controls, ...privacy };
   const teacher = await lessonTeacher(b, customerId, bot.id, p, previewTeacher);
   if (previewTeacher && !teacher) throw new HttpError(404, "המורה לא נמצא.");

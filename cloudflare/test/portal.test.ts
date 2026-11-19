@@ -1352,7 +1352,7 @@ describe("real learner portal", () => {
     const result = await applyLearnerControls(b, "learner-a", { id: "translator", role: "translator" }, c);
     expect(result.base_prompt).toBe(c.base_prompt);
     expect(result.custom_instructions).toBe(c.custom_instructions);
-    expect(result.store_transcripts).toBe(false);
+    expect(result.store_transcripts).toBe(true);
   });
   it("never returns another customer's transcript", async () => {
     await progress.saveSession({ student_id: "learner-a", call_id: "private-call", started_at: new Date(), learner_turns: 1, tutor_turns: 1, observations: [], transcript: null, summary: { summary_he: "שיחה", success_he: "", next_step_he: "", points: 0 }, usage: { input_text_tokens: 0, input_audio_tokens: 0, output_text_tokens: 0, output_audio_tokens: 0, thoughts_tokens: 0, estimated_cost_usd: 0, cost_basis: "test" }, model: "test" });
@@ -1379,6 +1379,7 @@ describe("real learner portal", () => {
     expect(String(session!.transcript_json).includes(text)).toBe(enabled);
   });
   it.each([false, true, undefined].flatMap(enabled => ["conversation", "empty", "error"].map(outcome => ({ enabled, outcome }))))("honors voice transcript opt-in=$enabled for $outcome", async ({ enabled, outcome }) => {
+    const on = enabled !== false;
     if (enabled !== undefined) await request("/v1/portal/preferences", tokenA, { store_transcripts: enabled });
     await progress.saveControls("student", controlsFromSettings(true));
     const connect = vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue(undefined);
@@ -1393,11 +1394,11 @@ describe("real learner portal", () => {
     const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: "" });
     await session.run(JSON.stringify({ type: "start", token: "portal", callId: "private-voice", format: "pcm16;rate=8000;ch=1" }), "student", false);
     expect(session.meter.transcript).toHaveLength(outcome === "conversation" ? 2 : 0);
-    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM prompt_snapshots").get()?.n).toBe(enabled ? 1 : 0);
-    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM conversation_turns").get()?.n).toBe(enabled && outcome === "conversation" ? 2 : 0);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM prompt_snapshots").get()?.n).toBe(on ? 1 : 0);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM conversation_turns").get()?.n).toBe(on && outcome === "conversation" ? 2 : 0);
     const saved = db.sql.prepare("SELECT transcript_json,summary_he FROM sessions WHERE student_id='learner-a'").get();
     expect(saved).toBeTruthy();
-    expect(saved!.transcript_json).toBe(enabled ? JSON.stringify(session.meter.transcript) : null);
+    expect(saved!.transcript_json).toBe(on ? JSON.stringify(session.meter.transcript) : null);
     expect(saved!.summary_he).toBeTruthy();
   });
   it.each(["", "/english"])("consumes a %s browser voice ticket atomically and forwards only its verified customer", async (prefix) => {
