@@ -1,0 +1,12 @@
+.sc-logo-symbol-mark {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sc-symbol-breathe 4s ease-in-out infinite;
+}
+@keyframes sc-symbol-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sc-logo-symbol-mark { animation: none !important; }
+}

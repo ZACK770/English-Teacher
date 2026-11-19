@@ -78,9 +78,21 @@
 .sk-land-caller strong { display: flex; align-items: center; gap: 8px; }
 .sk-land-caller strong::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
 .sk-land-caller span { padding: 2px 9px; border-radius: 99px; background: #ffffff0b; color: var(--quiet); font-size: 12px; }
-.sk-land-wave { display: flex; align-items: center; justify-content: center; gap: 5px; height: 105px; direction: ltr; }
-.sk-land-wave i { flex: 0 0 5px; border-radius: 8px; background: linear-gradient(#8fd14f, #c0f67d); animation: sk-land-wave 1.45s ease-in-out 3 alternate; }
-@keyframes sk-land-wave { from { transform: scaleY(.46); } to { transform: scaleY(1.12); } }
+.sk-land-voice-art { display: block; width: min(100%, 340px); margin: 4px auto; color: var(--ink); overflow: visible; }
+.sk-land-voice-art g, .sk-land-step-icon { transform-box: fill-box; transform-origin: center; }
+.sk-land-symbol-breathe { animation: sk-land-breathe 4s ease-in-out infinite; }
+.sk-land-rings { stroke: var(--accent); stroke-width: .8; animation: sk-land-halo 4s ease-in-out infinite; }
+.sk-land-signal { stroke: var(--accent); animation: sk-land-halo 4s ease-in-out -1s infinite; }
+.sk-land-tail { stroke: var(--accent); transform-box: fill-box; transform-origin: center; }
+.sk-land-draw path { stroke-dasharray: 1; animation: sk-land-draw 1.8s ease-out both; }
+.sk-land-draw .sk-land-tail { animation: sk-land-draw 1.8s ease-out both, sk-land-tail 4s ease-in-out infinite; }
+.sk-land-step-icon { width: 30px; height: 30px; stroke-width: 1.5; color: var(--accent); margin-bottom: 16px; animation: sk-land-breathe 4s ease-in-out infinite; }
+.sk-land-steps li:nth-child(2) .sk-land-step-icon { animation-delay: -.7s; }
+.sk-land-steps li:nth-child(3) .sk-land-step-icon { animation-delay: -1.4s; }
+@keyframes sk-land-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.5px) scale(1.03); } }
+@keyframes sk-land-tail { 0%,100% { translate: 0 0; } 50% { translate: 0 -1px; } }
+@keyframes sk-land-halo { 0%,100% { transform: scale(1); opacity: .25; } 50% { transform: scale(1.04); opacity: .65; } }
+@keyframes sk-land-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 .sk-land-quote { font-size: clamp(21px, 2.6vw, 35px); font-weight: 800; letter-spacing: -.025em; }
 .sk-land-call figcaption { font-size: 14px; color: var(--quiet); }
 .sk-land-words { display: grid; justify-items: start; gap: 9px; text-align: start; margin-top: 20px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #25362d8c; color: var(--quiet); font-size: 13px; }
@@ -161,7 +173,7 @@
   .sk-land-hero h1 { margin-block: 12px; }
   .sk-land-callback { margin-top: 15px; }
   .sk-land-call { padding: 14px 17px; border-radius: 15px; }
-  .sk-land-wave { height: 58px; transform: scale(.62); }
+  .sk-land-voice-art { width: 130px; height: 110px; }
   .sk-land-words { display: none; }
   .sk-land-offer-panel { padding: 18px; gap: 10px; }
   .sk-land-offer-panel > div:first-child { display: contents; }

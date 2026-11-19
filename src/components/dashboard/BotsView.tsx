@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/AppContext';
 import { BotProfile, TutorControls, BotRole } from '../../types';
-import { Bot, Plus, Copy, Settings, Check, ArrowRight, Play, Eye } from 'lucide-react';
+import { Plus, Copy, Settings, Check, ArrowRight, Play, Eye } from 'lucide-react';
+
+import { TeacherMark } from "../portal/LineTeacher";
 
 export const BotsView: React.FC = () => {
   const { bots, controls, saveBotProfile, saveBotControls, createBot, duplicateBot, showToast } = useApp();
@@ -121,7 +123,7 @@ export const BotsView: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <div className="w-11 h-11 rounded-xl bg-[#e9f5f0] text-[#137c69] flex items-center justify-center font-bold text-lg">
-                    <Bot className="w-6 h-6" />
+                    <TeacherMark className="line-teacher-badge" teacher={{ name: b.label, voice: controls[b.id]?.voice }} />
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${

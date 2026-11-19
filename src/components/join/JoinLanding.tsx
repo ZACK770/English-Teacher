@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { submitCallback } from './callbackApi';
 import { LegalFooter } from '../legal/LegalFooter';
-import { SpeakCallLogo } from '../brand/SpeakCallLogo';
-import { legalBasePath } from '../../legalRoutes';
-import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
+import { PhoneCall, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
+
+import { TeacherMark } from "../portal/LineTeacher";
+import { INITIAL_CONTROLS } from '../../store/initialData';
+import { SpeakCallLogo } from "../brand/SpeakCallLogo";
+import { legalBasePath } from "../../legalRoutes";
 
 const SHOW_SCHEDULED_CALLBACK = false;
 const scheduleWindow = 30 * 86400000;
@@ -119,7 +122,7 @@ export const JoinLanding: React.FC = () => {
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold font-mono">
-                    <Bot className="w-4 h-4" />
+                    <TeacherMark className="line-teacher-badge" teacher={{ name: "Shochi", voice: INITIAL_CONTROLS['shochi-robot'].voice }} />
                     <span>שוכי · מורה ה-AI האישי שלך בטלפון ובמחשב</span>
                   </div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-emerald-400 border border-slate-800 rounded-full text-xs font-mono">
