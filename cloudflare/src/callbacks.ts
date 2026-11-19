@@ -247,6 +247,7 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
         method: "POST",
         headers: { Authorization: "Bearer " + env.CALLBACK_RELAY_SECRET, "Content-Type": "application/json" },
         body: JSON.stringify({ request_id: item.id, phone: item.phone }),
+        signal: AbortSignal.timeout(10000),
       });
       const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       ok = response.ok && result.ok === true;

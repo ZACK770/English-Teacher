@@ -284,8 +284,13 @@ describe("immediate callback submission", () => {
 
 describe("legacy hostname redirect", () => {
   it.each(["speakool.net", "www.speakool.net"])("redirects %s before API handling", async host => {
-    const response = await worker.fetch(new Request("http://" + host + "/english/v1/public/callback?x=a%2Fb&y=2", { method: "POST" }), {} as Env);
+    const response = await worker.fetch(new Request("http://" + host + "/english/learn?x=a%2Fb&y=2"), {} as Env);
     expect(response.status).toBe(301);
-    expect(response.headers.get("Location")).toBe("https://speakcall.app/english/v1/public/callback?x=a%2Fb&y=2");
+    expect(response.headers.get("Location")).toBe("https://speakcall.app/english/learn?x=a%2Fb&y=2");
+  });
+
+  it("does not redirect legacy POST submissions", async () => {
+    const response = await worker.fetch(new Request("http://speakool.net/v1/public/callback", { method: "POST" }), {} as Env).catch(() => null);
+    expect(response?.status).not.toBe(301);
   });
 });

@@ -47,7 +47,7 @@ export function LessonCallbackForm({ tel, privacy }: { tel: string; privacy: str
       {status === "error" && <>לא הצלחנו לשלוח את הבקשה. אפשר לנסות שוב או <a href={tel}>לחייג אלינו</a>.</>}
       {status === "duplicate" && <>כבר קיבלנו בקשת חיוג למספר הזה ביממה האחרונה. אפשר גם <a href={tel}>לחייג אלינו</a>.</>}
       {status === "dialed" && "המורה מתקשר אליך עכשיו — תענה לטלפון."}
-      {(status === "queued" || status === "shabbat") && <>{status === "shabbat" ? "בקשת החיוג התקבלה. המורה יתקשר במוצאי שבת." : "בקשת החיוג התקבלה. המורה יתקשר אליך בדקות הקרובות."} <a href={tel}>אפשר לחייג אלינו</a>.</>}
+      {(status === "queued" || status === "shabbat") && <>{status === "shabbat" ? "בקשת החיוג התקבלה. המורה יתקשר במוצאי שבת." : "בקשת החיוג התקבלה. המורה יתקשר אליך בהקדם."} <a href={tel}>אפשר לחייג אלינו</a>.</>}
     </div>
   </form>;
 }

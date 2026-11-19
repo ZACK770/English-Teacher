@@ -136,7 +136,7 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (url.hostname === "speakool.net" || url.hostname === "www.speakool.net") {
+    if ((url.hostname === "speakool.net" || url.hostname === "www.speakool.net") && (request.method === "GET" || request.method === "HEAD")) {
       url.protocol = "https:";
       url.host = "speakcall.app";
       return Response.redirect(url.toString(), 301);
