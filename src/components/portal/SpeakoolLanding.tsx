@@ -83,7 +83,7 @@ export function SpeakoolLanding() {
           <a className="sk-secondary" href={tel}>לרכישה בטלפון, מקש 3</a>
         </article>)}</div>
         <p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · הצטרפות דרך נציג.</p>
-        <small>כל המחירים כוללים מע״מ. מנויים ומסלולי שליטה אינם זמינים לרכישה אוטומטית.</small>
+        <small>כל המחירים כוללים מע״מ. התשלום בכרטיס אשראי בדף המאובטח של נדרים פלוס.</small>
       </section>
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>המשפט הראשון הוא הכי קשה.<br />השאר כבר זורם.</h2><a className="sk-primary" href={learn}>בוא נדבר <ArrowLeft size={18} /></a></section>
