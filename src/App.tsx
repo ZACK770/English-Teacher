@@ -12,6 +12,7 @@ import { isBlogPath } from './blog/routes';
 import { LegalFooter } from './components/legal/LegalFooter';
 import { legalBasePath, legalPageForPath } from './legalRoutes';
 import { AdminAuthGate } from './components/dashboard/AdminAuthGate';
+import { CrmPage } from './components/dashboard/CrmPage';
 import './components/dashboard/dashboard.css';
 import './components/portal/portal-polish.css';
 
@@ -110,6 +111,7 @@ export const AppContent: React.FC = () => {
 };
 
 export const App: React.FC = () => {
+  if (/^\/(english\/)?dashboard\/crm(\/|$)/.test(window.location.pathname)) return <AdminAuthGate><CrmPage /></AdminAuthGate>;
   if (isBlogPath(window.location.pathname)) return <BlogPage />;
   const legalPage = legalPageForPath(window.location.pathname);
   if (legalPage) {
