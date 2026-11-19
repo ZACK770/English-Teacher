@@ -23,9 +23,10 @@ export const topics: Record<string, string> = { recommended: "המומלץ בש�
 export const tracks: Record<string, string> = { recommended: "המומלץ בשבילך", conversation: "שיחה", spelling: "איות", grammar: "דקדוק" };
 export const apiPrefix = location.pathname === "/english" || location.pathname.startsWith("/english/") ? "/english" : "";
 export class PortalError extends Error { constructor(message: string, public status: number) { super(message); } }
-export async function portalRequest<T>(path: string, token: string, body?: unknown, method?: string): Promise<T> {
+export async function portalRequest<T>(path: string, token: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(apiPrefix + path, {
     method: method || (body === undefined ? "GET" : "POST"),
+    ...(signal && { signal }),
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(typeof body === 'object' && body !== null && (path.endsWith('/verify') || path === '/v1/portal/checkout') ? { ...body, attribution: attribution() } : body) }),
   });

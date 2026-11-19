@@ -13,10 +13,14 @@ vi.mock("react", async importOriginal => ({
   useRef: initial => hooks.refs[hooks.refIndex++] ?? (hooks.refs[hooks.refIndex - 1] = { current: initial }),
   useEffect: effect => { if (hooks.capture) hooks.effects.push(effect); },
 }));
-vi.mock("../../src/components/portal/portalApi", () => ({ apiPrefix: "", portalRequest: vi.fn() }));
+vi.mock("../../src/components/portal/portalApi", () => ({
+  apiPrefix: "",
+  PortalError: class extends Error { constructor(message, status) { super(message); this.status = status; } },
+  portalRequest: vi.fn(),
+}));
 vi.mock("lucide-react", () => ({ Mic: () => null, MicOff: () => null, PhoneOff: () => null }));
 import { VoiceRoom } from "../../src/components/portal/VoiceRoom";
-import { portalRequest } from "../../src/components/portal/portalApi";
+import { PortalError, portalRequest } from "../../src/components/portal/portalApi";
 
 let resume, getUserMedia, done, cleanup;
 const render = () => {
@@ -41,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("voice socket closure", () => {
-  let sockets, stop;
+  let sockets, stop, addModule;
   const connect = async () => {
     cleanup = hooks.effects[0]();
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
@@ -51,6 +55,7 @@ describe("voice socket closure", () => {
   beforeEach(() => {
     sockets = [];
     stop = vi.fn();
+    addModule = vi.fn(async () => {});
     getUserMedia.mockResolvedValue({ getTracks: () => [{ stop }] });
     vi.stubGlobal("location", { origin: "https://school.example", protocol: "https:" });
     vi.stubGlobal("WebSocket", class {
@@ -67,7 +72,7 @@ describe("voice socket closure", () => {
     vi.stubGlobal("AudioContext", class {
       state = "running";
       resume = resume;
-      audioWorklet = { addModule: vi.fn(async () => {}) };
+      audioWorklet = { addModule };
       createMediaStreamSource = node;
       createGain = () => ({ ...node(), gain: { value: 1 } });
       async close() { this.state = "closed"; }
@@ -77,6 +82,74 @@ describe("voice socket closure", () => {
     const socket = await connect();
     expect(socket.close).not.toHaveBeenCalled();
     expect(render()).toContain("עוד רגע, המורה מצטרף");
+    expect(render()).not.toContain('role="alert"');
+  });
+  it("silently retries a timed-out worklet load without asking for the microphone again", async () => {
+    vi.useFakeTimers();
+    addModule.mockImplementationOnce(() => new Promise(() => {}));
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(addModule).toHaveBeenCalledTimes(2);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(portalRequest).toHaveBeenCalledOnce();
+    expect(sockets).toHaveLength(1);
+    expect(render()).not.toContain('role="alert"');
+  });
+  it("aborts a stalled ticket request and silently retries once before opening a single socket", async () => {
+    vi.useFakeTimers();
+    portalRequest.mockImplementationOnce(() => new Promise(() => {}));
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(portalRequest).toHaveBeenCalledTimes(2);
+    expect(portalRequest.mock.calls[0][4].aborted).toBe(true);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(sockets).toHaveLength(1);
+    expect(render()).not.toContain('role="alert"');
+  });
+  it("stops retrying ticket requests after a second transient failure", async () => {
+    portalRequest.mockRejectedValue(new PortalError("שירות השיחות אינו זמין", 503));
+    cleanup = hooks.effects[0]();
+    await vi.waitFor(() => expect(render()).toContain("שירות השיחות אינו זמין"));
+    expect(portalRequest).toHaveBeenCalledTimes(2);
+    expect(sockets).toHaveLength(0);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+  it.each([401, 403, 429])("does not retry ticket rejection %d", async status => {
+    portalRequest.mockRejectedValue(new PortalError("לא ניתן לפתוח שיחה", status));
+    cleanup = hooks.effects[0]();
+    await vi.waitFor(() => expect(render()).toContain("לא ניתן לפתוח שיחה"));
+    expect(portalRequest).toHaveBeenCalledOnce();
+    expect(sockets).toHaveLength(0);
+  });
+  it("cancels a pending ticket when exiting without retrying", async () => {
+    vi.useFakeTimers();
+    portalRequest.mockImplementation(() => new Promise(() => {}));
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    hooks.refs[1].current();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(portalRequest).toHaveBeenCalledOnce();
+    expect(portalRequest.mock.calls[0][4].aborted).toBe(true);
+    expect(sockets).toHaveLength(0);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+  it("leaves a stalled socket handshaking only for a bounded time and never opens another", async () => {
+    vi.useFakeTimers();
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].close).toHaveBeenCalledOnce();
+    expect(render()).toContain("השיחה לא התחברה");
+  });
+  it("clears the startup deadline when the teacher is ready", async () => {
+    vi.useFakeTimers();
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    const socket = sockets[0];
+    socket.onopen();
+    socket.onmessage({ data: JSON.stringify({ type: "ready" }) });
+    await vi.advanceTimersByTimeAsync(40000);
+    expect(socket.close).not.toHaveBeenCalled();
     expect(render()).not.toContain('role="alert"');
   });
   it("shows a connection error with retry and exit, not a balance error, on a no-audio close", async () => {
@@ -111,7 +184,7 @@ describe("voice socket closure", () => {
     expect(render()).not.toContain('role="alert"');
   });
 });
-afterEach(() => { cleanup?.(); cleanup = undefined; vi.unstubAllGlobals(); });
+afterEach(() => { cleanup?.(); cleanup = undefined; vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe("voice entry recovery", () => {
   it("shows microphone permission guidance with retry and a working exit", async () => {
     cleanup = hooks.effects[0]();
@@ -138,5 +211,27 @@ describe("voice entry recovery", () => {
     cleanup = hooks.effects[0]();
     expect(render()).toContain("חזרה לאזור האישי");
     expect(render()).not.toContain('role="alert"');
+  });
+  it("offers a fresh gesture when resume never settles", async () => {
+    vi.useFakeTimers();
+    resume.mockImplementationOnce(() => new Promise(() => {}));
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render()).toContain("התחל לדבר");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+  it("bounds a pending microphone permission without reopening it and disposes a late stream", async () => {
+    vi.useFakeTimers();
+    let grant;
+    getUserMedia.mockImplementation(() => new Promise(resolve => { grant = resolve; }));
+    cleanup = hooks.effects[0]();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(render()).toContain("המיקרופון לא נפתח");
+    const stop = vi.fn();
+    grant({ getTracks: () => [{ stop }] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(portalRequest).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledOnce();
   });
 });
