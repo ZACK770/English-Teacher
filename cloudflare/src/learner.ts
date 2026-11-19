@@ -143,6 +143,9 @@ export async function applyLearnerControls(
     !plan.success && !teacher
       ? "First call: before practising, run a short Hebrew intake, one question at a time: the learner's name if unknown, goal (work, travel or study; wanting to learn English (ללמוד אנגלית) is not itself study, use the purpose they name), level, what is hardest (speaking, listening or writing), minutes per lesson (5, 10 or 20), topic (or recommended if they have no preference), and preferred teacher style (warm, focused or playful) and whether they prefer a male or female teacher. Keep it under two minutes. Call save_intake once as soon as you know the goal and level (leave out answers the learner did not give), then start the lesson at that level. Never end the call before save_intake."
       : "",
+    plan.success || teacher
+      ? `Changing direction: if the learner asks to change their goal, level, what is hardest, lesson length, topic, speaking pace, conversation mode or teacher personality, confirm only what changes in one short Hebrew question, then call save_intake with goal and level (current values: goal=${JSON.stringify(plan.success ? plan.data.goal : "other")}, level=${JSON.stringify(choices.level)}) plus only the changed fields. It updates the same settings as the website's "לשנות כיוון", so tell the learner it is saved there too.`
+      : "",
     learnerName ? `The learner's name is ${JSON.stringify(learnerName)} (quoted data); greet them by it and use it naturally now and then.` : "The learner's name is unknown; you may ask it once, briefly.",
     "Encourage actual speaking, one short question at a time. Be natural, kind, and concise. Use the selected conversation, spelling or grammar practice.",
   ].filter(Boolean).join("\n");
@@ -200,12 +203,7 @@ export async function learnerRoutes(request: Request, env: Env, path: string, cu
     }
     if (input.material_id && !await b.record(materialsKind(customerId), input.material_id)) throw new HttpError(404, "רשימת המילים לא נמצאה.");
     if (!input.active_teacher && !input.selected_bot) {
-      const current = await b.loadContext("preferences:" + customerId);
-      const teacher = current.active_teacher ? await b.record(teachersKind(customerId), current.active_teacher) : null;
-      if (teacher) {
-        for (const key of ["pace", "corrections", "topic", "material_id", "level", "conversation_mode", "learning_load", "correction_policy", "closing_activity"] as const) if (input[key] !== undefined) teacher[key] = input[key];
-        await b.save(teachersKind(customerId), TeacherSchema.parse(teacher), current.active_teacher);
-      }
+      await syncActiveTeacher(b, customerId, input);
     }
     await b.savePreference(customerId, input);
     return Response.json({ saved: true });
@@ -279,13 +277,25 @@ export async function requireLearner(request: Request, env: Env) {
   return id;
 }
 
+const DIRECTION_KEYS = ["personality", "pace", "corrections", "topic", "material_id", "level", "conversation_mode", "learning_load", "correction_policy", "closing_activity"] as const;
+
+export async function syncActiveTeacher(b: BusinessStore, customerId: string, input: Record<string, any>) {
+  const current = await b.loadContext("preferences:" + customerId);
+  const teacher = current.active_teacher ? await b.record(teachersKind(customerId), current.active_teacher) : null;
+  if (!teacher) return;
+  for (const key of DIRECTION_KEYS) if (input[key] !== undefined) teacher[key] = input[key];
+  await b.save(teachersKind(customerId), TeacherSchema.parse(teacher), current.active_teacher);
+}
+
 const IntakeSchema = PlanSchema.extend({
   difficulty: PlanSchema.shape.difficulty.default("speaking"),
   minutes: PlanSchema.shape.minutes.default(10),
   topic: PlanSchema.shape.topic.default(RECOMMENDED_TOPIC),
   learner_name: z.string().trim().max(40).optional(),
-  personality: z.enum(["warm", "focused", "playful"]).default("warm"),
+  personality: z.enum(["warm", "focused", "playful"]).optional(),
   teacher_gender: z.enum(["male", "female"]).default("male"),
+  pace: pace.optional(),
+  conversation_mode: learningChoices.conversation_mode.optional(),
 });
 
 const goalWords: Record<string, RegExp> = {
@@ -310,15 +320,18 @@ export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
 export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
   const given = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const prior = await b.loadContext("preferences:" + customerId);
-  const kept = (key: "minutes" | "topic" | "difficulty", value: unknown) => given[key] ?? (PlanSchema.shape[key].safeParse(value).success ? value : undefined);
-  const parsed = IntakeSchema.safeParse({ ...given, minutes: kept("minutes", prior.minutes), topic: kept("topic", prior.topic), difficulty: kept("difficulty", prior.plan?.difficulty) });
+  const kept = (key: "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
+  const parsed = IntakeSchema.safeParse({ ...given, minutes: kept("minutes"), topic: kept("topic"), difficulty: kept("difficulty") });
   if (!parsed.success) return false;
-  const { learner_name, personality, teacher_gender, ...plan } = parsed.data;
-  await b.savePreference(customerId, { plan, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
+  const { learner_name, personality, teacher_gender, pace, conversation_mode, ...plan } = parsed.data;
+  const direction = { level: plan.level, ...(given.topic ? { topic: plan.topic } : {}), ...(pace ? { pace } : {}), ...(conversation_mode ? { conversation_mode } : {}) };
+  await syncActiveTeacher(b, customerId, { ...direction, ...(personality ? { personality } : {}) });
+  await b.savePreference(customerId, { plan, ...direction, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
   if (!botId || (await b.list(teachersKind(customerId))).length) return true;
   const fluent = plan.level === "fluent";
   const female = teacher_gender === "female";
-  const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality, voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });
+  const mode = conversation_mode || (fluent ? "conversation" : "guided");
+  const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality: personality || "warm", voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: pace || (plan.level === "beginner" ? "slow" : "normal"), corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: mode, learning_load: "light", correction_policy: mode === "guided" ? "after_answer" : "after_activity", closing_activity: "roleplay" });
   const saved = await b.save(teachersKind(customerId), teacher);
   await b.savePreference(customerId, { active_teacher: saved.id, selected_bot: botId });
   return true;

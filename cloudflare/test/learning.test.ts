@@ -7,7 +7,7 @@ import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
 import { ProgressStore } from "../src/progress";
-import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, teachersKind } from "../src/learner";
+import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -283,6 +283,18 @@ describe("learner settings to Gemini", () => {
     const [teacher] = await b.list(teachersKind("carol"));
     expect(teacher).toMatchObject({ base_bot: "phone", voice: "Aoede", personality: "playful" });
     expect((await b.loadContext("preferences:carol")).active_teacher).toBe(teacher.id);
+  });
+  it("applies a phone direction change to the active teacher the website shows", async () => {
+    const saved = await b.save(teachersKind("dana"), TeacherSchema.parse({ name: "Noa", base_bot: "teacher", personality: "warm", pace: "slow", topic: "business", level: "beginner", conversation_mode: "guided", correction_policy: "after_answer" }));
+    await b.savePreference("dana", { active_teacher: saved.id, plan: { goal: "work", level: "beginner", difficulty: "speaking", minutes: 10, topic: "business" } });
+    const before = await applyLearnerControls(b, "dana", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(before.custom_instructions).toContain("Changing direction");
+    expect(await saveIntake(b, "dana", "teacher", { goal: "work", level: "fluent", pace: "fast", conversation_mode: "roleplay", personality: "playful" })).toBe(true);
+    const [teacher] = await b.list(teachersKind("dana"));
+    expect(teacher).toMatchObject({ name: "Noa", level: "fluent", pace: "fast", conversation_mode: "roleplay", personality: "playful", topic: "business" });
+    expect(await b.loadContext("preferences:dana")).toMatchObject({ level: "fluent", pace: "fast", conversation_mode: "roleplay", plan: { level: "fluent", topic: "business" } });
+    const after = await applyLearnerControls(b, "dana", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(after.lesson).toMatchObject({ level: "fluent", conversation_mode: "roleplay", correction_policy: "after_activity" });
   });
   it("does not add grammar to recommended practice and only sends its targets when explicitly selected", async () => {
     await b.savePreference("alice", { topic: "business", track: "recommended" });

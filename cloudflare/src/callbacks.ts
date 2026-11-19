@@ -51,10 +51,9 @@ export function nextCallingSlot(date: Date): Date {
   const local = localDate(date);
   const day = local.getUTCDay();
   const hour = local.getUTCHours();
-  if (day !== 6 && !(day === 5 && hour >= 14) && hour >= 8 && hour < 22) return new Date(date);
-  if (hour >= 22 || day === 6 || (day === 5 && hour >= 14)) local.setUTCDate(local.getUTCDate() + 1);
-  local.setUTCHours(8, 0, 0, 0);
-  if (local.getUTCDay() === 6) local.setUTCDate(local.getUTCDate() + 1);
+  if (!(day === 5 && hour >= 14) && !(day === 6 && hour < 20)) return new Date(date);
+  if (day === 5) local.setUTCDate(local.getUTCDate() + 1);
+  local.setUTCHours(20, 0, 0, 0);
   return fromLocal(local);
 }
 
@@ -142,16 +141,13 @@ export async function resolveCallbackExtension(env: Env): Promise<CallbackExtens
 
 export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: string, now: Date, demo = false) {
   const retryAt = new Date(now.getTime() + 30 * 60000);
-  const localNow = localDate(now);
-  const localRetry = localDate(retryAt);
-  const sameStretch = localNow.toISOString().slice(0, 10) === localRetry.toISOString().slice(0, 10)
-    && nextCallingSlot(now).getTime() === now.getTime()
+  const sameStretch = nextCallingSlot(now).getTime() === now.getTime()
     && nextCallingSlot(retryAt).getTime() === retryAt.getTime();
   return {
     action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY, phones: [phone],
     title: "SpeakCall callback", messagesType: "extensionActivation",
     extensionActivation: env.TLIVR_CALLBACK_EXTENSION_ID,
-    dialRetries: sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "yes",
+    dialRetries: sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "no",
     externalID: requestId, ...(demo ? { demo: "yes" } : {}),
   };
 }
@@ -218,7 +214,11 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   await env.DB.prepare(
     "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,?,?,?,?,'queued',0,?,?,?)",
   ).bind(id, phone, body.name, body.for_whom, body.goal, body.timing, body.preferred_time || null, body.source || "landing", now, now, now, nextAttempt).run();
-  return Response.json({ ok: true, id }, { status: 201 });
+  const shabbat = nextAttempt !== scheduled.toISOString();
+  const status = body.timing === "now" && !shabbat && dialerConfigured(env)
+    ? await dialCallbackRow(env, { id, phone, attempts: 0 }, new Date(now))
+    : "queued";
+  return Response.json({ ok: true, id, status, ...(status === "queued" && shabbat ? { reason: "shabbat" } : {}) }, { status: 201 });
 }
 
 export async function listCallbacks(env: Env): Promise<Record<string, unknown>> {
@@ -228,10 +228,51 @@ export async function listCallbacks(env: Env): Promise<Record<string, unknown>> 
   return { items: results, dialer_configured: !!(env.CALLBACK_RELAY_URL && env.CALLBACK_RELAY_SECRET) || !!env.TLIVR_SYSTEM_API_KEY };
 }
 
-export async function dispatchCallbacks(env: Env): Promise<Record<string, unknown>> {
+function dialerConfigured(env: Env): boolean {
+  return !!(env.CALLBACK_RELAY_URL && env.CALLBACK_RELAY_SECRET) || !!env.TLIVR_SYSTEM_API_KEY;
+}
+
+async function dialCallbackRow(env: Env, item: { id: string; phone: string; attempts: number }, now: Date): Promise<"dialing" | "dialed" | "queued" | "failed"> {
   const useRelay = !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET;
-  if (!useRelay && !env.TLIVR_SYSTEM_API_KEY) return { skipped: "dialer not configured" };
   const provider = useRelay ? "relay" : "technoline";
+  const claimed = await env.DB.prepare("UPDATE callback_requests SET status='dialing',attempts=attempts+1,updated_at=? WHERE id=? AND status='queued' AND next_attempt_at<=? AND attempts=?")
+    .bind(nowIso(), item.id, now.toISOString(), item.attempts).run();
+  if (claimed.meta.changes !== 1) return "dialing";
+  try {
+    let ok: boolean;
+    let providerRef: string | null;
+    let lastError: string;
+    if (useRelay) {
+      const response = await fetch(env.CALLBACK_RELAY_URL!, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + env.CALLBACK_RELAY_SECRET, "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: item.id, phone: item.phone }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      ok = response.ok && result.ok === true;
+      providerRef = ok ? String(result.campaign_id ?? "") : null;
+      lastError = "relay " + response.status;
+    } else {
+      const result = await dialTechnolineCallback(env, item.phone, item.id);
+      ok = result.ok;
+      providerRef = ok ? String(result.campaignId ?? "") : null;
+      lastError = "technoline " + (result.errorCode || result.httpStatus);
+    }
+    const failure = callbackFailure(item.attempts + 1, new Date());
+    await env.DB.prepare("UPDATE callback_requests SET status=?,provider_ref=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
+      .bind(ok ? "dialed" : failure.status, providerRef, ok ? null : lastError, nowIso(), ok ? null : failure.nextAttemptAt, item.id).run();
+    return ok ? "dialed" : failure.status;
+  } catch {
+    const failure = callbackFailure(item.attempts + 1, new Date());
+    await env.DB.prepare("UPDATE callback_requests SET status=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
+      .bind(failure.status, provider + " unreachable", nowIso(), failure.nextAttemptAt, item.id).run();
+    return failure.status;
+  }
+}
+
+export async function dispatchCallbacks(env: Env): Promise<Record<string, unknown>> {
+  if (!dialerConfigured(env)) return { skipped: "dialer not configured" };
   const now = new Date();
   await env.DB.prepare("UPDATE callback_requests SET status='queued',next_attempt_at=?,updated_at=? WHERE status='dialing' AND updated_at<?")
     .bind(now.toISOString(), now.toISOString(), new Date(now.getTime() - 15 * 60000).toISOString()).run();
@@ -241,38 +282,7 @@ export async function dispatchCallbacks(env: Env): Promise<Record<string, unknow
   ).bind(now.toISOString()).all<{ id: string; phone: string; attempts: number }>();
   let sent = 0;
   for (const item of results) {
-    const claimed = await env.DB.prepare("UPDATE callback_requests SET status='dialing',attempts=attempts+1,updated_at=? WHERE id=? AND status='queued' AND next_attempt_at<=? AND attempts=?")
-      .bind(nowIso(), item.id, now.toISOString(), item.attempts).run();
-    if (claimed.meta.changes !== 1) continue;
-    try {
-      let ok: boolean;
-      let providerRef: string | null;
-      let lastError: string;
-      if (useRelay) {
-        const response = await fetch(env.CALLBACK_RELAY_URL!, {
-          method: "POST",
-          headers: { Authorization: "Bearer " + env.CALLBACK_RELAY_SECRET, "Content-Type": "application/json" },
-          body: JSON.stringify({ request_id: item.id, phone: item.phone }),
-        });
-        const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        ok = response.ok && result.ok === true;
-        providerRef = ok ? String(result.campaign_id ?? "") : null;
-        lastError = "relay " + response.status;
-      } else {
-        const result = await dialTechnolineCallback(env, item.phone, item.id);
-        ok = result.ok;
-        providerRef = ok ? String(result.campaignId ?? "") : null;
-        lastError = "technoline " + (result.errorCode || result.httpStatus);
-      }
-      const failure = callbackFailure(item.attempts + 1, new Date());
-      await env.DB.prepare("UPDATE callback_requests SET status=?,provider_ref=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
-        .bind(ok ? "dialed" : failure.status, providerRef, ok ? null : lastError, nowIso(), ok ? null : failure.nextAttemptAt, item.id).run();
-      if (ok) sent++;
-    } catch {
-      const failure = callbackFailure(item.attempts + 1, new Date());
-      await env.DB.prepare("UPDATE callback_requests SET status=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
-        .bind(failure.status, provider + " unreachable", nowIso(), failure.nextAttemptAt, item.id).run();
-    }
+    if (await dialCallbackRow(env, item, now) === "dialed") sent++;
   }
   return { sent, queued: results.length };
 }

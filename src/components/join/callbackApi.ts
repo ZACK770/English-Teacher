@@ -18,7 +18,11 @@ async function postCallback(request: CallbackRequest, source: 'pricing_join' | '
   });
   const result = await response.json().catch(() => null);
   if (!response.ok || result?.ok !== true) throw new Error('לא הצלחנו לשלוח את הבקשה. נסו שוב.');
-  return { duplicate: result.duplicate === true };
+  return {
+    duplicate: result.duplicate === true,
+    status: result.status === 'dialing' || result.status === 'dialed' ? 'dialed' as const : 'queued' as const,
+    reason: result.reason === 'shabbat' ? 'shabbat' as const : undefined,
+  };
 }
 
 export async function submitCallback(request: CallbackRequest): Promise<void> {

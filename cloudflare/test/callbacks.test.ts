@@ -13,10 +13,11 @@ describe("Technoline callback dialer", () => {
   it.each([
     ["2026-01-04T10:00:00Z", 2],
     ["2026-01-04T19:29:00Z", 2],
-    ["2026-01-04T19:30:00Z", 0],
+    ["2026-01-04T19:30:00Z", 2],
+    ["2026-01-04T21:45:00Z", 2],
     ["2026-01-09T11:29:00Z", 2],
     ["2026-01-09T11:30:00Z", 0],
-    ["2026-01-04T05:45:00Z", 0],
+    ["2026-01-04T05:45:00Z", 2],
     ["2026-03-27T10:30:00Z", 0],
     ["2026-01-10T10:00:00Z", 0],
   ])("limits retries at %s", (now, expected) => {
@@ -27,7 +28,7 @@ describe("Technoline callback dialer", () => {
     expect(buildTechnolineCallbackBody(env, "0501234567", "req-1", now)).toEqual({
       action: "campaignRun", apiKey: "test-key", phones: ["0501234567"], title: "SpeakCall callback",
       messagesType: "extensionActivation", extensionActivation: "456", dialRetries: 2,
-      betweenRetries: 15, reasonableHours: "yes", externalID: "req-1",
+      betweenRetries: 15, reasonableHours: "no", externalID: "req-1",
     });
     expect(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: "123" }, "0501234567", "req-1", now, true))
       .toMatchObject({ demo: "yes", extensionActivation: "123" });
@@ -117,11 +118,14 @@ describe("callback extension resolution", () => {
 describe("Israeli calling hours", () => {
   it.each([
     ["2026-01-04T19:59:00Z", "2026-01-04T19:59:00Z"],
-    ["2026-01-04T20:00:00Z", "2026-01-05T06:00:00Z"],
-    ["2026-01-04T01:00:00Z", "2026-01-04T06:00:00Z"],
-    ["2026-01-09T13:00:00Z", "2026-01-11T06:00:00Z"],
-    ["2026-03-27T12:00:00Z", "2026-03-29T05:00:00Z"],
-    ["2026-07-05T00:00:00Z", "2026-07-05T05:00:00Z"],
+    ["2026-01-04T20:00:00Z", "2026-01-04T20:00:00Z"],
+    ["2026-01-04T01:00:00Z", "2026-01-04T01:00:00Z"],
+    ["2026-01-09T13:00:00Z", "2026-01-10T18:00:00Z"],
+    ["2026-03-27T12:00:00Z", "2026-03-28T17:00:00Z"],
+    ["2026-07-05T00:00:00Z", "2026-07-05T00:00:00Z"],
+    ["2026-03-28T16:59:00Z", "2026-03-28T17:00:00Z"],
+    ["2026-03-28T17:00:00Z", "2026-03-28T17:00:00Z"],
+    ["2026-10-24T21:00:00Z", "2026-10-24T21:00:00Z"],
     ["2026-01-09T11:59:00Z", "2026-01-09T11:59:00Z"],
   ])("moves %s to %s", (input, expected) => {
     expect(nextCallingSlot(new Date(input)).toISOString()).toBe(new Date(expected).toISOString());
@@ -182,26 +186,26 @@ describe("callback retries", () => {
     expect(callbackFailure(3, now)).toEqual({ status: "failed", nextAttemptAt: null });
   });
   it("defers retries across Shabbat", () => {
-    expect(callbackFailure(1, new Date("2026-01-09T11:50:00Z")).nextAttemptAt).toBe("2026-01-11T06:00:00.000Z");
+    expect(callbackFailure(1, new Date("2026-01-09T11:50:00Z")).nextAttemptAt).toBe("2026-01-10T18:00:00.000Z");
   });
   it("does not touch the queue without a dialer", async () => {
     expect(await dispatchCallbacks({} as Env)).toEqual({ skipped: "dialer not configured" });
   });
   it("recovers stale claims but does not dial out of hours", async () => {
-    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T01:00:00Z"));
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-10T01:00:00Z"));
     const run = vi.fn().mockResolvedValue({});
     const bind = vi.fn().mockReturnValue({ run });
     const prepare = vi.fn().mockReturnValue({ bind });
     const env = { CALLBACK_RELAY_URL: "https://relay.test", CALLBACK_RELAY_SECRET: "test", DB: { prepare } } as unknown as Env;
     expect(await dispatchCallbacks(env)).toEqual({ skipped: "outside calling hours" });
     expect(prepare).toHaveBeenCalledTimes(1);
-    expect(bind).toHaveBeenCalledWith("2026-01-04T01:00:00.000Z", "2026-01-04T01:00:00.000Z", "2026-01-04T00:45:00.000Z");
+    expect(bind).toHaveBeenCalledWith("2026-01-10T01:00:00.000Z", "2026-01-10T01:00:00.000Z", "2026-01-10T00:45:00.000Z");
   });
 });
 
 describe("callback requests", () => {
   it.each([
-    [{ timing: "scheduled", preferred_at: "2026-01-09T13:00:00Z" }, "2026-01-11T06:00:00.000Z"],
+    [{ timing: "scheduled", preferred_at: "2026-01-09T13:00:00Z" }, "2026-01-10T18:00:00.000Z"],
     [{ timing: "scheduled", preferred_time: "מחר בערב" }, "2026-01-05T17:00:00.000Z"],
     [{ timing: "scheduled", preferred_time: "" }, "2026-01-04T10:00:00.000Z"],
     [{ timing: "now" }, "2026-01-04T10:00:00.000Z"],
@@ -221,5 +225,72 @@ describe("callback requests", () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     const request = new Request("https://example.test/v1/public/callback", { method: "POST", body: JSON.stringify({ name: "Test", phone: "0501234567", for_whom: "self", timing: "scheduled", consent: true, preferred_at }) });
     await expect(submitCallback(request, {} as Env)).rejects.toMatchObject({ status: 422 });
+  });
+});
+
+describe("immediate callback submission", () => {
+  function setup(now = "2026-01-04T01:00:00Z", duplicate = false, configured = true) {
+    vi.useFakeTimers().setSystemTime(new Date(now));
+    const writes: unknown[][] = [];
+    const DB = { prepare: (sql: string) => ({ bind: (...args: unknown[]) => ({
+      first: async () => duplicate ? { id: "existing" } : null,
+      run: async () => { writes.push([sql, ...args]); return { meta: { changes: 1 } }; },
+    }) }) };
+    const env = { DB, ...(configured ? { TLIVR_SYSTEM_API_KEY: "mock", TLIVR_CALLBACK_EXTENSION_ID: "456" } : {}) } as unknown as Env;
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "OK", errorCode: 0, campaignId: "campaign" }));
+    vi.stubGlobal("fetch", fetcher);
+    const submit = (timing = "now") => submitCallback(new Request("https://speakcall.app/v1/public/callback", {
+      method: "POST", body: JSON.stringify({ name: "Test", phone: "0501234567", for_whom: "self", timing, consent: true }),
+    }), env);
+    return { submit, fetcher, writes };
+  }
+  it("claims and dials an overnight request immediately", async () => {
+    const { submit, fetcher, writes } = setup();
+    expect(await (await submit()).json()).toMatchObject({ ok: true, status: "dialed" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ action: "campaignRun", reasonableHours: "no" });
+    expect(writes.some(row => String(row[0]).includes("status='dialing'"))).toBe(true);
+    expect(writes.at(-1)?.slice(1, 4)).toEqual(["dialed", "campaign", null]);
+  });
+  it("queues during Shabbat without dialing", async () => {
+    const { submit, fetcher } = setup("2026-01-09T12:00:00Z");
+    expect(await (await submit()).json()).toMatchObject({ status: "queued", reason: "shabbat" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("queues without a configured dialer", async () => {
+    const { submit, fetcher } = setup(undefined, false, false);
+    expect(await (await submit()).json()).toMatchObject({ status: "queued" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it.each(["rejected", "offline"])("queues with a retry after %s dial failure", async failure => {
+    const { submit, fetcher, writes } = setup();
+    if (failure === "offline") fetcher.mockRejectedValue(new Error("offline"));
+    else fetcher.mockResolvedValue(Response.json({ status: "ERROR", errorCode: 5 }));
+    expect(await (await submit()).json()).toMatchObject({ status: "queued" });
+    expect(writes.at(-1)).toContain("2026-01-04T01:15:00.000Z");
+  });
+  it("does not dial duplicates", async () => {
+    const { submit, fetcher, writes } = setup(undefined, true);
+    expect(await (await submit()).json()).toEqual({ ok: true, id: "existing", duplicate: true });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+  it("does not immediately dial scheduled requests", async () => {
+    const { submit, fetcher } = setup();
+    expect(await (await submit("scheduled")).json()).toMatchObject({ status: "queued" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("legacy hostname redirect", () => {
+  it.each(["speakool.net", "www.speakool.net"])("redirects %s before API handling", async host => {
+    const response = await worker.fetch(new Request("http://" + host + "/english/learn?x=a%2Fb&y=2"), {} as Env);
+    expect(response.status).toBe(301);
+    expect(response.headers.get("Location")).toBe("https://speakcall.app/english/learn?x=a%2Fb&y=2");
+  });
+
+  it("does not redirect legacy POST submissions", async () => {
+    const response = await worker.fetch(new Request("http://speakool.net/v1/public/callback", { method: "POST" }), {} as Env).catch(() => null);
+    expect(response?.status).not.toBe(301);
   });
 });

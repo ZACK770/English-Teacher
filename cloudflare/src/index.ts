@@ -135,7 +135,13 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
-    const path = new URL(request.url).pathname.replace(/^\/english(\/|$)/, "/");
+    const url = new URL(request.url);
+    if ((url.hostname === "speakool.net" || url.hostname === "www.speakool.net") && (request.method === "GET" || request.method === "HEAD")) {
+      url.protocol = "https:";
+      url.host = "speakcall.app";
+      return Response.redirect(url.toString(), 301);
+    }
+    const path = url.pathname.replace(/^\/english(\/|$)/, "/");
     const log = request.method !== "GET" && (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/"));
     let actor = "anonymous";
     if (log) {
