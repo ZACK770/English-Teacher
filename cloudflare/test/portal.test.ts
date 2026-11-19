@@ -1305,6 +1305,15 @@ describe("real learner portal", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
+  it("dispatches an email confirmation tool before completion of the same Gemini turn", async () => {
+    const gemini = new GeminiLive("", "", {});
+    const calls = [{ name: "save_email", args: { email: "012@example.com" } }];
+    (gemini as any).dispatch({ serverContent: { inputTranscription: { text: "Yes." }, turnComplete: true }, toolCall: { functionCalls: calls } });
+    await expect(gemini.next()).resolves.toMatchObject({ type: "transcript", role: "learner" });
+    await expect(gemini.next()).resolves.toEqual({ type: "tool_call", calls });
+    await expect(gemini.next()).resolves.toEqual({ type: "turn_complete" });
+  });
+
   it("authenticates form-only PBX callbacks independently of the legacy URL credential", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "legacy", TLIVR_CALLBACK_BODY_SECRET: "body-secret" };
     const fields = "PBXcallId=body-call&PBXnum=0765673575&PBXextensionPath=%2F99&PBXphone=0500000001&isaacMain=1";

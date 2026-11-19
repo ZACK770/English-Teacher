@@ -127,9 +127,9 @@ export class GeminiLive {
     for (const part of server.modelTurn?.parts ?? []) {
       if (part.inlineData?.data) this.push({ type: "audio", pcm24k: b64decode(part.inlineData.data) });
     }
-    if (server.turnComplete) this.push({ type: "turn_complete" });
     const calls = event.toolCall?.functionCalls;
     if (calls?.length) this.push({ type: "tool_call", calls });
+    if (server.turnComplete) this.push({ type: "turn_complete" });
     if ("goAway" in event) this.push({ type: "go_away", detail: event.goAway });
   }
 
