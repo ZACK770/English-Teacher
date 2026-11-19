@@ -10,6 +10,7 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   if (body?.confirm !== (person.phone || person.id)) throw new HttpError(400, "האישור אינו תואם. יש להקליד את הטלפון או את מזהה הלקוח כפי שמוצג בכרטיס.");
   const id = person.id;
   const rows = async (query: string, ...args: unknown[]) => (await env.DB.prepare(query).bind(...args).all<Row>()).results;
+  if ((await rows("SELECT 1 FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id WHERE m.customer_id=? AND s.customer_id<>? LIMIT 1", id, id)).length) throw new HttpError(409, "יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
   if ((await rows("SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם תשלום הממתין לסליקה. יש להמתין להשלמת התשלום או לביטולו.");
   const callRows = await rows(`SELECT call_id FROM call_customers WHERE customer_id=? UNION SELECT call_id FROM sessions WHERE student_id=?
     UNION SELECT call_id FROM usage_allocations WHERE customer_id=? UNION SELECT call_id FROM payment_orders WHERE customer_id=?
@@ -38,7 +39,8 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   remove("installment_grants", "order_id IN (SELECT value FROM json_each(?)) OR receipt_id IN (SELECT value FROM json_each(?))", orders, receipts);
   for (const table of ["subscription_renewals", "subscription_billing_locks"]) remove(table, `subscription_id ${inSubs}`, subs);
   remove("subscription_members", `customer_id=? OR subscription_id ${inSubs}`, id, subs);
-  for (const table of ["invoices", "standing_orders", "payment_orders", "sales_receipts", "usage_allocations", "portal_tokens", "app_login_codes", "app_sessions", "customer_settings", "navigation_assignments", "navigation_destinations", "navigation_trips"]) remove(table, "customer_id=?", id);
+  remove("usage_allocations", "customer_id=? AND NOT EXISTS (SELECT 1 FROM sales_receipts r WHERE r.id=usage_allocations.receipt_id AND r.customer_id<>?)", id, id);
+  for (const table of ["invoices", "standing_orders", "payment_orders", "sales_receipts", "portal_tokens", "app_login_codes", "app_sessions", "customer_settings", "navigation_assignments", "navigation_destinations", "navigation_trips"]) remove(table, "customer_id=?", id);
   remove("subscriptions", "customer_id=?", id);
   for (const table of ["active_calls", "conversation_turns", "diagnostic_events", "latency_events", "prompt_snapshots", "navigation_usage_events", "navigation_call_costs"]) remove(table, "call_id IN (SELECT value FROM json_each(?))", calls);
   remove("sessions", "student_id=?", id);

@@ -90,13 +90,23 @@ describe("CRM customer reset", () => {
     customer(); planAndSubscription("person1", status);
     expect((await reset()).status).toBe(409);
   });
-  it("removes membership without deleting or changing the other owner's family subscription", async () => {
+  it("blocks reset until another owner's family membership is removed", async () => {
     customer(); customer("owner", "0507654321"); planAndSubscription("owner", "active");
     insert("subscription_members", { subscription_id: "sub", customer_id: "person1", added_at: now });
-    expect((await reset()).status).toBe(200);
+    const response = await reset();
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
     expect(sql.prepare("SELECT * FROM subscriptions").get()).toMatchObject({ id: "sub", customer_id: "owner", status: "active" });
-    expect(sql.prepare("SELECT COUNT(*) AS n FROM subscription_members").get()).toMatchObject({ n: 0 });
-    expect(sql.prepare("SELECT id FROM customers").get()).toMatchObject({ id: "owner" });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM subscription_members").get()).toMatchObject({ n: 1 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 2 });
+  });
+  it("preserves usage charged to another customer's receipt after family membership removal", async () => {
+    customer(); customer("owner", "0507654321");
+    insert("sales_receipts", { id: "family-receipt", customer_id: "owner", package_id: "p", product: "school", reference: "family-ref", amount_ils: 100, vat_rate: 0, minutes: 60, expires_at: now, created_at: now });
+    insert("usage_allocations", { call_id: "family-call", customer_id: "person1", product: "school", receipt_id: "family-receipt", reserved_seconds: 120, billed_seconds: 120, created_at: now });
+    expect((await reset()).status).toBe(200);
+    expect(sql.prepare("SELECT billed_seconds FROM usage_allocations").get()).toMatchObject({ billed_seconds: 120 });
+    expect(sql.prepare("SELECT customer_id FROM sales_receipts").get()).toMatchObject({ customer_id: "owner" });
   });
   it("allows an active prepaid entitlement that has no recurring billing", async () => {
     customer(); planAndSubscription("person1", "active");
