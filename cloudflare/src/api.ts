@@ -11,6 +11,7 @@ import { compilePrompt } from "./prompt";
 import { renderNarration, renderVoicePreview } from "./learn";
 import { syncCrm } from "./crm";
 import { dispatchCallbacks, listCallbacks, testCallbackDial } from "./callbacks";
+import { listVoicemails, voicemailAudio } from "./voicemails";
 
 const ROLES = ["teacher", "translator", "sales", "service", "custom"] as const;
 const channel = z.string().max(200).nullable().optional().transform((v) => (v ?? "").trim() || null);
@@ -137,6 +138,9 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   const seg = path.split("/").slice(1).map(decodeURIComponent);
   const ok = (v: unknown, status = 200) => Response.json(v, { status });
   if (path === "/v1/admin/crm/sync" && method === "POST") return ok(await syncCrm(env));
+  if (path === "/v1/admin/crm/voicemails" && method === "GET") return Response.json(await listVoicemails(env, url.searchParams.get("before")), { headers: { "Cache-Control": "no-store" } });
+  const voicemail = path.match(/^\/v1\/admin\/crm\/voicemails\/([a-f0-9]{64})\/audio$/);
+  if (voicemail && method === "GET") return voicemailAudio(env, voicemail[1]);
   if (path === "/v1/admin/callbacks" && method === "GET") return ok(await listCallbacks(env));
   if (path === "/v1/admin/callbacks/dispatch" && method === "POST") return ok(await dispatchCallbacks(env));
   if (path === "/v1/admin/callbacks/dial-test" && method === "POST") return ok(await testCallbackDial(request, env));

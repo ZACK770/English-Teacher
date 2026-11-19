@@ -6,8 +6,10 @@ import { PaymentStore, paymentResponse } from "./payments";
 import { ProgressStore } from "./progress";
 import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
+import { enqueueVoicemail, processVoicemail } from "./voicemails";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
+const recordingNotice = "ההודעה תוקלט ותתומלל. המידע נשמר בצורה מאובטחת כדי לשפר את השירות, ולא ייעשה בו שימוש לרעה. השימוש במערכת מהווה הסכמה לכך.";
 export const IVRCopySchema = z.object({
   welcome: text("ברוכים הבאים לספיקול. פשוט לדבר. לכניסה לשיעור הקישו 1. לאזור האישי הקישו 2."),
   school: text("אין מורה זמין כרגע. לאפשרויות נוספות הקישו 9. לחזרה הקישו 0."),
@@ -48,7 +50,7 @@ export function ivrResponse(route: string, p: Record<string, string>, copy: IVRC
     if (p.FILEID_isaacMessage || p.isaacMessage) {
       return p.isaacThanks === "0" ? go() : ["1", "ERROR"].includes(p.isaacThanks) ? { type: "hangup" } : menu("isaacThanks", copy.thanks, "0,1");
     }
-    return { type: "record", name: "isaacMessage", max: 60, min: 2, confirm: "no", post: true, hangupSave: "yes", files: [{ text: copy.service }] };
+    return { type: "record", name: "isaacMessage", max: 60, min: 2, confirm: "no", post: true, hangupSave: "yes", maskLog: true, files: [{ text: recordingNotice }, { text: copy.service }] };
   }
   if (!routes[route]) throw new HttpError(404, "Unknown IVR route");
   const [name, content, keys, targets] = routes[route];
@@ -225,7 +227,7 @@ async function callbackForm(request: Request): Promise<URLSearchParams> {
   return form;
 }
 
-export async function handleCallback(request: Request, env: Env, s: Settings, route: string): Promise<IVRResponse> {
+export async function handleCallback(request: Request, env: Env, s: Settings, route: string, ctx?: ExecutionContext): Promise<IVRResponse> {
   const query = new URL(request.url).searchParams;
   const legacy = query.getAll("key");
   const legacyAuth = legacy.length === 1 && secureEqual(legacy[0], s.callbackSecret);
@@ -257,6 +259,10 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   const b = new BusinessStore(env.DB);
   const progress = new ProgressStore(env.DB);
   const customerId = await b.identifyCall(p.PBXphone ?? "private", callId, "ivr");
+  if (route === "service" && path === extensionPath(system.base, "/4") && p.FILEID_isaacMessage) {
+    const id = await enqueueVoicemail(env, system.phone, customerId, p.PBXphone ?? "", p.FILEID_isaacMessage, p.DURATION_isaacMessage);
+    if (id && ctx) ctx.waitUntil(processVoicemail(env, id).catch(() => undefined));
+  }
   if (s.systems.length > 1) await b.saveContext(callId, { pbx_base: system.base });
   const values: Record<string, unknown> = {};
   const languages: Record<string, string> = { "1": "English", "2": "Hebrew", "3": "Yiddish", "4": "Arabic", "5": "Russian", "6": "French", "7": "" };
@@ -292,8 +298,9 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
   if (slot && result.files?.length) {
     if (route === "service" && result.name === "isaacThanks") slot = "thanks";
-    const audio = await narrationForSlot(b, slot, result.files[0].text ?? "");
-    if (audio && s.publicBaseUrl) result.files = [{ fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` }];
+    const fileIndex = route === "service" && result.type === "record" ? 1 : 0;
+    const audio = await narrationForSlot(b, slot, result.files[fileIndex].text ?? "");
+    if (audio && s.publicBaseUrl) result.files[fileIndex] = { fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` };
   }
   const inputs = Object.fromEntries(Object.entries(p).filter(([key]) => key.startsWith("isaac") || key === "FILEID_isaacMessage").map(([key, value]) => [key, value.slice(0, 200)]));
   await b.save("ivr-events", { call_id: callId, customer_id: customerId, route, input: inputs, output: result, latency_ms: Date.now() - clock, at: nowIso(), request_method: request.method }, randomHex(16));

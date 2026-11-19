@@ -9,10 +9,11 @@ import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { geminiBudgetStatus } from "./gemini-budget";
+import { dispatchVoicemails } from "./voicemails";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
-async function handle(request: Request, env: Env): Promise<Response> {
+async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const s = settings(env);
   const path = url.pathname.replace(/^\/english(\/|$)/, "/") || "/";
@@ -45,7 +46,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return stub.fetch(new Request(request, { headers }));
   }
   if (path.startsWith("/v1/technoline/ivr/")) {
-    return Response.json(await handleCallback(request, env, s, path.slice("/v1/technoline/ivr/".length)));
+    return Response.json(await handleCallback(request, env, s, path.slice("/v1/technoline/ivr/".length), ctx));
   }
   const narration = path.match(/^\/v1\/technoline\/narrations\/([^/]+)\/([a-f0-9]{64})\.wav$/);
   if (narration && request.method === "GET") return publicNarration(env, decodeURIComponent(narration[1]), narration[2]);
@@ -120,8 +121,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    try { return await handle(request, env); }
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+    try { return await handle(request, env, ctx); }
     catch (error) {
       if (error instanceof HttpError) return Response.json({ detail: error.detail }, { status: error.status });
       return Response.json({ detail: "Request failed" }, { status: 500 });
@@ -130,6 +131,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
+    ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
