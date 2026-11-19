@@ -28,12 +28,22 @@ describe("join callback submission", () => {
 });
 
 describe("landing callback submission", () => {
+  it.each([
+    ["dialed", undefined, "dialed"],
+    ["dialing", undefined, "dialed"],
+    ["queued", "shabbat", "queued"],
+    ["queued", undefined, "queued"],
+  ])("propagates %s feedback", async (status, reason, expected) => {
+    vi.stubGlobal("location", { pathname: "/" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, status, reason })));
+    await expect(submitLessonCallback("0500000000")).resolves.toEqual({ duplicate: false, status: expected, reason });
+  });
   it.each([["/", false], ["/english/", true]])("uses the public endpoint and distinguishes duplicate requests from new ones at %s", async (pathname, duplicate) => {
     vi.stubGlobal("location", { pathname });
     const fetch = vi.fn(async () => Response.json(duplicate ? { ok: true, duplicate } : { ok: true }, { status: duplicate ? 200 : 201 }));
     vi.stubGlobal("fetch", fetch);
     const phone = "0500000000";
-    await expect(submitLessonCallback(phone)).resolves.toEqual({ duplicate });
+    await expect(submitLessonCallback(phone)).resolves.toEqual({ duplicate, status: "queued", reason: undefined });
     const [[url, request]] = fetch.mock.calls;
     expect(url).toBe((pathname === "/" ? "" : "/english") + "/v1/public/callback");
     expect(request.method).toBe("POST");
