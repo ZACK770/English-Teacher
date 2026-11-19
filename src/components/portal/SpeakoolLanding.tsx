@@ -4,6 +4,7 @@ import { PHONE_LINE } from "./LearnerPortal";
 import { LegalFooter } from "../legal/LegalFooter";
 import { legalBasePath } from "../../legalRoutes";
 import { LessonCallbackForm } from "./LessonCallbackForm";
+import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import "./portal.css";
 import "./landing.css";
 import { FREE_TIER_TEXT, MONTHLY_TERMS, MASTERY_GUARANTEE, PRICING_PACKAGES } from "../../pricing";
@@ -19,7 +20,6 @@ const faq = [
 ];
 
 const wave = [18, 32, 57, 29, 69, 48, 24, 52, 33, 16];
-const logo = "/brand/speakcall/logo-en-reverse.svg";
 const domains = [
   { title: "נסיעות", mastered: 68, practicing: 20, terms: "Boarding pass · Reservation · Directions" },
   { title: "עבודה", mastered: 54, practicing: 26, terms: "Deadline · Follow up · Proposal" },
@@ -38,7 +38,7 @@ export function SpeakoolLanding() {
   }, []);
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
-      <a className="sk-land-brand" href={base + "/"}><img src={logo} width={708} height={170} alt="SpeakCall — עמוד הבית" /></a>
+      <a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
       <nav aria-label="ניווט ראשי"><a href="#free-lesson">שיעור ראשון</a><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
     </header>
     <main>
@@ -145,7 +145,7 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><a className="sk-primary" href="#free-lesson">לשיעור ראשון בחינם <ArrowLeft aria-hidden="true" size={18} /></a></section>
     </main>
-    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"}><img src={logo} width={708} height={170} alt="SpeakCall — עמוד הבית" loading="lazy" /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
+    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
     <LegalFooter />
   </div>;
 }

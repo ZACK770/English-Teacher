@@ -4,6 +4,7 @@ import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { LearningProgress } from "./LearningProgress";
+import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
 import "./portal.css";
@@ -20,8 +21,8 @@ const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day:
 function IconButton({ label, children, onClick, active = false }: { label: string; children: React.ReactNode; onClick: () => void; active?: boolean }) {
   return <button type="button" className={"sk-icon " + (active ? "is-active" : "")} aria-label={label} aria-pressed={active} title={label} onClick={onClick}>{children}<span className="sk-tooltip">{label}</span></button>;
 }
-function Brand({ onClick }: { onClick: () => void }) {
-  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><AudioLines strokeWidth={1.5} /><span>SpeakCall<span className="sk-brand-dot">.</span></span></button>;
+function Brand({ onClick, collapse = false }: { onClick: () => void; collapse?: boolean }) {
+  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><SpeakCallLogo collapse={collapse} /></button>;
 }
 function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
   return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">
@@ -190,7 +191,7 @@ export const LearnerPortal: React.FC = () => {
     </div>
   </>;
   return <div className="speakool" dir="rtl">
-    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
+    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
         <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}

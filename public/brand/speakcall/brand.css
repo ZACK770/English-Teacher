@@ -1,4 +1,4 @@
-:root{--sc-brand-ink:#172D36;--sc-brand-blue:#3156D8;--sc-brand-teal:#148F95;--sc-brand-paper:#F7F8F3;--sc-brand-ice:#E7EDFF;--sc-brand-mint:#DDF3ED;}
+:root{--sc-brand-ink:#111A1A;--sc-brand-lime:#C0F67D;--sc-brand-lime-deep:#8FD14F;--sc-brand-lime-on-light:#5F9E1F;--sc-brand-paper:#F0F5EF;--sc-brand-card:#1B2726;--sc-brand-quiet:#A9BBB4;--sc-brand-line:#35423E;--sc-brand-sage:#25362D;}
 @keyframes speakcall-breathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.025)}}
 .speakcall-breathe{transform-origin:center;animation:speakcall-breathe 4s ease-in-out infinite;}
 @media(prefers-reduced-motion:reduce){.speakcall-breathe{animation:none!important;}}
