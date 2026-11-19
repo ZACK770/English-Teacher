@@ -142,7 +142,7 @@ export default {
     if ((url.hostname === "speakcall.app" || url.hostname === "www.speakcall.app") && isPageRequest) {
       url.protocol = "https:";
       url.host = "speakool.net";
-      return Response.redirect(url.toString(), 301);
+      return Response.redirect(url.toString(), 302);
     }
     const path = url.pathname.replace(/^\/english(\/|$)/, "/");
     const log = request.method !== "GET" && (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/"));
