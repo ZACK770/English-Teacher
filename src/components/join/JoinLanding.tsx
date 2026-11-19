@@ -118,7 +118,7 @@ export const JoinLanding: React.FC = () => {
                   </div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--card)] text-[var(--accent)] border border-[var(--line)] rounded-full text-xs font-mono">
                     <span className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
-                    <span>קו טלפוני 076-567-3575 · שלוחה 99</span>
+                    <span>קו טלפוני 076-567-3575 · ללמידה הקישו 1</span>
                   </div>
                 </div>
 
@@ -294,7 +294,7 @@ export const JoinLanding: React.FC = () => {
                   </a>
 
                   <div className="text-xs text-[var(--quiet)] pt-1">
-                    או חייגו כעת מכל טלפון: <strong className="text-[var(--accent)] font-mono text-sm">076-567-3575 #99</strong>
+                    או חייגו כעת מכל טלפון: <strong className="text-[var(--accent)] font-mono text-sm">076-567-3575</strong> וללמידה הקישו 1
                   </div>
                 </div>
 
