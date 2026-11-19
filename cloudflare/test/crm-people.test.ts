@@ -56,6 +56,23 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM customer reset", () => {
+  it.each([false, true])("prepares no compound SQL during reset with linked history %s", async history => {
+    customer();
+    if (history) {
+      session(); planAndSubscription();
+      event("ivr-events", { call_id: "call1" });
+      insert("customer_phones", { phone: "0501234567", customer_id: "person1" });
+    }
+    const prepare = env.DB.prepare.bind(env.DB);
+    const prepared = vi.spyOn(env.DB, "prepare").mockImplementation(query => {
+      expect(query).not.toMatch(/\b(?:UNION|INTERSECT|EXCEPT)\b/i);
+      return prepare(query);
+    });
+    expect((await reset()).status).toBe(200);
+    expect(prepared.mock.calls.length).toBeGreaterThan(40);
+    for (const [query] of prepared.mock.calls) expect(query).not.toMatch(/\b(?:UNION|INTERSECT|EXCEPT)\b/i);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 0 });
+  });
   it("keeps every prepared statement within the D1 binding limit", async () => {
     customer(); session();
     const prepare = env.DB.prepare.bind(env.DB);

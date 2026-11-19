@@ -19,26 +19,42 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   if (body?.confirm !== (person.phone || person.id)) throw new HttpError(400, "האישור אינו תואם. יש להקליד את הטלפון או את מזהה הלקוח כפי שמוצג בכרטיס.");
   const id = person.id;
   const rows = async (query: string, ...args: unknown[]) => (await env.DB.prepare(query).bind(...args).all<Row>()).results;
+  const combine = async (queries: [string, ...unknown[]][]) => (await Promise.all(queries.map(([query, ...args]) => rows(query, ...args)))).flat();
   if ((await rows("SELECT 1 FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id WHERE m.customer_id=? AND m.removed_at IS NULL AND s.customer_id<>? LIMIT 1", id, id)).length) throw new HttpError(409, "יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
   if ((await rows("SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם תשלום הממתין לסליקה. יש להמתין להשלמת התשלום או לביטולו.");
-  const callRows = await rows(`SELECT call_id FROM call_customers WHERE customer_id=? UNION SELECT call_id FROM sessions WHERE student_id=?
-    UNION SELECT call_id FROM usage_allocations WHERE customer_id=? UNION SELECT call_id FROM payment_orders WHERE customer_id=?
-    UNION SELECT call_id FROM learning_lessons WHERE customer_id=? UNION SELECT last_call_id FROM navigation_trips WHERE customer_id=?
-    UNION SELECT json_extract(body,'$.call_id') FROM console_records WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=?`, id, id, id, id, id, id, id);
+  const callRows = await combine([
+    ["SELECT call_id FROM call_customers WHERE customer_id=?", id],
+    ["SELECT call_id FROM sessions WHERE student_id=?", id],
+    ["SELECT call_id FROM usage_allocations WHERE customer_id=?", id],
+    ["SELECT call_id FROM payment_orders WHERE customer_id=?", id],
+    ["SELECT call_id FROM learning_lessons WHERE customer_id=?", id],
+    ["SELECT last_call_id AS call_id FROM navigation_trips WHERE customer_id=?", id],
+    ["SELECT json_extract(body,'$.call_id') AS call_id FROM console_records WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=?", id],
+  ]);
   const callIds = [...new Set(callRows.flatMap(r => r.call_id ? [r.call_id, r.call_id.split("~")[0]] : []))];
   const calls = JSON.stringify(callIds);
   const recent = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  if ((await rows(`SELECT 1 FROM sessions WHERE student_id=? AND (julianday(started_at)>=julianday(?) OR julianday(ended_at)>=julianday(?))
-    UNION ALL SELECT 1 FROM call_customers WHERE customer_id=? AND julianday(created_at)>=julianday(?)
-    UNION ALL SELECT 1 FROM console_records WHERE kind IN ('ivr-events','ad-entries') AND (json_extract(body,'$.customer_id')=? OR json_extract(body,'$.call_id') IN (SELECT value FROM json_each(?))) AND (julianday(json_extract(body,'$.at'))>=julianday(?) OR julianday(created_at)>=julianday(?)) LIMIT 1`, id, recent, recent, id, recent, id, calls, recent, recent)).length) throw new HttpError(409, "לא ניתן למחוק לקוח שהייתה לו פעילות בעשר הדקות האחרונות. יש להמתין ולנסות שוב.");
+  if ((await combine([
+    ["SELECT 1 FROM sessions WHERE student_id=? AND (julianday(started_at)>=julianday(?) OR julianday(ended_at)>=julianday(?)) LIMIT 1", id, recent, recent],
+    ["SELECT 1 FROM call_customers WHERE customer_id=? AND julianday(created_at)>=julianday(?) LIMIT 1", id, recent],
+    ["SELECT 1 FROM console_records WHERE kind IN ('ivr-events','ad-entries') AND (json_extract(body,'$.customer_id')=? OR json_extract(body,'$.call_id') IN (SELECT value FROM json_each(?))) AND (julianday(json_extract(body,'$.at'))>=julianday(?) OR julianday(created_at)>=julianday(?)) LIMIT 1", id, calls, recent, recent],
+  ])).length) throw new HttpError(409, "לא ניתן למחוק לקוח שהייתה לו פעילות בעשר הדקות האחרונות. יש להמתין ולנסות שוב.");
   if ((await rows("SELECT 1 FROM active_calls WHERE call_id IN (SELECT value FROM json_each(?)) AND lease_expires_at>? LIMIT 1", calls, Date.now() / 1000)).length) throw new HttpError(409, "לא ניתן למחוק לקוח במהלך שיחה פעילה. יש לסיים את השיחה ולנסות שוב.");
   const subs = JSON.stringify((await rows("SELECT id FROM subscriptions WHERE customer_id=?", id)).map(r => r.id));
   const inSubs = "IN (SELECT value FROM json_each(?))";
-  if ((await rows(`SELECT 1 FROM standing_orders WHERE (customer_id=? OR entitlement_id ${inSubs}) AND state<>'cancelled' AND (state IN ('active','past_due') OR COALESCE(keva_id,'')<>'')
-    UNION ALL SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=? AND s.status IN ('active','paused','past_due') AND p.billing IN ('monthly','yearly') LIMIT 1`, id, subs, id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם הוראת קבע או מנוי מתחדש פעיל. יש לבטל תחילה את החיוב אצל ספק התשלום.");
-  const phoneRows = await rows(`SELECT phone FROM customer_phones WHERE customer_id=? UNION SELECT primary_phone AS phone FROM customers WHERE id=?
-    UNION SELECT json_extract(body,'$.phone') FROM console_records WHERE (kind='customers' AND id=?) OR (kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?)`, id, id, id, id);
-  const otherPhones = await rows("SELECT phone FROM customer_phones WHERE customer_id<>? UNION SELECT primary_phone AS phone FROM customers WHERE id<>?", id, id);
+  if ((await combine([
+    [`SELECT 1 FROM standing_orders WHERE (customer_id=? OR entitlement_id ${inSubs}) AND state<>'cancelled' AND (state IN ('active','past_due') OR COALESCE(keva_id,'')<>'') LIMIT 1`, id, subs],
+    ["SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=? AND s.status IN ('active','paused','past_due') AND p.billing IN ('monthly','yearly') LIMIT 1", id],
+  ])).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם הוראת קבע או מנוי מתחדש פעיל. יש לבטל תחילה את החיוב אצל ספק התשלום.");
+  const phoneRows = await combine([
+    ["SELECT phone FROM customer_phones WHERE customer_id=?", id],
+    ["SELECT primary_phone AS phone FROM customers WHERE id=?", id],
+    ["SELECT json_extract(body,'$.phone') AS phone FROM console_records WHERE (kind='customers' AND id=?) OR (kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?)", id, id],
+  ]);
+  const otherPhones = await combine([
+    ["SELECT phone FROM customer_phones WHERE customer_id<>?", id],
+    ["SELECT primary_phone AS phone FROM customers WHERE id<>?", id],
+  ]);
   const conflicting = new Set(otherPhones.map(r => r.phone && visiblePhone(r.phone)).filter(Boolean));
   const phones = [...new Set([...phoneRows.map(r => r.phone), person.phone].filter(Boolean).map(p => visiblePhone(p)).filter(p => p && !conflicting.has(p)))];
   const hashes = await Promise.all(phones.map(p => sha256Hex(p!)));
