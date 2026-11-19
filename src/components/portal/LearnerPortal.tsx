@@ -8,6 +8,7 @@ import { DirectVoice } from "./DirectVoice";
 import { clearLearnerToken, saveLearnerToken } from "./learnerToken";
 import { LearningProgress } from "./LearningProgress";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
+import { ConversationArt } from "./ConversationArt";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
 import { isFemale, TeacherMark } from "./LineTeacher";
@@ -28,25 +29,6 @@ function IconButton({ label, children, onClick, active = false }: { label: strin
 }
 function Brand({ onClick, collapse = false }: { onClick: () => void; collapse?: boolean }) {
   return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><SpeakCallLogo collapse={collapse} /></button>;
-}
-function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
-  return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">
-    <circle className="sk-art-halo sk-conversation-halo" cx="180" cy="180" r="135" />
-    <g className="sk-orbit" style={{ transformOrigin: "180px 180px", animationDelay: `${seed % 5 * -.8}s` }}>
-      <ellipse cx="180" cy="180" rx="142" ry="63" transform="rotate(-37 180 180)" fill="none" stroke="currentColor" strokeWidth=".75" />
-      <circle cx="292" cy="95" r="7" className="sk-art-accent" />
-    </g>
-    <g className="sk-conversation-breathe">
-      <path d="M78 97Q78 80 95 80H211Q228 80 228 97V174Q228 191 211 191H132L104 217V191H95Q78 191 78 174Z" className="sk-art-paper" />
-      <text x="153" y="151" textAnchor="middle" direction="ltr" fontSize="43" fontFamily="Georgia,serif" fill="currentColor">hello.</text>
-    </g>
-    <g className="sk-conversation-breathe sk-conversation-second">
-      <path d="M145 184Q145 170 159 170H268Q282 170 282 184V246Q282 260 268 260H247V283L218 260H159Q145 260 145 246Z" className="sk-art-accent" />
-      {[0, 1, 2, 3, 4, 5, 6].map(n => <rect key={n} className="sk-sound-bar" x={180 + n * 11} y={203 - (n % 3) * 5} width="3" height={24 + (n % 3) * 10} rx="2" fill="var(--paper)" style={{ animationDelay: `${n * -.18}s` }} />)}
-    </g>
-    <path d="M82 265v22m-11-11h22M284 58v17m-8-8h16" stroke="currentColor" strokeWidth="1" />
-    <circle cx="82" cy="232" r="3" fill="currentColor" /><circle cx="277" cy="301" r="3" fill="currentColor" />
-      </svg>;
 }
 function Modal({ title, children, onClose, error, busy }: { title: string; children: React.ReactNode; onClose: () => void; error?: string; busy?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);

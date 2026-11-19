@@ -13,7 +13,9 @@
 .sk-email-option { margin-top: 28px; padding-top: 20px; border-top: 1px solid #657086; }
 .sk-direct-voice { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .sk-land-hero:has(.sk-entry-cards) { grid-template-columns: minmax(0, 1fr); }
-.sk-land-hero:has(.sk-entry-cards) > figure { display: none; }
+.sk-land-hero:has(.sk-entry-cards) > figure { display: grid; grid-template-columns: minmax(160px, 280px) minmax(0, 1fr); gap: 18px 28px; align-items: center; text-align: start; }
+.sk-land-hero:has(.sk-entry-cards) .sk-land-caller { grid-column: 1 / -1; }
+.sk-land-hero:has(.sk-entry-cards) .sk-land-voice-art { grid-row: 2 / 4; }
 @media (max-width: 640px) { .sk-entry-cards { grid-template-columns: 1fr; } .sk-entry-card { padding: 20px; } }
 .sk-land {
   --paper: #111a1a;
@@ -95,21 +97,11 @@
 .sk-land-caller strong { display: flex; align-items: center; gap: 8px; }
 .sk-land-caller strong::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
 .sk-land-caller span { padding: 2px 9px; border-radius: 99px; background: #ffffff0b; color: var(--quiet); font-size: 12px; }
-.sk-land-voice-art { display: block; width: min(100%, 340px); margin: 4px auto; color: var(--ink); overflow: visible; }
-.sk-land-voice-art g, .sk-land-step-icon { transform-box: fill-box; transform-origin: center; }
-.sk-land-symbol-breathe { animation: sk-land-breathe 4s ease-in-out infinite; }
-.sk-land-rings { stroke: var(--accent); stroke-width: .8; animation: sk-land-halo 4s ease-in-out infinite; }
-.sk-land-signal { stroke: var(--accent); animation: sk-land-halo 4s ease-in-out -1s infinite; }
-.sk-land-tail { stroke: var(--accent); transform-box: fill-box; transform-origin: center; }
-.sk-land-draw path { stroke-dasharray: 1; animation: sk-land-draw 1.8s ease-out both; }
-.sk-land-draw .sk-land-tail { animation: sk-land-draw 1.8s ease-out both, sk-land-tail 4s ease-in-out infinite; }
-.sk-land-step-icon { width: 30px; height: 30px; stroke-width: 1.5; color: var(--accent); margin-bottom: 16px; animation: sk-land-breathe 4s ease-in-out infinite; }
+.sk-land-voice-art { display: block; width: min(100%, 340px); height: auto; margin: 4px auto; animation: sk-land-breathe 4s ease-in-out infinite; }
+.sk-land-step-icon { display: block; width: 30px; height: 30px; margin-bottom: 16px; animation: sk-land-breathe 4s ease-in-out infinite; }
 .sk-land-steps li:nth-child(2) .sk-land-step-icon { animation-delay: -.7s; }
 .sk-land-steps li:nth-child(3) .sk-land-step-icon { animation-delay: -1.4s; }
 @keyframes sk-land-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.5px) scale(1.03); } }
-@keyframes sk-land-tail { 0%,100% { translate: 0 0; } 50% { translate: 0 -1px; } }
-@keyframes sk-land-halo { 0%,100% { transform: scale(1); opacity: .25; } 50% { transform: scale(1.04); opacity: .65; } }
-@keyframes sk-land-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 .sk-land-quote { font-size: clamp(21px, 2.6vw, 35px); font-weight: 800; letter-spacing: -.025em; }
 .sk-land-call figcaption { font-size: 14px; color: var(--quiet); }
 .sk-land-words { display: grid; justify-items: start; gap: 9px; text-align: start; margin-top: 20px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #25362d8c; color: var(--quiet); font-size: 13px; }
@@ -126,8 +118,7 @@
 .sk-land-offer-panel p:not(.sk-land-kicker) { max-width: 490px; color: var(--quiet); font-size: 17px; }
 .sk-land-cta { display: flex; flex-wrap: wrap; gap: 9px; margin-block: 18px 9px; }
 .sk-land-clock { position: relative; display: grid; place-content: center; text-align: center; width: clamp(132px, 21vw, 260px); aspect-ratio: 1; }
-.sk-land-clock svg { position: absolute; inset: 0; width: 100%; height: 100%; fill: none; stroke: var(--line); stroke-width: 2; transform: rotate(-90deg); }
-.sk-land-clock circle + circle { stroke: var(--accent); stroke-dasharray: 64 100; stroke-linecap: round; }
+.sk-land-clock::before { content: ""; position: absolute; inset: 4%; border-radius: 50%; padding: 2px; background: conic-gradient(var(--accent) 64%, var(--line) 0); mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude; }
 .sk-land-clock strong { color: var(--accent); font-size: clamp(58px, 9vw, 130px); letter-spacing: -.1em; line-height: .9; margin-inline-start: .09em; }
 .sk-land-clock span { color: var(--quiet); font-size: clamp(12px, 1.5vw, 21px); font-weight: 800; margin-top: 5px; }
 .sk-land-steps, .sk-land-example, .sk-land-plans, .sk-land-faq, .sk-land-final { padding-block: clamp(48px, 7.5vw, 95px); border-top: 1px solid var(--line); }
@@ -191,6 +182,7 @@
   .sk-land-hero h1 { margin-block: 12px; }
   .sk-land-callback { margin-top: 15px; }
   .sk-land-call { padding: 14px 17px; border-radius: 15px; }
+  .sk-land-hero:has(.sk-entry-cards) > figure { display: block; text-align: center; }
   .sk-land-voice-art { width: 130px; height: 110px; }
   .sk-land-words { display: none; }
   .sk-land-offer-panel { padding: 18px; gap: 10px; }
