@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
+import { visiblePhone } from "./phone";
 
 const CALLBACK_IP_PREFIX = "public-callback:ip:";
 const CALLBACK_IP_LIMIT = 3;
@@ -26,6 +27,7 @@ const RequestSchema = z.object({
 });
 
 export function normalizePhone(raw: string): string | null {
+  if (!visiblePhone(raw)) return null;
   let digits = raw.replace(/[^0-9+]/g, "");
   if (digits.startsWith("+972")) digits = "0" + digits.slice(4);
   else if (digits.startsWith("972")) digits = "0" + digits.slice(3);
