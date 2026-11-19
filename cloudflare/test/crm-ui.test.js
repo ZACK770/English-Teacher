@@ -15,8 +15,8 @@ describe("CRM physical call grouping", () => {
   it("groups multiple suffixed bot sessions with their IVR/ad call under a single heading", () => {
     const html = renderJourney([
       step("ad", "ad-entries", "pbx"), step("menu", "ivr-events", "pbx"),
-      step("start1", "session-start", "pbx123"), step("end1", "session-end", "pbx123"),
-      step("start2", "session-start", "pbx456"), step("end2", "session-end", "pbx456"),
+      step("start1", "session-start", "pbx~123"), step("end1", "session-end", "pbx~123"),
+      step("start2", "session-start", "pbx~456"), step("end2", "session-end", "pbx~456"),
     ]);
     expect(html.match(/<h3>/g)).toHaveLength(1);
     expect(html.match(/class="crm-step"/g)).toHaveLength(6);
@@ -26,10 +26,12 @@ describe("CRM physical call grouping", () => {
       step("short-menu", "ivr-events", "pbx"),
       step("long-menu", "ivr-events", "pbx123"),
       step("exact", "session-start", "pbx123"),
-      step("suffix", "session-end", "pbx123abc"),
+      step("suffix", "session-end", "pbx123~abc"),
+      step("unrelated", "session-start", "pbx1234"),
     ]);
     const groups = html.split('class="crm-journey-group"').slice(1);
-    expect(groups).toHaveLength(2);
+    expect(groups).toHaveLength(3);
+    expect(groups[2]).toContain("<strong>unrelated</strong>");
     expect(groups[0]).not.toContain("<strong>exact</strong>");
     expect(groups[1]).toContain("<strong>exact</strong>");
     expect(groups[1]).toContain("<strong>suffix</strong>");

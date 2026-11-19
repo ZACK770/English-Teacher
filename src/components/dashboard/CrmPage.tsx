@@ -35,7 +35,7 @@ export function Journey({ steps }: { steps: Step[] }) {
   const groups = new Map<string, Step[]>();
   for (const step of steps) {
     const callId = step.call_id;
-    const key = (callId && (physicalCalls.find(id => id === callId) || physicalCalls.find(id => callId.startsWith(id)) || callId)) || 'event:' + step.id;
+    const key = (callId && (physicalCalls.find(id => id === callId) || physicalCalls.find(id => callId.startsWith(id + '~')) || callId)) || 'event:' + step.id;
     groups.set(key, [...(groups.get(key) || []), step]);
   }
   return <div className="crm-timeline">{[...groups.entries()].map(([key, events]) => <section className="crm-journey-group" key={key}><h3>{events[0].call_id ? 'שיחה · ' + date(events[0].at) : 'פעילות נוספת'}</h3>{events.map(e => <article className="crm-step" key={e.id}><time>{date(e.at)}</time><strong>{e.label}</strong>{e.input && Object.keys(e.input).length > 0 && <div className="crm-choices">{Object.entries(e.input).map(([k, v]) => <code key={k} dir="ltr">{k} = {String(v)}</code>)}</div>}{e.destination && <p>הועברו אל: <b dir="ltr">{e.destination}</b></p>}{e.campaign && <p>מקור פרסומת: {e.campaign}</p>}{e.status && <p>מצב: {states[e.status] || 'מצב נוסף שנרשם במערכת'}</p>}{e.plan && <p>מסלול: <span dir="auto">{e.plan}</span></p>}{e.amount_ils !== undefined && <p>{money(e.amount_ils)}</p>}{e.scheduled_at && <p>מועד מתוכנן: {date(e.scheduled_at)}</p>}{(e.summary || e.transcript) && <p>{e.summary || e.transcript}</p>}</article>)}</section>)}</div>;
