@@ -4,6 +4,9 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+# Secrets (wrangler secret put): GEMINI_API_KEY, ADMIN_BEARER_SECRET.
+# Optional: GEMINI_PAID_TEACHER_API_KEY (paid allocations; falls back to GEMINI_API_KEY).
+
 [vars]
 GA_MEASUREMENT_ID = ""
 CF_BEACON_TOKEN = "9bbae75ae72c4010961886b5be1e0df9"

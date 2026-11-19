@@ -5,6 +5,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
 import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
+import { geminiKeyForCall } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
@@ -113,6 +114,8 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   let limited = false;
   try {
     await b.registerWebCall(callId, customerId, botId);
+    const selected = await geminiKeyForCall(env, callId);
+    s = { ...s, geminiKey: selected.key };
     const learning = new LearningStore(env.DB);
     if (controls.lesson) await learning.begin(customerId, callId, controls.lesson);
     let history = (await progress.lessonContext(customerId)) + (await b.lessonContext(customerId, botId));
@@ -124,7 +127,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
       await progress.savePromptSnapshot(botId, callId, artifact);
       await progress.logTurn(botId, callId, "input", text);
     }
-    await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
+    await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web", tier: selected.tier });
     result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, {
       storeTranscript: controls.store_transcripts,
       learning: controls.lesson ? args => learning.record(customerId, callId, args) : undefined,
