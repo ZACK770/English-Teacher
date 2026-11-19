@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { LegalFooter } from './LegalFooter';
+import { legalBasePath } from '../../legalRoutes';
 
 const CONTACT_EMAIL = 'support@speakcall.app';
 const hasContactEmail = /^[^\s@<>\[\]]+@[^\s@<>\[\]]+\.[^\s@<>\[\]]+$/.test(CONTACT_EMAIL);
@@ -65,7 +66,7 @@ export const LegalPage = ({ page }: { page: LegalPageName }) => {
   return (
     <div dir="rtl" lang="he" className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans">
       <main className="max-w-3xl mx-auto px-6 py-12 sm:py-16">
-        <a href="/#join" className="text-emerald-400 underline focus-visible:outline-2 focus-visible:outline-emerald-400">חזרה לספיקול</a>
+        <a href={`${legalBasePath(window.location.pathname)}/#join`} className="text-emerald-400 underline focus-visible:outline-2 focus-visible:outline-emerald-400">חזרה לספיקול</a>
         <h1 className="text-3xl sm:text-4xl font-extrabold mt-8 mb-4">{policy.title}</h1>
         <p className="text-slate-400 mb-10">עדכון אחרון: <time dateTime="2026-11-19">19.11.2026</time></p>
         <div className="space-y-8">
