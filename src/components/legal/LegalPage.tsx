@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { LegalFooter } from './LegalFooter';
 import { legalBasePath } from '../../legalRoutes';
+import { SpeakCallLogo } from '../brand/SpeakCallLogo';
 
 const CONTACT_EMAIL = 'support@speakcall.app';
 const hasContactEmail = /^[^\s@<>\[\]]+@[^\s@<>\[\]]+\.[^\s@<>\[\]]+$/.test(CONTACT_EMAIL);
@@ -8,7 +9,7 @@ const hasContactEmail = /^[^\s@<>\[\]]+@[^\s@<>\[\]]+\.[^\s@<>\[\]]+$/.test(CONT
 const contactText = (text: string) => text.split(CONTACT_EMAIL).map((part, index) => (
   <span key={index}>
     {index > 0 && (hasContactEmail
-      ? <a href={`mailto:${CONTACT_EMAIL}`} className="underline text-emerald-400 focus-visible:outline-2 focus-visible:outline-emerald-400">{CONTACT_EMAIL}</a>
+      ? <a href={`mailto:${CONTACT_EMAIL}`} className="underline text-[#c0f67d] focus-visible:outline-2 focus-visible:outline-[#c0f67d]">{CONTACT_EMAIL}</a>
       : CONTACT_EMAIL)}
     {part}
   </span>
@@ -64,15 +65,16 @@ export const LegalPage = ({ page }: { page: LegalPageName }) => {
   }, [policy.title]);
 
   return (
-    <div dir="rtl" lang="he" className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans">
+    <div dir="rtl" lang="he" className="min-h-screen bg-[#111a1a] text-[#f0f5ef] font-sans">
       <main className="max-w-3xl mx-auto px-6 py-12 sm:py-16">
-        <a href={`${legalBasePath(window.location.pathname)}/#join`} className="text-emerald-400 underline focus-visible:outline-2 focus-visible:outline-emerald-400">חזרה לספיקול</a>
+        <a className="block mb-6" href={`${legalBasePath(window.location.pathname)}/`} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
+        <a href={`${legalBasePath(window.location.pathname)}/#join`} className="text-[#c0f67d] underline focus-visible:outline-2 focus-visible:outline-[#c0f67d]">חזרה לספיקול</a>
         <h1 className="text-3xl sm:text-4xl font-extrabold mt-8 mb-4">{policy.title}</h1>
-        <p className="text-slate-400 mb-10">עדכון אחרון: <time dateTime="2026-11-19">19.11.2026</time></p>
+        <p className="text-[#a9bbb4] mb-10">עדכון אחרון: <time dateTime="2026-11-19">19.11.2026</time></p>
         <div className="space-y-8">
           {policy.sections.map(([heading, text]) => (
             <section key={heading}>
-              <h2 className="text-xl font-bold text-emerald-400 mb-3">{heading}</h2>
+              <h2 className="text-xl font-bold text-[#c0f67d] mb-3">{heading}</h2>
               <p className="text-slate-300 leading-8">{contactText(text)}</p>
             </section>
           ))}

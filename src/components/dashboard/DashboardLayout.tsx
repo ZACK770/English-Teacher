@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SpeakCallLogo } from '../brand/SpeakCallLogo';
 import {
   LayoutDashboard,
   Mail,
@@ -51,18 +52,18 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
   ];
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-[#0b0f17]">
+    <div className="dashboard-shell flex bg-[#0b0f17]">
       {/* Sidebar */}
       <aside
         className={`${
           sidebarOpen ? 'w-64' : 'w-20'
-        } bg-slate-900 border-l border-slate-800 flex flex-col transition-all duration-300 shrink-0 shadow-xl z-10`}
+        } dashboard-sidebar bg-slate-900 border-l border-slate-800 flex flex-col transition-all duration-300 shrink-0 shadow-xl z-10`}
       >
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           {sidebarOpen ? (
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-sm">
-                ד
+              <div className="dashboard-symbol">
+                <SpeakCallLogo variant="symbol" />
               </div>
               <div>
                 <div className="text-xs font-bold text-slate-100">קונסולת ניהול עסקית</div>
@@ -70,11 +71,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
               </div>
             </div>
           ) : (
-            <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-sm mx-auto">
-              ד
+            <div className="dashboard-symbol mx-auto">
+              <SpeakCallLogo variant="symbol" />
             </div>
           )}
           <button
+            aria-label={sidebarOpen ? 'צמצום תפריט הניהול' : 'הרחבת תפריט הניהול'}
+            aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition hidden sm:block"
           >
@@ -83,13 +86,14 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
         </div>
 
         {/* Navigation list */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+        <nav aria-label="ניווט מרכז הניהול" className="dashboard-nav flex-1 overflow-y-auto p-3 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
             return (
               <button
                 key={item.id}
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => onSelectTab(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition cursor-pointer ${
                   isActive
@@ -136,7 +140,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-6 bg-[#0b0f17]">
+      <main className="dashboard-main flex-1 p-6 bg-[#0b0f17]">
         <div className="max-w-7xl mx-auto">
           {currentTab === 'overview' && <OverviewView onNavigate={onSelectTab} />}
           {currentTab === 'campaigns' && <CampaignsView />}

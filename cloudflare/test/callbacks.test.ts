@@ -283,14 +283,24 @@ describe("immediate callback submission", () => {
 });
 
 describe("legacy hostname redirect", () => {
-  it.each(["speakool.net", "www.speakool.net"])("redirects %s before API handling", async host => {
+  it.each(["speakcall.app", "www.speakcall.app"])("redirects %s before API handling", async host => {
     const response = await worker.fetch(new Request("http://" + host + "/english/learn?x=a%2Fb&y=2"), {} as Env);
-    expect(response.status).toBe(301);
-    expect(response.headers.get("Location")).toBe("https://speakcall.app/english/learn?x=a%2Fb&y=2");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("https://speakool.net/english/learn?x=a%2Fb&y=2");
+  });
+
+  it.each([
+    ["/v1/technoline/router", { Upgrade: "websocket" }],
+    ["/english/v1/public/stats", {}],
+    ["/healthz", {}],
+    ["/learn", { Upgrade: "websocket" }],
+  ])("does not redirect API, health or WebSocket request %s", async (path, headers) => {
+    const response = await worker.fetch(new Request("https://speakcall.app" + path, { headers }), {} as Env).catch(() => null);
+    expect(response?.status).not.toBe(302);
   });
 
   it("does not redirect legacy POST submissions", async () => {
-    const response = await worker.fetch(new Request("http://speakool.net/v1/public/callback", { method: "POST" }), {} as Env).catch(() => null);
-    expect(response?.status).not.toBe(301);
+    const response = await worker.fetch(new Request("http://speakcall.app/v1/public/callback", { method: "POST" }), {} as Env).catch(() => null);
+    expect(response?.status).not.toBe(302);
   });
 });

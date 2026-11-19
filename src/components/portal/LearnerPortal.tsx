@@ -4,63 +4,46 @@ import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { LearningProgress } from "./LearningProgress";
+import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
+import { isFemale, TeacherMark } from "./LineTeacher";
+export { TeacherMark } from "./LineTeacher";
 import "./portal.css";
+import "./logo-breathing.css";
 
 type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan" | "checkout";
 const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "בקצב טבעי", fast: "אפשר להגביר" };
 const personalities: Record<string, string> = { warm: "חם ומעודד", focused: "ישר לעניין", playful: "עם חיוך" };
 const DEFAULT_NAME = "דוד";
 const FEMALE_NAME = "אסתי";
-const isFemale = (voice?: string) => ["Aoede", "Kore", "Leda", "Zephyr", "Callirrhoe", "Autonoe", "Despina", "Erinome", "Laomedeia", "Achernar", "Gacrux", "Pulcherrima", "Vindemiatrix", "Sulafat"].includes(voice || "");
 const voices = [{ value: "Aoede", label: "רך ובהיר" }, { value: "Puck", label: "קליל וחם" }, { value: "Charon", label: "עמוק ורגוע" }];
 const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day: "numeric", month: "long", timeZone: "Asia/Jerusalem" });
 
 function IconButton({ label, children, onClick, active = false }: { label: string; children: React.ReactNode; onClick: () => void; active?: boolean }) {
   return <button type="button" className={"sk-icon " + (active ? "is-active" : "")} aria-label={label} aria-pressed={active} title={label} onClick={onClick}>{children}<span className="sk-tooltip">{label}</span></button>;
 }
-function Brand({ onClick }: { onClick: () => void }) {
-  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><AudioLines strokeWidth={1.5} /><span>SpeakCall<span className="sk-brand-dot">.</span></span></button>;
+function Brand({ onClick, collapse = false }: { onClick: () => void; collapse?: boolean }) {
+  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><SpeakCallLogo collapse={collapse} /></button>;
 }
 function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
   return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">
-    <circle className="sk-art-halo" cx="180" cy="180" r="135" />
+    <circle className="sk-art-halo sk-conversation-halo" cx="180" cy="180" r="135" />
     <g className="sk-orbit" style={{ transformOrigin: "180px 180px", animationDelay: `${seed % 5 * -.8}s` }}>
       <ellipse cx="180" cy="180" rx="142" ry="63" transform="rotate(-37 180 180)" fill="none" stroke="currentColor" strokeWidth=".75" />
       <circle cx="292" cy="95" r="7" className="sk-art-accent" />
     </g>
-    <g className="sk-float-one">
+    <g className="sk-conversation-breathe">
       <path d="M78 97Q78 80 95 80H211Q228 80 228 97V174Q228 191 211 191H132L104 217V191H95Q78 191 78 174Z" className="sk-art-paper" />
       <text x="153" y="151" textAnchor="middle" direction="ltr" fontSize="43" fontFamily="Georgia,serif" fill="currentColor">hello.</text>
     </g>
-    <g className="sk-float-two">
+    <g className="sk-conversation-breathe sk-conversation-second">
       <path d="M145 184Q145 170 159 170H268Q282 170 282 184V246Q282 260 268 260H247V283L218 260H159Q145 260 145 246Z" className="sk-art-accent" />
-      {[0, 1, 2, 3, 4, 5, 6].map(n => <rect key={n} className="sk-sound-bar" x={180 + n * 11} y={203 - (n % 3) * 5} width="3" height={24 + (n % 3) * 10} rx="2" fill="#fffef9" style={{ animationDelay: `${n * -.18}s` }} />)}
+      {[0, 1, 2, 3, 4, 5, 6].map(n => <rect key={n} className="sk-sound-bar" x={180 + n * 11} y={203 - (n % 3) * 5} width="3" height={24 + (n % 3) * 10} rx="2" fill="var(--paper)" style={{ animationDelay: `${n * -.18}s` }} />)}
     </g>
     <path d="M82 265v22m-11-11h22M284 58v17m-8-8h16" stroke="currentColor" strokeWidth="1" />
     <circle cx="82" cy="232" r="3" fill="currentColor" /><circle cx="277" cy="301" r="3" fill="currentColor" />
       </svg>;
-}
-const markBg = ["#d4ff3f", "#7cc7ff", "#ffb86b", "#c9a7ff", "#5be3b5"];
-const markShirt = ["#1f3a5f", "#3b2f63", "#0f4c45", "#5a2a35", "#2d3b1f"];
-const markScarf = ["#e2557a", "#3c7dd9", "#8a5cf6", "#f0a030", "#16a37f"];
-export function TeacherMark({ teacher, index = 0 }: { teacher?: Teacher; index?: number }) {
-  const seed = teacher ? [...teacher.name].reduce((n, c) => n + c.charCodeAt(0), 0) : index;
-  const female = isFemale(teacher?.voice);
-  const pick = (list: string[]) => list[seed % list.length];
-  return <svg className="sk-avatar-mark" viewBox="0 0 100 100" aria-hidden="true">
-    <circle cx="50" cy="50" r="48" fill={pick(markBg)} />
-    <path d="M17 97c3-20 16-30 33-30s30 10 33 30z" fill={pick(markShirt)} />
-    <path d="M43 60h14v10a7 7 0 0 1-14 0z" fill="#e2b48e" />
-    {female && <path d="M28 50c0-18 9-29 22-29s22 11 22 29c0 7-2 12-5 15-1-15-7-26-17-26s-16 11-17 26c-3-3-5-8-5-15z" fill={pick(markScarf)} />}
-    <ellipse cx="50" cy="46" rx="16" ry="19" fill="#f2c9a5" />
-    {female ? <><path d="M33 40c2-11 9-16 17-16s15 5 17 16c-5-5-10-7-17-7s-12 2-17 7z" fill={pick(markScarf)} /><circle cx="70" cy="60" r="5" fill={pick(markScarf)} /></>
-      : <><path d="M34 42c0-13 7-19 16-19s16 6 16 19c-3-6-8-9-16-9s-13 3-16 9z" fill="#2b2118" /><path d="M34 49c1 12 8 18 16 18s15-6 16-18c-3 4-9 6-16 6s-13-2-16-6z" fill="#3a2c20" /><path d="M41 25a9 5 0 0 1 18 0z" fill="#14161a" /></>}
-    <circle cx="44" cy="45" r="1.9" fill="#1d1d1f" /><circle cx="56" cy="45" r="1.9" fill="#1d1d1f" />
-    {seed % 2 === 1 && <g fill="none" stroke="#14161a" strokeWidth="1.6"><circle cx="44" cy="45" r="5" /><circle cx="56" cy="45" r="5" /><path d="M49 45h2" /></g>}
-    <path d="M45 54q5 3.5 10 0" stroke={female ? "#b5485a" : "#f2c9a5"} strokeWidth="2" fill="none" strokeLinecap="round" />
-  </svg>;
 }
 function Modal({ title, children, onClose, error, busy }: { title: string; children: React.ReactNode; onClose: () => void; error?: string; busy?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -130,7 +113,7 @@ export const LearnerPortal: React.FC = () => {
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (note) { const t = setTimeout(() => setNote(""), 4500); return () => clearTimeout(t); } }, [note]);
-  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus()); };
+  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true })); };
   const run = async (action: () => Promise<void>, success = "") => {
     setBusy(true); setError("");
     try { await action(); await refresh(); if (success) setNote(success); return true; }
@@ -190,7 +173,7 @@ export const LearnerPortal: React.FC = () => {
     </div>
   </>;
   return <div className="speakool" dir="rtl">
-    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
+    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
         <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
@@ -297,7 +280,7 @@ function Direction({ initial, purpose, askTeacher = false, editing = false, mate
   const recommended = ["recommended", ...(d.goal === "work" ? ["career", "business", "property", "everyday"] : d.goal === "study" ? ["school", "academic", "medicine", "everyday"] : ["travel", "flights", "everyday"])];
   return <section className={"sk-step-card" + (purpose === "teacher" ? " is-teacher" : "")}>
     <div className="sk-step-top"><span>{step + 1} / {total}</span><div className="sk-step-dots">{Array.from({ length: total }, (_, n) => n).map(n => <i className={n <= step ? "is-done" : ""} key={n} />)}</div></div>
-    {purpose === "teacher" && <div className="sk-builder-mark"><TeacherMark teacher={{ ...d, id: "", base_bot: "", explanation: "hebrew", corrections: "gentle", name: d.name || "מורה" }} /></div>}
+    {purpose === "teacher" && <div className="sk-builder-mark"><TeacherMark teacher={{ name: d.name || "מורה", voice: d.voice }} /></div>}
     <h2>{q?.title || (topicStep ? "על מה בא לך לדבר?" : "איך נקרא למורה שלך?")}</h2><p>{q?.sub || (topicStep ? "משהו שתוכל להשתמש בו כבר מחר." : "ואפשר לחבר רשימת מילים משלך.")}</p>
     {q ? <Options value={String(d[q.key] ?? "")} values={q.values} onChange={v => choose(q.key, v)} />
       : topicStep ? <TopicPicker value={d.topic} onChange={v => purpose === "plan" ? finish({ ...d, topic: v }) : (setD(x => ({ ...x, topic: v })), setStep(n => n + 1))} recommended={recommended} />
@@ -347,7 +330,7 @@ function PreferencesForm({ preferences, account, onSave, onDirection, onTeachers
     <Setting title="שפת התרגום" value={draft.language || "זיהוי אוטומטי"}><label>השפה שלך<select value={draft.language} onChange={e => change("language", e.target.value)}><option value="">זיהוי אוטומטי</option>{["English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"].map(l => <option key={l}>{l}</option>)}</select></label></Setting>
     <div className="sk-setting-row"><span>אוצר המילים שלי<small>{account.materials.length} רשימות שמורות</small></span><button type="button" className="sk-link" onClick={onMaterials}>לרשימות שלי<ArrowUpLeft size={15} /></button></div>
     <Setting title="טלפונים מחוברים" value={account.customer.phone}>{phonesPanel}</Setting>
-    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{futureMinutes(account) > 0 && <p>{futureMinutes(account)} דקות לתקופות עתידיות (עדיין לא זמינות)</p>}{account.receipts.length ? account.receipts.map(r => <p key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"}{r.valid_from && new Date(r.valid_from).getTime() > Date.now() ? <> · זמינות מ־{lessonDate(r.valid_from)}</> : null} · עד {lessonDate(r.expires_at)}</p>) : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
+    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{futureMinutes(account) > 0 && <p>{futureMinutes(account)} דקות לתקופות עתידיות (עדיין לא זמינות)</p>}{account.receipts.length ? <ul className="sk-receipts">{account.receipts.map(r => <li key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"}{r.valid_from && new Date(r.valid_from).getTime() > Date.now() ? <> · זמינות מ־{lessonDate(r.valid_from)}</> : null} · עד {lessonDate(r.expires_at)}</li>)}</ul> : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
     {subscriptionPanel}
     <div className="sk-setting-row"><label htmlFor="save-transcripts">לשמור גם את המילים<small>תמליל השיחות הבאות. סיכומים נשמרים גם בלי זה.</small></label><input id="save-transcripts" type="checkbox" role="switch" checked={draft.store_transcripts === true} onChange={e => change("store_transcripts", e.target.checked)} /></div>
     <div className="sk-actions"><button className="sk-primary" type="submit">ככה מתאים לי<Check size={16} /></button><button type="button" className="sk-link" onClick={onLogout}><LogOut size={15} />יציאה</button></div>

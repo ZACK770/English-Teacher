@@ -13,7 +13,7 @@ export const LegacyConsole: React.FC = () => {
   );
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
+    <div className="legacy-console max-w-6xl mx-auto p-6 space-y-6">
       {/* Notice header */}
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between text-xs text-amber-900">
         <div className="flex items-center gap-2">
