@@ -113,8 +113,8 @@ export const LearnerPortal: React.FC = () => {
   const webBotId = [active?.base_bot, p.selected_bot, account?.customer.preferred_bot, "isaac-basic"].find(id => webTeachers.some(b => b.id === id)) || webTeachers[0]?.id;
   const defaultWeb = defaultBase || webTeachers.find(b => b.id === "isaac-basic") || webTeachers[0];
   const teacherName = active?.name || DEFAULT_NAME;
-  const hasDirection = !!(p.plan || active || p.quick_entry === "selected");
-  const needsQuickDirection = account && !checkoutPlan && !hasDirection && !account.teachers.length && !p.quick_entry
+  const hasDirection = !!(p.plan || active || p.trial_setup === "selected");
+  const needsQuickDirection = account && !checkoutPlan && !hasDirection && !account.teachers.length && !p.trial_setup
     && !account.progress.session_count && !remainingMinutes(account)
     && !account.subscriptions?.some(s => s.status === "active");
   const talk = (teacher?: Teacher, bot?: { id: string; label: string }) => {
@@ -130,8 +130,8 @@ export const LearnerPortal: React.FC = () => {
     setError("");
     try {
       const input: Preferences = choices
-        ? { ...choices, selected_bot: webBotId, mode: "free", quick_entry: "selected" }
-        : { quick_entry: "skipped" };
+        ? { ...choices, selected_bot: webBotId, mode: "free", trial_setup: "selected" }
+        : { trial_setup: "skipped" };
       await save(input);
       setAccount(current => current && ({ ...current, preferences: { ...current.preferences, ...input } }));
       talk();

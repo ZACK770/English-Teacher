@@ -179,19 +179,23 @@ describe("email login", () => {
 
 describe("quick teacher direction", () => {
   it("uses the saved level and style for voice controls without starting a second intake", async () => {
-    expect((await request("/v1/portal/preferences", tokenA, { quick_entry: "selected", level: "intermediate", personality: "focused" })).status).toBe(200);
+    expect((await request("/v1/portal/preferences", tokenA, { trial_setup: "selected", level: "intermediate", personality: "focused" })).status).toBe(200);
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.lesson?.level).toBe("intermediate");
     expect(c.custom_instructions).toContain("Personality: focused.");
     expect(c.intake_pending).toBe(false);
+    expect(c.custom_instructions).not.toContain("First call: before practising");
+    await b.saveContext("web-trial", await b.loadContext("preferences:learner-a"));
+    expect(await runtimeContext(b, "web-trial")).not.toContain("destination: main");
   });
 
   it("keeps existing lesson choices when the learner skips setup", async () => {
-    expect((await request("/v1/portal/preferences", tokenA, { quick_entry: "skipped" })).status).toBe(200);
+    expect((await request("/v1/portal/preferences", tokenA, { trial_setup: "skipped" })).status).toBe(200);
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.lesson?.level).toBe("beginner");
     expect(c.custom_instructions).toContain("Personality: warm.");
     expect(c.intake_pending).toBe(false);
+    expect(c.custom_instructions).not.toContain("First call: before practising");
   });
 });
 
