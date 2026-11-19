@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { conversion } from "./analytics";
 import { BusinessStore, PackageSchema } from "./business";
 import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
@@ -265,8 +266,10 @@ export async function checkoutRoutes(request: Request, env: Env, path: string, c
   };
   if (path === "/v1/portal/billing" && request.method === "GET") return Response.json(await store.billing(customerId), { headers: noCache });
   if (path === "/v1/portal/checkout" && request.method === "POST") {
-    const input = await json(z.object({ package_id: z.string().regex(/^[a-z0-9-]{1,40}$/), domain: z.string().max(40).optional() }));
-    return Response.json(await store.start(env, customerId, input.package_id, input.domain), { headers: noCache });
+    const input = await json(z.object({ package_id: z.string().regex(/^[a-z0-9-]{1,40}$/), domain: z.string().max(40).optional(), attribution: z.unknown().optional() }));
+    const order = await store.start(env, customerId, input.package_id, input.domain);
+    await conversion(env, "begin_checkout", input.attribution, order.id, customerId, order.amount_ils).catch(error => console.error("Analytics checkout failed", error));
+    return Response.json(order, { headers: noCache });
   }
   const order = path.match(/^\/v1\/portal\/checkout\/([a-f0-9]{32})(\/keva)?$/);
   if (order && !order[2] && request.method === "GET") return Response.json(await store.view(order[1], customerId), { headers: noCache });

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { track } from '../../analytics';
 import { ProChoices } from "./ProBadge";
 import { CreditCard, Lock } from "lucide-react";
 import { portalRequest, topics } from "./portalApi";
@@ -31,7 +32,10 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
     for (let i = 0; i < 20; i++) {
       const fresh = await portalRequest<Order>("/v1/portal/checkout/" + o.id, token);
       setOrder(fresh);
-      if (fresh.state === "paid" && (!fresh.subscription || fresh.subscription.state === "active")) { setDone(true); setBusy(false); return; }
+      if (fresh.state === "paid" && (!fresh.subscription || fresh.subscription.state === "active")) {
+        track('purchase', { reference: fresh.id, value: fresh.amount_ils, currency: 'ILS' }, fresh.id);
+        setDone(true); setBusy(false); return;
+      }
       await new Promise(r => setTimeout(r, 1500));
     }
     setBusy(false);

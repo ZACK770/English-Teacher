@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AnalyticsView } from './AnalyticsView';
 import { SpeakCallLogo } from '../brand/SpeakCallLogo';
 import {
   LayoutDashboard,
@@ -39,6 +40,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
 
   const navItems = [
     { id: 'overview', label: 'סקירה כללית', icon: LayoutDashboard },
+    { id: 'analytics', label: 'אנליטיקס', icon: Activity },
     { id: 'campaigns', label: 'קמפיינים ואינטייק', icon: Mail, badge: 'A/B' },
     { id: 'economics', label: 'אקסל רווח ועלויות', icon: Table, badge: 'חדש' },
     { id: 'bots', label: 'מורים ובוטים (שוכי)', icon: Bot },
@@ -143,6 +145,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
       <main className="dashboard-main flex-1 p-6 bg-[#0b0f17]">
         <div className="max-w-7xl mx-auto">
           {currentTab === 'overview' && <OverviewView onNavigate={onSelectTab} />}
+          {currentTab === 'analytics' && <AnalyticsView />}
           {currentTab === 'campaigns' && <CampaignsView />}
           {currentTab === 'economics' && <EconomicsExcelView />}
           {currentTab === 'bots' && <BotsView />}

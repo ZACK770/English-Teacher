@@ -1,4 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
+import { purchaseAttribution } from "./analytics";
 import { CheckoutStore } from "./checkout";
 import { SubscriptionStore } from "./subscriptions";
 import { canPurchaseAutomatically } from "../../src/pricing";
@@ -116,7 +117,9 @@ export class PaymentStore {
             result = await this.refusal(event, mosad);
           } else {
             try {
-              result = await this.settle(event, mosad);
+              const settled = await this.settle(event, mosad);
+              if (settled.paid) await purchaseAttribution(env, settled.receipt_id).catch(error => console.error("Analytics purchase attribution failed", error));
+              result = settled;
             } catch (error) {
               await this.issueForData(event, "settlement_review", String(error));
               result = { review: true };
@@ -398,7 +401,9 @@ export async function handleWebhook(request: Request, env: Env): Promise<Record<
     const checkout = new CheckoutStore(store.business);
     if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
     if (keva && !data.TransactionId) return await checkout.kevaCreated(data, mosadId);
-    return await store.settle(data, mosadId);
+    const settled = await store.settle(data, mosadId);
+    if (settled.paid) await purchaseAttribution(env, settled.receipt_id).catch(error => console.error("Analytics purchase attribution failed", error));
+    return settled;
   } catch {
     if (String(data.MosadNumber ?? "") === mosadId) await store.issueForData(data, "settlement_review", "").catch(() => false);
     throw new HttpError(400, "Settlement requires review");

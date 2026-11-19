@@ -1,4 +1,5 @@
 import { adCampaignReport } from "./ad-entry";
+import { analyticsSummary } from "./analytics";
 import { checkoutRoutes } from "./checkout";
 import { z } from "zod";
 import { BusinessStore, EconomicsSchema, MODELS, ReceiptSchema } from "./business";
@@ -141,6 +142,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   const payments = new PaymentStore(b);
   const seg = path.split("/").slice(1).map(decodeURIComponent);
   const ok = (v: unknown, status = 200) => Response.json(v, { status });
+  if (path === "/v1/admin/analytics" && method === "GET") return analyticsSummary(request, env);
   if (path === "/v1/admin/crm/sync" && method === "POST") return ok(await syncCrm(env));
   if (path === "/v1/admin/crm/voicemails" && method === "GET") return Response.json(await listVoicemails(env, url.searchParams.get("before")), { headers: { "Cache-Control": "no-store" } });
   const voicemail = path.match(/^\/v1\/admin\/crm\/voicemails\/([a-f0-9]{64})\/audio$/);
