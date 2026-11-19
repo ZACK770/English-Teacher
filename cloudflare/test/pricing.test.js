@@ -20,7 +20,7 @@ describe("site and dashboard pricing", () => {
     expect(canPurchaseAutomatically({ billing: "one_time", duration_months: 6 })).toBe(false);
   });
 
-  it("binds the landing to shared terms and representative-only signup links", () => {
+  it("binds the landing to shared terms and online checkout links", () => {
     const source = readFileSync(new URL("../../src/components/portal/SpeakoolLanding.tsx", import.meta.url), "utf8");
     expect(source).toContain("{FREE_TIER_TEXT}");
     expect(source).toContain("{MONTHLY_TERMS}");
@@ -28,7 +28,7 @@ describe("site and dashboard pricing", () => {
     expect(source).toContain('import { LegalFooter } from "../legal/LegalFooter";');
     expect(source).toContain("<LegalFooter />");
     expect(source).toContain("לעומת מנוי שוטף לאותה תקופה");
-    expect(source.match(/href=\{join\}/g)).toHaveLength(2);
+    expect(source.split('href={learn + "?plan=" + p.id}').length - 1).toBe(2);
     expect(source.match(/מומלץ/g)).toHaveLength(2);
     expect(source).not.toContain("20 דקות מתנה");
     expect(source).not.toContain("₪220");

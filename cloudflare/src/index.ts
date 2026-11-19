@@ -2,6 +2,8 @@ import { type Env, bearer, secureEqual, settings, HttpError } from "./env";
 import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
+import { CheckoutStore } from "./checkout";
+import { BusinessStore } from "./business";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
@@ -153,5 +155,6 @@ export default {
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
+    ctx.waitUntil(new CheckoutStore(new BusinessStore(env.DB)).issueDueGrants().catch(() => 0));
   },
 };

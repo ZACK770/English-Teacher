@@ -9,13 +9,12 @@ const faq = [
   ["צריך אינטרנט?", "לא. מספיק טלפון רגיל, גם כשר. מי שרוצה יכול לדבר גם מהמחשב."],
   ["למה השיחה מוגבלת בזמן?", "שיחות קצרות ותכופות נדבקות יותר משיעור ארוך פעם בשבוע. במסלולים הגבוהים השיחה ארוכה יותר."],
   ["מה קורה כשהזמן נגמר?", "המורה מודיע לפני הסוף, מסכם, שומר את מה שלמדת ונפרד. שום דבר לא הולך לאיבוד."],
-  ["איך משלמים?", "תוספת דקות ותרגומון רוכשים בטלפון, מקש 3, דרך נדרים פלוס. למנוי בהוראת קבע או למסלול שליטה בתשלומים מצטרפים דרך נציג."],
+  ["איך משלמים?", "בכרטיס אשראי באתר, בדף המאובטח של נדרים פלוס: מנוי חודשי מתחדש בהוראת קבע וניתן לביטול בכל עת, ומסלולי השליטה אפשר לחלק לתשלומים. תוספת דקות ותרגומון אפשר לרכוש גם בטלפון, מקש 3."],
 ];
 
 export function SpeakoolLanding() {
   const base = location.pathname.startsWith("/english") ? "/english" : "";
   const learn = base + "/learn";
-  const join = base + "/join";
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
@@ -65,7 +64,7 @@ export function SpeakoolLanding() {
           {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p className="sk-land-line">{p.tagline}</p>
           <div className="sk-land-price"><strong>{p.price_ils}</strong><span>₪ לחודש</span></div>
           <ul><li>{p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li><li>חודש ראשון ₪29 · מלוא הדקות</li><li>שנתי: ₪{p.annual_price_ils} · מחיר של 10 חודשים</li></ul>
-          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={join}>ההצטרפות דרך נציג · הוראת קבע</a>
+          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={learn + "?plan=" + p.id}>להצטרפות · ₪{p.first_month_price_ils ?? p.price_ils} לחודש הראשון</a>
         </article>)}</div>
         <h3>מסלול שליטה · מחיר קבוע, אפשרות לתשלומים</h3>
         <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.duration_months).map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>
@@ -73,7 +72,7 @@ export function SpeakoolLanding() {
           <div className="sk-land-price"><strong>₪{p.price_ils.toLocaleString("he-IL")}</strong><span>ל־{p.duration_months} חודשים</span></div>
           <p>במקום ₪{p.anchor_price_ils?.toLocaleString("he-IL")}</p><small>לעומת מנוי שוטף לאותה תקופה</small>
           <ul><li>עד {p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li></ul>
-          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={join}>ההצטרפות דרך נציג · תשלומים</a>
+          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={learn + "?plan=" + p.id}>להצטרפות · עד {p.duration_months} תשלומים</a>
         </article>)}</div>
         <p>{MASTERY_GUARANTEE}</p>
         <h3>תוספות ורכישה חד־פעמית</h3>
@@ -84,7 +83,7 @@ export function SpeakoolLanding() {
           <a className="sk-secondary" href={tel}>לרכישה בטלפון, מקש 3</a>
         </article>)}</div>
         <p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · הצטרפות דרך נציג.</p>
-        <small>כל המחירים כוללים מע״מ. מנויים ומסלולי שליטה אינם זמינים לרכישה אוטומטית.</small>
+        <small>כל המחירים כוללים מע״מ. התשלום בכרטיס אשראי בדף המאובטח של נדרים פלוס.</small>
       </section>
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>המשפט הראשון הוא הכי קשה.<br />השאר כבר זורם.</h2><a className="sk-primary" href={learn}>בוא נדבר <ArrowLeft size={18} /></a></section>

@@ -1,4 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
+import { CheckoutStore, receiptDays } from "./checkout";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
@@ -58,6 +59,7 @@ export class PaymentStore {
   async refusal(data: Record<string, any>, mosadId: string) {
     if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
     if (String(data.Status ?? "").toLowerCase() !== "error") throw new Error("Invalid refusal");
+    if (!["", "0", "undefined", "null"].includes(String(data.KevaId ?? ""))) return new CheckoutStore(this.business).kevaRefused(data);
     if (!(await this.issueForData(data, "refusal", data.Message ?? "החיוב סורב"))) return { ignored: true };
     const orderId = String(data.Groupe).slice(PREFIX.length);
     await this.db.prepare("UPDATE payment_orders SET state='failed',updated_at=? WHERE id=? AND state IN ('issued','awaiting_settlement')").bind(nowIso(), orderId).run();
@@ -258,6 +260,7 @@ export class PaymentStore {
     if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
     if (![undefined, null, "", "OK"].includes(data.Status)) return { ignored: true };
     const category = String(data.Groupe ?? "");
+    if (!["", "0"].includes(String(data.KevaId ?? ""))) return new CheckoutStore(this.business).kevaCharge(data, mosadId);
     if (!category.startsWith(PREFIX)) return { ignored: true };
     const orderId = category.slice(PREFIX.length);
     if (!/^[0-9a-f]{32}$/.test(orderId)) return { ignored: true };
@@ -279,7 +282,7 @@ export class PaymentStore {
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
     const receiptId = randomHex(10);
     const now = nowIso();
-    const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");
+    const expires = new Date(Date.now() + receiptDays(pkg, order.channel) * 86400_000).toISOString().replace("Z", "+00:00");
     await this.db.batch([
       this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
         receiptId, order.customer_id, order.package_id, pkg.product, `nedarim:${mosadId}:${transactionId}`, amount / 100, order.vat_rate, pkg.minutes, expires, now,
@@ -287,6 +290,7 @@ export class PaymentStore {
       this.db.prepare("UPDATE payment_orders SET state='paid',transaction_id=?,confirmation=?,receipt_id=?,updated_at=? WHERE id=? AND state!='paid'").bind(transactionId, confirmation, receiptId, now, orderId),
       this.db.prepare("UPDATE payment_issues SET status='resolved',resolved_at=?,resolution='התשלום אושר מול הסולק' WHERE order_id=? AND status='open' AND kind IN ('refusal','pbx_failure')").bind(now, orderId),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:nedarim_verified", orderId, now),
+      ...new CheckoutStore(this.business).grantStatements(order, pkg),
     ]);
     return { paid: true, receipt_id: receiptId, customer_id: order.customer_id, package_id: order.package_id, amount_ils: amount / 100 };
   }
@@ -376,7 +380,10 @@ export async function handleWebhook(request: Request, env: Env): Promise<Record<
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid settlement");
   } catch { throw new HttpError(400, "Settlement requires review"); }
   try {
+    const keva = !["", "0", "undefined", "null"].includes(String(data.KevaId ?? ""));
+    const checkout = new CheckoutStore(store.business);
     if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
+    if (keva && !data.TransactionId) return await checkout.kevaCreated(data, mosadId);
     return await store.settle(data, mosadId);
   } catch {
     if (String(data.MosadNumber ?? "") === mosadId) await store.issueForData(data, "settlement_review", "").catch(() => false);
