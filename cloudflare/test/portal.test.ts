@@ -1472,6 +1472,24 @@ describe("school history after navigation migration", () => {
         JSON.stringify([{ role: "user", text: navigation ? "NAVIGATION_ONLY" : "hello" }]),
         navigation ? "NAVIGATION_ONLY" : "English practice", navigation ? "NAVIGATION_NEXT_STEP" : "Practice another phrase", navigation ? 999 : 10);
   }
+  it("returns a complete practice window beyond 20 calls without another learner, navigation or transcript data", async () => {
+    for (let i = 0; i < 25; i++) session("practice-" + i);
+    session("other-learner", "learner-b");
+    session("retired-navigation", "learner-a", true);
+    await b.registerWebCall("retired-navigation", "learner-a", "voice-navigator-live");
+    session("old-practice");
+    db.sql.prepare("UPDATE sessions SET started_at=datetime('now','-40 days') WHERE call_id='old-practice'").run();
+    session("future-practice");
+    db.sql.prepare("UPDATE sessions SET started_at=datetime('now','+2 hours') WHERE call_id='future-practice'").run();
+    const response = await request("/v1/portal/practice");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const report = await response.json() as any;
+    expect(report.sessions).toHaveLength(25);
+    expect(report.sessions.every((s: any) => s.call_id.startsWith("practice-"))).toBe(true);
+    expect(Object.keys(report.sessions[0]).sort()).toEqual(["call_id", "duration_seconds", "next_step_he", "started_at", "success_he", "summary_he"]);
+    expect((await (await request("/v1/portal/practice", tokenB)).json() as any).sessions.map((s: any) => s.call_id)).toEqual(["other-learner"]);
+    expect((await request("/v1/portal/practice", "invalid-token")).status).toBe(401);
+  });
   it.each([
     { id: "voice-navigator-live", role: "teacher" },
     { id: "old-navigation-profile", role: "navigation" },

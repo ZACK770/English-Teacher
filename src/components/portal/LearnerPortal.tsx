@@ -6,6 +6,7 @@ import { VoiceRoom } from "./VoiceRoom";
 import { clearEntryChallenges, EntryForm, QuickEntry, type EntryChannel } from "./QuickEntry";
 import { legalBasePath } from "../../legalRoutes";
 import { clearLearnerToken, saveLearnerToken } from "./learnerToken";
+import { HomeDashboard, PracticeDashboard } from "./PracticeDashboard";
 import { VocabularyPage } from "./VocabularyPage";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { ConversationArt } from "./ConversationArt";
@@ -160,30 +161,15 @@ export const LearnerPortal: React.FC = () => {
     plan: ["יופי. יש לנו כיוון.", "התוכנית שלך"],
     checkout: ["עוד רגע מתחילים.", "הצטרפות למסלול"],
   };
-  const lastLesson = account?.progress.sessions[0];
   const firstName = account && account.customer.name !== "לקוח מהטלפון" ? account.customer.name.split(" ")[0] : "";
   const nav: [Page, string, React.ReactNode][] = [["home", "בית", <Sprout key="i" />], ["teachers", "המורים שלי", <Users key="i" />], ["materials", "אוצר מילים", <BookOpen key="i" />], ["achievements", "ההתקדמות", <Trophy key="i" />], ["history", "השיחות שלי", <History key="i" />], ["settings", "העדפות", <Settings2 key="i" />]];
   const renderHome = () => account && <>
-    <section className="sk-hero">
-      <div>
-        <h2>השיחה הבאה שלך</h2>
-        <p>{teacherName} כבר על הקו · {p.minutes || p.plan?.minutes || 10} דקות · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /></p>
+    <HomeDashboard account={account} token={token} teacherName={teacherName} onProgress={() => navigate("achievements")} onGoal={() => navigate("intake")}>
+        <p className="pd-muted">{p.minutes || p.plan?.minutes || 10} דקות לאימון · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /></p>
         {p.track !== "grammar" && activeMaterial?.target_count === 0 && <p role="status" className="sk-notice">לרשימה ״{activeMaterial.name}״ עוד אין יעדי אנגלית, אז מדברים בלי ציוני מילים. <button className="sk-link" onClick={() => navigate("materials")}>לרשימות</button></p>}
         <div className="sk-actions">{webBotId && <button className="sk-primary" onClick={() => talk()}><Mic size={18} />להתחיל שיחה</button>}<button className={webBotId ? "sk-link" : "sk-primary"} onClick={() => setPhoneOpen(true)}>לדבר בטלפון</button></div>
-      </div>
-      <div className="sk-hero-art"><ConversationArt /></div>
-    </section>
-    <div className="sk-metrics">
-      <div className="sk-metric"><strong>{remainingMinutes(account)}</strong><span>דקות בחבילה</span></div>
-      <div className="sk-metric"><strong>{account.progress.session_count}</strong><span>שיחות עד היום</span></div>
-      <div className="sk-metric"><strong>{practiceDays(account.progress.sessions)}</strong><span>ימי תרגול לאחרונה</span></div>
-    </div>
+    </HomeDashboard>
     <AccessNotice account={account} />
-    <div className="sk-dash-bottom">
-      {lastLesson ? <button className="sk-panel-card" onClick={() => navigate("history")}><strong>השיחה האחרונה</strong><p>{lastLesson.summary_he || "עוד שיחה קטנה באנגלית."}</p><p className="sk-accent-text">הצעד הבא: {lastLesson.next_step_he || "ממשיכים לדבר."}</p></button>
-        : <button className="sk-panel-card" onClick={() => navigate("teachers")}><strong>{teacherName}</strong><p>המורה שמחכה לך בטלפון. אפשר להחליף מתי שבא לך.</p></button>}
-      <button className="sk-panel-card" onClick={() => navigate("materials")}><strong>המילים שלך</strong><p>{activeMaterial ? "בשיחה הבאה: " + activeMaterial.name : nextWords(p.topic || p.plan?.topic)}</p><p>ציון מתעדכן רק כשמילה נבדקה באמת בשיחה.</p></button>
-    </div>
   </>;
   if (needsQuickDirection && !voice) return <ProAccessProvider paid={account.access?.paid === true}><div className="speakool" dir="rtl"><div className="sk-shell">
     <header className="sk-header"><a className="sk-brand" href={legalBasePath(location.pathname) + "/"} aria-label="ספיקול"><SpeakCallLogo /></a></header>
@@ -215,7 +201,7 @@ export const LearnerPortal: React.FC = () => {
           {page === "materials" && <VocabularyPage account={account} token={token} onSave={async (name, words) => await run(async () => { const r = await portalRequest<Material>("/v1/portal/materials", token, { name, words }); await save({ material_id: r.id }); setNote(r.target_count === 0 ? "נשמר כחומר לשיחה בלבד; טרם הוכנו יעדי אנגלית למדידה." : "המילים נשמרו. יעדי האנגלית מוכנים לשיחה הבאה."); })} onActivate={id => void run(() => save({ material_id: id }), id ? account.materials.find(m => m.id === id)?.target_count === 0 ? "נבחר חומר לשיחה בלבד, ללא ציוני מילים." : "הרשימה מחכה לשיחה הבאה." : "הרשימה האישית הוסרה מהשיחה הבאה.")} onDelete={id => void run(async () => { await portalRequest("/v1/portal/materials/" + id, token, undefined, "DELETE"); }, "הרשימה נמחקה.")} />}
           {page === "history" && <div className="sk-history">{account.progress.sessions.length === 0 ? <Empty icon={<History />} title="הסיפור שלנו עוד מתחיל." text="אחרי השיחה הראשונה יחכו לך כאן סיכום קטן וצעד הבא." action={() => setPhoneOpen(true)} actionLabel="בוא נדבר" /> : account.progress.sessions.map((lesson, index) => <article className="sk-history-item" key={lesson.call_id || index}><button className="sk-history-row" aria-expanded={expanded === lesson.call_id} onClick={() => { setExpanded(expanded === lesson.call_id ? null : lesson.call_id); setTranscript(undefined); }}><span className={"sk-history-dot " + (lesson.success_he ? "has-success" : "")} /><time dateTime={lesson.started_at}>{lessonDate(lesson.started_at)}</time><span>{lesson.summary_he || "עוד שיחה קטנה באנגלית"}</span><small>{Math.max(1, Math.round(lesson.duration_seconds / 60))} דקות</small><ChevronDown size={16} /></button>{expanded === lesson.call_id && <div className="sk-history-detail"><dl><dt>מה הצליח</dt><dd>{lesson.success_he || "כל שיחה היא עוד תרגול."}</dd><dt>כדאי לחזק</dt><dd>{lesson.observations.find(o => o.correction)?.correction || "עדיין אין הערה לשיחה הזאת."}</dd><dt>הצעד הבא</dt><dd>{lesson.next_step_he || "ממשיכים לדבר."}</dd></dl>{lesson.observations.length > 0 && <div className="sk-tags">{lesson.observations.slice(0, 6).map((o, i) => <span className="sk-tag" key={i}>{o.skill}</span>)}</div>}<button className="sk-quiet-link" onClick={() => void run(async () => { const r = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(lesson.call_id) + "/transcript", token); setTranscript(r.transcript); })}>הצג את השיחה</button>{transcript === null && <p className="sk-muted">לא נשמר תמליל לשיחה הזאת. אפשר לבחור שמירת שיחות בהעדפות.</p>}{transcript && <div className="sk-transcript">{transcript.map((t, i) => <p key={i}><strong>{t.role === "learner" ? "אני" : "המורה"}: </strong><span dir="auto">{t.text}</span></p>)}</div>}</div>}</article>)}</div>}
           {page === "checkout" && <Checkout token={token} packageId={checkoutPlan} onDone={() => { history.replaceState(null, "", location.pathname); void refresh(); navigate("home"); }} />}
-          {page === "achievements" && <Achievements account={account} />}
+          {page === "achievements" && <Achievements account={account} token={token} onGoal={() => navigate("intake")} onStart={() => setPhoneOpen(true)} />}
           {page === "settings" && <>
             <ProfileNext account={account} hasDirection={hasDirection} onDirection={() => navigate("intake")} onLink={setLinkChannel} />
             <PreferencesForm key={JSON.stringify(p)} preferences={p} account={account} onDirection={hasDirection ? () => navigate("intake") : undefined} onSave={input => void run(() => save(input), "סגור. השיחה הבאה תהיה בדרך שלך.")} onTeachers={() => navigate("teachers")} onMaterials={() => navigate("materials")} onLogout={logout} phonesPanel={hasPhone(account) && <PhoneLinks account={account} token={token} onRefresh={refresh} />} subscriptionPanel={<SubscriptionPanel token={token} subscriptions={account.subscriptions} onRefresh={refresh} />} />
@@ -323,9 +309,8 @@ function Direction({ initial, purpose, askTeacher = false, editing = false, mate
   </section>;
 }
 
-function Achievements({ account }: { account: Account }) {
-  const progress = account.progress;
-  return <section className="sk-achievements"><div className="sk-persistence"><span><Clock3 size={16} />{progress.total_minutes} דקות של אנגלית</span><span>{progress.session_count} שיחות</span><span>{progress.total_points} נקודות עידוד — לא ציון ידע</span><span>{practiceDays(progress.sessions)} ימי תרגול בשיחות האחרונות</span></div></section>;
+function Achievements({ account, token, onGoal, onStart }: { account: Account; token: string; onGoal: () => void; onStart: () => void }) {
+  return <section className="sk-achievements"><PracticeDashboard account={account} token={token} onGoal={onGoal} onStart={onStart} /></section>;
 }
 const hasPhone = (account: Account) => !!(account.customer.phone || account.phones.length);
 

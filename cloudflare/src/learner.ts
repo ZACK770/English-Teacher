@@ -179,6 +179,9 @@ export async function applyLearnerControls(
 export async function learnerRoutes(request: Request, env: Env, path: string, customerId: string, s: Settings): Promise<Response | null> {
   const b = new BusinessStore(env.DB);
   const progress = new ProgressStore(env.DB);
+  if (path === "/v1/portal/practice" && request.method === "GET") {
+    return Response.json(await progress.practiceReport(customerId), { headers: { "Cache-Control": "no-store" } });
+  }
   if (path === "/v1/portal/learning" && request.method === "GET") {
     const materials = await b.list(materialsKind(customerId));
     const custom = (await Promise.all(materials.map(m => materialTargets({ id: m.id, words: m.words })))).flat();

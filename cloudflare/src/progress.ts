@@ -262,6 +262,16 @@ export class ProgressStore {
     );
   }
 
+  async practiceReport(studentId: string, now = new Date()) {
+    // One extra day covers the full first Israeli calendar day, including DST.
+    const since = new Date(now.getTime() - 31 * 86400000).toISOString();
+    const until = now.toISOString();
+    const { results } = await this.db.prepare(`SELECT call_id, started_at, duration_seconds, summary_he, success_he, next_step_he
+      FROM sessions WHERE student_id = ? AND julianday(started_at) >= julianday(?) AND julianday(started_at) <= julianday(?) AND ${SCHOOL_SESSION_FILTER}
+      ORDER BY started_at DESC`).bind(studentId, since, until).all();
+    return { sessions: results, since, until };
+  }
+
   async report(studentId: string, limit = 20) {
     const [rowsResult, lifetimeResult] = await this.db.batch<Record<string, any>>([
       this.db.prepare(`SELECT call_id, started_at, duration_seconds, learner_turns, tutor_turns, observations_json, summary_he, success_he, next_step_he, points,
