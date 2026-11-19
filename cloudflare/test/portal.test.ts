@@ -68,6 +68,56 @@ describe("email login", () => {
     expect((await b.record("customers", "learner-a"))!.phone).toBe("0500000001");
   });
 
+  it("connects an email-only learner through a single-use voice ticket, reserves the opening trial and exchanges audio", async () => {
+    await progress.createBot({ id: "isaac-basic", label: "Basic", role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: true, web_enabled: true, enabled: true }, controlsFromSettings(false));
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, blocked_extension: "/8" }, "isaac-basic");
+    const { challenge } = await (await start()).json() as any;
+    const { token } = await (await verify(challenge, sentCode())).json() as any;
+    const account = await (await request("/v1/portal/me", token)).json() as any;
+    const customerId = account.customer.id;
+    expect(account.customer).toMatchObject({ name: "", phone: "", preferred_bot: "" });
+    expect(account.teachers).toEqual([]);
+    expect(db.sql.prepare("SELECT primary_phone FROM customers WHERE id=?").get(customerId)?.primary_phone).toBeNull();
+    expect(db.sql.prepare("SELECT * FROM customer_phones WHERE customer_id=?").all(customerId)).toEqual([]);
+
+    class Socket extends EventTarget { accept = vi.fn(); send = vi.fn(); close = vi.fn(); }
+    const server = new Socket();
+    vi.stubGlobal("WebSocketPair", class { 0 = new Socket(); 1 = server; });
+    const OriginalResponse = Response;
+    vi.stubGlobal("Response", class extends OriginalResponse {
+      constructor(body: any, init: any) { super(body, init?.status === 101 ? { ...init, status: 200 } : init); }
+    });
+    let running!: Promise<unknown>;
+    const call = new CallSession({ id: { toString: () => "email-voice-object" }, waitUntil: (promise: Promise<unknown>) => { running = promise; } } as unknown as DurableObjectState, env);
+    env.CALLS = { newUniqueId: () => "email-voice-object", get: () => ({ fetch: (request: Request) => call.fetch(request) }) } as unknown as DurableObjectNamespace;
+    let finish!: (event: { type: "closed" }) => void;
+    const pending = new Promise<{ type: "closed" }>(resolve => { finish = resolve; });
+    vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue(undefined);
+    vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "close").mockImplementation(() => { finish({ type: "closed" }); });
+    const input = vi.spyOn(GeminiLive.prototype, "sendAudio").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "next").mockResolvedValueOnce({ type: "audio", pcm24k: new Uint8Array(960).fill(7) }).mockImplementation(() => pending);
+    const { ticket } = await (await request("/v1/portal/voice-ticket", token, { bot_id: "isaac-basic" })).json() as any;
+    const voiceUrl = "https://school.example/v1/portal/voice?ticket=" + ticket;
+    try {
+      await worker.fetch(new Request(voiceUrl, { headers: { Upgrade: "websocket" } }), env);
+      await vi.waitFor(() => expect(server.send).toHaveBeenCalledWith(JSON.stringify({ type: "ready" })));
+      expect((await worker.fetch(new Request(voiceUrl, { headers: { Upgrade: "websocket" } }), env)).status).toBe(401);
+      expect(db.sql.prepare("SELECT product,reserved_seconds,billed_seconds FROM usage_allocations WHERE customer_id=?").all(customerId)).toEqual([{ product: "school-opening", reserved_seconds: 600, billed_seconds: null }]);
+      for (let n = 0; n < 10; n++) server.dispatchEvent(new MessageEvent("message", { data: new ArrayBuffer(320) }));
+      await vi.waitFor(() => expect(input).toHaveBeenCalled());
+      await vi.waitFor(() => expect(server.send.mock.calls.some(([payload]) => payload instanceof Uint8Array && payload.some(byte => byte !== 0))).toBe(true));
+      expect(server.close).not.toHaveBeenCalled();
+      expect(db.sql.prepare("SELECT * FROM diagnostic_events").all()).toEqual([]);
+    } finally {
+      server.dispatchEvent(new Event("close"));
+      await running;
+    }
+    expect(db.sql.prepare("SELECT call_id FROM active_calls").all()).toEqual([]);
+    expect(db.sql.prepare("SELECT student_id FROM sessions").all()).toEqual([{ student_id: customerId }]);
+  });
+
   it("lets administrators edit email-only learners without losing email or creating an empty phone identity", async () => {
     const { challenge } = await (await start()).json() as any;
     const { token } = await (await verify(challenge, sentCode())).json() as any;
