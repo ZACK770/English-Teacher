@@ -42,7 +42,11 @@ export const newBudgetLedger = (now: number): Ledger => ({ day: dayOf(now), spen
 
 function account(state: Ledger, lease: Lease, now: number, limits: Limits, metered = lease.metered) {
   const before = Math.max(lease.metered - lease.baseMetered, lease.floor);
-  lease.floor += floorCost(Math.max(0, now - lease.last), limits);
+  const elapsed = Math.max(0, now - lease.last);
+  const today = Math.max(0, now - Math.max(lease.last, Date.parse(state.day)));
+  const delta = Math.max(0, metered - lease.metered);
+  if (today < elapsed) lease.baseMetered += Math.floor(delta * (elapsed - today) / elapsed);
+  lease.floor += floorCost(today, limits);
   lease.last = now;
   lease.metered = Math.max(lease.metered, metered);
   state.spent += Math.max(lease.metered - lease.baseMetered, lease.floor) - before;
@@ -55,7 +59,6 @@ function advance(state: Ledger, now: number, limits: Limits) {
     for (const [id, lease] of Object.entries(state.leases)) {
       if (lease.until <= midnight) delete state.leases[id];
       else {
-        lease.last = midnight;
         lease.baseMetered = lease.metered;
         lease.floor = 0;
         lease.held = floorCost(lease.until - midnight, limits);

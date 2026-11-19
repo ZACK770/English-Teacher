@@ -51,6 +51,15 @@ it("resets spend at UTC midnight without dropping active jobs or repeating the p
   });
 });
 
+it("prorates a cumulative usage report around UTC midnight", () => {
+  const start = Date.parse("2026-11-19T23:59:50Z");
+  const ledger = newBudgetLedger(start);
+  applyBudget(ledger, start, limits, "acquire", "overnight");
+  applyBudget(ledger, start + 10_000, limits, "status");
+  expect(applyBudget(ledger, start + 20_000, limits, "check", "overnight", 200_000).estimated_spend_usd).toBe(0.1);
+  expect(applyBudget(ledger, start + 21_000, limits, "release", "overnight", 210_000).estimated_spend_usd).toBe(0.11);
+});
+
 afterEach(() => vi.useRealTimers());
 
 it("fails closed if the admission service is unreachable, and terminates a running job on denial", async () => {
