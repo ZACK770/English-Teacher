@@ -288,12 +288,17 @@ const IntakeSchema = PlanSchema.extend({
   teacher_gender: z.enum(["male", "female"]).default("male"),
 });
 
-export async function saveIntake(b: BusinessStore, customerId: string, botId: string, args: unknown, phoneReady = true) {
+export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
+  const bots = (await progress.listBots()).filter(bot => bot.enabled && bot.phone_enabled && bot.role === "teacher");
+  return [botId, "isaac-basic"].find(id => bots.some(bot => bot.id === id)) || bots[0]?.id || null;
+}
+
+export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
   const parsed = IntakeSchema.safeParse(args);
   if (!parsed.success) return false;
   const { learner_name, personality, teacher_gender, ...plan } = parsed.data;
   await b.savePreference(customerId, { plan, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
-  if (!phoneReady || (await b.list(teachersKind(customerId))).length) return true;
+  if (!botId || (await b.list(teachersKind(customerId))).length) return true;
   const fluent = plan.level === "fluent";
   const female = teacher_gender === "female";
   const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality, voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });

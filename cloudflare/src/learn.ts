@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { applyLearnerControls, saveIntake } from "./learner";
+import { applyLearnerControls, phoneTeacherFor, saveIntake } from "./learner";
 import { downsample24kTo8k, b64encode, concat, wav } from "./audio";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
@@ -95,7 +95,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
       await progress.logTurn(botId, callId, "input", text);
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
-    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined, args => saveIntake(b, customerId, botId, args, bot.phone_enabled));
+    result = await runLive(s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined, async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args));
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });

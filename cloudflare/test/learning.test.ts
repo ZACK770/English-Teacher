@@ -6,7 +6,8 @@ import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, 
 import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
-import { applyLearnerControls, LearnerPreferencesSchema, saveIntake, teachersKind } from "../src/learner";
+import { ProgressStore } from "../src/progress";
+import { applyLearnerControls, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, teachersKind } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -226,11 +227,19 @@ describe("learner settings to Gemini", () => {
     expect(after.intake_pending).toBe(false);
     expect((await b.loadContext("preferences:alice")).plan).toEqual({ goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" });
   });
-  it("saves a web-only intake plan without making a web-only bot the phone teacher", async () => {
-    expect(await saveIntake(b, "bob", "web-only", { goal: "travel", level: "beginner" }, false)).toBe(true);
-    expect((await b.loadContext("preferences:bob")).plan).toMatchObject({ goal: "travel" });
+  it("bases a web-only intake teacher on a phone teacher and keeps the chosen voice", async () => {
+    const progress = new ProgressStore(db as unknown as D1Database);
+    const make = (id: string, phone: boolean) => progress.createBot({ id, label: id, role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: phone, web_enabled: true, enabled: true }, controlsFromSettings(false));
+    await make("web-only", false);
+    expect(await phoneTeacherFor(progress, "web-only")).toBeNull();
+    expect(await saveIntake(b, "bob", null, { goal: "travel", level: "beginner" })).toBe(true);
     expect(await b.list(teachersKind("bob"))).toEqual([]);
-    expect((await b.loadContext("preferences:bob")).active_teacher).toBeUndefined();
+    await make("phone", true);
+    expect(await phoneTeacherFor(progress, "web-only")).toBe("phone");
+    expect(await saveIntake(b, "carol", await phoneTeacherFor(progress, "web-only"), { goal: "travel", level: "beginner", teacher_gender: "female", personality: "playful" })).toBe(true);
+    const [teacher] = await b.list(teachersKind("carol"));
+    expect(teacher).toMatchObject({ base_bot: "phone", voice: "Aoede", personality: "playful" });
+    expect((await b.loadContext("preferences:carol")).active_teacher).toBe(teacher.id);
   });
   it("does not add grammar to recommended practice and only sends its targets when explicitly selected", async () => {
     await b.savePreference("alice", { topic: "business", track: "recommended" });
