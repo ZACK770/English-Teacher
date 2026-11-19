@@ -2,10 +2,11 @@ import { z } from "zod";
 import { conversion } from "./analytics";
 import { BusinessStore, PackageSchema } from "./business";
 import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
-import { PREFIX, agorot, safeMessage } from "./payments";
+import { PREFIX, PaymentStore, agorot, safeMessage } from "./payments";
 import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
 import { manageKeva as manage } from "./nedarim";
+import { MASTERY_ID } from "../../src/pricing";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -20,7 +21,7 @@ export const checkoutConfigured = (env: Env) =>
 export function webTerms(pkg: Pkg) {
   if (!pkg.active || pkg.price_ils <= 0 || pkg.billing === "yearly") return null;
   if (pkg.billing === "monthly") return { now: pkg.price_ils, monthly: pkg.price_ils, installments: 1 };
-  return { now: pkg.price_ils, monthly: 0, installments: pkg.duration_months ?? 1 };
+  return { now: pkg.price_ils, monthly: 0, installments: pkg.max_installments ?? pkg.duration_months ?? 1 };
 }
 
 const MONTH_MS = 30 * 86400_000;
@@ -60,7 +61,7 @@ export class CheckoutStore {
     const customer = await this.business.record("customers", customerId);
     if (!body || !customer) throw new HttpError(404, "המסלול לא נמצא.");
     const pkg = PackageSchema.parse(body);
-    if (pkg.duration_months === 12 && (!domain || domain === "everyday" || !vocabularyCatalog.some(t => t.domain === domain))) throw new HttpError(422, "יש לבחור תחום אוצר מילים נוסף למסלול שליטה מלאה.");
+    if (packageId === MASTERY_ID && (!domain || domain === "everyday" || !vocabularyCatalog.some(t => t.domain === domain))) throw new HttpError(422, "יש לבחור תחום אוצר מילים נוסף למסלול שליטה מלאה.");
     const terms = webTerms(pkg);
     if (!terms) throw new HttpError(422, "המסלול הזה לא פתוח לרכישה באתר.");
     const cutoff = new Date(Date.now() - ORDER_TTL_MS).toISOString().replace("Z", "+00:00");
@@ -68,7 +69,7 @@ export class CheckoutStore {
       "SELECT id,snapshot FROM payment_orders WHERE customer_id=? AND package_id=? AND channel='web' AND state='issued' AND created_at>? ORDER BY created_at DESC LIMIT 1",
     ).bind(customerId, packageId, cutoff).first<{ id: string; snapshot: string }>();
     if (reusable) {
-      if (pkg.duration_months === 12 && domain) await this.db.prepare("UPDATE payment_orders SET snapshot=?,updated_at=? WHERE id=? AND state='issued'").bind(JSON.stringify({ ...JSON.parse(reusable.snapshot), guarantee_domain: domain }), nowIso(), reusable.id).run();
+      if (packageId === MASTERY_ID && domain) await this.db.prepare("UPDATE payment_orders SET snapshot=?,updated_at=? WHERE id=? AND state='issued'").bind(JSON.stringify({ ...JSON.parse(reusable.snapshot), guarantee_domain: domain }), nowIso(), reusable.id).run();
       return this.view(reusable.id, customerId);
     }
     const unfinished = await this.db.prepare(
@@ -172,6 +173,25 @@ export class CheckoutStore {
     }
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
     const subscriptions = new SubscriptionStore(this.db);
+    const first = await this.db.prepare("SELECT channel,transaction_id,receipt_id,amount_agorot FROM payment_orders WHERE id=?").bind(sub.first_order_id).first<{ channel: string; transaction_id: string | null; receipt_id: string | null; amount_agorot: number }>();
+    // A phone standing order has no separate first charge: its first monthly charge settles the phone order and opens the subscription.
+    if (first?.channel === "phone") {
+      if (first.transaction_id === transactionId) {
+        if (agorot(data.Amount) !== first.amount_agorot) throw new Error("Payment amount mismatch");
+        return { paid: true, receipt_id: first.receipt_id, duplicate: true };
+      }
+      if (!sub.entitlement_id) {
+        if (sub.state === "cancelled") throw new Error("Standing order was cancelled");
+        const payments = new PaymentStore(this.business);
+        const firstCharge = { ...data, KevaId: "", Groupe: PREFIX + sub.first_order_id };
+        let settled: Record<string, unknown>;
+        try { settled = await payments.settle(firstCharge, mosadId, true); }
+        catch (error) { await payments.issueForData(firstCharge, "settlement_review", "").catch(() => false); throw error; }
+        const now = nowIso();
+        await this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(now, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id).run();
+        return settled;
+      }
+    }
     if (!sub.entitlement_id) {
       const order = await this.db.prepare("SELECT o.id,r.id AS receipt_id,r.created_at FROM payment_orders o JOIN sales_receipts r ON r.id=o.receipt_id AND r.customer_id=o.customer_id WHERE o.id=? AND o.channel='web' AND o.state='paid'").bind(sub.first_order_id).first<{ id: string; receipt_id: string; created_at: string }>();
       if (!order || sub.state === "cancelled") throw new Error("First payment must settle before renewal");
@@ -217,7 +237,13 @@ export class CheckoutStore {
   }
 
   async kevaRefused(data: Record<string, any>) {
-    const sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
+    let sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
+    const subId = String(data.Groupe ?? "").startsWith(PREFIX) ? String(data.Groupe).slice(PREFIX.length) : "";
+    if (!sub && /^[0-9a-f]{32}$/.test(subId) && /^[0-9]{1,20}$/.test(String(data.KevaId))) {
+      // The setup webhook was missed: bind the Keva so the refusal is visible and the caller can cancel.
+      await this.db.prepare("UPDATE standing_orders SET keva_id=?,state=CASE WHEN state='pending' THEN 'active' ELSE state END,updated_at=? WHERE id=? AND keva_id IS NULL AND state!='cancelled'").bind(String(data.KevaId), nowIso(), subId).run();
+      sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
+    }
     if (!sub) return { ignored: true };
     const now = nowIso();
     await this.db.batch([
@@ -241,8 +267,10 @@ export class CheckoutStore {
       if (text !== "OK") throw new HttpError(502, "לא הצלחנו לבטל מול נדרים פלוס כרגע. נסו שוב או פנו לשירות.");
     }
     const now = nowIso();
-    if (sub.entitlement_id) await new SubscriptionStore(this.db).cancel(sub.entitlement_id, now);
     await this.db.prepare("UPDATE standing_orders SET state='cancelled',cancelled_at=?,updated_at=? WHERE id=?").bind(now, now, sub.id).run();
+    // Re-read: the first phone charge may have linked the subscription while Nedarim was cancelling.
+    const linked = await this.db.prepare("SELECT entitlement_id FROM standing_orders WHERE id=?").bind(sub.id).first<{ entitlement_id: string | null }>();
+    if (linked?.entitlement_id) await new SubscriptionStore(this.db).cancel(linked.entitlement_id, now);
     await this.business.audit("payment:keva_cancelled", sub.id);
     return { cancelled: true };
   }

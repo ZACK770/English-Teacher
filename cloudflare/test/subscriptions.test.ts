@@ -135,7 +135,7 @@ describe("subscription promises against production SQL", () => {
     await store.pause(sub.id, 60, "2026-02-20");
     await store.tick("2026-04-25");
     expect(receipts()[0].expires_at).toBe("2026-04-30T00:00:00.000+00:00");
-    expect((await store.get(sub.id)).term_end).toBe("2026-08-30T00:00:00.000+00:00");
+    expect((await store.get(sub.id)).term_end).toBe("2026-06-30T00:00:00.000+00:00");
   });
   it("cancels future grants but keeps existing paid minutes until expiry", async () => {
     const sub = await store.create("owner", "school-step", at);
@@ -148,6 +148,7 @@ describe("subscription promises against production SQL", () => {
     expect((await b.reserveCall("owner", "teacher", "cancelled-owner", 60)).mode).toBe("paid");
   });
   it("cron grants prepaid mastery months plus a single three-month guarantee extension, never monthly renewals", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',6) WHERE kind='packages' AND id='school-foundations'");
     const sub = await store.create("owner", "school-foundations", at);
     await store.create("owner", "school-step", at);
     await expect(store.evaluateGuarantee(sub.id, "2026-06-30")).rejects.toThrow("not due");
@@ -160,6 +161,7 @@ describe("subscription promises against production SQL", () => {
     expect((await store.get(sub.id)).extension_months).toBe(3);
   });
   it("uses measurable whole-domain mastery, averages domains equally and does not extend eligible success", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',6) WHERE kind='packages' AND id='school-foundations'");
     const domains = [{ domain: "everyday", levels: ["beginner" as const] }];
     const pool = vocabularyCatalog.filter(t => t.domain === "everyday" && t.level === "beginner");
     expect(pool.length).toBeGreaterThan(100);
@@ -292,12 +294,30 @@ describe("subscription promises against production SQL", () => {
     expect(summary.members).toHaveLength(1);
   });
   it("anchors month-end renewals and never grants an extra mastery period after February", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',6) WHERE kind='packages' AND id='school-foundations'");
     const sub = await store.create("owner", "school-foundations", "2026-01-31");
     await store.tick("2026-07-30");
     expect(receipts()).toHaveLength(6);
     expect((await store.get(sub.id)).current_period_end).toBe("2026-07-31T00:00:00.000+00:00");
     await store.tick("2026-11-01");
     expect(receipts()).toHaveLength(9);
+  });
+  it("keeps receipts, renewals and members linked when widening the term constraint", () => {
+    const legacy = new DatabaseSync(":memory:");
+    try {
+      for (const name of readdirSync(new FileURL("../migrations/", import.meta.url)).filter(n => n.endsWith(".sql") && n < "0020").sort()) legacy.exec(readFileSync(new FileURL("../migrations/" + name, import.meta.url), "utf8"));
+      legacy.exec("PRAGMA foreign_keys=ON");
+      legacy.prepare("INSERT INTO customers(id,created_at,updated_at) VALUES ('c',?,?)").run(at, at);
+      legacy.prepare("INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at) VALUES ('s','c','school-step','active',5900,?,?,?)").run(at, at, at);
+      legacy.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id) VALUES ('r','c','school-step','school','x',59,0.18,60,?,?,'s')").run(at, at);
+      legacy.prepare("INSERT INTO subscription_renewals(subscription_id,reference,period_start,created_at) VALUES ('s','ref',?,?)").run(at, at);
+      legacy.exec("BEGIN");
+      legacy.exec(readFileSync(new FileURL("../migrations/0020_phone_plans.sql", import.meta.url), "utf8"));
+      legacy.exec("COMMIT");
+      expect(legacy.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(legacy.prepare("SELECT status,price_agorot FROM subscriptions WHERE id='s'").get()).toMatchObject({ status: "active", price_agorot: 5900 });
+      legacy.prepare("UPDATE subscriptions SET term_months=4 WHERE id='s'").run();
+    } finally { legacy.close(); }
   });
   it("preserves existing subscriptions and invoice references when migrating the status constraint", () => {
     const legacy = new DatabaseSync(":memory:");

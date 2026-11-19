@@ -8,7 +8,7 @@ import worker from "../src/index";
 import { standingOrderStart } from "../src/checkout";
 import { SubscriptionStore, addMonths } from "../src/subscriptions";
 import { attribution } from "./analytics-fixture";
-import { PaymentStore } from "../src/payments";
+import { PaymentStore, paymentResponse, phonePackageIds } from "../src/payments";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -376,15 +376,15 @@ describe("website checkout", () => {
     expect((await (await req("/v1/portal/checkout/" + o.id)).json() as any).state).toBe("paid");
     const store = new SubscriptionStore(env.DB);
     const sub = await store.get(o.id);
-    expect(sub).toMatchObject({ term_months: 12, monthly_minutes: 300, period_number: 1, price_agorot: 149000 });
+    expect(sub).toMatchObject({ term_months: 6, monthly_minutes: 300, period_number: 1, price_agorot: 149000 });
     expect(JSON.parse(sub.domains_json)).toContainEqual({ domain: "business" });
     expect(db.sql.prepare("SELECT entitlement_id FROM payment_orders WHERE id=?").get(o.id)?.entitlement_id).toBe(sub.id);
     await store.tick(addMonths(sub.started_at, 1));
     await store.tick(addMonths(sub.started_at, 1));
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 2 });
-    await store.tick(addMonths(sub.started_at, 11));
-    await store.tick(addMonths(sub.started_at, 11));
-    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 12 });
+    await store.tick(addMonths(sub.started_at, 5));
+    await store.tick(addMonths(sub.started_at, 5));
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 6 });
     expect(db.sql.prepare("SELECT COUNT(*) n FROM installment_grants").get()).toMatchObject({ n: 0 });
   });
 
@@ -518,5 +518,65 @@ describe("website checkout", () => {
     expect((await req("/v1/portal/checkout/" + o.id)).status).toBe(404);
     delete env.NEDARIM_API_VALID;
     expect((await req("/v1/portal/checkout", { package_id: "school-step" })).status).toBe(503);
+  });
+});
+
+describe("phone plans", () => {
+  const phone = async (params: Record<string, string>) => paymentResponse(new PaymentStore(b), { ...env, NEDARIM_PHONE_ENABLED: "true", NEDARIM_PHONE_TERMINAL: "1" } as Env, "/99", { PBXcallId: "call-1", ...params }, "c1", phonePackageIds(await b.list("packages"))) as Promise<any>;
+  const text = (r: any) => r.files[0].text as string;
+
+  it("reads the approved menu and opens a monthly plan from the standing order's first charge", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    expect(phonePackageIds(await b.list("packages")).slice(0, 5)).toEqual(["school-step", "school-pace", "school-fluent", "school-foundations", "school-mastery"]);
+    const menu = text(await phone({}));
+    expect(menu).toContain("לדבר אנגלית בקצב עם מנוי פרו המומלץ, ב־119 שקלים לחודש, הקישו 2.");
+    expect(menu).toContain("ב־1,490 שקלים, עד 12 תשלומים, הקישו 5.");
+    expect(menu).not.toContain("נציג");
+    expect(text(await phone({ isaacPackage: "2" }))).toContain("בהוראת קבע באשראי");
+    const card = await phone({ isaacPackage: "2", isaacPayConfirm: "1" });
+    const sub = db.sql.prepare("SELECT * FROM standing_orders").get() as any;
+    expect(card).toMatchObject({ type: "creditCard", sum: 119, payments: 1, paymentsMode: "kevaMonthly", category: "dibura-" + sub.id });
+    expect(text(await phone({ isaacPackage: "2", isaacPayConfirm: "1", isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "777" }))).toContain("הוראת הקבע נקלטה");
+    expect((await hook({ MosadNumber: "7019554", KevaId: "5151", Amount: "119", Currency: "1", Groupe: card.category, NextDate: "01/01/2026", Phone: "0500000001" })).status).toBe(200);
+    expect(db.sql.prepare("SELECT state,keva_id FROM standing_orders").get()).toMatchObject({ state: "active", keva_id: "5151" });
+    const charge = { MosadNumber: "7019554", TransactionId: "11", Confirmation: "9", Amount: "119", Currency: "1", Groupe: card.category, KevaId: "5151" };
+    expect((await hook({ ...charge, Amount: "29" })).status).toBe(400);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM subscriptions").get()?.n).toBe(0);
+    expect((await hook(charge)).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
+    const store = new SubscriptionStore(env.DB);
+    expect(await store.get(sub.first_order_id)).toMatchObject({ status: "active", period_number: 1, price_agorot: 11900 });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()?.n).toBe(1);
+    expect(text(await phone({}))).toContain("המנוי נפתח");
+    vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
+    expect((await hook({ ...charge, TransactionId: "12", Confirmation: "10" })).status).toBe(200);
+    expect(await store.get(sub.first_order_id)).toMatchObject({ period_number: 2 });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()?.n).toBe(2);
+  });
+
+  it("charges a term track in up to its installments and opens it for the approved number of months", async () => {
+    const card = await phone({ isaacPackage: "5", isaacPayConfirm: "1" });
+    const order = db.sql.prepare("SELECT * FROM payment_orders").get() as any;
+    expect(card).toMatchObject({ type: "creditCard", sum: 1490, payments: 12, paymentsMode: "regular", category: "dibura-" + order.id });
+    await phone({ isaacPackage: "5", isaacPayConfirm: "1", isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "55" });
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "21", Confirmation: "55", Amount: "1490", Currency: "1", Groupe: card.category, Tashloumim: "12", KevaId: "" })).status).toBe(200);
+    expect(await new SubscriptionStore(env.DB).get(order.id)).toMatchObject({ status: "active", term_months: 6, plan_id: "school-mastery" });
+  });
+
+  it("flags a rejected first charge and shows a refused standing order whose setup webhook was missed", async () => {
+    const card = await phone({ isaacPackage: "1", isaacPayConfirm: "1" });
+    const sub = db.sql.prepare("SELECT * FROM standing_orders").get() as any;
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "31", Confirmation: "1", Amount: "1", Currency: "1", Groupe: card.category, KevaId: "6161" })).status).toBe(400);
+    expect(db.sql.prepare("SELECT order_id FROM payment_issues WHERE kind='settlement_review'").get()).toMatchObject({ order_id: sub.first_order_id });
+    db.sql.exec("UPDATE standing_orders SET keva_id=NULL");
+    await hook({ MosadNumber: "7019554", Status: "Error", Source: "Keva", KevaId: "6262", Groupe: card.category, Message: "סירוב" });
+    expect(db.sql.prepare("SELECT state,keva_id FROM standing_orders").get()).toMatchObject({ state: "past_due", keva_id: "6262" });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_refusal'").get()?.n).toBe(1);
+  });
+
+  it("cancels the pending standing order when the caller backs out", async () => {
+    await phone({ isaacPackage: "1" });
+    await phone({ isaacPackage: "1", isaacPayConfirm: "0" });
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toMatchObject({ state: "cancelled" });
   });
 });

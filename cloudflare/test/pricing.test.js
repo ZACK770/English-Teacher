@@ -38,6 +38,6 @@ describe("site and dashboard pricing", () => {
     expect(MONTHLY_TERMS).not.toContain("₪29");
     expect(MONTHLY_TERMS).toContain("עד חודשיים בשנה");
     expect(MASTERY_GUARANTEE).toContain("70% שליטה");
-    expect(PRICING_PACKAGES.filter(p => p.anchor_price_ils).map(p => p.anchor_price_ils)).toEqual([1194, 2388]);
+    expect(PRICING_PACKAGES.filter(p => p.anchor_price_ils).map(p => p.anchor_price_ils)).toEqual([796, 1194]);
   });
 });
