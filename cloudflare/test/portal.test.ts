@@ -670,7 +670,26 @@ describe("school history after navigation migration", () => {
   });
 });
 
+describe("monthly voice preview quota", () => {
+  it("reports the enforced calendar-month period and resets the monthly quota", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2027-01-31T12:00:00Z"));
+      const token = (await b.portalInvite("learner-a")).token;
+      for (let n = 0; n < 3; n++) expect(await b.consumeMonthlyQuota("portal-voice-preview:learner-a", 3)).toBe(true);
+      const response = await request("/v1/portal/voice-preview", token, { voice: "Puck" });
+      expect(response.status).toBe(429);
+      expect(await response.text()).toContain("לחודש הזה");
+      vi.setSystemTime(new Date("2027-02-01T00:00:00Z"));
+      expect(await b.consumeMonthlyQuota("portal-voice-preview:learner-a", 3)).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("Technoline caller-ID login", () => {
+  function used(kind: string) {
+    return Number(db.sql.prepare("SELECT COALESCE(SUM(used),0) AS n FROM api_quota WHERE api LIKE ?").get(`portal-ring:${kind}:%`)?.n);
+  }
   async function challenge(token = "") {
     const response = await request("/v1/portal/auth/start", token, { phone: "0500000001" });
     expect(response.status).toBe(200);
@@ -681,16 +700,19 @@ describe("Technoline caller-ID login", () => {
     expect(code).toMatch(/^\d{6}$/);
     const verified = await request("/v1/portal/auth/verify", "", { challenge: id, code });
     expect(verified.status).toBe(200);
+    expect(used("verified")).toBe(1);
     const result = await verified.json() as any;
     expect(await b.portalCustomer(result.token)).toBe("learner-a");
     expect(await b.portalCustomer(tokenA)).toBe("learner-a");
     expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(401);
+    expect(used("verified")).toBe(1);
   });
   it("limits retries and rejects expired challenges", async () => {
     const id = await challenge();
     const wrong = code === "111111" ? "222222" : "111111";
     for (let n = 0; n < 5; n++) expect((await request("/v1/portal/auth/verify", "", { challenge: id, code: wrong })).status).toBe(401);
     expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(401);
+    expect(used("verified")).toBe(0);
     await b.putSetting("portal-auth:" + id, { phone: "0500000001", attempts: 0, expires: 0 });
     expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(401);
   });
@@ -698,6 +720,32 @@ describe("Technoline caller-ID login", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("Forbidden", { status: 403 })));
     expect((await request("/v1/portal/auth/start", "", { phone: "0500000001" })).status).toBe(503);
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM console_settings WHERE id LIKE 'portal-auth:%'").get()?.n).toBe(0);
+    expect(used("verified")).toBe(0);
+  });
+  it("allows unanswered calls up to the separate hourly attempt cap without using successful verifications", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2027-01-01T10:00:00Z"));
+      for (let n = 0; n < 10; n++) {
+        vi.setSystemTime(new Date(`2027-01-01T10:${String(n).padStart(2, "0")}:00Z`));
+        await challenge();
+      }
+      vi.setSystemTime(new Date("2027-01-01T10:11:00Z"));
+      expect((await request("/v1/portal/auth/start", "", { phone: "0500000001" })).status).toBe(429);
+      expect(fetch).toHaveBeenCalledTimes(10);
+      expect(used("verified")).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it("caps successful verifications at five per phone per hour and resets next hour", async () => {
+    vi.useFakeTimers();
+    try {
+      for (let n = 0; n < 7; n++) {
+        vi.setSystemTime(new Date(n === 6 ? "2027-01-01T11:00:00Z" : `2027-01-01T10:0${n}:00Z`));
+        const id = await challenge();
+        expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(n === 5 ? 429 : 200);
+      }
+      expect(used("verified")).toBe(6);
+    } finally { vi.useRealTimers(); }
   });
   it("does not send a call for an invalid phone and limits repeated ringing", async () => {
     expect((await request("/v1/portal/auth/start", "", { phone: "invalid" })).status).toBe(422);

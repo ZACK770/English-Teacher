@@ -52,9 +52,9 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     const hour = nowIso().slice(0, 13), minute = nowIso().slice(0, 16);
     for (const [key, limit] of [
       [`portal-ring:phone:${phoneHash}:${minute}`, 1],
-      [`portal-ring:phone:${phoneHash}:${hour}`, 5],
-      [`portal-ring:ip:${ipHash}:${hour}`, 20],
-      [`portal-ring:day:${hour.slice(0, 10)}`, 500],
+      [`portal-ring:phone:${phoneHash}:${hour}`, 10],
+      [`portal-ring:ip:${ipHash}:${hour}`, 40],
+      [`portal-ring:day:${hour.slice(0, 10)}`, 1000],
     ] as const) {
       if (!await b.consumeMonthlyQuota(key, limit)) throw new HttpError(429, "כבר שלחנו צלצול. נחכה קצת ואז ננסה שוב.");
     }
@@ -80,6 +80,8 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     if (challenge.linkCustomer && await requireLearner(request, env) !== challenge.linkCustomer) throw new HttpError(403, "הצלצול שייך לחשבון אחר.");
     const consumed = await env.DB.prepare("DELETE FROM console_settings WHERE id=? RETURNING id").bind(key).first();
     if (!consumed) throw new HttpError(401, "הצלצול הזה כבר שימש לכניסה. אפשר לבקש צלצול חדש.");
+    const phoneHash = (await sha256Hex(challenge.phone)).slice(0, 24);
+    if (!await b.consumeMonthlyQuota(`portal-ring:verified:${phoneHash}:${nowIso().slice(0, 13)}`, 5)) throw new HttpError(429, "מכסת האימותים המוצלחים לשעה הזאת נוצלה. אפשר לנסות שוב בשעה הבאה.");
     const owner = await b.customerForPhone(challenge.phone);
     const existing = owner ? { customer_id: owner } : null;
     if (challenge.linkCustomer) {
