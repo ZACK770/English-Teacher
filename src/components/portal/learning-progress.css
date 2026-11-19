@@ -8,6 +8,9 @@
 .sk-word-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:9px;margin:18px 0}
 .sk-word-chip{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);font-size:16px;overflow-wrap:anywhere}
 .sk-word-chip:hover{background:var(--sage);border-color:var(--accent)}
+.sk-word-chip.is-encountered,.sk-word-chip.is-mastered{background:var(--sage)}
+.sk-word-chip.is-mastered{border-color:var(--accent)}
+.sk-encountered-mark{font-size:13px;color:var(--quiet);flex-shrink:0}
 .sk-mastery-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0}
 .sk-learning-progress .sk-domain-open{color:var(--accent);font-size:14px;margin-top:8px}
 .sk-word-meaning{font-size:26px;font-weight:600;margin:0 0 14px}.sk-word-details section{margin-top:26px}.sk-word-details h3{font-size:18px;margin:0 0 12px}

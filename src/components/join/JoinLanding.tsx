@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { submitCallback } from './callbackApi';
 import { LegalFooter } from '../legal/LegalFooter';
-import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
+import { PhoneCall, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
+
+import { TeacherMark } from "../portal/LineTeacher";
+import { INITIAL_CONTROLS } from '../../store/initialData';
+import { SpeakCallLogo } from "../brand/SpeakCallLogo";
+import { legalBasePath } from "../../legalRoutes";
 
 const SHOW_SCHEDULED_CALLBACK = false;
 const scheduleWindow = 30 * 86400000;
@@ -78,11 +83,8 @@ export const JoinLanding: React.FC = () => {
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-6 py-4">
         <div className="max-w-[1280px] mx-auto flex items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-xl shadow-md">
-              ס
-            </div>
-            <div>
-              <span className="font-extrabold text-lg tracking-tight text-slate-100 block">ספיקול (SpeakCall)</span>
+            <a href={`${legalBasePath(window.location.pathname)}/`} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
+            <div className="hidden sm:block">
               <span className="text-[11px] text-slate-400 block font-medium">בית ספר ללימוד אנגלית מדוברת בטלפון ובמחשב</span>
             </div>
           </div>
@@ -120,7 +122,7 @@ export const JoinLanding: React.FC = () => {
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold font-mono">
-                    <Bot className="w-4 h-4" />
+                    <TeacherMark className="line-teacher-badge" teacher={{ name: "Shochi", voice: INITIAL_CONTROLS['shochi-robot'].voice }} />
                     <span>שוכי · מורה ה-AI האישי שלך בטלפון ובמחשב</span>
                   </div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-emerald-400 border border-slate-800 rounded-full text-xs font-mono">

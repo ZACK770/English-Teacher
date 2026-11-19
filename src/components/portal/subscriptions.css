@@ -1,30 +1,30 @@
-.subscription-panel { margin: 1rem 0; color: #243c3b; text-align: right; }
+.subscription-panel { margin: 1rem 0; color: var(--ink); text-align: right; }
 .subscription-panel h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: .8rem; }
 .subscription-panel h4 { font-weight: 700; margin-top: 1rem; }
 .subscription-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.subscription-card, .subscription-create { border: 1px solid #dbe4e0; border-radius: 16px; padding: 18px; margin: 12px 0; background: #fffefa; }
-.subscription-admin .subscription-card, .subscription-admin .subscription-create { background: #fafbfc; font-size: 12px; }
+.subscription-card, .subscription-create { border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin: 12px 0; background: var(--card); }
+.subscription-admin .subscription-card, .subscription-admin .subscription-create { background: var(--card); font-size: 12px; }
 .subscription-heading, .subscription-member { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
 .subscription-heading strong { font-size: 1.15em; }
-.subscription-heading > span { background: #e9f5f0; border-radius: 20px; padding: 3px 12px; }
+.subscription-heading > span { background: var(--sage); border-radius: 20px; padding: 3px 12px; }
 .subscription-card dl { margin: 12px 0; }
-.subscription-card dl > div { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid #e5ebe7; flex-wrap: wrap; }
+.subscription-card dl > div { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .subscription-card dd { margin: 0; font-weight: 600; }
-.subscription-panel small { display: block; color: #546b66; line-height: 1.7; }
+.subscription-panel small { display: block; color: var(--quiet); line-height: 1.7; }
 .subscription-panel p { margin: 8px 0; line-height: 1.7; }
 .subscription-actions, .subscription-create { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
 .subscription-panel label { display: flex; flex-direction: column; gap: 5px; font-size: .9em; min-width: 0; }
-.subscription-panel input, .subscription-panel select { border: 1px solid #b9cac2; background: white; border-radius: 9px; padding: 8px 10px; max-width: 100%; width: 170px; color: #243c3b; }
+.subscription-panel input, .subscription-panel select { border: 1px solid var(--line); background: var(--paper); border-radius: 9px; padding: 8px 10px; max-width: 100%; width: 170px; color: var(--ink); }
 .subscription-panel input[type=number] { width: 110px; }
-.subscription-panel button { border: 1px solid #137c69; color: #116351; background: #e9f5f0; padding: 8px 12px; border-radius: 9px; font-weight: 600; cursor: pointer; }
+.subscription-panel button { border: 1px solid var(--accent); color: var(--accent); background: var(--sage); padding: 8px 12px; border-radius: 9px; font-weight: 600; cursor: pointer; }
 .subscription-panel button:disabled, .subscription-panel fieldset:disabled button { opacity: .5; cursor: wait; }
-.subscription-panel .subscription-danger { color: #9c3434; border-color: #d7a8a8; background: #fff4f4; }
-.subscription-panel .subscription-error { color: #9c3434; background: #fff0ed; padding: 12px; border-radius: 9px; }
-.subscription-panel .subscription-note { color: #116351; background: #edf6ef; padding: 10px; border-radius: 9px; }
+.subscription-panel .subscription-danger { color: #ffb3b8; border-color: #74404a; background: #48282d; }
+.subscription-panel .subscription-error { color: #ffb3b8; background: #48282d; padding: 12px; border-radius: 9px; }
+.subscription-panel .subscription-note { color: var(--accent); background: var(--sage); padding: 10px; border-radius: 9px; }
 .subscription-actions { margin-top: 14px; }
 .subscription-member { padding: 8px 0; }
-.subscription-panel :focus-visible { outline: 2px solid #137c69; outline-offset: 3px; }
+.subscription-panel :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .speakool .subscription-panel { color: var(--ink); }
 .speakool .subscription-card { background: var(--card); color: var(--ink); border-color: var(--line); }
 .speakool .subscription-card small { color: var(--quiet); }
-.speakool .subscription-heading > span { color: #116351; }
+.speakool .subscription-heading > span { color: var(--accent); }

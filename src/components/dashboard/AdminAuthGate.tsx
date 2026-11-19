@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { SpeakCallLogo } from '../brand/SpeakCallLogo';
+import { legalBasePath } from '../../legalRoutes';
 
 type Identity = { username: string; role: 'owner' | 'staff' };
 type AdminUser = Identity & { id: string; display_name: string; disabled: number };
@@ -72,15 +74,16 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
     return () => { active = false; window.removeEventListener('admin-session-expired', expired); };
   }, []);
   if (loading) return <div dir="rtl" role="status" className="p-8">בודקים את הכניסה…</div>;
-  if (!identity) return <main dir="rtl" className="min-h-screen bg-slate-950 text-white grid place-items-center"><form className="p-8 space-y-5 max-w-sm w-full" onSubmit={async e => {
+  if (!identity) return <main dir="rtl" className="min-h-screen bg-[#111a1a] text-[#f0f5ef] grid place-items-center"><form className="p-8 space-y-5 max-w-sm w-full" onSubmit={async e => {
     e.preventDefault(); setLoading(true); setError('');
     try { setIdentity(await adminApi('auth/login', 'POST', { username, password })); setPassword(''); } catch (err) { setError((err as Error).message); } finally { setLoading(false); }
   }}>
+    <a href={`${legalBasePath(window.location.pathname)}/`} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
     <h1 className="text-2xl">כניסה למרכז הניהול</h1>
     <label className="block">שם משתמש<input className="block w-full bg-slate-800 p-3" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label>
     <label className="block">סיסמה<input className="block w-full bg-slate-800 p-3" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>
     {error && <p role="alert">{error}</p>}
-    <button className="bg-emerald-700 p-3 rounded w-full" type="submit">כניסה</button>
+    <button className="bg-[#c0f67d] text-[#111a1a] p-3 rounded w-full" type="submit">כניסה</button>
   </form></main>;
   return <><header dir="rtl" className="bg-slate-900 text-white p-3 flex flex-wrap gap-5 items-center">
     <span>{identity.username}</span>
