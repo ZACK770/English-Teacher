@@ -13,6 +13,7 @@ import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
+import { BusinessStore } from "./business";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -156,5 +157,6 @@ export default {
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
     ctx.waitUntil(new CheckoutStore(new BusinessStore(env.DB)).issueDueGrants().catch(() => 0));
+    ctx.waitUntil(new BusinessStore(env.DB).releaseStaleReservations());
   },
 };

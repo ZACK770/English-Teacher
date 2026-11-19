@@ -245,13 +245,20 @@ export class TutorSession {
       try {
         if (this.finalMessage && !this.disconnected) await this.speakFinalMessage(this.finalMessage);
         if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
-        if (releaseBudget && this.callId && this.customerId && this.controls) {
-          await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
-          await this.drainFinalAudio();
-          const billed = this.meteredAt === null ? 0 : Math.max(0, ((this.failureStarted ?? Date.now()) - this.meteredAt - this.failureGapMs) / 1000);
-          await this.b.settleCall(this.callId, billed);
-          await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
-          await this.latency("session_saved");
+        if (this.callId && this.customerId && this.controls) {
+          try {
+            await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
+            await this.drainFinalAudio();
+          } finally {
+            if (reserved && this.meteredAt !== null) {
+              const billed = Math.max(0, ((this.failureStarted ?? Date.now()) - this.meteredAt - this.failureGapMs) / 1000);
+              await this.b.settleCall(this.callId, billed);
+            }
+          }
+          if (releaseBudget) {
+            await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
+            await this.latency("session_saved");
+          }
         }
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);

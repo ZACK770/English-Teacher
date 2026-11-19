@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
-import { BusinessStore } from "../src/business";
+import { BusinessStore, PackageSchema } from "../src/business";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, teachersKind } from "../src/learner";
@@ -407,6 +407,87 @@ describe("public callback quota", () => {
     await cleanupCallbackQuota(env);
     expect(db.sql.prepare("SELECT api FROM api_quota").all()).toEqual([]);
     expect((await submit(8, "192.0.2.1")).status).toBe(201);
+  });
+});
+
+describe("call minute reservations", () => {
+  async function buyMinute() {
+    const { id: packageId } = await b.save("packages", PackageSchema.parse({ name: "One minute", product: "school", minutes: 1, price_ils: 1, active: true }));
+    return b.receipt({ customer_id: "learner-a", package_id: packageId, reference: "test-minute", amount_ils: 1 });
+  }
+
+  const reserve = (callId: string, seconds = 60, customer = "learner-a") => b.reserveCall(customer, "student", callId, seconds);
+
+  it("atomically splits the last paid minute and blocks any further calls", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    const callIds = ["phone", "browser", "another"];
+    const results = await Promise.all(callIds.map(id => reserve(id, 40)));
+    expect(results.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 20, 40]);
+    const larger = callIds[results.findIndex(row => row.seconds === 40)];
+    const smaller = callIds[results.findIndex(row => row.seconds === 20)];
+    await b.settleCall(larger, 90);
+    await b.settleCall(larger, 0);
+    await b.settleCall(smaller, 5);
+    expect((await reserve(larger)).mode).toBe("blocked");
+    expect((await b.customerDetail("learner-a")).receipts[0].spent_seconds).toBe(45);
+    expect((await reserve("next")).seconds).toBe(15);
+  });
+
+  it("grants the last free-call slot only once", async () => {
+    await b.save("policies", { enabled: true, free_calls_month: 1 }, "student");
+    expect((await Promise.all([reserve("one"), reserve("two")])).map(row => row.mode).sort()).toEqual(["blocked", "free"]);
+  });
+
+  it("enforces basic daily slots and the shared monthly budget atomically", async () => {
+    await b.save("policies", { enabled: true, basic_enabled: true, basic_calls_day: 1, basic_month_seconds: 40, basic_call_seconds: 30 }, "student");
+    const sameCustomer = await Promise.all([reserve("one"), reserve("two")]);
+    expect(sameCustomer.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 30]);
+    const differentCustomer = await Promise.all([reserve("three", 60, "learner-b"), reserve("four", 60, "learner-c")]);
+    expect(differentCustomer.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 10]);
+  });
+
+  it("releases the paid hold when web-turn setup fails before Gemini starts", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    vi.spyOn(BusinessStore.prototype, "registerWebCall").mockRejectedValueOnce(new Error("Test setup failure"));
+    expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(500);
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 60 });
+  });
+
+  it("releases the paid hold when phone finalization fails before settlement", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValueOnce(new Error("Test model unavailable"));
+    const logLatency = ProgressStore.prototype.logLatency;
+    vi.spyOn(ProgressStore.prototype, "logLatency").mockImplementation(function (this: ProgressStore, ...args) {
+      if (args[2] === "ai_connection_closed") return Promise.reject(new Error("Test diagnostics failure"));
+      return logLatency.apply(this, args);
+    });
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner");
+    await expect(session.run(JSON.stringify({
+      type: "start", token: "test-channel", format: "pcm16;rate=8000;ch=1", callId: "phone-call", caller: "0500000001",
+    }), "student", false)).rejects.toThrow("Test diagnostics failure");
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 60 });
+  });
+
+  it("reaps stale holds via the existing cron without releasing active holds or billed usage", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    expect((await reserve("billed", 10)).seconds).toBe(10);
+    await b.settleCall("billed", 10);
+    expect((await reserve("stale", 40)).seconds).toBe(40);
+    expect((await reserve("active", 10)).seconds).toBe(10);
+    db.sql.prepare("UPDATE usage_allocations SET created_at=? WHERE call_id IN ('stale','billed')")
+      .run(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().replace("Z", "+00:00"));
+    db.sql.prepare("UPDATE usage_allocations SET created_at=? WHERE call_id='active'")
+      .run(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().replace("Z", "+00:00"));
+    const work: Promise<unknown>[] = [];
+    const ctx = { waitUntil(task: Promise<unknown>) { work.push(task); } };
+    await worker.scheduled({} as ScheduledController, env, ctx as ExecutionContext);
+    await Promise.all(work);
+    await b.settleCall("stale", 40);
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 40 });
   });
 });
 
