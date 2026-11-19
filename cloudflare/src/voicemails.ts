@@ -64,7 +64,7 @@ async function download(fileId: string, apiKey: string): Promise<Uint8Array> {
   const params = new URLSearchParams({ action: "fileDownload", audio: fileId, apiKey });
   const response = await fetch(`https://api.tlivr.com/ivrFilesApi.php?${params}`, {
     headers: { "User-Agent": "speakcall-voicemails/1.0", Accept: "audio/mpeg, audio/mp3" },
-    signal: AbortSignal.timeout(15_000), redirect: "error",
+    signal: AbortSignal.timeout(15_000), redirect: "manual",
   });
   const mime = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
   if (!response.ok || !response.body || (mime !== "audio/mp3" && mime !== "audio/mpeg")) {

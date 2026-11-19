@@ -203,6 +203,7 @@ describe("IVR voicemail CRM", () => {
     expect(download).toHaveBeenCalledWith(expect.stringContaining("action=fileDownload&audio=pbx-file-1"), expect.any(Object));
     expect(download).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       headers: { "User-Agent": "speakcall-voicemails/1.0", Accept: "audio/mpeg, audio/mp3" },
+      redirect: "manual",
     }));
     expect(run).toHaveBeenCalledExactlyOnceWith("@cf/openai/whisper-large-v3-turbo",
       expect.objectContaining({ language: "he", task: "transcribe", vad_filter: true }));
