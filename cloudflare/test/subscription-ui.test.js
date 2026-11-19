@@ -3,14 +3,26 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 let SubscriptionPanel;
+let remainingMinutes, futureMinutes;
 beforeAll(async () => {
   vi.stubGlobal("location", { pathname: "/learn" });
   SubscriptionPanel = (await import("../../src/components/portal/SubscriptionPanel")).SubscriptionPanel;
+  ({ remainingMinutes, futureMinutes } = await import("../../src/components/portal/portalApi"));
 });
 afterAll(() => vi.unstubAllGlobals());
 const sub = { id: "sub", plan_name: "צעד", status: "active", owner: true, price_agorot: 5900, renewal_amount_agorot: 5900, term_months: null, current_period_start: "2026-01-01", current_period_end: "2026-02-01", pause_until: null, pause_days_remaining: 53, rollover_minutes: 12, rollover: [{ minutes: 12, expires_at: "2026-03-01" }], guarantee_status: null, extension_months: 0, members: [] };
 const render = subscriptions => renderToStaticMarkup(createElement(SubscriptionPanel, { token: "local", subscriptions }));
 describe("subscription UI states", () => {
+  it("separates spendable, future and expired receipt balances", () => {
+    const now = Date.now();
+    const receipt = { id: "r", product: "school", minutes: 60, spent_seconds: 60, expires_at: new Date(now + 86400000).toISOString() };
+    const account = { receipts: [receipt, { ...receipt, valid_from: new Date(now + 3600000).toISOString() }, { ...receipt, expires_at: new Date(now - 86400000).toISOString() }] };
+    expect(remainingMinutes(account)).toBe(59);
+    expect(futureMinutes(account)).toBe(59);
+    expect(remainingMinutes({ receipts: [] })).toBe(0);
+    expect(futureMinutes({ receipts: [] })).toBe(0);
+    expect(remainingMinutes({ receipts: [{ ...receipt, valid_from: "invalid" }] })).toBe(0);
+  });
   it("shows an empty account without exposing management actions", () => {
     const html = render([]);
     expect(html).toContain("עדיין אין מנוי בחשבון");
