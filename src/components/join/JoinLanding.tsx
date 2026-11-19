@@ -3,6 +3,9 @@ import { submitCallback } from './callbackApi';
 import { LegalFooter } from '../legal/LegalFooter';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
+const scheduleWindow = 30 * 86400000;
+const localDateTime = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
 export const JoinLanding: React.FC = () => {
   // Campaign variation toggle (A: Shochi Robot Direct, B: Parents & Urgency)
   const [variation, setVariation] = useState<'A' | 'B'>('A');
@@ -18,6 +21,7 @@ export const JoinLanding: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const now = new Date();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,9 +41,13 @@ export const JoinLanding: React.FC = () => {
       return;
     }
 
+    const preferredAt = timing === 'scheduled' ? new Date(preferredTime) : null;
+    if (preferredAt && preferredAt.getTime() > Date.now() + scheduleWindow) {
+      setErrorMessage('אפשר לתאם שיחה עד 30 יום מראש');
+      return;
+    }
     setIsSubmitting(true);
     try {
-      const preferredAt = timing === 'scheduled' ? new Date(preferredTime) : null;
       if (preferredAt && (!Number.isFinite(preferredAt.getTime()) || preferredAt.getTime() < Date.now())) {
         throw new Error('invalid schedule');
       }
@@ -369,9 +377,18 @@ export const JoinLanding: React.FC = () => {
                     <input
                       type="datetime-local"
                       required
-                      min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                      min={localDateTime(now)}
+                      max={localDateTime(new Date(now.getTime() + scheduleWindow))}
                       value={preferredTime}
-                      onChange={e => setPreferredTime(e.target.value)}
+                      onChange={e => {
+                        e.target.setCustomValidity('');
+                        setPreferredTime(e.target.value);
+                      }}
+                      onInvalid={e => {
+                        if (e.currentTarget.validity.rangeOverflow) {
+                          e.currentTarget.setCustomValidity('אפשר לתאם שיחה עד 30 יום מראש');
+                        }
+                      }}
                       className="w-full p-2.5 rounded-xl border border-slate-800 text-xs bg-slate-950 text-slate-100"
                     />
                     <p className="text-slate-400 mt-1">נחייג בין 08:00 ל-22:00, לא בשבת</p>
