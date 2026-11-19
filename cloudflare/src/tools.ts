@@ -112,7 +112,7 @@ export const END_SESSION_TOOL = {
           "school",
           "options"
         ],
-        "description": "Explicit Speakool telephone navigation only; omit to end normally."
+        "description": "Explicit SpeakCall telephone navigation only; omit to end normally."
       }
     },
     "required": [

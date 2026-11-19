@@ -98,7 +98,7 @@ export const INITIAL_BOTS: BotProfile[] = [
 
 export const INITIAL_CONTROLS: Record<string, TutorControls> = {
   'shochi-robot': {
-    base_prompt: `You are Shochi, an honest, warm, slightly humorous and encouraging AI robot English tutor at "Lishna Acharina" (לישנא אחרינא) English school.
+    base_prompt: `You are Shochi, an honest, warm, slightly humorous and encouraging AI robot English tutor at the SpeakCall (ספיקול) English school.
 You openly acknowledge that you are a robot, but you are the best personal English study buddy ("חברותא טלפוני") anyone could ask for.
 Your motto: Speaking from day one is the ONLY way to master English, just like learning Hebrew at age 3.
 
@@ -106,7 +106,7 @@ Always speak warmly and clearly. When teaching Hebrew speakers, explain new conc
 Never judge mistakes - celebrate every attempt.
 If the student uploaded custom study materials, prioritize practicing those exact topics and vocabulary.
 Keep turns concise (1-2 sentences), ask one question at a time, and provide encouraging feedback.`,
-    opening_message: 'היי, כאן שוכי המורה הרובוט שלך! נעים מאוד להיפגש. מוכן שנתחיל לדבר אנגלית בכיף בלי להתבייש?',
+    opening_message: 'היי, כאן שוכי, המורה הרובוטי שלך מבית הספר ספיקול (SpeakCall)! נעים מאוד להיפגש. מוכן שנתחיל לדבר אנגלית בכיף בלי להתבייש?',
     learning_goal: 'ביטחון בדיבור יומיומי, שבירת מחסום השפה ותרגול מעשי על חומרים אישיים',
     custom_instructions: 'ספק פידבק חם, ציין נקודות לשבח והסבר טעויות בעברית ידידותית.',
     target_lesson_minutes: 15,
@@ -128,7 +128,7 @@ Keep turns concise (1-2 sentences), ask one question at a time, and provide enco
     input_batch_frames: 4,
     transcription_mode: 'BILINGUAL',
     transcription_language_codes: ['he-IL', 'en-US'],
-    custom_vocabulary: ['Shochi', 'English', 'Lishna Acharina', 'lesson', 'practice', 'robot'],
+    custom_vocabulary: ['Shochi', 'English', 'SpeakCall', 'lesson', 'practice', 'robot'],
     context_trigger_tokens: 3500,
     context_target_tokens: 1800,
     store_transcripts: true
@@ -527,7 +527,7 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
     gift_value_text: 'חבילת שיעורים בשווי 20 דקות לחודש - מתנה!',
     body_text: `היי, אני שוכי - אני לא בן אדם. כן. אני רובוט. אבל מה לעשות גם רובוטים צריכים להתפרנס...
 
-אז אני למשל משמש כמורה פרטי, מקצועי, בבית הספר ללמידה אנגלית 'לישנא אחרינא'. אחלה עבודה.
+אז אני למשל משמש כמורה פרטי ומקצועי בבית הספר לאנגלית ספיקול (SpeakCall). אחלה עבודה.
 כמוני יש שם עוד מורים ומורות רבים. אנשי מקצוע מהשורה הראשונה.
 
 אז למה אני סתם מספר לך על החיים שלי?
@@ -565,7 +565,7 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
 
 את מכירה את הרגע הזה שהבת שלך מתכוננת למבחן באנגלית, יודעת את כל הכללים על הנייר – אבל כשצריך לדבר משפט אחד באנגלית בכיתה, היא פשוט קופאת מבושה?
 
-בבית הספר 'לישנא אחרינא' פיתחנו מורות וירטואליות סבלניות בטלפון (כמו מאיה). 
+בבית הספר ספיקול (SpeakCall) פיתחנו מורות וירטואליות סבלניות בטלפון (כמו מאיה).
 המורה מתקשרת לבת שלך, משוחחת איתה בעברית רגועה ומלמדת אותה אנגלית צעד-אחר-צעד, בלי לחץ ובלי שיפוטיות.
 
 למה זה עובד בצורה כל כך טובה?
@@ -636,4 +636,3 @@ export const INITIAL_EXCEL_ROWS: UnitEconomicsExcelRow[] = [
     notes: 'רווח גולמי: 1.65 ש״ח לדקה (כ-90% רווח גולמי!)'
   }
 ];
-

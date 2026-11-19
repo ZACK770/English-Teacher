@@ -10,10 +10,18 @@ import { SessionMeter } from "../src/meter";
 import worker from "../src/index";
 import { ProgressStore } from "../src/progress";
 import { TutorSession } from "../src/session";
+import { INITIAL_CONTROLS } from "../../src/store/initialData";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
 const start = { type: "start", callId: "test-call", caller: "private", token: "test-channel", format: "pcm16;rate=8000;ch=1" };
+
+it("introduces the seeded Shochi teacher as SpeakCall", () => {
+  const shochi = INITIAL_CONTROLS["shochi-robot"];
+  expect(shochi.base_prompt).toContain("SpeakCall (ספיקול)");
+  expect(shochi.opening_message).toContain("ספיקול (SpeakCall)");
+  expect(shochi.custom_vocabulary).toContain("SpeakCall");
+});
 
 describe("Technoline protocol", () => {
   it("accepts the exact documented type=start frame", () => {
