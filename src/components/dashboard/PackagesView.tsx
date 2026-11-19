@@ -128,7 +128,7 @@ export const PackagesView: React.FC = () => {
         </div>
       </div>
 
-      <div className="space-y-2 text-sm text-[#172b35]"><p>{FREE_TIER_TEXT}.</p><p>{MONTHLY_TERMS}</p><p>מסלול שליטה: {MASTERY_GUARANTEE}</p><p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · דרך נציג.</p></div>
+      <div className="space-y-2 text-sm text-[#acc0bf]"><p>{FREE_TIER_TEXT}.</p><p>{MONTHLY_TERMS}</p><p>מסלול שליטה: {MASTERY_GUARANTEE}</p><p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · דרך נציג.</p></div>
 
       {/* Package Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
