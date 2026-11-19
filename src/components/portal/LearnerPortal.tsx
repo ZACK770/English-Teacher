@@ -76,7 +76,7 @@ function Login({ onToken, error }: { onToken: (token: string) => void; error: st
     finally { setBusy(false); }
   };
   return <main className="sk-login">
-    <section className="sk-login-copy"><h1>פשוט<br />לדבר<span>.</span></h1><p className="sk-lede">את השפה הראשונה שלך לא למדת מספר.<br />הקשבת. ניסית. דיברת.<br />בוא נעשה את זה שוב. הפעם באנגלית.</p>
+    <section className="sk-login-copy"><h1>פשוט{" "}<br />לדבר<span>.</span></h1><p className="sk-lede">את השפה הראשונה שלך לא למדת מספר.<br />הקשבת. ניסית. דיברת.<br />בוא נעשה את זה שוב. הפעם באנגלית.</p>
       <form onSubmit={submit} className="sk-login-form">
         <label htmlFor="sk-phone">{challenge ? "מה שש הספרות האחרונות של המספר שצלצל?" : "באיזה מספר נדבר?"}</label>
         {!challenge ? <input id="sk-phone" type="tel" dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="050-000-0000" required /> : <input id="sk-phone" key="otp" autoFocus dir="ltr" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" pattern="[0-9]{6}" required />}
