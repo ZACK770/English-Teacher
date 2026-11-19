@@ -235,6 +235,11 @@ export class BusinessStore {
     return result.meta.changes === 1;
   }
 
+  async refundMonthlyQuota(api: string, quotaMonth = month()): Promise<void> {
+    await this.db.prepare("UPDATE api_quota SET used=MAX(0,used-1) WHERE month=? AND api=?")
+      .bind(quotaMonth, api).run();
+  }
+
   async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number, channel: "voice" | "text" = "voice"): Promise<Allowance> {
     const policyRow = await this.record("policies", botId);
     const teacher = !policyRow && await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(botId).first();

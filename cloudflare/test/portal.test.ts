@@ -700,12 +700,12 @@ describe("Technoline caller-ID login", () => {
     expect(code).toMatch(/^\d{6}$/);
     const verified = await request("/v1/portal/auth/verify", "", { challenge: id, code });
     expect(verified.status).toBe(200);
-    expect(used("verified")).toBe(1);
+    expect(used("verified")).toBe(0);
     const result = await verified.json() as any;
     expect(await b.portalCustomer(result.token)).toBe("learner-a");
     expect(await b.portalCustomer(tokenA)).toBe("learner-a");
     expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(401);
-    expect(used("verified")).toBe(1);
+    expect(used("verified")).toBe(0);
   });
   it("limits retries and rejects expired challenges", async () => {
     const id = await challenge();
@@ -722,6 +722,40 @@ describe("Technoline caller-ID login", () => {
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM console_settings WHERE id LIKE 'portal-auth:%'").get()?.n).toBe(0);
     expect(used("verified")).toBe(0);
   });
+  it.each(["rejected", "thrown"])("refunds %s provider calls without bypassing the minute throttle", async (failure) => {
+    vi.useFakeTimers();
+    const provider = vi.fn(async () => {
+      if (failure === "thrown") throw new Error("Provider unavailable");
+      return Response.json({ status: "ERROR", errorCode: "1" });
+    });
+    vi.stubGlobal("fetch", provider);
+    try {
+      for (let n = 0; n < 12; n++) {
+        vi.setSystemTime(new Date(`2027-01-31T23:${String(n).padStart(2, "0")}:00Z`));
+        expect((await request("/v1/portal/auth/start", "", { phone: "0500000001" })).status).toBe(503);
+        expect(used("phone")).toBe(n + 1);
+        expect(used("ip")).toBe(0);
+        expect(used("day")).toBe(0);
+        expect(db.sql.prepare("SELECT used FROM api_quota WHERE api GLOB 'portal-ring:phone:*:????-??-??T??'").get()?.used).toBe(0);
+        expect((await request("/v1/portal/auth/start", "", { phone: "0500000001" })).status).toBe(429);
+      }
+      expect(provider).toHaveBeenCalledTimes(12);
+      expect(db.sql.prepare("SELECT COUNT(*) AS n FROM console_settings WHERE id LIKE 'portal-auth:%'").get()?.n).toBe(0);
+      vi.setSystemTime(new Date("2027-01-31T23:12:00Z"));
+      provider.mockImplementation(async () => Response.json({ status: "OK", errorCode: "0" }));
+      await challenge();
+      expect(used("ip")).toBe(1);
+      expect(used("day")).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it("never refunds a quota below zero or creates missing quota rows", async () => {
+    await b.refundMonthlyQuota("missing");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM api_quota WHERE api='missing'").get()?.n).toBe(0);
+    await b.consumeMonthlyQuota("refund-test", 10);
+    await b.refundMonthlyQuota("refund-test");
+    await b.refundMonthlyQuota("refund-test");
+    expect(db.sql.prepare("SELECT used FROM api_quota WHERE api='refund-test'").get()?.used).toBe(0);
+  });
   it("allows unanswered calls up to the separate hourly attempt cap without using successful verifications", async () => {
     vi.useFakeTimers();
     try {
@@ -736,15 +770,15 @@ describe("Technoline caller-ID login", () => {
       expect(used("verified")).toBe(0);
     } finally { vi.useRealTimers(); }
   });
-  it("caps successful verifications at five per phone per hour and resets next hour", async () => {
+  it("allows more than five successful verifications per hour without a separate verification cap", async () => {
     vi.useFakeTimers();
     try {
       for (let n = 0; n < 7; n++) {
-        vi.setSystemTime(new Date(n === 6 ? "2027-01-01T11:00:00Z" : `2027-01-01T10:0${n}:00Z`));
+        vi.setSystemTime(new Date(`2027-01-01T10:0${n}:00Z`));
         const id = await challenge();
-        expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(n === 5 ? 429 : 200);
+        expect((await request("/v1/portal/auth/verify", "", { challenge: id, code })).status).toBe(200);
       }
-      expect(used("verified")).toBe(6);
+      expect(used("verified")).toBe(0);
     } finally { vi.useRealTimers(); }
   });
   it("does not send a call for an invalid phone and limits repeated ringing", async () => {
