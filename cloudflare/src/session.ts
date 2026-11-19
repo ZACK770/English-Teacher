@@ -297,7 +297,7 @@ export class TutorSession {
   private async runTasks(tasks: Promise<void>[]) {
     try { await Promise.race(tasks); }
     catch (error) {
-      if (!this.abort.signal.aborted && isGeminiError(error)) this.geminiFailure = (error as Error).message.split(this.s.geminiKey).join("[redacted]").slice(0, 200);
+      if (!this.abort.signal.aborted && !this.reason && isGeminiError(error)) this.geminiFailure = (error as Error).message.split(this.s.geminiKey).join("[redacted]").slice(0, 200);
       throw error;
     }
     finally {
