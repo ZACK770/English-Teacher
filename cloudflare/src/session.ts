@@ -6,7 +6,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
-import { acquireGeminiBudget, GeminiBudgetError } from "./gemini-budget";
+import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
@@ -220,6 +220,7 @@ export class TutorSession {
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
+        void reportGeminiOutcome(this.env, true);
         ai.startGreeting(this.controls.opening_message);
         if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
         await this.latency("greeting_sent");
@@ -241,8 +242,9 @@ export class TutorSession {
         this.finalMessage = CALL_FAILURE_MESSAGE;
       }
       if (this.profileId && this.callId && !this.abort.signal.aborted) {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        await this.progress.logDiagnostic(this.profileId, this.callId, "call_failed", { error_type: error instanceof Error ? error.name : "Error", message: message.split(this.s.geminiKey).join("[redacted]").slice(0, 250) });
+        const message = (error instanceof Error ? error.message : "Unknown error").split(this.s.geminiKey).join("[redacted]");
+        await this.progress.logDiagnostic(this.profileId, this.callId, "call_failed", { error_type: error instanceof Error ? error.name : "Error", message: message.slice(0, 250) });
+        if (isGeminiError(error)) await reportGeminiOutcome(this.env, false, message);
       }
     } finally {
       this.settling = true;

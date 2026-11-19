@@ -4,6 +4,9 @@ const LEASE_MS = 35_000;
 const CHECK_MS = 10_000;
 const LOCAL_DEADLINE_MS = 25_000;
 const MICROS = 1_000_000;
+const FAILURE_STREAK_ALERT = 3;
+const FAILURE_STREAK_GAP_MS = 30 * 60_000;
+const FAILURE_ALERT_EVERY_MS = 60 * 60_000;
 export const BUDGET_GUARD_NAME = "speakcall-v2";
 
 export type BudgetDenial = "system_busy" | "gemini_budget_reached" | "gemini_guard_unavailable";
@@ -37,6 +40,21 @@ type Lease = { until: number; last: number; metered: number; baseMetered: number
 type Notice = { spent: number; daily: number; blocked: boolean; sent: boolean };
 type Ledger = { day: string; spent: number; leases: Record<string, Lease>; notices: Record<string, Notice> };
 type Operation = "acquire" | "check" | "release" | "status";
+type Outcome = "failure" | "success";
+type FailureStreak = { streak: number; first: number; last: number; error: string; alerted_at: number };
+const CONFIG_KEYS = ["GEMINI_MAX_CONCURRENT", "GEMINI_DAILY_BUDGET_USD", "GEMINI_RESERVE_USD_PER_MINUTE"] as const;
+type GuardConfig = Partial<Record<typeof CONFIG_KEYS[number], string>>;
+const guardConfig = (env: Env): GuardConfig => Object.fromEntries(CONFIG_KEYS.filter(key => env[key] !== undefined).map(key => [key, String(env[key])]));
+
+export function applyGeminiOutcome(state: FailureStreak | undefined, now: number, outcome: Outcome, error = "") {
+  const next = state ? { ...state } : { streak: 0, first: now, last: now, error: "", alerted_at: 0 };
+  if (outcome === "success") return { state: { ...next, streak: 0 }, alert: false };
+  if (!next.streak || now - next.last > FAILURE_STREAK_GAP_MS) Object.assign(next, { streak: 0, first: now });
+  Object.assign(next, { streak: next.streak + 1, last: now, error: error.slice(0, 200) });
+  const alert = next.streak >= FAILURE_STREAK_ALERT && now - next.alerted_at >= FAILURE_ALERT_EVERY_MS;
+  if (alert) next.alerted_at = now;
+  return { state: next, alert };
+}
 const dayOf = (time: number) => new Date(time).toISOString().slice(0, 10);
 const floorCost = (ms: number, limits: Limits) => Math.ceil(ms * limits.perMinute / 60_000);
 export const newBudgetLedger = (now: number): Ledger => ({ day: dayOf(now), spent: 0, leases: {}, notices: {} });
@@ -115,12 +133,16 @@ export class GeminiBudget {
   constructor(private ctx: DurableObjectState, private env: Env) {}
 
   fetch = async (request: Request): Promise<Response> => {
-    const op = new URL(request.url).pathname.slice(1) as Operation;
-    let id = "", observed = 0;
+    const op = new URL(request.url).pathname.slice(1) as Operation | Outcome;
+    let id = "", observed = 0, config: GuardConfig = {};
+    const data = request.method === "POST" ? await request.json<{ id?: string; cost?: number; config?: GuardConfig; error?: string }>() : {};
+    if (data.config && typeof data.config === "object") {
+      config = Object.fromEntries(CONFIG_KEYS.filter(key => typeof data.config?.[key] === "string").map(key => [key, data.config![key]]));
+    }
+    if (op === "failure" || op === "success") return this.recordOutcome(op, typeof data.error === "string" ? data.error : "");
     if (op !== "status") {
       if (!["acquire", "check", "release"].includes(op)) return new Response(null, { status: 404 });
-      const data = await request.json<{ id: string; cost?: number }>();
-      id = data.id;
+      id = data.id ?? "";
       if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id)) return new Response(null, { status: 400 });
       if (typeof data.cost === "number" && Number.isFinite(data.cost)) observed = Math.round(Math.max(0, data.cost) * MICROS);
     }
@@ -128,11 +150,43 @@ export class GeminiBudget {
     const storage = this.ctx.storage;
     const state = storage.kv.get<Ledger>("ledger") ?? newBudgetLedger(now);
     const alreadyNotified = !!state.notices[dayOf(now)];
-    const result = applyBudget(state, now, budgetConfig(this.env), op, id, observed);
+    const result = applyBudget(state, now, budgetConfig({ ...this.env, ...config }), op, id, observed);
     storage.kv.put("ledger", state);
     if ((!alreadyNotified && result.alert_state === "pending") || op === "status") this.ctx.waitUntil(this.sendAlert());
+    if (op === "status") {
+      console.log(JSON.stringify({ event: "gemini_guard_status", active_jobs: result.active_jobs, concurrent_limit: result.concurrent_limit,
+        daily_budget_usd: result.daily_budget_usd, estimated_spend_usd: result.estimated_spend_usd }));
+    }
     return Response.json({ ...result, alert_configured: !!(this.env.GEMINI_BUDGET_EMAIL && this.env.GEMINI_BUDGET_EMAIL_TO) });
   };
+
+  private recordOutcome(outcome: Outcome, error: string) {
+    const storage = this.ctx.storage.kv;
+    const { state, alert } = applyGeminiOutcome(storage.get<FailureStreak>("gemini_failures"), Date.now(), outcome, error);
+    storage.put("gemini_failures", state);
+    if (alert) this.ctx.waitUntil(this.sendFailureAlert(state));
+    return Response.json({ streak: state.streak, alerted: alert });
+  }
+
+  private async sendFailureAlert(streak: FailureStreak) {
+    const to = this.env.GEMINI_FAILURE_EMAIL_TO || this.env.GEMINI_BUDGET_EMAIL_TO;
+    const email = this.env.GEMINI_BUDGET_EMAIL;
+    if (!to || !email) return;
+    const time = (at: number) => new Date(at).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+    try {
+      await email.send({
+        from: "alerts@speakcall.app", to, subject: "SpeakCall: שיחות נכשלות בגלל שגיאה מ־Gemini",
+        text: `${streak.streak} שיחות ברצף נכשלו בגלל שגיאה מ־Gemini (מ־${time(streak.first)} עד ${time(streak.last)}).\n` +
+          `השגיאה האחרונה: ${streak.error || "לא ידועה"}\n` +
+          "אם כתוב שהקרדיט נגמר (prepayment credits are depleted), צריך להטעין קרדיט ב־AI Studio.\n" +
+          "התראה נוספת תישלח לכל היותר פעם בשעה, כל עוד הכשלים נמשכים.",
+      });
+    } catch {
+      console.error("Gemini failure alert delivery failed");
+      const latest = this.ctx.storage.kv.get<FailureStreak>("gemini_failures");
+      if (latest) this.ctx.storage.kv.put("gemini_failures", { ...latest, alerted_at: 0 });
+    }
+  }
 
   private async sendAlert() {
     const to = this.env.GEMINI_BUDGET_EMAIL_TO;
@@ -164,10 +218,10 @@ export class GeminiBudget {
   }
 }
 
-async function callGuard(env: Env, op: Operation, id = "", cost = 0) {
+async function callGuard(env: Env, op: Operation | Outcome, id = "", cost = 0, error?: string) {
   const stub = env.GEMINI_BUDGET.getByName(BUDGET_GUARD_NAME, { locationHint: "weur" });
-  const request = stub.fetch("https://budget.internal/" + op, op === "status" ? undefined : {
-    method: "POST", body: JSON.stringify({ id, cost }),
+  const request = stub.fetch("https://budget.internal/" + op, {
+    method: "POST", body: JSON.stringify({ id, cost, error, config: guardConfig(env) }),
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -180,6 +234,12 @@ async function callGuard(env: Env, op: Operation, id = "", cost = 0) {
 }
 
 export const geminiBudgetStatus = (env: Env) => callGuard(env, "status");
+
+export const isGeminiError = (error: unknown) => error instanceof Error && error.message.startsWith("Gemini");
+
+export async function reportGeminiOutcome(env: Env, ok: boolean, error = "") {
+  await callGuard(env, ok ? "success" : "failure", "", 0, ok ? undefined : error.slice(0, 200)).catch(() => undefined);
+}
 
 export async function acquireGeminiBudget(env: Env, cost: () => number, stop: (reason: BudgetDenial) => void) {
   const id = crypto.randomUUID();

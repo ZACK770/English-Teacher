@@ -5,7 +5,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
 import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
-import { acquireGeminiBudget, GeminiBudgetError } from "./gemini-budget";
+import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
 import { ProgressStore } from "./progress";
@@ -37,6 +37,7 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
   let timer: ReturnType<typeof setTimeout> | undefined;
   const work = async () => {
     await ai.connect();
+    void reportGeminiOutcome(env, true);
     startedAt = Date.now();
     await progress.logLatency(profileId, callId, "gemini_connected", Date.now() - t0, 0);
     ai.startGreeting(opening);
@@ -132,6 +133,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     if (error instanceof GeminiBudgetError) { limited = true; throw error; }
+    if (isGeminiError(error)) await reportGeminiOutcome(env, false, (error as Error).message.split(s.geminiKey).join("[redacted]"));
     if (!startedAt) throw error;
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");
