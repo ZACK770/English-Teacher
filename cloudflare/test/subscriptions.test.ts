@@ -306,6 +306,7 @@ describe("subscription promises against production SQL", () => {
       legacy.exec("PRAGMA foreign_keys=ON");
       legacy.prepare("INSERT INTO customers(id,created_at,updated_at) VALUES ('legacy',?,?)").run(at, at);
       legacy.prepare("INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at) VALUES ('legacy-sub','legacy','school-step','active',5900,?,?,?)").run(at, at, at);
+      for (const date of ["2026-01-31T12:34:56.000+00:00", "2024-01-31T12:34:56.000+00:00", "2026-05-31T12:34:56.000+00:00"]) legacy.prepare("INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at) VALUES (?,'legacy','school-step','active',5900,?,?,?)").run(date, date, date, date);
       legacy.prepare("INSERT INTO invoices(id,customer_id,subscription_id,amount_agorot,status,issued_at,created_at) VALUES ('invoice','legacy','legacy-sub',5900,'paid',?,?)").run(at, at);
       legacy.exec("BEGIN");
       legacy.exec(readFileSync(new FileURL("../migrations/0015_subscriptions.sql", import.meta.url), "utf8"));
@@ -313,6 +314,7 @@ describe("subscription promises against production SQL", () => {
       expect(legacy.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(legacy.prepare("SELECT subscription_id FROM invoices WHERE id='invoice'").get()?.subscription_id).toBe("legacy-sub");
       expect(legacy.prepare("SELECT monthly_minutes,current_period_start,current_period_end,pause_year_start FROM subscriptions WHERE id='legacy-sub'").get()).toMatchObject({ monthly_minutes: 60, current_period_start: at, current_period_end: addMonths(at, 1), pause_year_start: at });
+      for (const date of ["2026-01-31T12:34:56.000+00:00", "2024-01-31T12:34:56.000+00:00", "2026-05-31T12:34:56.000+00:00"]) expect(legacy.prepare("SELECT current_period_end FROM subscriptions WHERE id=?").get(date)?.current_period_end).toBe(addMonths(date, 1));
       legacy.exec("UPDATE subscriptions SET status='paused' WHERE id='legacy-sub'");
       expect(legacy.prepare("SELECT price_agorot FROM subscriptions WHERE id='legacy-sub'").get()?.price_agorot).toBe(5900);
     } finally { legacy.close(); }

@@ -42,7 +42,10 @@ UPDATE plans SET domains_json='[{"domain":"everyday","levels":["beginner"]},{"do
 UPDATE subscriptions SET
   monthly_minutes=COALESCE((SELECT included_minutes FROM plans WHERE id=subscriptions.plan_id),0),
   current_period_start=started_at,
-  current_period_end=COALESCE(current_period_end,strftime('%Y-%m-%dT%H:%M:%f+00:00',started_at,'+1 month')),
+  current_period_end=COALESCE(current_period_end,
+    strftime('%Y-%m-',started_at,'start of month','+1 month') ||
+    printf('%02d',MIN(CAST(strftime('%d',started_at) AS INTEGER),CAST(strftime('%d',started_at,'start of month','+2 months','-1 day') AS INTEGER))) ||
+    strftime('T%H:%M:%f+00:00',started_at)),
   pause_year_start=started_at,
   domains_json=COALESCE((SELECT domains_json FROM plans WHERE id=subscriptions.plan_id),'[]');
 ALTER TABLE sales_receipts ADD COLUMN subscription_id TEXT REFERENCES subscriptions(id);
