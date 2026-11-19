@@ -7,7 +7,7 @@ import { TeacherMark } from "../portal/LineTeacher";
 import { INITIAL_CONTROLS } from '../../store/initialData';
 import "./join.css";
 
-const SHOW_SCHEDULED_CALLBACK = false;
+const SHOW_SCHEDULED_CALLBACK = true;
 const scheduleWindow = 30 * 86400000;
 const localDateTime = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
