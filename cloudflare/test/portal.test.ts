@@ -13,7 +13,7 @@ import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { transferCommand } from "../src/technoline";
 import { GeminiLive } from "../src/gemini";
-import { GeminiBudget } from "../src/gemini-budget";
+import { BUDGET_GUARD_NAME, GeminiBudget } from "../src/gemini-budget";
 import { cleanupPortalAuth } from "../src/portal-auth";
 import worker from "../src/index";
 import { LearningStore } from "../src/learning";
@@ -522,7 +522,7 @@ it("routes a caller out of minutes to the quota menu even when Gemini is unavail
 });
 
 it("releases the shared Gemini slot before transferring to a PBX menu", async () => {
-  const original = env.GEMINI_BUDGET.getByName("speakcall");
+  const original = env.GEMINI_BUDGET.getByName(BUDGET_GUARD_NAME);
   const order: string[] = [];
   env.GEMINI_BUDGET = { getByName: () => ({
     fetch: async (url: string, init?: RequestInit) => {
