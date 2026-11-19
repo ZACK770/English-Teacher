@@ -541,7 +541,10 @@ describe("real learner portal", () => {
     expect(saved!.summary_he).toBeTruthy();
   });
   it.each(["", "/english"])("consumes a %s browser voice ticket atomically and forwards only its verified customer", async (prefix) => {
-    const created = await (await request("/v1/portal/voice-ticket", tokenA, { bot_id: "student" })).json() as any;
+    await env.DB.prepare("UPDATE bots SET phone_enabled=0 WHERE id='student'").run();
+    const issued = await request("/v1/portal/voice-ticket", tokenA, { bot_id: "student" });
+    expect(issued.status).toBe(200);
+    const created = await issued.json() as any;
     const forward = vi.fn(async (r: Request) => Response.json({ customer: r.headers.get("X-Portal-Customer"), bot: r.headers.get("X-Profile"), path: new URL(r.url).pathname, search: new URL(r.url).search }));
     env.CALLS = { newUniqueId: () => "test-object", get: () => ({ fetch: forward }) } as unknown as DurableObjectNamespace;
     const url = "https://school.example" + prefix + "/v1/portal/voice?ticket=" + created.ticket;
