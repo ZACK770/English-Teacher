@@ -6,7 +6,10 @@ export async function subscriptionApi(request: Request, store: SubscriptionStore
   const [id, action, memberId] = segments;
   const method = request.method;
   try {
-    if (!id && method === "GET") return Response.json({ items: customerId ? await store.summary(customerId) : await store.list() });
+    if (!id && method === "GET") {
+      const owner = customerId || new URL(request.url).searchParams.get("customer_id");
+      return Response.json({ items: owner ? await store.summary(owner) : await store.list() });
+    }
     if (!id && method === "POST" && !customerId) {
       const input = z.object({ customer_id: z.string().min(1), plan_id: z.string().min(1), domains: z.array(DomainSchema).optional() }).parse(await request.json());
       return Response.json(await store.create(input.customer_id, input.plan_id, undefined, input.domains), { status: 201 });

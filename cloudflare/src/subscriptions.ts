@@ -164,19 +164,27 @@ export class SubscriptionStore {
     return Promise.all((await this.list(customerId)).map(async sub => {
       const balance = await this.db.prepare(`SELECT COALESCE(SUM(MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))),0)/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND r.reference<? AND r.expires_at>?`)
         .bind(sub.id, `subscription:${sub.id}:${sub.current_period_start}`, sub.status === "paused" ? sub.paused_at : iso(at)).first<{ minutes: number }>();
+      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND r.reference<? AND r.expires_at>? ORDER BY r.expires_at`)
+        .bind(sub.id, `subscription:${sub.id}:${sub.current_period_start}`, sub.status === "paused" ? sub.paused_at : iso(at)).all<{ expires_at: string; minutes: number }>()).results.filter(r => r.minutes > 0);
+      const plan = await this.db.prepare("SELECT name FROM plans WHERE id=?").bind(sub.plan_id).first<{ name: string }>();
+      const members = (await this.db.prepare("SELECT m.customer_id,c.name,c.primary_phone AS phone FROM subscription_members m JOIN customers c ON c.id=m.customer_id WHERE m.subscription_id=? AND m.removed_at IS NULL").bind(sub.id).all()).results;
+      const year = yearStart(sub.started_at, iso(at));
+      const ongoing = sub.status === "paused" ? Math.max(0, (Date.parse(iso(at) < sub.pause_until ? iso(at) : sub.pause_until) - Date.parse(sub.paused_at > year ? sub.paused_at : year)) / DAY) : 0;
       const { notes, ...publicSub } = sub;
-      return { ...publicSub, owner: sub.customer_id === customerId, renewal_amount_agorot: await this.renewalAmount(sub.id), rollover_minutes: balance?.minutes ?? 0 };
+      return { ...publicSub, plan_name: plan?.name ?? sub.plan_id, members, owner: sub.customer_id === customerId, renewal_amount_agorot: await this.renewalAmount(sub.id), rollover_minutes: balance?.minutes ?? 0, rollover, pause_days_remaining: Math.max(0, 60 - (sub.pause_year_start === year ? sub.pause_days_used : 0) - ongoing) };
     }));
   }
   async tick(at = new Date().toISOString()) {
     at = iso(at);
     for (let sub of await this.list()) {
-      if (sub.status === "paused" && sub.pause_until <= at) sub = await this.resume(sub.id, at);
-      if (sub.status !== "active" || !sub.term_months) continue;
-      if (sub.guarantee_status === "pending" && sub.term_end <= at) sub = await this.evaluateGuarantee(sub.id, at);
-      while (sub.current_period_end <= at && sub.period_number < sub.term_months + sub.extension_months) {
-        sub = await this.recordRenewal(sub.id, at, `mastery:${sub.id}:${sub.current_period_end}`);
-      }
+      try {
+        if (sub.status === "paused" && sub.pause_until <= at) sub = await this.resume(sub.id, at);
+        if (sub.status !== "active" || !sub.term_months) continue;
+        if (sub.guarantee_status === "pending" && sub.term_end <= at) sub = await this.evaluateGuarantee(sub.id, at);
+        while (sub.current_period_end <= at && sub.period_number < sub.term_months + sub.extension_months) {
+          sub = await this.recordRenewal(sub.id, at, `mastery:${sub.id}:${sub.current_period_end}`);
+        }
+      } catch { /* Continue processing independent subscriptions. */ }
     }
   }
 }

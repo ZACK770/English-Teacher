@@ -1,0 +1,46 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+let SubscriptionPanel;
+beforeAll(async () => {
+  vi.stubGlobal("location", { pathname: "/learn" });
+  SubscriptionPanel = (await import("../../src/components/portal/SubscriptionPanel")).SubscriptionPanel;
+});
+afterAll(() => vi.unstubAllGlobals());
+const sub = { id: "sub", plan_name: "צעד", status: "active", owner: true, price_agorot: 5900, renewal_amount_agorot: 5900, term_months: null, current_period_start: "2026-01-01", current_period_end: "2026-02-01", pause_until: null, pause_days_remaining: 53, rollover_minutes: 12, rollover: [{ minutes: 12, expires_at: "2026-03-01" }], guarantee_status: null, extension_months: 0, members: [] };
+const render = subscriptions => renderToStaticMarkup(createElement(SubscriptionPanel, { token: "local", subscriptions }));
+describe("subscription UI states", () => {
+  it("shows an empty account without exposing management actions", () => {
+    const html = render([]);
+    expect(html).toContain("עדיין אין מנוי בחשבון");
+    expect(html).not.toContain("ימי הקפאה (1–60)");
+  });
+  it("shows locked price, carry-over expiry and owner pause controls", () => {
+    const html = render([sub]);
+    expect(html).toContain("המחיר נעול כל עוד המנוי פעיל");
+    expect(html).toContain("12 דקות מועברות");
+    expect(html).toContain("תוקף עד");
+    expect(html).toContain("ימי הקפאה (1–60)");
+    expect(html).toContain("53");
+  });
+  it("shows resume for paused owners and no management controls for family learners", () => {
+    expect(render([{ ...sub, status: "paused", pause_until: "2026-01-15" }])).toContain(">המשך</button>");
+    const html = render([{ ...sub, owner: false }]);
+    expect(html).toContain("אתם חלק ממנוי משפחתי");
+    expect(html).not.toContain("<button");
+  });
+  it("allows administrators to manage a subscription when viewing a family member", () => {
+    const html = renderToStaticMarkup(createElement(SubscriptionPanel, { token: "local", customerId: "member", subscriptions: [{ ...sub, owner: false }] }));
+    expect(html).toContain("רישום חיוב חודשי");
+    expect(html).toContain("הוספת בן משפחה");
+    expect(html).toContain("הערכת אחריות");
+    expect(html).not.toContain("ניהול המנוי אצל בעל החשבון");
+  });
+  it("labels prepaid mastery prices as a term price rather than a monthly charge", () => {
+    const html = render([{ ...sub, term_months: 12, price_agorot: 149000 }]);
+    expect(html).toContain("מחיר המסלול הנעול");
+    expect(html).toContain("ל־12 חודשים");
+    expect(html).not.toContain("מחיר חודשי נעול");
+  });
+});

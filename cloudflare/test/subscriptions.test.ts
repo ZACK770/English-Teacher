@@ -202,6 +202,9 @@ describe("subscription promises against production SQL", () => {
     const created = await req(path, "admin", { customer_id: "owner", plan_id: "school-step" });
     expect(created.status).toBe(201);
     const sub = await created.json() as Record<string, any>;
+    const filtered = await req(path + "?customer_id=owner", "admin");
+    expect((await filtered.json() as any).items[0]).toMatchObject({ id: sub.id, plan_name: "צעד", owner: true });
+    expect(await (await req(path + "?customer_id=nobody", "admin")).json()).toEqual({ items: [] });
     expect((await req(path + "/" + sub.id, "admin")).status).toBe(200);
     const { token } = await b.portalInvite("owner");
     const me = await req("/v1/portal/me", token);
@@ -219,6 +222,25 @@ describe("subscription promises against production SQL", () => {
   });
   it("clamps calendar-month arithmetic at month ends", () => {
     expect(addMonths("2026-01-31T00:00:00Z", 1)).toBe("2026-02-28T00:00:00.000+00:00");
+  });
+  it("isolates bad subscriptions during scheduled processing", async () => {
+    const bad = await store.create("owner", "school-foundations", at);
+    const good = await store.create("owner", "school-foundations", at);
+    db.sql.prepare("UPDATE subscriptions SET status='paused',paused_at='invalid',pause_until=? WHERE id=?").run(at, bad.id);
+    vi.spyOn(store, "list").mockResolvedValue([await store.get(bad.id), await store.get(good.id)]);
+    await store.tick("2026-02-01");
+    expect((await store.get(good.id)).period_number).toBe(2);
+    expect((await store.get(bad.id)).status).toBe("paused");
+  });
+  it("returns plan labels, rollover expiries, members and remaining annual pause days", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    await store.recordRenewal(sub.id, addMonths(at, 1), "summary-renewal");
+    await store.addMember(sub.id, "0503333333", "Family learner");
+    await store.pause(sub.id, 7, "2026-02-02");
+    const summary = (await store.summary("owner", "2026-02-05"))[0];
+    expect(summary).toMatchObject({ plan_name: "צעד", pause_days_remaining: 57, rollover_minutes: 60 });
+    expect(summary.rollover).toEqual([{ expires_at: addMonths(at, 2), minutes: 60 }]);
+    expect(summary.members).toHaveLength(1);
   });
   it("anchors month-end renewals and never grants an extra mastery period after February", async () => {
     const sub = await store.create("owner", "school-foundations", "2026-01-31");

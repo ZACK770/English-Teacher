@@ -1,11 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../store/AppContext';
 import { Customer } from '../../types';
 import { Users, Plus, Search, ExternalLink, PhoneCall, Copy, Check, FileText } from 'lucide-react';
 import { VoicemailInbox } from './VoicemailInbox';
+import { SubscriptionPanel } from '../portal/SubscriptionPanel';
+import { portalRequest } from '../portal/portalApi';
 
 export const CustomersView: React.FC = () => {
-  const { customers, bots, receipts, detailedCalls, saveCustomer, createCustomer, generateCustomerInvite, showToast } = useApp();
+  const { customers: cachedCustomers, bots, receipts, detailedCalls, saveCustomer, createCustomer, generateCustomerInvite, showToast, adminToken, setAdminToken } = useApp();
+  const [serverCustomers, setServerCustomers] = useState<Customer[] | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const customers = serverCustomers ?? cachedCustomers;
+  useEffect(() => {
+    let live = true;
+    portalRequest<{ items: Customer[] }>('/v1/admin/business/customers', adminToken).then(r => { if (live) { setServerCustomers(r.items); setLoadError(''); } }).catch(() => { if (live) setLoadError('לא הצלחנו לטעון לקוחות מהשרת. יש לבדוק את מפתח הניהול.'); });
+    return () => { live = false; };
+  }, [adminToken]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -28,17 +38,26 @@ export const CustomersView: React.FC = () => {
   const customerReceipts = selectedCustomer ? receipts.filter(r => r.customer_id === selectedCustomer.id) : [];
   const customerCalls = selectedCustomer ? detailedCalls.filter(c => c.customer_id === selectedCustomer.id) : [];
 
-  const handleCreateCustomer = (e: React.FormEvent) => {
+  const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newPhone.trim()) return;
 
-    createCustomer({
+    const input = {
       name: newName,
       phone: newPhone,
       source: newSource,
       preferred_bot: newBot,
       notes: newNotes
-    });
+    };
+    try {
+      if (serverCustomers !== null) {
+        const customer = await portalRequest<Customer>('/v1/admin/business/customers', adminToken, input);
+        setServerCustomers(current => [customer, ...(current ?? [])]);
+      } else createCustomer(input);
+    } catch {
+      showToast('לא הצלחנו ליצור לקוח. יש לבדוק את מספר הטלפון ומפתח הניהול.');
+      return;
+    }
 
     setShowNewModal(false);
     setNewName('');
@@ -46,11 +65,15 @@ export const CustomersView: React.FC = () => {
     setNewNotes('');
   };
 
-  const handleOpenInvite = (customerId: string) => {
-    const url = generateCustomerInvite(customerId);
-    setInviteUrl(url);
-    navigator.clipboard.writeText(url);
-    showToast('קישור הכניסה האישי לאזור התלמיד הועתק ללוח!');
+  const handleOpenInvite = async (customerId: string) => {
+    try {
+      const url = serverCustomers !== null
+        ? `${window.location.origin}/learn#${(await portalRequest<{ token: string }>('/v1/admin/business/customers/' + customerId + '/invite', adminToken, {})).token}`
+        : generateCustomerInvite(customerId);
+      setInviteUrl(url);
+      await navigator.clipboard.writeText(url);
+      showToast('קישור הכניסה האישי לאזור התלמיד הועתק ללוח!');
+    } catch { showToast('לא הצלחנו להפיק או להעתיק קישור אישי. יש לבדוק את מפתח הניהול והרשאת ההעתקה.'); }
   };
 
   return (
@@ -79,6 +102,8 @@ export const CustomersView: React.FC = () => {
       <VoicemailInbox customerIds={new Set(customers.map(customer => customer.id))} onOpenCustomer={setSelectedCustomerId} />
 
       {/* Search Toolbar */}
+      <label className="block text-xs text-[#718087]">מפתח ניהול API<input aria-label="מפתח ניהול API" type="password" autoComplete="off" className="border rounded-lg p-2 mr-2" value={adminToken} onChange={e => setAdminToken(e.target.value)} /></label>
+      {loadError && <p role="alert" className="text-red-700">{loadError}</p>}
       <div className="bg-white border border-[#e3e8eb] rounded-2xl p-4 shadow-xs flex items-center gap-3">
         <Search className="w-4 h-4 text-[#718087]" />
         <input
@@ -225,6 +250,7 @@ export const CustomersView: React.FC = () => {
                 </div>
               </div>
 
+              <SubscriptionPanel key={selectedCustomer.id} token={adminToken} customerId={selectedCustomer.id} />
               {/* Balances */}
               <div>
                 <h3 className="font-bold text-sm text-[#172b35] mb-2">יתרות בחבילות שיחה</h3>
