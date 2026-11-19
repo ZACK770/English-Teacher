@@ -78,7 +78,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const text = parsed.data.text;
   const controls = await applyLearnerControls(b, customerId, bot, await progress.loadControls(botId, defaults(s, botId)));
   const callId = "web-" + randomHex(12);
-  const allowance = await b.reserveCall(customerId, botId, callId, 120);
+  const allowance = await b.reserveCall(customerId, botId, callId, 120, "text");
   if (!allowance.seconds) throw new HttpError(402, "אין יתרת שימוש זמינה. פנה לשירות לרכישת חבילה");
   await b.registerWebCall(callId, customerId, botId);
   const learning = new LearningStore(env.DB);

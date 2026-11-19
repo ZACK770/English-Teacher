@@ -1,3 +1,4 @@
+import { FREE_TIER_TEXT, MONTHLY_TERMS, MASTERY_GUARANTEE } from '../../pricing';
 import React, { useState } from 'react';
 import { useApp } from '../../store/AppContext';
 import { Package, Receipt, PaymentOrder, PaymentIssue } from '../../types';
@@ -28,15 +29,15 @@ export const PackagesView: React.FC = () => {
   // New Package Form
   const [pkgName, setPkgName] = useState('');
   const [pkgProduct, setPkgProduct] = useState<'school' | 'translator'>('school');
-  const [pkgMinutes, setPkgMinutes] = useState(100);
-  const [pkgPrice, setPkgPrice] = useState(220);
+  const [pkgMinutes, setPkgMinutes] = useState(60);
+  const [pkgPrice, setPkgPrice] = useState(39);
   const [pkgValidity, setPkgValidity] = useState(30);
 
   // New Receipt Form
   const [receiptCustomer, setReceiptCustomer] = useState(customers[0]?.id || '');
-  const [receiptPackage, setReceiptPackage] = useState(packages[0]?.id || '');
+  const [receiptPackage, setReceiptPackage] = useState(packages.find(p => p.automated_purchase !== false)?.id || '');
   const [receiptRef, setReceiptRef] = useState('');
-  const [receiptAmount, setReceiptAmount] = useState(220);
+  const [receiptAmount, setReceiptAmount] = useState(39);
 
   // Resolve issue modal
   const [resolvingIssueId, setResolvingIssueId] = useState<string | null>(null);
@@ -63,7 +64,10 @@ export const PackagesView: React.FC = () => {
       price_ils: pkgPrice,
       validity_days: pkgValidity,
       active: true,
-      phone_enabled: true
+      phone_enabled: true,
+      billing: 'one_time',
+      max_call_minutes: 15,
+      automated_purchase: true
     });
     setShowNewPkgModal(false);
     setPkgName('');
@@ -103,7 +107,7 @@ export const PackagesView: React.FC = () => {
             <span>חבילות ותשלומי נדרים פלוס</span>
           </h1>
           <p className="text-xs text-[#718087] mt-1">
-            מחירים כוללים מע״מ. תשלום שנרשם יוצר זכאות עם דקות שיחה ותאריך תפוגה.
+            מחירים כוללים מע״מ. רק תוספת דקות ותרגומון זמינים לסליקה חד־פעמית.
           </p>
         </div>
 
@@ -124,6 +128,8 @@ export const PackagesView: React.FC = () => {
         </div>
       </div>
 
+      <div className="space-y-2 text-sm text-[#acc0bf]"><p>{FREE_TIER_TEXT}.</p><p>{MONTHLY_TERMS}</p><p>מסלול שליטה: {MASTERY_GUARANTEE}</p><p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · דרך נציג.</p></div>
+
       {/* Package Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {packages.map(pkg => (
@@ -140,16 +146,21 @@ export const PackagesView: React.FC = () => {
                 ₪{pkg.price_ils}
               </div>
               <p className="text-xs text-[#718087]">
-                {pkg.minutes} דקות שיחה מלאות בקו ובאתר.
+                {pkg.minutes} דקות{pkg.billing === 'monthly' || pkg.duration_months ? ' בחודש' : ''} · עד {pkg.max_call_minutes ?? 5} דקות לשיחה.
+                {pkg.billing === 'monthly' && <> הוראת קבע · חודש ראשון ₪29 · שנתי ₪{pkg.annual_price_ils}.</>}
+                {pkg.duration_months && <> מסלול שליטה · {pkg.duration_months} חודשים · מחיר קבוע, אפשרות לתשלומים.</>}
+                {pkg.anchor_price_ils && <> במקום ₪{pkg.anchor_price_ils.toLocaleString('he-IL')} · לעומת מנוי שוטף לאותה תקופה.</>}
+                {pkg.recommended && <> מומלץ.</>}
+                {pkg.tagline}
               </p>
             </div>
 
             <div className="pt-4 border-t border-[#f0f3f4] mt-4 flex items-center justify-between text-xs">
               <span className="text-[#137c69] font-semibold">
-                {pkg.phone_enabled ? '● זמינה בטלפון' : '○ באתר בלבד'}
+                {pkg.automated_purchase === false ? 'ההצטרפות דרך נציג · הוראת קבע/תשלומים' : '● רכישה חד־פעמית בטלפון'}
               </span>
               <button
-                onClick={() => showToast(`החבילה "${pkg.name}" פעילה בקו ובסליקה.`)}
+                onClick={() => showToast(pkg.automated_purchase === false ? 'ההצטרפות דרך נציג; אין סליקה אוטומטית למסלול זה.' : `החבילה "${pkg.name}" זמינה לרכישה חד־פעמית.`)}
                 className="bg-[#fafbfc] border border-[#e3e8eb] hover:bg-white text-[#172b35] px-3.5 py-1.5 rounded-xl font-bold transition"
               >
                 הגדרות
@@ -413,7 +424,7 @@ export const PackagesView: React.FC = () => {
                   }}
                   className="w-full p-2.5 rounded-xl border border-[#e3e8eb]"
                 >
-                  {packages.map(p => (
+                  {packages.filter(p => p.automated_purchase !== false && !p.duration_months && !['monthly', 'yearly'].includes(p.billing || '')).map(p => (
                     <option key={p.id} value={p.id}>{p.name} (₪{p.price_ils})</option>
                   ))}
                 </select>

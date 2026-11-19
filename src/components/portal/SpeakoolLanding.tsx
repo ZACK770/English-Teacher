@@ -1,24 +1,21 @@
 import { ArrowLeft, Phone } from "lucide-react";
 import { PHONE_LINE, TeacherMark } from "./LearnerPortal";
+import { LegalFooter } from "../legal/LegalFooter";
 import "./portal.css";
 import "./landing.css";
+import { FREE_TIER_TEXT, MONTHLY_TERMS, MASTERY_GUARANTEE, PRICING_PACKAGES } from "../../pricing";
 
-const plans = [
-  { name: "טעימה", price: "חינם", unit: "", minutes: "2 שיחות בחודש", call: "עד 5 דקות לשיחה", line: "חמש דקות. בלי כרטיס אשראי." },
-  { name: "לאט אבל בטוח", price: "49", unit: "₪ לחודש", minutes: "60 דקות", call: "עד 5 דקות לשיחה", line: "שיחה קצרה כמעט כל יום. ככה זה נדבק." },
-  { name: "בקצב", price: "99", unit: "₪ לחודש", minutes: "150 דקות", call: "עד 8 דקות לשיחה", line: "למי שכבר מדבר ורוצה להתקדם באמת." },
-  { name: "פרו", price: "179", unit: "₪ ל־60 יום", minutes: "300 דקות", call: "עד 12 דקות לשיחה", line: "למי שרוצה לשלוט באנגלית כבר מחר.", pro: true },
-];
 const faq = [
   ["צריך אינטרנט?", "לא. מספיק טלפון רגיל, גם כשר. מי שרוצה יכול לדבר גם מהמחשב."],
   ["למה השיחה מוגבלת בזמן?", "שיחות קצרות ותכופות נדבקות יותר משיעור ארוך פעם בשבוע. במסלולים הגבוהים השיחה ארוכה יותר."],
   ["מה קורה כשהזמן נגמר?", "המורה מודיע לפני הסוף, מסכם, שומר את מה שלמדת ונפרד. שום דבר לא הולך לאיבוד."],
-  ["איך משלמים?", "בטלפון: מקישים 3 ובוחרים מסלול. התשלום מאובטח דרך נדרים פלוס."],
+  ["איך משלמים?", "תוספת דקות ותרגומון רוכשים בטלפון, מקש 3, דרך נדרים פלוס. למנוי בהוראת קבע או למסלול שליטה בתשלומים מצטרפים דרך נציג."],
 ];
 
 export function SpeakoolLanding() {
   const base = location.pathname.startsWith("/english") ? "/english" : "";
   const learn = base + "/learn";
+  const join = base + "/join";
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
@@ -61,17 +58,38 @@ export function SpeakoolLanding() {
       </section>
       <section id="plans" className="sk-shell sk-land-plans">
         <h2>משלמים על דיבור. לא על חוברות.</h2>
-        <div className="sk-land-grid">{plans.map(p => <article key={p.name} className={p.pro ? "is-pro" : ""}>
-          {p.pro && <em>הכי מהיר</em>}<h3>{p.name}</h3><p className="sk-land-line">{p.line}</p>
-          <div className="sk-land-price"><strong>{p.price}</strong><span>{p.unit}</span></div>
-          <ul><li>{p.minutes}</li><li>{p.call}</li><li>סיכום ושמירה בסוף כל שיחה</li></ul>
-          <a className={p.pro ? "sk-primary" : "sk-secondary"} href={p.price === "חינם" ? learn : tel}>{p.price === "חינם" ? "להתחיל עכשיו" : "לבחור בטלפון, מקש 3"}</a>
+        <article><h3>מתחילים בחינם</h3><p>{FREE_TIER_TEXT}. ללא כרטיס אשראי.</p><a className="sk-secondary" href={learn}>להתחיל עכשיו</a></article>
+        <h3>מנויים חודשיים · הוראת קבע</h3>
+        <p>{MONTHLY_TERMS}</p>
+        <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.billing === "monthly").map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>
+          {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p className="sk-land-line">{p.tagline}</p>
+          <div className="sk-land-price"><strong>{p.price_ils}</strong><span>₪ לחודש</span></div>
+          <ul><li>{p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li><li>חודש ראשון ₪29 · מלוא הדקות</li><li>שנתי: ₪{p.annual_price_ils} · מחיר של 10 חודשים</li></ul>
+          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={join}>ההצטרפות דרך נציג · הוראת קבע</a>
         </article>)}</div>
-        <small>המחירים כוללים מע״מ. הדקות בתוקף לתקופת המסלול.</small>
+        <h3>מסלול שליטה · מחיר קבוע, אפשרות לתשלומים</h3>
+        <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.duration_months).map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>
+          {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p>{p.tagline}</p>
+          <div className="sk-land-price"><strong>₪{p.price_ils.toLocaleString("he-IL")}</strong><span>ל־{p.duration_months} חודשים</span></div>
+          <p>במקום ₪{p.anchor_price_ils?.toLocaleString("he-IL")}</p><small>לעומת מנוי שוטף לאותה תקופה</small>
+          <ul><li>עד {p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li></ul>
+          <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={join}>ההצטרפות דרך נציג · תשלומים</a>
+        </article>)}</div>
+        <p>{MASTERY_GUARANTEE}</p>
+        <h3>תוספות ורכישה חד־פעמית</h3>
+        <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.automated_purchase).map(p => <article key={p.id}>
+          <h3>{p.name}</h3><div className="sk-land-price"><strong>₪{p.price_ils}</strong><span>חד־פעמי</span></div>
+          <p>{p.minutes} דקות · תוקף {p.validity_days} ימים</p><p>{p.tagline}</p>
+          {p.product === "school" && <p>עד {p.max_call_minutes} דקות לשיחה</p>}
+          <a className="sk-secondary" href={tel}>לרכישה בטלפון, מקש 3</a>
+        </article>)}</div>
+        <p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · הצטרפות דרך נציג.</p>
+        <small>כל המחירים כוללים מע״מ. מנויים ומסלולי שליטה אינם זמינים לרכישה אוטומטית.</small>
       </section>
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>המשפט הראשון הוא הכי קשה.<br />השאר כבר זורם.</h2><a className="sk-primary" href={learn}>בוא נדבר <ArrowLeft size={18} /></a></section>
     </main>
     <footer className="sk-shell sk-land-foot"><span dir="ltr">SpeakCall<span className="sk-brand-dot">.</span></span><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
+    <LegalFooter />
   </div>;
 }

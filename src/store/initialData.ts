@@ -23,6 +23,7 @@ import {
   EmailCampaign,
   UnitEconomicsExcelRow
 } from '../types';
+import { FREE_TIER_TEXT, PRICING_PACKAGES, SCHOOL_FREE_POLICY } from '../pricing';
 
 export const INITIAL_BOTS: BotProfile[] = [
   {
@@ -236,7 +237,7 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     phone: '052-7698420',
     source: 'direct',
     preferred_bot: 'shochi-robot',
-    notes: 'חשבון ברירת מחדל לבדיקות טלפוניה והתנסות עצמית. זכאי לחבילת היכרות 20 דקות.',
+    notes: 'חשבון ברירת מחדל לבדיקות טלפוניה והתנסות עצמית. זכאי לשיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש.',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     has_paid: false,
@@ -320,38 +321,7 @@ export const INITIAL_ENROLLMENTS: Enrollment[] = [
   }
 ];
 
-export const INITIAL_PACKAGES: Package[] = [
-  {
-    id: 'pkg_starter',
-    name: 'חבילת היכרות · 100 דקות',
-    product: 'school',
-    minutes: 100,
-    price_ils: 220,
-    validity_days: 30,
-    active: true,
-    phone_enabled: true
-  },
-  {
-    id: 'pkg_standard',
-    name: 'מסלול מקיף · 300 דקות',
-    product: 'school',
-    minutes: 300,
-    price_ils: 550,
-    validity_days: 60,
-    active: true,
-    phone_enabled: true
-  },
-  {
-    id: 'pkg_translator_free',
-    name: 'תרגומון עסקי · 600 דקות',
-    product: 'translator',
-    minutes: 600,
-    price_ils: 420,
-    validity_days: 90,
-    active: true,
-    phone_enabled: true
-  }
-];
+export const INITIAL_PACKAGES: Package[] = PRICING_PACKAGES;
 
 // Clean launch state: no fake financial transactions or mock receipts
 export const INITIAL_RECEIPTS: Receipt[] = [];
@@ -396,27 +366,9 @@ export const INITIAL_NARRATIONS: Narration[] = [
 ];
 
 export const INITIAL_ACCESS_POLICIES: Record<string, AccessPolicy> = {
-  'maya-child': {
-    id: 'maya-child',
-    enabled: true,
-    product: 'school',
-    free_calls_month: 2,
-    free_call_seconds: 90,
-    blocked_extension: '/99/8',
-    basic_enabled: true,
-    basic_calls_day: 1,
-    basic_call_seconds: 60,
-    basic_month_seconds: 600,
-    basic_intro_text: 'שיעור היכרות קצר ללא עלות.'
-  },
-  'alex-adult': {
-    id: 'alex-adult',
-    enabled: true,
-    product: 'school',
-    free_calls_month: 1,
-    free_call_seconds: 120,
-    blocked_extension: '/99/8'
-  },
+  'shochi-robot': { id: 'shochi-robot', ...SCHOOL_FREE_POLICY },
+  'maya-child': { id: 'maya-child', ...SCHOOL_FREE_POLICY },
+  'alex-adult': { id: 'alex-adult', ...SCHOOL_FREE_POLICY },
   'translator-live': {
     id: 'translator-live',
     enabled: true,
@@ -441,14 +393,14 @@ export const INITIAL_ECONOMICS: Economics = {
   owner_hour_value: 120,
   development_cash: 500,
   development_self_work: 1500,
-  forecast_price_ils: 380,
+  forecast_price_ils: 119,
   forecast_minutes: 200,
   forecast_cost_per_minute: 0.25,
   forecast_payment_fee: 6.5,
   forecast_lifetime_months: 4,
   free_budget_ils: 300,
-  school_price_ils: 420,
-  school_minutes: 250,
+  school_price_ils: 119,
+  school_minutes: 200,
   school_minute_cost: 0.28,
   translator_price_ils: 320,
   translator_minutes: 150,
@@ -524,7 +476,7 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
     name: 'גרסה א׳: שוכי הרובוט מדבר ישירות (כנות והומור)',
     subject: 'היי, אני שוכי - אני לא בן אדם. כן, אני רובוט... 🤖 (ויש לי מתנה בשבילך)',
     target_audience: 'קהל רחב, אנשי מקצוע וכל מי שרוצה לדבר אנגלית שוטפת',
-    gift_value_text: 'חבילת שיעורים בשווי 20 דקות לחודש - מתנה!',
+    gift_value_text: FREE_TIER_TEXT,
     body_text: `היי, אני שוכי - אני לא בן אדם. כן. אני רובוט. אבל מה לעשות גם רובוטים צריכים להתפרנס...
 
 אז אני למשל משמש כמורה פרטי ומקצועי בבית הספר לאנגלית ספיקול (SpeakCall). אחלה עבודה.
@@ -546,7 +498,7 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
 כמה זה עולה?
 בשביל ההתחלה וההיכרות בינינו:
 
-קיבלת חבילה בשווי 20 דקות לחודש - מתנה!
+${FREE_TIER_TEXT}.
 רוצה לדבר איתי? יאללה נתחיל! שלח את המספר שלך ואני כבר מחייג!`,
     cta_label: 'שליחת מספר ושיחה מיידית עם שוכי ←',
     sent_count: 0,
@@ -560,7 +512,7 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
     name: 'גרסה ב׳: פנייה רגשית להורים (אמהות לבנות) + דחיפות למתנה',
     subject: 'הבת שלך עדיין נלחצת מלדבר באנגלית? יש מורה שלא נמאס לה לעולם (חבילת מתנה ל-50 הראשונים)',
     target_audience: 'אמהות לבנות בכיתה ז׳-ט׳ והורים לתלמידים המתקשים בשפה הדבורה',
-    gift_value_text: 'חבילת שיחת היכרות ואינטייק מקיפה (20 דק׳) ללא עלות',
+    gift_value_text: FREE_TIER_TEXT,
     body_text: `שלום יקרה,
 
 את מכירה את הרגע הזה שהבת שלך מתכוננת למבחן באנגלית, יודעת את כל הכללים על הנייר – אבל כשצריך לדבר משפט אחד באנגלית בכיתה, היא פשוט קופאת מבושה?
@@ -573,7 +525,7 @@ export const INITIAL_EMAIL_CAMPAIGNS: EmailCampaign[] = [
 • את והיא מקבלות גישה לאזור אישי באתר: רואות את כל התמלילים, הציונים והמחמאות.
 • אפשר להעלות את עמודי הספר או שיעורי הבית מבית הספר – והמורה בטלפון תתרגל בדיוק את החומר הזה!
 
-פתחנו 50 חבילות היכרות לחודש הקרוב במתנה מוחלטת (שווי 20 דק׳ תרגול).
+${FREE_TIER_TEXT}.
 
 השאירי עכשיו את מספר הטלפון והמורה תחייג אליכם להכיר.`,
     cta_label: 'שריון חבילת מתנה ושיחת היכרות ←',
@@ -616,23 +568,23 @@ export const INITIAL_EXCEL_ROWS: UnitEconomicsExcelRow[] = [
   },
   {
     category: 'חבילת מתנה והיכרות (Gift Acquisition Pack)',
-    item: 'עלות נטו של חבילת מתנה 20 דק׳ לליד',
+    item: 'עלות נטו של שיעור פתיחה 10 דק׳ לליד',
     cost_per_minute_ils: 0.18,
     monthly_fixed_ils: 0,
-    notes: '20 דקות * 0.18 ש״ח = 3.60 ש״ח בלבד לעלות רכישת לקוח (CAC זעיר!)'
+    notes: '10 דקות * 0.18 ש״ח = 1.80 ש״ח לשיעור פתיחה; לא כולל שיחות חודשיות'
   },
   {
     category: 'הכנסות מתמחור חבילות (Revenue Packages)',
-    item: 'חבילת בסיס (100 דק׳ ב-220 ש״ח)',
-    cost_per_minute_ils: -2.20, // Negative cost = Revenue
+    item: 'צעד (60 דק׳ ב-59 ש״ח לחודש)',
+    cost_per_minute_ils: -(59 / 60), // Negative cost = Revenue
     monthly_fixed_ils: 0,
-    notes: 'רווח גולמי: 2.02 ש״ח לדקה (כ-91% רווח גולמי!)'
+    notes: 'מחיר רגיל לפני הנחת חודש ראשון; אינו חישוב רווח'
   },
   {
     category: 'הכנסות מתמחור חבילות (Revenue Packages)',
-    item: 'חבילת פרימיום (300 דק׳ ב-550 ש״ח)',
-    cost_per_minute_ils: -1.83,
+    item: 'בקצב (200 דק׳ ב-119 ש״ח לחודש)',
+    cost_per_minute_ils: -(119 / 200),
     monthly_fixed_ils: 0,
-    notes: 'רווח גולמי: 1.65 ש״ח לדקה (כ-90% רווח גולמי!)'
+    notes: 'מחיר רגיל לפני הנחת חודש ראשון; אינו חישוב רווח'
   }
 ];

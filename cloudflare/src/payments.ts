@@ -1,4 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
+import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
 export const PREFIX = "dibura-";
@@ -221,6 +222,7 @@ export class PaymentStore {
     const customer = await this.business.record("customers", customerId);
     if (!body || !customer) throw new Error("Unknown customer or package");
     const pkg = PackageSchema.parse(body);
+    if (!canPurchaseAutomatically(pkg)) throw new Error("ההצטרפות למסלול זה דרך נציג");
     if (!pkg.active || (!allowHidden && !pkg.phone_enabled)) throw new Error("Inactive package");
     const amount = agorot(pkg.price_ils);
     const orderId = randomHex(16);
@@ -351,7 +353,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   const lines: string[] = [];
   packageIds.forEach((id, index) => {
     const p = packages[id];
-    if (p && p.active && p.price_ils > 0 && (p.phone_enabled ?? true)) {
+    if (p && p.active && canPurchaseAutomatically(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
       const product = p.product === "school" ? "בית הספר" : "התרגומון";
       lines.push(`לחבילת ${product}, ${p.name}, במחיר ${p.price_ils} שקלים, הקישו ${index + 1}.`);
     }

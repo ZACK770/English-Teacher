@@ -79,7 +79,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              דף נחיתה והרשמה (20 דק' מתנה)
+              הרשמה · פתיחה 10 דק׳ + 2 שיחות של 5 דקות בחודש
             </button>
 
             <button
@@ -111,7 +111,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
           {currentCustomer && (
             <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-xs text-slate-300 font-medium">
               <Clock className="w-3.5 h-3.5 text-emerald-400" />
-              <span>יתרת מתנה: <strong className="text-emerald-400">{currentCustomer.balance_minutes || 20} דק'</strong></span>
+              <span>יתרת מתנה: <strong className="text-emerald-400">{currentCustomer.balance_minutes ?? 10} דק'</strong></span>
             </div>
           )}
 

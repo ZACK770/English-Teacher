@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nowIso, randomHex, sha256Hex, tokenUrlsafe } from "./env";
 import { SCHOOL_CALL_FILTER, SCHOOL_SESSION_FILTER } from "./school-history";
+import { canPurchaseAutomatically, SCHOOL_FREE_POLICY } from "../../src/pricing";
 
 export const CustomerSchema = z.object({
   name: z.string().min(1).max(100),
@@ -17,6 +18,13 @@ export const PackageSchema = z.object({
   validity_days: z.number().int().min(1).max(3650).default(30),
   max_call_minutes: z.number().int().min(1).max(60).default(5),
   tagline: z.string().max(120).default(""),
+  billing: z.enum(["prepaid", "monthly", "yearly", "one_time"]).default("prepaid"),
+  automated_purchase: z.boolean().default(true),
+  duration_months: z.number().int().min(1).max(12).optional(),
+  annual_price_ils: z.number().min(0).optional(),
+  first_month_price_ils: z.number().min(0).optional(),
+  anchor_price_ils: z.number().min(0).optional(),
+  recommended: z.boolean().default(false),
   active: z.boolean().default(false),
   phone_enabled: z.boolean().default(true),
 });
@@ -60,6 +68,7 @@ export const AccessPolicySchema = z.object({
   product: z.enum(["school", "translator"]).default("school"),
   free_calls_month: z.number().int().min(0).max(100).default(0),
   free_call_seconds: z.number().int().min(10).max(600).default(60),
+  opening_seconds: z.number().int().min(0).max(600).default(0),
   blocked_extension: z.string().max(150).refine((v) => v.startsWith("/"), "שלוחה צריכה להתחיל בלוכסן").default("/"),
   basic_enabled: z.boolean().default(false),
   basic_calls_day: z.number().int().min(0).max(50).default(3),
@@ -121,7 +130,7 @@ export class BusinessStore {
       .prepare("SELECT * FROM console_records WHERE kind=? ORDER BY updated_at DESC")
       .bind(kind)
       .all<{ id: string; body: string; updated_at: string }>();
-    return results.map((r) => ({ ...JSON.parse(r.body), id: r.id, updated_at: r.updated_at }));
+    return results.map((r) => ({ ...JSON.parse(r.body), id: r.id, updated_at: r.updated_at })).filter((r) => kind !== "packages" || !r.retired);
   }
 
   async record(kind: string, id: string): Promise<Record<string, any> | null> {
@@ -162,9 +171,9 @@ export class BusinessStore {
     }
     if (kind === "packages") {
       stmts.push(this.db.prepare(`INSERT INTO plans(id,name,product,billing,price_agorot,included_minutes,validity_days,active,created_at,updated_at)
-        VALUES (?,?,?,'prepaid',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,product=excluded.product,price_agorot=excluded.price_agorot,
+        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,product=excluded.product,billing=excluded.billing,price_agorot=excluded.price_agorot,
         included_minutes=excluded.included_minutes,validity_days=excluded.validity_days,active=excluded.active,updated_at=excluded.updated_at`)
-        .bind(id, body.name, body.product, Math.round(Number(body.price_ils) * 100), body.minutes, body.validity_days, body.active ? 1 : 0, now, now));
+        .bind(id, body.name, body.product, body.billing ?? "prepaid", Math.round(Number(body.price_ils) * 100), body.minutes, body.validity_days, body.active ? 1 : 0, now, now));
     }
     await this.db.batch(stmts);
     return { id, ...body };
@@ -226,9 +235,10 @@ export class BusinessStore {
     return result.meta.changes === 1;
   }
 
-  async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number): Promise<Allowance> {
+  async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number, channel: "voice" | "text" = "voice"): Promise<Allowance> {
     const policyRow = await this.record("policies", botId);
-    const policy = AccessPolicySchema.parse(policyRow ?? {});
+    const teacher = !policyRow && await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(botId).first();
+    const policy = AccessPolicySchema.parse(policyRow ?? (teacher ? SCHOOL_FREE_POLICY : {}));
     if (!policy.enabled) return { seconds: maxSeconds, mode: "unrestricted" };
     const now = nowIso();
     const { results: receipts } = await this.db
@@ -249,6 +259,17 @@ export class BusinessStore {
       }
     }
     const anonymous = customerId.startsWith("anonymous-");
+    if (!anonymous && channel === "voice" && policy.opening_seconds) {
+      const openingProduct = policy.product + "-opening";
+      const seconds = Math.min(maxSeconds, policy.opening_seconds);
+      const opening = await this.db.prepare(`INSERT OR IGNORE INTO usage_allocations
+        SELECT ?,?,?,NULL,?,NULL,? WHERE NOT EXISTS
+        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND (billed_seconds IS NULL OR billed_seconds>=60))`)
+        .bind(callId, customerId, openingProduct, seconds, now, customerId, openingProduct).run();
+      if (opening.meta.changes) {
+        return { seconds, mode: "free" };
+      }
+    }
     const count = await this.db
       .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ?
         AND (billed_seconds IS NULL OR billed_seconds>0)`)
@@ -307,8 +328,9 @@ export class BusinessStore {
   }
 
   async accessSummary(customerId: string, receipts: Record<string, any>[]) {
-    const policy = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).find((p) => p.enabled && p.product === "school");
-    if (!policy) return { limited: false, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    const policies = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).filter((p) => p.product === "school");
+    const policy = policies.find((p) => p.enabled) ?? (policies.length ? undefined : AccessPolicySchema.parse(SCHOOL_FREE_POLICY));
+    if (!policy) return { limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
     const used = await this.db
       .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)`)
       .bind(customerId, "school", month() + "%")
@@ -316,8 +338,10 @@ export class BusinessStore {
     const now = nowIso();
     const live = receipts.find((r) => r.product === "school" && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
     const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
+    const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60)").bind(customerId).first();
     return {
       limited: true,
+      opening_minutes: !customerId.startsWith("anonymous-") && !opening ? policy.opening_seconds / 60 : 0,
       free_calls_left: customerId.startsWith("anonymous-") ? 0 : Math.max(0, policy.free_calls_month - (used?.n ?? 0)),
       free_call_minutes: Math.round(policy.free_call_seconds / 60),
       plan_name: pkg?.success ? pkg.data.name.split(" · ")[0] : "",
@@ -420,6 +444,7 @@ export class BusinessStore {
     const customer = await this.record("customers", value.customer_id);
     if (!packageBody || !customer) throw new Error("לקוח או חבילה לא נמצאו");
     const pkg = PackageSchema.parse(packageBody);
+    if (!canPurchaseAutomatically(pkg)) throw new Error("ההצטרפות למסלול זה דרך נציג; אין להטעין זכאות חודשית כקבלה חד־פעמית");
     if (!pkg.active) throw new Error("החבילה אינה פעילה");
     const id = randomHex(10);
     const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");

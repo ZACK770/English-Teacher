@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from .auth import secure_equal
 from .bots import BotCreate
-from .business import AccessPolicy, now
+from .business import AccessPolicy, can_purchase_automatically, now
 from .controls import TutorControls
 from .payments import configured as payment_configured
 from .payments import payment_response
@@ -908,7 +908,8 @@ def install_pbx_api(app, require_admin):
             if package_ids is None:
                 packages = await asyncio.to_thread(business.list, "packages")
                 package_ids = [p["id"] for p in packages
-                               if p["active"] and p["price_ils"] > 0
+                               if p["active"] and can_purchase_automatically(p)
+                               and p["price_ils"] > 0
                                and p.get("phone_enabled", True)][:8]
                 await asyncio.to_thread(save_context, business, "payments:" + call_id,
                                         {"package_ids": package_ids})
@@ -987,4 +988,3 @@ def install_pbx_api(app, require_admin):
         event_id = secrets.token_hex(16)
         await asyncio.to_thread(business.save, "ivr-events", details, event_id)
         return result
-

@@ -117,7 +117,7 @@ export const CustomersView: React.FC = () => {
                       ) : (
                         <div className="flex flex-col gap-1 items-start">
                           <span className="bg-[#f5f6f8] text-[#718087] px-2 py-0.5 rounded text-[11px]">
-                            חבילת מתנה 20 דק'
+                            שיעור פתיחה 10 דק׳ + 2 שיחות של 5 דקות בחודש
                           </span>
                           <span className="bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded text-[10px]">
                             🔥 ליד חם לשדרוג
@@ -197,7 +197,7 @@ export const CustomersView: React.FC = () => {
                     🔥 מנוע המרה ושדרוג (Nedarim Plus + CRM מרחב)
                   </span>
                   <p className="text-amber-800 mt-0.5 text-[11px]">
-                    הלקוח זכאי להצעה: חבילת 100 דקות ב-220 ₪ או 300 דקות ב-550 ₪.
+                    מנויים: צעד ₪59 ל־60 דקות, בקצב ₪119 ל־200 דקות, שוטף ₪199 ל־400 דקות בחודש. חודש ראשון ₪29 בכל המסלולים · ההצטרפות דרך נציג.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
