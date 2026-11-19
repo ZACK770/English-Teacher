@@ -21,7 +21,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
   const { currentCustomer, streak, triggerIntakeCall } = useApp();
 
   return (
-    <header className="h-16 bg-[#111a1a] border-b border-[#35423e]/80 sticky top-0 z-40 px-4 sm:px-6 shadow-md text-[#f0f5ef]">
+    <header className="business-header h-16 bg-[#111a1a] border-b border-[#35423e]/80 sticky top-0 z-40 px-4 sm:px-6 shadow-md text-[#f0f5ef]">
       <div className="max-w-7xl mx-auto h-full flex items-center justify-between">
         {/* Brand and Logo */}
         <div className="flex items-center gap-6">

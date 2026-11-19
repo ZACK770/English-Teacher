@@ -131,7 +131,7 @@ export const LearnerPortal: React.FC = () => {
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (note) { const t = setTimeout(() => setNote(""), 4500); return () => clearTimeout(t); } }, [note]);
-  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus()); };
+  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true })); };
   const run = async (action: () => Promise<void>, success = "") => {
     setBusy(true); setError("");
     try { await action(); await refresh(); if (success) setNote(success); return true; }
@@ -314,7 +314,7 @@ function PreferencesForm({ preferences, account, onSave, onTeachers, onMaterials
     <Setting title="שפת התרגום" value={draft.language || "זיהוי אוטומטי"}><label>השפה שלך<select value={draft.language} onChange={e => change("language", e.target.value)}><option value="">זיהוי אוטומטי</option>{["English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"].map(l => <option key={l}>{l}</option>)}</select></label></Setting>
     <div className="sk-setting-row"><span>אוצר המילים שלי<small>{account.materials.length} רשימות שמורות</small></span><button type="button" className="sk-link" onClick={onMaterials}>לרשימות שלי<ArrowUpLeft size={15} /></button></div>
     <Setting title="טלפונים מחוברים" value={account.customer.phone}>{phonesPanel}</Setting>
-    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{futureMinutes(account) > 0 && <p>{futureMinutes(account)} דקות לתקופות עתידיות (עדיין לא זמינות)</p>}{account.receipts.length ? account.receipts.map(r => <p key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"}{r.valid_from && new Date(r.valid_from).getTime() > Date.now() ? <> · זמינות מ־{lessonDate(r.valid_from)}</> : null} · עד {lessonDate(r.expires_at)}</p>) : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
+    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{futureMinutes(account) > 0 && <p>{futureMinutes(account)} דקות לתקופות עתידיות (עדיין לא זמינות)</p>}{account.receipts.length ? <ul className="sk-receipts">{account.receipts.map(r => <li key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"}{r.valid_from && new Date(r.valid_from).getTime() > Date.now() ? <> · זמינות מ־{lessonDate(r.valid_from)}</> : null} · עד {lessonDate(r.expires_at)}</li>)}</ul> : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
     {subscriptionPanel}
     <div className="sk-setting-row"><label htmlFor="save-transcripts">לשמור גם את המילים<small>תמליל השיחות הבאות. סיכומים נשמרים גם בלי זה.</small></label><input id="save-transcripts" type="checkbox" role="switch" checked={draft.store_transcripts === true} onChange={e => change("store_transcripts", e.target.checked)} /></div>
     <div className="sk-actions"><button className="sk-primary" type="submit">ככה מתאים לי<Check size={16} /></button><button type="button" className="sk-link" onClick={onLogout}><LogOut size={15} />יציאה</button></div>
