@@ -68,6 +68,20 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
+  it("continues the calendar of an adopted standing order after previous paid renewals", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-31T00:00:00Z"));
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    await hook({ MosadNumber: "7019554", TransactionId: "70", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    db.sql.exec("UPDATE standing_orders SET entitlement_id=NULL,state='active',keva_id='4242'; UPDATE payment_orders SET entitlement_id=NULL; UPDATE sales_receipts SET subscription_id=NULL,valid_from=NULL; DELETE FROM subscriptions;");
+    for (const [id, date] of [["71", "2026-02-28T00:00:00.000+00:00"], ["72", "2026-03-31T00:00:00.000+00:00"]]) {
+      db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,'c1','school-step','school',?,59,0.18,60,?,?)").run(id, "nedarim:7019554:" + id, addMonths(date, 2), date);
+      db.sql.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES ('payment:keva_charge',?,?)").run(o.subscription.id, date);
+    }
+    vi.setSystemTime(new Date("2026-04-30T00:00:00Z"));
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "73", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" })).status).toBe(200);
+    expect(await new SubscriptionStore(env.DB).get(o.id)).toMatchObject({ started_at: "2026-01-31T00:00:00.000+00:00", period_number: 4, current_period_start: "2026-04-30T00:00:00.000+00:00", current_period_end: "2026-05-31T00:00:00.000+00:00" });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE subscription_id=?").get(o.id)?.n).toBe(4);
+  });
   it("settles legacy mastery snapshots using the configured default domains", async () => {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "travel" })).json() as any;
     db.sql.prepare("UPDATE payment_orders SET snapshot=json_remove(snapshot,'$.guarantee_domain') WHERE id=?").run(o.id);

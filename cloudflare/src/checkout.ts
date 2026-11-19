@@ -2,7 +2,7 @@ import { z } from "zod";
 import { BusinessStore, PackageSchema } from "./business";
 import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
-import { SubscriptionStore } from "./subscriptions";
+import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
@@ -184,10 +184,17 @@ export class CheckoutStore {
       const order = await this.db.prepare("SELECT o.id,r.id AS receipt_id,r.created_at FROM payment_orders o JOIN sales_receipts r ON r.id=o.receipt_id AND r.customer_id=o.customer_id WHERE o.id=? AND o.channel='web' AND o.state='paid'").bind(sub.first_order_id).first<{ id: string; receipt_id: string; created_at: string }>();
       if (!order || sub.state === "cancelled") throw new Error("First payment must settle before renewal");
       const pkg = PackageSchema.parse(JSON.parse(sub.snapshot));
+      const receipts = (await this.db.prepare(`SELECT r.id,r.created_at,r.valid_from FROM sales_receipts r
+        WHERE r.customer_id=? AND r.package_id=? AND (r.id=? OR (r.reference LIKE ? AND EXISTS
+          (SELECT 1 FROM console_audit a WHERE a.action='payment:keva_charge' AND a.entity_id=? AND a.created_at=r.created_at)))
+        ORDER BY r.created_at,r.id`).bind(sub.customer_id, sub.package_id, order.receipt_id, `nedarim:${mosadId}:%`, sub.id).all<{ id: string; created_at: string; valid_from: string | null }>()).results;
+      const latest = receipts[receipts.length - 1];
+      const start = latest.valid_from ?? latest.created_at;
       const entitlement = await subscriptions.create(sub.customer_id, sub.package_id, order.created_at, undefined, {
         id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: null, grantFirstPeriod: false,
+        period: { number: receipts.length, start, end: addMonths(start, 1) },
         statements: [
-          this.db.prepare("UPDATE sales_receipts SET subscription_id=?,valid_from=COALESCE(valid_from,created_at) WHERE id=?").bind(order.id, order.receipt_id),
+          ...receipts.map(r => this.db.prepare("UPDATE sales_receipts SET subscription_id=?,valid_from=COALESCE(valid_from,created_at) WHERE id=?").bind(order.id, r.id)),
           this.db.prepare("UPDATE payment_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.id),
           this.db.prepare("UPDATE standing_orders SET entitlement_id=? WHERE id=?").bind(order.id, sub.id),
         ],

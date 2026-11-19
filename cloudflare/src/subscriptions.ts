@@ -34,7 +34,7 @@ export class SubscriptionStore {
     return (await this.db.prepare(`SELECT DISTINCT s.* FROM subscriptions s LEFT JOIN subscription_members m ON m.subscription_id=s.id AND m.removed_at IS NULL ${customerId ? "WHERE s.customer_id=? OR m.customer_id=?" : ""} ORDER BY s.created_at DESC`)
       .bind(...(customerId ? [customerId, customerId] : [])).all<Subscription>()).results;
   }
-  async create(customerId: string, planId: string, at = new Date().toISOString(), domains?: Domain[], source?: { id: string; priceAgorot: number; monthlyMinutes: number; termMonths: number | null; receiptId?: string; chargeAgorot?: number; vatRate?: number; grantFirstPeriod?: boolean; statements?: D1PreparedStatement[] }) {
+  async create(customerId: string, planId: string, at = new Date().toISOString(), domains?: Domain[], source?: { id: string; priceAgorot: number; monthlyMinutes: number; termMonths: number | null; receiptId?: string; chargeAgorot?: number; vatRate?: number; grantFirstPeriod?: boolean; period?: { number: number; start: string; end: string }; statements?: D1PreparedStatement[] }) {
     at = iso(at);
     const plan = await this.db.prepare("SELECT * FROM plans WHERE id=? AND (active=1 OR ?=1) AND product='school'").bind(planId, source ? 1 : 0).first<Subscription>();
     const pkg = await new BusinessStore(this.db).record("packages", planId);
@@ -45,10 +45,10 @@ export class SubscriptionStore {
     const selected = z.array(DomainSchema).parse(domains ?? JSON.parse(plan.domains_json));
     if (term && (!selected.length || selected.some(d => !vocabularyCatalog.some(t => t.domain === d.domain && (!d.levels || d.levels.includes(t.level as any)))))) throw new Error("Guarantee domains must have measurable vocabulary");
     if (term === 12 && (!source || domains) && !selected.some(d => d.domain !== "everyday")) throw new Error("Choose an additional vocabulary domain for mastery");
-    const id = source?.id ?? randomHex(12), end = addMonths(at, 1);
+    const id = source?.id ?? randomHex(12), end = source?.period?.end ?? addMonths(at, 1);
     await this.db.batch([
-      this.db.prepare(`INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_start,current_period_end,created_at,updated_at,term_months,pause_year_start,guarantee_status,domains_json,monthly_minutes,term_end)
-        VALUES (?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, customerId, planId, source?.priceAgorot ?? plan.price_agorot, at, at, end, at, at, term, at, term ? "pending" : null, JSON.stringify(selected), minutes, term ? addMonths(at, term) : null),
+      this.db.prepare(`INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_start,current_period_end,created_at,updated_at,term_months,pause_year_start,guarantee_status,domains_json,monthly_minutes,term_end,period_number)
+        VALUES (?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, customerId, planId, source?.priceAgorot ?? plan.price_agorot, at, source?.period?.start ?? at, end, at, at, term, at, term ? "pending" : null, JSON.stringify(selected), minutes, term ? addMonths(at, term) : null, source?.period?.number ?? 1),
       ...(source?.grantFirstPeriod === false ? [] : [this.grantStatement({ id, customer_id: customerId, plan_id: planId, monthly_minutes: minutes, current_period_start: at, current_period_end: end, receipt_id: source?.receiptId, charge_agorot: source?.chargeAgorot, vat_rate: source?.vatRate }, at)]),
       ...(source?.statements ?? []),
     ]);
