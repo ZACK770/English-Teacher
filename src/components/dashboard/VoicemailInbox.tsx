@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { apiPrefix } from '../portal/portalApi';
 
-const endpoint = '/v1/admin/crm/voicemails';
+const endpoint = apiPrefix + '/v1/admin/crm/voicemails';
 const statusLabels: Record<string, string> = {
   pending: 'ממתינה לעיבוד',
   fetching: 'טוענת את ההקלטה',
