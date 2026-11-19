@@ -167,6 +167,21 @@ describe("approved pricing catalog", () => {
     expect(await b.reserveCall("learner-a", "student", "after-opening", 1800)).toMatchObject({ seconds: 300 });
   });
 
+  it("does not advertise free limits when all school policies are disabled", async () => {
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, enabled: false }, "student");
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: false, opening_minutes: 0, free_calls_left: 0 });
+    expect(await b.reserveCall("learner-a", "student", "disabled-policy", 1800)).toEqual({ seconds: 1800, mode: "unrestricted" });
+  });
+
+  it("uses the free fallback only when no school policy exists", async () => {
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10, free_calls_left: 2 });
+    await b.save("policies", { product: "translator", enabled: false }, "translator");
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10 });
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, enabled: false }, "student");
+    await b.save("policies", SCHOOL_FREE_POLICY, "another-teacher");
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10 });
+  });
+
   it("keeps the opening lesson available after text allowances are used", async () => {
     for (const id of ["text-a", "text-b"]) {
       expect(await b.reserveCall("learner-a", "student", id, 120, "text")).toMatchObject({ seconds: 120 });

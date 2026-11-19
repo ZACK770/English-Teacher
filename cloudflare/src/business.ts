@@ -328,8 +328,9 @@ export class BusinessStore {
   }
 
   async accessSummary(customerId: string, receipts: Record<string, any>[]) {
-    const policy = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).find((p) => p.enabled && p.product === "school") ?? AccessPolicySchema.parse(SCHOOL_FREE_POLICY);
-    if (!policy) return { limited: false, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    const policies = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).filter((p) => p.product === "school");
+    const policy = policies.find((p) => p.enabled) ?? (policies.length ? undefined : AccessPolicySchema.parse(SCHOOL_FREE_POLICY));
+    if (!policy) return { limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
     const used = await this.db
       .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)`)
       .bind(customerId, "school", month() + "%")
