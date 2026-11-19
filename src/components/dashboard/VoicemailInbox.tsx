@@ -12,6 +12,8 @@ const statusLabels: Record<string, string> = {
   transcription_failed: 'לא הצלחנו לתמלל',
   invalid_audio: 'קובץ ההקלטה לא תקין או חורג מהמגבלה',
   audio_failed: 'לא הצלחנו לקבל את ההקלטה',
+  download_failed: 'לא הצלחנו להוריד את ההקלטה ממערכת הטלפוניה',
+  storage_failed: 'ההקלטה הורדה אך לא נשמרה באחסון',
 };
 
 interface Voicemail {

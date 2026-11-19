@@ -201,6 +201,9 @@ describe("IVR voicemail CRM", () => {
     await Promise.all([dispatchVoicemails(env), processVoicemail(env, job.id)]);
     expect(download).toHaveBeenCalledTimes(1);
     expect(download).toHaveBeenCalledWith(expect.stringContaining("action=fileDownload&audio=pbx-file-1"), expect.any(Object));
+    expect(download).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: { "User-Agent": "speakcall-voicemails/1.0", Accept: "audio/mpeg, audio/mp3" },
+    }));
     expect(run).toHaveBeenCalledExactlyOnceWith("@cf/openai/whisper-large-v3-turbo",
       expect.objectContaining({ language: "he", task: "transcribe", vad_filter: true }));
     expect(await items()).toMatchObject([{ status: "ready", audio_ready: 1, transcript: "שלום, אשמח שתחזרו אליי." }]);
@@ -225,6 +228,32 @@ describe("IVR voicemail CRM", () => {
     expect((await items()).map(job => job.status)).toEqual(["invalid_audio", "invalid_audio"]);
     expect(media.size).toBe(0);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["download_failed", "Voicemail download failed", { http_status: 403 }],
+    ["storage_failed", "Voicemail R2 write failed", undefined],
+  ])("retries once and exposes %s without transcribing", async (status, message, details) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await callback("failed-recording");
+      if (status === "download_failed") {
+        const reject = () => new Response("upstream response that must not be logged", { status: 403 });
+        download.mockImplementationOnce(async () => reject()).mockImplementationOnce(async () => reject());
+      } else {
+        vi.spyOn(env.VOICEMAIL_AUDIO!, "put").mockRejectedValue(new Error("R2 details that must not be logged"));
+      }
+      await dispatchVoicemails(env);
+      expect(await items()).toMatchObject([{ status: "pending", audio_ready: 0 }]);
+      await dispatchVoicemails(env);
+      expect(await items()).toMatchObject([{ status, audio_ready: 0 }]);
+      await dispatchVoicemails(env);
+      expect(download).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls).toEqual(Array.from({ length: 2 }, () => details ? [message, details] : [message]));
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("charges failed attempts to the daily quota, normalizes caller IDs, and keeps all valid audio", async () => {
