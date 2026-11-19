@@ -135,9 +135,18 @@ export function matchesEmailReadBack(text: string, email: string) {
   const readBack = text.normalize("NFKC").toLowerCase().trim()
     .match(/^הכתובת היא\s*:?\s*(.+?)[.!?,]?\s+הכתובת נכונה[?.]?$/s);
   if (!readBack) return false;
-  const address = readBack[1]!;
-  return address.replace(/\s+/g, "") === email
-    || address.replace(/(?<![a-z0-9_@.+-])[a-z]+(?![a-z0-9_@.+-])/g, word => spokenEmail[word] ?? word).replace(/\s+/g, "") === email;
+  let offsets = new Set([0]);
+  for (const word of readBack[1]!.trim().split(/\s+/)) {
+    const alias = Object.hasOwn(spokenEmail, word) ? spokenEmail[word] : undefined;
+    const next = new Set<number>();
+    for (const offset of offsets) {
+      if (email.startsWith(word, offset)) next.add(offset + word.length);
+      if (alias && email.startsWith(alias, offset)) next.add(offset + alias.length);
+    }
+    if (!next.size) return false;
+    offsets = next;
+  }
+  return offsets.has(email.length);
 }
 
 export function isEmailConfirmation(value: string) {

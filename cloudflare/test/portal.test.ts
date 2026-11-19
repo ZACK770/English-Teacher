@@ -8,7 +8,7 @@ import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, quickOpening, runtimeContext, startSchool } from "../src/pbx";
-import { adCampaignReport, recordSalesTool } from "../src/ad-entry";
+import { adCampaignReport, matchesEmailReadBack, recordSalesTool } from "../src/ad-entry";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { transferCommand } from "../src/technoline";
@@ -1312,6 +1312,14 @@ describe("real learner portal", () => {
     await expect(gemini.next()).resolves.toMatchObject({ type: "transcript", role: "learner" });
     await expect(gemini.next()).resolves.toEqual({ type: "tool_call", calls });
     await expect(gemini.next()).resolves.toEqual({ type: "turn_complete" });
+  });
+
+  it.each([
+    ["one at example dot com", "one@example.com", true],
+    ["one zero one two at five dot net", "one012@five.net", true],
+    ["one twelve at example dot com", "1012@example.com", false],
+  ] as const)("matches spoken read-back %s to the complete address %s", (spoken, email, matches) => {
+    expect(matchesEmailReadBack(`הכתובת היא ${spoken}. הכתובת נכונה?`, email)).toBe(matches);
   });
 
   it("authenticates form-only PBX callbacks independently of the legacy URL credential", async () => {
