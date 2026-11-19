@@ -3,6 +3,10 @@ import { submitCallback } from './callbackApi';
 import { LegalFooter } from '../legal/LegalFooter';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
+const SHOW_SCHEDULED_CALLBACK = false;
+const scheduleWindow = 30 * 86400000;
+const localDateTime = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
 export const JoinLanding: React.FC = () => {
   // Campaign variation toggle (A: Shochi Robot Direct, B: Parents & Urgency)
   const [variation, setVariation] = useState<'A' | 'B'>('A');
@@ -18,6 +22,7 @@ export const JoinLanding: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const now = new Date();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,20 +42,31 @@ export const JoinLanding: React.FC = () => {
       return;
     }
 
+    const callbackTiming = SHOW_SCHEDULED_CALLBACK ? timing : 'now';
+    const preferredAt = callbackTiming === 'scheduled' ? new Date(preferredTime) : null;
+    if (preferredAt && preferredAt.getTime() > Date.now() + scheduleWindow) {
+      setErrorMessage('אפשר לתאם שיחה עד 30 יום מראש');
+      return;
+    }
     setIsSubmitting(true);
     try {
+      if (preferredAt && (!Number.isFinite(preferredAt.getTime()) || preferredAt.getTime() < Date.now())) {
+        throw new Error('invalid schedule');
+      }
+      const readableTime = preferredAt?.toLocaleString('he-IL') ?? '';
       await submitCallback({
         name,
         phone: cleanPhone,
         for_whom: forWhom,
         goal,
-        timing,
-        preferred_time: timing === 'scheduled' ? preferredTime : '',
+        timing: callbackTiming,
+        preferred_time: readableTime,
+        preferred_at: preferredAt?.toISOString(),
         consent: true
       });
       setSubmittedSuccess(true);
     } catch {
-      setErrorMessage('לא הצלחנו לשלוח את הבקשה. נסו שוב.');
+      setErrorMessage('לא הצלחנו לשמור את הבקשה. בדקו את מועד השיחה ונסו שוב.');
     } finally {
       setIsSubmitting(false);
     }
@@ -352,21 +368,32 @@ export const JoinLanding: React.FC = () => {
                       className="w-full p-2.5 rounded-xl border border-slate-800 bg-slate-950 text-xs text-slate-200"
                     >
                       <option value="now">עכשיו (מיידי!)</option>
-                      <option value="scheduled">בשעה אחרת</option>
+                      {SHOW_SCHEDULED_CALLBACK && <option value="scheduled">בשעה אחרת</option>}
                     </select>
                   </div>
                 </div>
 
-                {timing === 'scheduled' && (
+                {SHOW_SCHEDULED_CALLBACK && timing === 'scheduled' && (
                   <div>
                     <label className="font-bold text-slate-300 block mb-1">מתי נוח לכם שנתקשר?</label>
                     <input
-                      type="text"
+                      type="datetime-local"
+                      required
+                      min={localDateTime(now)}
+                      max={localDateTime(new Date(now.getTime() + scheduleWindow))}
                       value={preferredTime}
-                      onChange={e => setPreferredTime(e.target.value)}
-                      placeholder="למשל: היום ב-20:00 בערב"
+                      onChange={e => {
+                        e.target.setCustomValidity('');
+                        setPreferredTime(e.target.value);
+                      }}
+                      onInvalid={e => {
+                        if (e.currentTarget.validity.rangeOverflow) {
+                          e.currentTarget.setCustomValidity('אפשר לתאם שיחה עד 30 יום מראש');
+                        }
+                      }}
                       className="w-full p-2.5 rounded-xl border border-slate-800 text-xs bg-slate-950 text-slate-100"
                     />
+                    <p className="text-slate-400 mt-1">נחייג בין 08:00 ל-22:00, לא בשבת</p>
                   </div>
                 )}
 
