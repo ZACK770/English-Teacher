@@ -27,6 +27,7 @@ export class TutorSession {
   private ai: GeminiLive | null = null;
   private reconnecting: Promise<void> | null = null;
   private reconnectAttempts = 0;
+  private lastGeminiError = "";
   private failureStarted: number | null = null;
   private failureGapMs = 0;
   private finalMessage: string | null = null;
@@ -106,6 +107,7 @@ export class TutorSession {
     let releaseBudget: (() => Promise<void>) | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let hardLimit: ReturnType<typeof setTimeout> | undefined;
+    let geminiConnected = false;
     try {
       if (this.abort.signal.aborted) return;
       const initial = JSON.parse(raw);
@@ -220,6 +222,7 @@ export class TutorSession {
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
+        geminiConnected = true;
         ai.startGreeting(this.controls.opening_message);
         if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
         await this.latency("greeting_sent");
@@ -229,7 +232,6 @@ export class TutorSession {
           this.stop("hard_time_limit");
         }, allowance.seconds * 1000);
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);
-        await reportGeminiOutcome(this.env, this.reason !== "gemini_reconnect_exhausted", "Gemini reconnect exhausted");
       }
     } catch (error) {
       if (error instanceof GeminiBudgetError) {
@@ -244,9 +246,13 @@ export class TutorSession {
       if (this.profileId && this.callId && !this.abort.signal.aborted) {
         const message = (error instanceof Error ? error.message : "Unknown error").split(this.s.geminiKey).join("[redacted]");
         await this.progress.logDiagnostic(this.profileId, this.callId, "call_failed", { error_type: error instanceof Error ? error.name : "Error", message: message.slice(0, 250) });
-        if (isGeminiError(error)) await reportGeminiOutcome(this.env, false, message);
+        if (isGeminiError(error)) {
+          geminiConnected = false;
+          await reportGeminiOutcome(this.env, false, message);
+        }
       }
     } finally {
+      if (geminiConnected) void reportGeminiOutcome(this.env, this.reason !== "gemini_reconnect_exhausted", "Gemini reconnect exhausted: " + this.lastGeminiError);
       this.settling = true;
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (hardLimit !== undefined) clearTimeout(hardLimit);
@@ -415,8 +421,9 @@ export class TutorSession {
         this.lastHuman = Date.now();
         await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnected", { attempt, resumed: !!handle }).catch(() => {});
         return;
-      } catch {
+      } catch (error) {
         replacement.close();
+        this.lastGeminiError = (error instanceof Error ? error.message : "").split(this.s.geminiKey).join("[redacted]").slice(0, 150);
         await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnect_failed", { attempt }).catch(() => {});
       }
     }
