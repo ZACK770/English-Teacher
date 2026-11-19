@@ -9,9 +9,9 @@ import { ProgressStore } from "./progress";
 import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 import { enqueueVoicemail, processVoicemail } from "./voicemails";
+import { withRecordedAudio } from "./phone-audio";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
-const recordingNotice = "ההודעה תוקלט ותתומלל. המידע נשמר בצורה מאובטחת כדי לשפר את השירות, ולא ייעשה בו שימוש לרעה. השימוש במערכת מהווה הסכמה לכך.";
 export const IVRCopySchema = z.object({
   welcome: text("ברוכים הבאים לספיקול. פשוט לדבר. לכניסה לשיעור הקישו 1. לאזור האישי הקישו 2."),
   school: text("אין מורה זמין כרגע. לאפשרויות נוספות הקישו 9. לחזרה הקישו 0."),
@@ -19,7 +19,7 @@ export const IVRCopySchema = z.object({
   languages: text("לאנגלית הקישו 1. לעברית 2. ליידיש 3. לערבית 4. לרוסית 5. לצרפתית 6. לזיהוי אוטומטי ותרגום עברית אנגלית הקישו 7. לחזרה הקישו 0."),
   sales: text("לחבילות ותשלום הקישו 1. לשירות לקוחות הקישו 4. לחזרה הקישו 0."),
   service: text("השאירו הודעה לאחר הצליל. לסיום הקישו סולמית."),
-  thanks: text("ההודעה נשמרה, תודה. לחזרה הקישו 0. לסיום הקישו 1."),
+  thanks: text("הודעתכם נשמרה, תודה. לחזרה הקישו 0. לסיום הקישו 1."),
   quota: text("הדקות לשיחות כבר נוצלו. לא נורא, ממשיכים: לבחירת מסלול הקישו 1. ללמידה הקישו 2. לתפריט הראשי הקישו 0."),
   school_mode: text("להמשך הקורס הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0."),
   options: text("לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0."),
@@ -52,7 +52,7 @@ export function ivrResponse(route: string, p: Record<string, string>, copy: IVRC
     if (p.FILEID_isaacMessage || p.isaacMessage) {
       return p.isaacThanks === "0" ? go() : ["1", "ERROR"].includes(p.isaacThanks) ? { type: "hangup" } : menu("isaacThanks", copy.thanks, "0,1");
     }
-    return { type: "record", name: "isaacMessage", max: 60, min: 2, confirm: "no", post: true, hangupSave: "yes", maskLog: true, files: [{ text: recordingNotice }, { text: copy.service }] };
+    return { type: "record", name: "isaacMessage", max: 60, min: 2, confirm: "no", post: true, hangupSave: "yes", maskLog: true, files: [{ text: copy.service }] };
   }
   if (!routes[route]) throw new HttpError(404, "Unknown IVR route");
   const [name, content, keys, targets] = routes[route];
@@ -261,7 +261,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   if (!visiblePhone(p.PBXphone ?? "")) {
     return p.PBXcallStatus === "HANGUP" || p.hiddenCallerEnd
       ? { type: "hangup" }
-      : { ...menu("hiddenCallerEnd", HIDDEN_CALLER_MESSAGE, "0"), times: 1, timeout: 1, errorReturn: "END" };
+      : withRecordedAudio({ ...menu("hiddenCallerEnd", HIDDEN_CALLER_MESSAGE, "0"), times: 1, timeout: 1, errorReturn: "END" }, s.publicBaseUrl);
   }
   const b = new BusinessStore(env.DB);
   const progress = new ProgressStore(env.DB);
@@ -305,15 +305,15 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   if (route === "options" && result.type === "simpleMenu") {
     const others = (await progress.listBots()).some((bot) => bot.enabled && bot.phone_enabled && !["teacher", "translator"].includes(bot.role));
     result.enabledKeys = "0,1,2,3,4" + (others ? ",6" : "");
-    if (others) result.files[0].text += " לבוטים נוספים הקישו 6.";
+    if (others) result.files.push({ text: "לשירותים נוספים הקישו 6." });
   }
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
   if (slot && result.files?.length) {
     if (route === "service" && result.name === "isaacThanks") slot = "thanks";
-    const fileIndex = route === "service" && result.type === "record" ? 1 : 0;
-    const audio = await narrationForSlot(b, slot, result.files[fileIndex].text ?? "");
-    if (audio && s.publicBaseUrl) result.files[fileIndex] = { fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` };
+    const audio = await narrationForSlot(b, slot, result.files[0].text ?? "");
+    if (audio && s.publicBaseUrl) result.files[0] = { fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` };
   }
+  withRecordedAudio(result, s.publicBaseUrl);
   const inputs = Object.fromEntries(Object.entries(p).filter(([key]) => key.startsWith("isaac") || key === "FILEID_isaacMessage").map(([key, value]) => [key, value.slice(0, 200)]));
   await b.save("ivr-events", { call_id: callId, customer_id: customerId, route, input: inputs, output: result, latency_ms: Date.now() - clock, at: nowIso(), request_method: request.method }, randomHex(16));
   return result;
