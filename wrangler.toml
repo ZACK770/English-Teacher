@@ -10,6 +10,13 @@ directory = "./dist"
 binding = "ASSETS"
 run_worker_first = true
 
+[ai]
+binding = "AI"
+
+[[r2_buckets]]
+binding = "VOICEMAIL_AUDIO"
+bucket_name = "english-engine-voicemails"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "english-engine"

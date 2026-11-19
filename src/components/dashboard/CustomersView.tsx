@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../store/AppContext';
 import { Customer } from '../../types';
 import { Users, Plus, Search, ExternalLink, PhoneCall, Copy, Check, FileText } from 'lucide-react';
+import { VoicemailInbox } from './VoicemailInbox';
 
 export const CustomersView: React.FC = () => {
   const { customers, bots, receipts, detailedCalls, saveCustomer, createCustomer, generateCustomerInvite, showToast } = useApp();
@@ -74,6 +75,8 @@ export const CustomersView: React.FC = () => {
           <span>הוספת לקוח חדש</span>
         </button>
       </div>
+
+      <VoicemailInbox customerIds={new Set(customers.map(customer => customer.id))} onOpenCustomer={setSelectedCustomerId} />
 
       {/* Search Toolbar */}
       <div className="bg-white border border-[#e3e8eb] rounded-2xl p-4 shadow-xs flex items-center gap-3">

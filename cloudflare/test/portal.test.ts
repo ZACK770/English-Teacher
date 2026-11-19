@@ -19,6 +19,7 @@ import { LearningStore } from "../src/learning";
 import { PackageSchema } from "../src/business";
 import { PaymentStore } from "../src/payments";
 import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
+import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
 import { cleanupCallbackQuota } from "../src/callbacks";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
@@ -145,6 +146,112 @@ it("releases the shared Gemini slot before transferring to a PBX menu", async ()
   }), "student", false);
   expect(socket.send).toHaveBeenCalledWith(transferCommand("/99"));
   expect(order).toEqual(["release", "transfer"]);
+});
+
+describe("IVR voicemail CRM", () => {
+  const media = new Map<string, Uint8Array>();
+  const mp3 = (frames = 100) => {
+    const file = new Uint8Array(417 * frames);
+    for (let i = 0; i < frames; i++) file.set([0xff, 0xfb, 0x90, 0xc0], 417 * i);
+    return file;
+  };
+  const file = mp3();
+  const run = vi.fn(async () => ({ text: "שלום, אשמח שתחזרו אליי." }));
+  const download = vi.fn(async () => new Response(file, { headers: { "Content-Type": "audio/mp3" } }));
+  const callback = (fileId?: string, phone = "0500000001", options: Record<string, string> = {}) => {
+    const params = new URLSearchParams({
+      PBXcallId: "call-" + (fileId ?? "prompt"), PBXnum: "0765673575",
+      PBXextensionPath: "/4", PBXphone: phone, PBXcallStatus: "HANGUP",
+      ...(fileId ? { FILEID_isaacMessage: fileId, DURATION_isaacMessage: "3" } : {}), ...options,
+    });
+    return worker.fetch(new Request("https://school.example/v1/technoline/ivr/service?key=cb", {
+      method: "POST", body: params,
+    }), env);
+  };
+  const admin = (path = "", token = "test-admin") => request("/v1/admin/crm/voicemails" + path, token);
+  const items = async () => (await (await admin()).json() as { items: Array<{ id: string; status: string }> }).items;
+
+  beforeEach(() => {
+    media.clear();
+    run.mockClear();
+    download.mockClear();
+    Object.assign(env, {
+      TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_API_KEY: "test-pbx", TLIVR_PROJECT_ENABLED: "true",
+      TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/",
+      AI: { run },
+      VOICEMAIL_AUDIO: {
+        put: async (key: string, value: Uint8Array) => media.set(key, value),
+        get: async (key: string) => media.has(key) ? { body: media.get(key) } : null,
+      },
+    });
+    vi.stubGlobal("fetch", download);
+  });
+
+  it("discloses recording and transcription, then ingests a hangup exactly once and serves private audio", async () => {
+    const prompt = await callback(undefined, "0500000001", { PBXcallStatus: "CALL" });
+    expect(await prompt.json()).toMatchObject({
+      type: "record", hangupSave: "yes", files: [{ text: expect.stringContaining("תוקלט ותתומלל") }, { text: expect.any(String) }],
+    });
+    expect(await (await callback("pbx-file-1")).json()).toEqual({ type: "hangup" });
+    expect(await (await callback("pbx-file-1")).json()).toEqual({ type: "hangup" });
+    const [job] = await items();
+    expect(job).toMatchObject({ status: "pending", customer_id: "learner-a" });
+    await Promise.all([dispatchVoicemails(env), processVoicemail(env, job.id)]);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledWith(expect.stringContaining("action=fileDownload&audio=pbx-file-1"), expect.any(Object));
+    expect(run).toHaveBeenCalledExactlyOnceWith("@cf/openai/whisper-large-v3-turbo",
+      expect.objectContaining({ language: "he", task: "transcribe", vad_filter: true }));
+    expect(await items()).toMatchObject([{ status: "ready", audio_ready: 1, transcript: "שלום, אשמח שתחזרו אליי." }]);
+    expect((await admin("", tokenA)).status).toBe(401);
+    expect((await admin(`/${job.id}/audio`, tokenA)).status).toBe(401);
+    const audio = await admin(`/${job.id}/audio`);
+    expect(audio.headers.get("Cache-Control")).toBe("no-store");
+    expect(new Uint8Array(await audio.arrayBuffer())).toEqual(file);
+  });
+
+  it("does not transcribe invalid routes, IDs, durations, or oversized audio", async () => {
+    await callback("outside-service", "0500000001", { PBXextensionPath: "/2" });
+    await callback("untrusted/path");
+    await callback("too-long", "0500000001", { DURATION_isaacMessage: "61" });
+    expect(await items()).toEqual([]);
+    await callback("over-duration");
+    await callback("over-bytes");
+    download.mockImplementation(async (url?: string) => new Response(
+      url?.includes("over-duration") ? mp3(2310) : new Uint8Array(1_000_001), { headers: { "Content-Type": "audio/mpeg" } }));
+    await dispatchVoicemails(env);
+    download.mockImplementation(async () => new Response(file, { headers: { "Content-Type": "audio/mp3" } }));
+    expect((await items()).map(job => job.status)).toEqual(["invalid_audio", "invalid_audio"]);
+    expect(media.size).toBe(0);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("charges failed attempts to the daily quota, normalizes caller IDs, and keeps all valid audio", async () => {
+    run.mockRejectedValueOnce(new Error("provider unavailable"));
+    for (const [i, phone] of ["0500000001", "+972500000001", "050-000-0001", "0500000001"].entries()) {
+      await callback("caller-" + i, phone);
+      await dispatchVoicemails(env);
+    }
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(media.size).toBe(4);
+    expect((await items()).map(job => job.status).sort()).toEqual(["quota_exceeded", "ready", "ready", "transcription_failed"]);
+  });
+
+  it("reserves the final global minute once even with concurrent callers", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    db.sql.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<99)
+      INSERT INTO ivr_voicemails (id,system_phone,file_id,customer_id,caller_key,created_at,intake_day,status,transcription_day,reserved_seconds)
+      SELECT 'seed-'||i,'test','seed-'||i,'unlinked','caller-'||i,'1970-01-01',?,'ready',?,60 FROM n`).run(today, today);
+    download.mockResolvedValueOnce(new Response(mp3(2296), { headers: { "Content-Type": "audio/mpeg" } }));
+    download.mockResolvedValueOnce(new Response(mp3(2296), { headers: { "Content-Type": "audio/mpeg" } }));
+    await callback("global-one", "0500000001");
+    await callback("global-two", "0500000002");
+    await dispatchVoicemails(env);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(media.size).toBe(2);
+    expect((await items()).slice(0, 2).map(job => job.status).sort()).toEqual(["quota_exceeded", "ready"]);
+    expect((await (await admin()).json() as { next: string }).next).toBeTruthy();
+    expect(db.sql.prepare("SELECT SUM(reserved_seconds) AS total FROM ivr_voicemails").get()?.total).toBe(6_000);
+  });
 });
 
 describe("approved pricing catalog", () => {

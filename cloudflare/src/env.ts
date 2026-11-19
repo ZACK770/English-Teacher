@@ -2,6 +2,8 @@ export interface Env {
   DB: D1Database;
   CALLS: DurableObjectNamespace;
   ASSETS: Fetcher;
+  AI?: Ai;
+  VOICEMAIL_AUDIO?: R2Bucket;
   GEMINI_API_KEY: string;
   GEMINI_BUDGET: DurableObjectNamespace;
   GEMINI_MAX_CONCURRENT?: string;
