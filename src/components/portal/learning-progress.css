@@ -13,6 +13,12 @@
 .sk-encountered-mark{font-size:13px;color:var(--quiet);flex-shrink:0}
 .sk-mastery-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0}
 .sk-learning-progress .sk-domain-open{color:var(--accent);font-size:14px;margin-top:8px}
+.speakool .sk-vocab-create{background:var(--sage)}
+.sk-vocab-create strong,.sk-vocab-actions{display:flex;align-items:center;gap:8px}
+.sk-vocab-create strong svg{flex-shrink:0}
+.sk-vocab-personal{cursor:default}
+.sk-vocab-personal strong{overflow-wrap:anywhere}
+.sk-vocab-actions{flex-wrap:wrap;margin-top:auto}
 .sk-word-meaning{font-size:26px;font-weight:600;margin:0 0 14px}.sk-word-details section{margin-top:26px}.sk-word-details h3{font-size:18px;margin:0 0 12px}
 .sk-word-example{background:var(--sage);padding:20px;border-radius:12px}.sk-word-example blockquote{font-size:22px;line-height:1.7;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .sk-progress-dialog .sk-progress-meta,.sk-attempts small{font-size:13px;color:var(--quiet);line-height:1.7;margin:4px 0}
