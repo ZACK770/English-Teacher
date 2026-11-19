@@ -171,7 +171,7 @@
   .sk-land-hero h1 { margin-block: 12px; }
   .sk-land-callback { margin-top: 15px; }
   .sk-land-call { padding: 14px 17px; border-radius: 15px; }
-  .sk-land-wave { height: 58px; transform: scale(.62); }
+  .sk-land-voice-art { width: 130px; height: 110px; }
   .sk-land-words { display: none; }
   .sk-land-offer-panel { padding: 18px; gap: 10px; }
   .sk-land-offer-panel > div:first-child { display: contents; }
