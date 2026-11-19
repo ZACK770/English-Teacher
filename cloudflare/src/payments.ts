@@ -12,13 +12,13 @@ const phonePlan = (pkg: PhonePackage) => pkg.product === "school" && (pkg.billin
 export const phonePurchasable = (pkg: PhonePackage) =>
   !!pkg.active && (pkg.price_ils ?? 0) > 0 && (pkg.phone_enabled ?? true) && (canPurchaseAutomatically(pkg) || phonePlan(pkg));
 
-// Approved /3 menu wording; used only while the console price still matches.
-const PHONE_PITCH: Record<string, [number, string]> = {
+// Approved /3 menu wording; used only while the console price (and quoted minutes) still match.
+const PHONE_PITCH: Record<string, [number, string, number?]> = {
   "school-step": [59, "להתחיל אנגלית עם מנוי בייסיק, ב 59 שקלים לחודש בלבד"],
   "school-pace": [119, "לדבר אנגלית בקצב עם מנוי פרו המומלץ, ב־119 שקלים לחודש"],
   "school-fluent": [199, "לאנגלית שוטפת עם מנוי פרימיום, ב 199 שקלים לחודש"],
   "school-foundations": [690, "לחבילת אנגלית FIX - שליטה מלאה באנגלית תוך ארבעה חודשים - כשכל המערכת פתוחה עבורכם משך תקופת הלימוד - ב 690 שקלים, עד 6 תשלומים"],
-  "school-mastery": [1490, "לחבילת שליטה מלאה, חצי שנה של אימון אינטנסיבי הכוללת 300 דקות בכל חודש, ב־1,490 שקלים, עד 12 תשלומים"],
+  "school-mastery": [1490, "לחבילת שליטה מלאה, חצי שנה של אימון אינטנסיבי הכוללת 300 דקות בכל חודש, ב־1,490 שקלים, עד 12 תשלומים", 300],
 };
 
 export function phonePackageIds(packages: Record<string, any>[]): string[] {
@@ -321,7 +321,7 @@ export class PaymentStore {
     if (pkg.billing === "monthly" || pkg.duration_months) {
       await new SubscriptionStore(this.db).create(order.customer_id, order.package_id, now,
         order.package_id === MASTERY_ID && JSON.parse(order.snapshot).guarantee_domain ? [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain: JSON.parse(order.snapshot).guarantee_domain }] : undefined,
-        { id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: pkg.duration_months ?? null, receiptId, chargeAgorot: amount, vatRate: order.vat_rate,
+        { id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: pkg.billing === "monthly" ? null : pkg.duration_months ?? null, receiptId, chargeAgorot: amount, vatRate: order.vat_rate,
           statements: [
             ...settlement,
             this.db.prepare("UPDATE payment_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.id),
@@ -413,7 +413,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     if (!p || !phonePurchasable(p)) return;
     const key = `הקישו ${index + 1}.`;
     const pitch = PHONE_PITCH[id];
-    if (pitch && pitch[0] === p.price_ils) lines.push(`${pitch[1]}, ${key}`);
+    if (pitch && pitch[0] === p.price_ils && (pitch[2] === undefined || pitch[2] === p.minutes)) lines.push(`${pitch[1]}, ${key}`);
     else if (p.billing === "monthly") lines.push(`${p.name}, ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש בהוראת קבע, ${key}`);
     else if (p.duration_months) lines.push(`${p.name}, ${p.minutes} דקות בכל חודש למשך ${p.duration_months} חודשים, ב-${p.price_ils} שקלים, עד ${installmentsFor(p)} תשלומים, ${key}`);
     else lines.push(`לרכישה מיידית של ${p.name}: ${p.minutes} דקות, בתוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, ${key}`);
