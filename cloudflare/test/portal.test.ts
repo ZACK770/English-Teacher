@@ -1361,6 +1361,22 @@ describe("real learner portal", () => {
     const a = await (await request("/v1/portal/me")).json() as any;
     expect(a.progress.sessions[0].call_id).toBe("private-call");
   });
+  it.each(["paid", "default"] as const)("records only the %s key tier for voice and text calls", async tier => {
+    env.GEMINI_API_KEY = "default-test-key";
+    env.GEMINI_PAID_TEACHER_API_KEY = "paid-test-key";
+    if (tier === "paid") db.sql.exec("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('qa-paid','learner-a','school-pace','school','qa-paid',119,0,200,'2999-01-01','2020-01-01')");
+    vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValue(new Error("Test model unavailable"));
+    expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(502);
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: "" });
+    await session.run(JSON.stringify({ type: "start", token: "portal", callId: "tier-voice", format: "pcm16;rate=8000;ch=1" }), "student", false);
+    const markers = db.sql.prepare("SELECT call_id,event_name,details_json FROM latency_events WHERE json_extract(details_json,'$.tier') IS NOT NULL ORDER BY id").all();
+    expect(markers).toHaveLength(2);
+    expect(JSON.parse(String(markers[0].details_json))).toEqual({ channel: "web", tier });
+    expect(markers[1]).toMatchObject({ call_id: "tier-voice", event_name: "gemini_connect_started", details_json: JSON.stringify({ tier }) });
+    const events = JSON.stringify(db.sql.prepare("SELECT details_json FROM latency_events UNION ALL SELECT details_json FROM diagnostic_events").all());
+    expect(events).not.toContain(env.GEMINI_API_KEY);
+    expect(events).not.toContain(env.GEMINI_PAID_TEACHER_API_KEY);
+  });
   it.each([false, true])("honors text transcript opt-in=%s in prompt traces as well as turns", async (enabled) => {
     await request("/v1/portal/preferences", tokenA, { store_transcripts: enabled });
     vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValue(new Error("Test model unavailable"));

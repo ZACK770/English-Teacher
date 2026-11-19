@@ -22,17 +22,17 @@ describe("Gemini allocation key routing", () => {
   afterEach(() => db.close());
 
   it("uses the paid key for minutes reserved from a purchase", async () => {
-    expect(await geminiKeyForCall(env, "paid")).toBe("paid-test-key");
+    expect(await geminiKeyForCall(env, "paid")).toEqual({ key: "paid-test-key", tier: "paid" });
   });
   it.each(["grant", "free", "basic", "unrestricted", "finished", "empty", "missing"])("uses the default key for %s", async callId => {
-    expect(await geminiKeyForCall(env, callId)).toBe("default-test-key");
+    expect(await geminiKeyForCall(env, callId)).toEqual({ key: "default-test-key", tier: "default" });
   });
   it("keeps advertisements on the default key even with a paid allocation", async () => {
-    expect(await geminiKeyForCall(env, "paid", true)).toBe("default-test-key");
+    expect(await geminiKeyForCall(env, "paid", true)).toEqual({ key: "default-test-key", tier: "default" });
   });
   it.each([undefined, ""])("falls back when the paid secret is %s", async key => {
     env.GEMINI_PAID_TEACHER_API_KEY = key;
-    expect(await geminiKeyForCall(env, "paid")).toBe("default-test-key");
+    expect(await geminiKeyForCall(env, "paid")).toEqual({ key: "default-test-key", tier: "default" });
   });
   it("propagates allocation lookup failures rather than guessing paid status", async () => {
     vi.spyOn(env.DB, "prepare").mockImplementation(() => { throw new Error("database unavailable"); });

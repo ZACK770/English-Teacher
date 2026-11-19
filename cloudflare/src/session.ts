@@ -214,9 +214,10 @@ export class TutorSession {
         hardLimit = setTimeout(() => this.stop("hard_time_limit"), allowance.seconds * 1000);
         await this.runTasks([this.basicListen(allowance.intro ?? ""), this.pacedOutput(), this.watchdog()]);
       } else {
-        await this.latency("gemini_connect_started");
         if (this.abort.signal.aborted) return;
-        this.s = { ...this.s, geminiKey: await geminiKeyForCall(this.env, this.callId, adCall) };
+        const selected = await geminiKeyForCall(this.env, this.callId, adCall);
+        this.s = { ...this.s, geminiKey: selected.key };
+        await this.latency("gemini_connect_started", { tier: selected.tier });
         const ai = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, this.artifact.setup_message);
         this.ai = ai;
         await ai.connect();
