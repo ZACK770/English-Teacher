@@ -4,6 +4,7 @@ import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { LearningProgress } from "./LearningProgress";
+import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
 import "./portal.css";
@@ -20,8 +21,8 @@ const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day:
 function IconButton({ label, children, onClick, active = false }: { label: string; children: React.ReactNode; onClick: () => void; active?: boolean }) {
   return <button type="button" className={"sk-icon " + (active ? "is-active" : "")} aria-label={label} aria-pressed={active} title={label} onClick={onClick}>{children}<span className="sk-tooltip">{label}</span></button>;
 }
-function Brand({ onClick }: { onClick: () => void }) {
-  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><AudioLines strokeWidth={1.5} /><span>SpeakCall<span className="sk-brand-dot">.</span></span></button>;
+function Brand({ onClick, collapse = false }: { onClick: () => void; collapse?: boolean }) {
+  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><SpeakCallLogo collapse={collapse} /></button>;
 }
 function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
   return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">
@@ -130,7 +131,7 @@ export const LearnerPortal: React.FC = () => {
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (note) { const t = setTimeout(() => setNote(""), 4500); return () => clearTimeout(t); } }, [note]);
-  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus()); };
+  const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true })); };
   const run = async (action: () => Promise<void>, success = "") => {
     setBusy(true); setError("");
     try { await action(); await refresh(); if (success) setNote(success); return true; }
@@ -190,7 +191,7 @@ export const LearnerPortal: React.FC = () => {
     </div>
   </>;
   return <div className="speakool" dir="rtl">
-    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
+    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
         <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
@@ -347,7 +348,7 @@ function PreferencesForm({ preferences, account, onSave, onDirection, onTeachers
     <Setting title="שפת התרגום" value={draft.language || "זיהוי אוטומטי"}><label>השפה שלך<select value={draft.language} onChange={e => change("language", e.target.value)}><option value="">זיהוי אוטומטי</option>{["English", "Hebrew", "Yiddish", "Arabic", "Russian", "French"].map(l => <option key={l}>{l}</option>)}</select></label></Setting>
     <div className="sk-setting-row"><span>אוצר המילים שלי<small>{account.materials.length} רשימות שמורות</small></span><button type="button" className="sk-link" onClick={onMaterials}>לרשימות שלי<ArrowUpLeft size={15} /></button></div>
     <Setting title="טלפונים מחוברים" value={account.customer.phone}>{phonesPanel}</Setting>
-    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{futureMinutes(account) > 0 && <p>{futureMinutes(account)} דקות לתקופות עתידיות (עדיין לא זמינות)</p>}{account.receipts.length ? account.receipts.map(r => <p key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"}{r.valid_from && new Date(r.valid_from).getTime() > Date.now() ? <> · זמינות מ־{lessonDate(r.valid_from)}</> : null} · עד {lessonDate(r.expires_at)}</p>) : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
+    <Setting title="החבילה שלי" value={remainingMinutes(account) + " דקות בחבילה"}>{futureMinutes(account) > 0 && <p>{futureMinutes(account)} דקות לתקופות עתידיות (עדיין לא זמינות)</p>}{account.receipts.length ? <ul className="sk-receipts">{account.receipts.map(r => <li key={r.id}>{r.minutes} דקות · {r.product === "school" ? "בית הספר" : "תרגומון"}{r.valid_from && new Date(r.valid_from).getTime() > Date.now() ? <> · זמינות מ־{lessonDate(r.valid_from)}</> : null} · עד {lessonDate(r.expires_at)}</li>)}</ul> : <p>עדיין אין חבילה בתשלום בחשבון.</p>}<a className="sk-link" href={"tel:" + account.phone}>להוספת דקות: חייגו, הקישו 2 ואז 3 <Phone size={15} /></a></Setting>
     {subscriptionPanel}
     <div className="sk-setting-row"><label htmlFor="save-transcripts">לשמור גם את המילים<small>תמליל השיחות הבאות. סיכומים נשמרים גם בלי זה.</small></label><input id="save-transcripts" type="checkbox" role="switch" checked={draft.store_transcripts === true} onChange={e => change("store_transcripts", e.target.checked)} /></div>
     <div className="sk-actions"><button className="sk-primary" type="submit">ככה מתאים לי<Check size={16} /></button><button type="button" className="sk-link" onClick={onLogout}><LogOut size={15} />יציאה</button></div>

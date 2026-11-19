@@ -10,6 +10,8 @@ import { LegalPage } from './components/legal/LegalPage';
 import { LegalFooter } from './components/legal/LegalFooter';
 import { legalBasePath, legalPageForPath } from './legalRoutes';
 import { AdminAuthGate } from './components/dashboard/AdminAuthGate';
+import './components/dashboard/dashboard.css';
+import './components/portal/portal-polish.css';
 
 type View = 'dashboard' | 'learn' | 'join' | 'legacy' | 'home';
 
@@ -97,7 +99,7 @@ export const AppContent: React.FC = () => {
       </div>
     </div>
   );
-  return currentView === 'dashboard' || currentView === 'legacy' ? <AdminAuthGate>{content}</AdminAuthGate> : content;
+  return currentView === 'dashboard' || currentView === 'legacy' ? <div className="pulse-dashboard"><AdminAuthGate>{content}</AdminAuthGate></div> : content;
 };
 
 export const App: React.FC = () => {

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { submitCallback } from './callbackApi';
 import { LegalFooter } from '../legal/LegalFooter';
+import { SpeakCallLogo } from '../brand/SpeakCallLogo';
+import { legalBasePath } from '../../legalRoutes';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
 const SHOW_SCHEDULED_CALLBACK = false;
@@ -78,11 +80,8 @@ export const JoinLanding: React.FC = () => {
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-6 py-4">
         <div className="max-w-[1280px] mx-auto flex items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-xl shadow-md">
-              ס
-            </div>
-            <div>
-              <span className="font-extrabold text-lg tracking-tight text-slate-100 block">ספיקול (SpeakCall)</span>
+            <a href={`${legalBasePath(window.location.pathname)}/`} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
+            <div className="hidden sm:block">
               <span className="text-[11px] text-slate-400 block font-medium">בית ספר ללימוד אנגלית מדוברת בטלפון ובמחשב</span>
             </div>
           </div>
