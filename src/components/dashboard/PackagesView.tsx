@@ -147,7 +147,7 @@ export const PackagesView: React.FC = () => {
               </div>
               <p className="text-xs text-[#718087]">
                 {pkg.minutes} דקות{pkg.billing === 'monthly' || pkg.duration_months ? ' בחודש' : ''} · עד {pkg.max_call_minutes ?? 5} דקות לשיחה.
-                {pkg.billing === 'monthly' && <> הוראת קבע · חודש ראשון ₪29 · שנתי ₪{pkg.annual_price_ils}.</>}
+                {pkg.billing === 'monthly' && <> הוראת קבע · שנתי ₪{pkg.annual_price_ils}.</>}
                 {pkg.duration_months && <> מסלול שליטה · {pkg.duration_months} חודשים · מחיר קבוע, אפשרות לתשלומים.</>}
                 {pkg.anchor_price_ils && <> במקום ₪{pkg.anchor_price_ils.toLocaleString('he-IL')} · לעומת מנוי שוטף לאותה תקופה.</>}
                 {pkg.recommended && <> מומלץ.</>}

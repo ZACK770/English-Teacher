@@ -1,5 +1,5 @@
 export const FREE_TIER_TEXT = "שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש";
-export const MONTHLY_TERMS = "חודש ראשון ב־₪29 בכל המסלולים, עם מלוא הדקות. מנוי שנתי במחיר של 10 חודשים. המחיר נעול כל עוד המנוי פעיל. דקות שלא נוצלו נצברות לחודש אחד בלבד. אפשר להקפיא עד חודשיים ולבטל בכל עת.";
+export const MONTHLY_TERMS = "מנוי שנתי במחיר של 10 חודשים. המחיר נעול כל עוד המנוי פעיל. דקות שלא נוצלו נצברות לחודש אחד בלבד. אפשר להקפיא עד חודשיים ולבטל בכל עת.";
 export const MASTERY_GUARANTEE = "לא הגעת ליעד אוצר המילים לפי המדידה? מקבלים 3 חודשים נוספים ללא עלות.";
 export const SCHOOL_FREE_POLICY = {
   enabled: true, product: "school" as const, opening_seconds: 600,
@@ -8,9 +8,9 @@ export const SCHOOL_FREE_POLICY = {
 };
 
 export const PRICING_PACKAGES = [
-  { id: "school-step", name: "צעד", product: "school" as const, billing: "monthly" as const, price_ils: 59, minutes: 60, validity_days: 30, max_call_minutes: 10, annual_price_ils: 590, first_month_price_ils: 29, recommended: false, tagline: "מתחילים לדבר בקצב שלך", active: true, phone_enabled: false, automated_purchase: false },
-  { id: "school-pace", name: "בקצב", product: "school" as const, billing: "monthly" as const, price_ils: 119, minutes: 200, validity_days: 30, max_call_minutes: 15, annual_price_ils: 1190, first_month_price_ils: 29, recommended: true, tagline: "תרגול קבוע והתקדמות בשיחה", active: true, phone_enabled: false, automated_purchase: false },
-  { id: "school-fluent", name: "שוטף", product: "school" as const, billing: "monthly" as const, price_ils: 199, minutes: 400, validity_days: 30, max_call_minutes: 20, annual_price_ils: 1990, first_month_price_ils: 29, recommended: false, tagline: "יותר זמן לשיחה שוטפת", active: true, phone_enabled: false, automated_purchase: false },
+  { id: "school-step", name: "צעד", product: "school" as const, billing: "monthly" as const, price_ils: 59, minutes: 60, validity_days: 30, max_call_minutes: 10, annual_price_ils: 590, recommended: false, tagline: "מתחילים לדבר בקצב שלך", active: true, phone_enabled: false, automated_purchase: false },
+  { id: "school-pace", name: "בקצב", product: "school" as const, billing: "monthly" as const, price_ils: 119, minutes: 200, validity_days: 30, max_call_minutes: 15, annual_price_ils: 1190, recommended: true, tagline: "תרגול קבוע והתקדמות בשיחה", active: true, phone_enabled: false, automated_purchase: false },
+  { id: "school-fluent", name: "שוטף", product: "school" as const, billing: "monthly" as const, price_ils: 199, minutes: 400, validity_days: 30, max_call_minutes: 20, annual_price_ils: 1990, recommended: false, tagline: "יותר זמן לשיחה שוטפת", active: true, phone_enabled: false, automated_purchase: false },
   { id: "school-foundations", name: "יסודות", product: "school" as const, billing: "one_time" as const, price_ils: 690, minutes: 300, validity_days: 180, duration_months: 6, max_call_minutes: 20, anchor_price_ils: 1194, recommended: false, tagline: "אוצר מילים בסיסי ומדידת התקדמות", active: true, phone_enabled: false, automated_purchase: false },
   { id: "school-mastery", name: "שליטה מלאה", product: "school" as const, billing: "one_time" as const, price_ils: 1490, minutes: 300, validity_days: 365, duration_months: 12, max_call_minutes: 20, anchor_price_ils: 2388, recommended: true, tagline: "אוצר מילים בסיסי ומתקדם ותחום אחד לבחירה", active: true, phone_enabled: false, automated_purchase: false },
   { id: "school-topup", name: "תוספת דקות", product: "school" as const, billing: "one_time" as const, price_ils: 39, minutes: 60, validity_days: 30, max_call_minutes: 15, recommended: false, tagline: "רכישה חד־פעמית, גם ללא מנוי", active: true, phone_enabled: true, automated_purchase: true },
