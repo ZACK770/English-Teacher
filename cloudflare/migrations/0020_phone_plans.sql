@@ -1,8 +1,8 @@
 -- Monthly plans and term tracks become purchasable on the phone line (/3); terms follow the approved menu.
 UPDATE console_records SET body=json_set(body,'$.phone_enabled',json('true')),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
   WHERE kind='packages' AND id IN ('school-step','school-pace','school-fluent','school-foundations','school-mastery');
-UPDATE console_records SET body=json_set(body,'$.duration_months',4,'$.validity_days',120,'$.max_installments',6) WHERE kind='packages' AND id='school-foundations';
-UPDATE console_records SET body=json_set(body,'$.duration_months',6,'$.validity_days',180,'$.max_installments',12) WHERE kind='packages' AND id='school-mastery';
+UPDATE console_records SET body=json_set(body,'$.duration_months',4,'$.validity_days',120,'$.max_installments',6,'$.anchor_price_ils',796) WHERE kind='packages' AND id='school-foundations';
+UPDATE console_records SET body=json_set(body,'$.duration_months',6,'$.validity_days',180,'$.max_installments',12,'$.anchor_price_ils',1194) WHERE kind='packages' AND id='school-mastery';
 UPDATE plans SET validity_days=120 WHERE id='school-foundations';
 UPDATE plans SET validity_days=180 WHERE id='school-mastery';
 

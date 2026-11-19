@@ -51,7 +51,7 @@ Nedarim API authentication, credit availability and the previously empty webhook
 configuration were verified read-only on 2026-10-21. A completed live telephone
 payment is a separate check; do not describe configuration checks as a live charge.
 
-Webhook: `https://ivr-driver.onrender.com/v1/payments/nedarim/webhook`.
+Webhook: `https://english-engine.a0527698420.workers.dev/v1/payments/nedarim/webhook` (the Render service is suspended).
 Use GetWebhook before SetWebhook; never silently overwrite another destination.
 Install the secret on the app before SetWebhookSecret and activating delivery.
 HMAC is calculated over the exact raw bytes with a 5-minute timestamp window.
