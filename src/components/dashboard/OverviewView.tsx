@@ -128,8 +128,8 @@ export const OverviewView: React.FC<{ onNavigate: (page: string) => void }> = ({
             </div>
 
             <div className="flex items-center justify-between py-2 border-b border-[#f0f3f4]">
-              <span className="text-[#718087]">עלות רכישת לקוח נטו (חבילת מתנה 20 דק׳)</span>
-              <strong className="text-[#137c69] text-sm tabular-nums">₪3.60 בלבד</strong>
+              <span className="text-[#718087]">אומדן עלות שיעור פתיחה (10 דק׳)</span>
+              <strong className="text-[#137c69] text-sm tabular-nums">₪1.80 לפני השיחות החודשיות</strong>
             </div>
 
             <div className="flex items-center justify-between py-2 border-b border-[#f0f3f4]">

@@ -195,7 +195,7 @@ export const JoinLanding: React.FC = () => {
                   </div>
                   <div>
                     <h4 className="font-extrabold text-sm text-emerald-400">
-                      20 דקות שיעור ראשונות במתנה מלאה
+                      שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש
                     </h4>
                     <p className="text-slate-400 mt-0.5">
                       התנסות טלפונית וממוחשבת ישירה ללא שום עלות וללא צורך בהזנת כרטיס אשראי.
@@ -235,7 +235,7 @@ export const JoinLanding: React.FC = () => {
                   </div>
                   <div>
                     <h4 className="font-extrabold text-sm text-slate-100">
-                      20 דקות שיעור ראשונות במתנה מלאה
+                      שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש
                     </h4>
                     <p className="text-slate-400 mt-0.5">
                       שיחת היכרות ישירה ללא התחייבות.
@@ -268,7 +268,7 @@ export const JoinLanding: React.FC = () => {
                 <div>
                   <h3 className="text-xl font-extrabold text-slate-100">הרישום הושלם בהצלחה!</h3>
                   <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto mt-1">
-                    שלום <strong>{name}</strong>, חבילת המתנה (20 דק׳) הופעלה עבור המספר <strong>{phone}</strong>.
+                    שלום <strong>{name}</strong>, בקשת ההצטרפות נשלחה עבור המספר <strong>{phone}</strong>. ההתנסות כוללת שיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש.
                   </p>
                 </div>
 

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { replaceSchoolPackages, SCHOOL_FREE_POLICY } from '../pricing';
 import {
   BotProfile,
   TutorControls,
@@ -200,8 +201,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [packages, setPackages] = useState<Package[]>(() => {
-    const saved = localStorage.getItem('dibura_packages');
-    return saved ? JSON.parse(saved) : INITIAL_PACKAGES;
+    const saved = localStorage.getItem('dibura_packages_v2');
+    if (saved) return JSON.parse(saved);
+    const legacy = localStorage.getItem('dibura_packages');
+    return legacy ? replaceSchoolPackages(JSON.parse(legacy) as Package[]) : INITIAL_PACKAGES;
   });
 
   const [receipts, setReceipts] = useState<Receipt[]>(() => {
@@ -225,8 +228,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [accessPolicies, setAccessPolicies] = useState<Record<string, AccessPolicy>>(() => {
-    const saved = localStorage.getItem('dibura_access_policies');
-    return saved ? JSON.parse(saved) : INITIAL_ACCESS_POLICIES;
+    const saved = localStorage.getItem('dibura_access_policies_v2');
+    if (saved) return JSON.parse(saved);
+    const legacy = JSON.parse(localStorage.getItem('dibura_access_policies') || '{}') as Record<string, AccessPolicy>;
+    return { ...INITIAL_ACCESS_POLICIES, ...Object.fromEntries(Object.entries(legacy).map(([id, policy]) => [id, policy.product === 'school' ? { ...policy, ...SCHOOL_FREE_POLICY } : policy])) };
   });
 
   const [economics, setEconomics] = useState<Economics>(() => {
@@ -274,12 +279,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => { localStorage.setItem('dibura_customers', JSON.stringify(customers)); }, [customers]);
   useEffect(() => { localStorage.setItem('dibura_courses', JSON.stringify(courses)); }, [courses]);
   useEffect(() => { localStorage.setItem('dibura_enrollments', JSON.stringify(enrollments)); }, [enrollments]);
-  useEffect(() => { localStorage.setItem('dibura_packages', JSON.stringify(packages)); }, [packages]);
+  useEffect(() => { localStorage.setItem('dibura_packages_v2', JSON.stringify(packages)); }, [packages]);
   useEffect(() => { localStorage.setItem('dibura_receipts', JSON.stringify(receipts)); }, [receipts]);
   useEffect(() => { localStorage.setItem('dibura_payment_orders', JSON.stringify(paymentOrders)); }, [paymentOrders]);
   useEffect(() => { localStorage.setItem('dibura_payment_issues', JSON.stringify(paymentIssues)); }, [paymentIssues]);
   useEffect(() => { localStorage.setItem('dibura_narrations', JSON.stringify(narrations)); }, [narrations]);
-  useEffect(() => { localStorage.setItem('dibura_access_policies', JSON.stringify(accessPolicies)); }, [accessPolicies]);
+  useEffect(() => { localStorage.setItem('dibura_access_policies_v2', JSON.stringify(accessPolicies)); }, [accessPolicies]);
   useEffect(() => { localStorage.setItem('dibura_economics', JSON.stringify(economics)); }, [economics]);
   useEffect(() => { localStorage.setItem('dibura_pbx_config', JSON.stringify(pbxConfig)); }, [pbxConfig]);
   useEffect(() => { localStorage.setItem('dibura_callbacks', JSON.stringify(callbacks)); }, [callbacks]);
@@ -438,11 +443,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `pkg_${Date.now()}`,
       name: data.name || 'חבילה חדשה',
       product: data.product || 'school',
-      minutes: data.minutes || 100,
-      price_ils: data.price_ils || 200,
+      minutes: data.minutes ?? 60,
+      price_ils: data.price_ils ?? 39,
       validity_days: data.validity_days || 30,
       active: true,
-      phone_enabled: true
+      phone_enabled: data.phone_enabled ?? true,
+      billing: data.billing ?? 'one_time',
+      max_call_minutes: data.max_call_minutes ?? 15,
+      automated_purchase: data.automated_purchase ?? true
     };
     setPackages(prev => [...prev, newP]);
     showToast(`החבילה "${newP.name}" נוצרה.`);
@@ -451,6 +459,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const recordManualReceipt = (customerId: string, packageId: string, reference: string, amountIls: number): Receipt => {
     const pkg = packages.find(p => p.id === packageId);
+    if (pkg?.automated_purchase === false || pkg?.billing === 'monthly' || pkg?.billing === 'yearly' || pkg?.duration_months) throw new Error('יש להסדיר זכאות חודשית דרך נציג; אין להטעין מסלול כקבלה חד־פעמית');
     const newRec: Receipt = {
       id: `rec_${Date.now()}`,
       customer_id: customerId,
@@ -802,19 +811,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     },
     {
       extension: '99/3',
-      name: 'שיחת מכירה ואינטייק (חבילת מתנה 20 דק)',
+      name: 'שיחת מכירה ואינטייק (שיעור פתיחה 10 דק)',
       bot_id: 'shochi-robot',
-      description: 'שיחה אישית מול שוכי עם אבחון רמה ראשוני ומתן חבילת מתנה',
+      description: 'שיחה אישית מול שוכי עם אבחון רמה ראשוני ושיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש',
       ivr_file: 'intake_gift.wav',
       is_active: true,
-      system_prompt: 'You are Shochi greeting a new student who registered on the landing page. Welcome them, conduct a 2-minute friendly spoken intake to assess their level, celebrate their initiative, and explain that their 20-minute gift pack is activated.'
+      system_prompt: 'You are Shochi greeting a new student who registered on the landing page. Welcome them, conduct a 2-minute friendly spoken intake to assess their level, celebrate their initiative, and explain that a one-time 10-minute opening lesson is available, followed by two calls of up to 5 minutes per month.'
     }
   ]);
 
   const currentCustomer: Customer = {
     ...(customers.find(c => c.id === activeLearnerId) || customers[0]),
     full_name: (customers.find(c => c.id === activeLearnerId) || customers[0])?.name || 'תלמיד לדוגמה',
-    balance_minutes: (customers.find(c => c.id === activeLearnerId) || customers[0])?.paid_ils ? Math.round((customers.find(c => c.id === activeLearnerId) || customers[0])!.paid_ils! * 0.8) : 20,
+    balance_minutes: (customers.find(c => c.id === activeLearnerId) || customers[0])?.paid_ils ? Math.round((customers.find(c => c.id === activeLearnerId) || customers[0])!.paid_ils! * 0.8) : 10,
     current_level: 'מתחיל מתקדם (A2)',
     total_calls: 12,
     vocab_words_mastered: 84,

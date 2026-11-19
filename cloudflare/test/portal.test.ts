@@ -14,6 +14,9 @@ import { GeminiLive } from "../src/gemini";
 import { cleanupPortalAuth } from "../src/portal-auth";
 import worker from "../src/index";
 import { LearningStore } from "../src/learning";
+import { PackageSchema } from "../src/business";
+import { PaymentStore } from "../src/payments";
+import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -75,6 +78,80 @@ beforeEach(async () => {
   }));
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); db.sql.close(); });
+
+describe("approved pricing catalog", () => {
+  it("seeds the approved school catalog and mirrors accurate billing types", async () => {
+    for (const pkg of PRICING_PACKAGES.filter(p => p.product === "school")) {
+      expect(PackageSchema.parse(await b.record("packages", pkg.id))).toEqual(PackageSchema.parse(pkg));
+      const plan = db.sql.prepare("SELECT * FROM plans WHERE id=?").get(pkg.id)!;
+      expect([plan.billing, plan.price_agorot, plan.included_minutes]).toEqual([pkg.billing, pkg.price_ils * 100, pkg.minutes]);
+    }
+    await b.save("packages", PackageSchema.parse(PRICING_PACKAGES[0]), "school-step");
+    expect(db.sql.prepare("SELECT billing FROM plans WHERE id='school-step'").get()?.billing).toBe("monthly");
+  });
+
+  it("retires legacy school offers without deleting history or changing translator packages", async () => {
+    await b.save("packages", { name: "ישן", product: "school", price_ils: 220, minutes: 100, validity_days: 30, active: true }, "pkg_starter");
+    await b.save("packages", PRICING_PACKAGES.find(p => p.product === "translator")!, "pkg_translator_free");
+    const translator = await b.record("packages", "pkg_translator_free");
+    db.sql.exec(readFileSync(new FileURL("../migrations/0010_pricing_v2.sql", import.meta.url), "utf8"));
+    expect((await b.list("packages")).some(p => p.id === "pkg_starter")).toBe(false);
+    expect(await b.record("packages", "pkg_starter")).toMatchObject({ minutes: 100, active: false, retired: true });
+    expect(await b.record("packages", "pkg_translator_free")).toEqual(translator);
+  });
+
+  it("blocks direct and hidden purchase and manual wallet grants for representative-only offers", async () => {
+    for (const pkg of PRICING_PACKAGES.filter(p => !p.automated_purchase)) {
+      await expect(new PaymentStore(b).create("buy-" + pkg.id, "learner-a", pkg.id, true)).rejects.toThrow("נציג");
+      await expect(b.receipt({ customer_id: "learner-a", package_id: pkg.id, reference: "manual:" + pkg.id, amount_ils: pkg.price_ils })).rejects.toThrow("נציג");
+    }
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()?.n).toBe(0);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()?.n).toBe(0);
+  });
+
+  it("keeps top-up and translator one-time orders available without a subscription", async () => {
+    const translator = PRICING_PACKAGES.find(p => p.product === "translator")!;
+    await b.save("packages", translator, translator.id);
+    for (const [id, amount, minutes, days] of [["school-topup", 3900, 60, 30], [translator.id, 42000, 600, 90]] as const) {
+      const order = await new PaymentStore(b).create("buy-" + id, "learner-a", id);
+      expect(order.amount_agorot).toBe(amount);
+      expect(JSON.parse(order.snapshot)).toMatchObject({ minutes, validity_days: days });
+      expect(await new PaymentStore(b).issue("buy-" + id)).toBe(true);
+      const data = { MosadNumber: "7019554", Groupe: "dibura-" + order.id, TransactionId: String(amount), Confirmation: "approved", Currency: "1", Amount: amount / 100 };
+      expect(await new PaymentStore(b).settle(data, "7019554")).toMatchObject({ paid: true, package_id: id });
+      expect(await new PaymentStore(b).settle(data, "7019554")).toMatchObject({ duplicate: true });
+    }
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()?.n).toBe(2);
+    expect(await b.reserveCall("learner-a", "student", "topup-call", 1800)).toEqual({ seconds: 900, mode: "paid" });
+  });
+
+  it("grants one opening lesson across teachers then two five-minute calls each month", async () => {
+    await b.save("policies", SCHOOL_FREE_POLICY, "student");
+    await b.save("policies", SCHOOL_FREE_POLICY, "another-teacher");
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect(await b.reserveCall("learner-a", "student", "opening", 1800)).toMatchObject({ seconds: 600, mode: "free" });
+    await b.settleCall("opening", 600);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
+    for (const id of ["free-a", "free-b"]) {
+      expect(await b.reserveCall("learner-a", "another-teacher", id, 1800)).toMatchObject({ seconds: 300, mode: "free" });
+      await b.settleCall(id, 300);
+    }
+    expect(await b.reserveCall("learner-a", "student", "exhausted", 1800)).toMatchObject({ seconds: 0, mode: "blocked" });
+    db.sql.prepare("UPDATE usage_allocations SET created_at='2000-01-01' WHERE product='school'").run();
+    expect(await b.reserveCall("learner-a", "student", "next-month", 1800)).toMatchObject({ seconds: 300, mode: "free" });
+  });
+
+  it("does not grant anonymous trials, retries zero-billed failures, and validates ranges", async () => {
+    await b.save("policies", SCHOOL_FREE_POLICY, "student");
+    expect(await b.reserveCall("anonymous-hidden", "student", "hidden", 1800)).toMatchObject({ seconds: 0 });
+    await b.reserveCall("learner-a", "student", "failed-opening", 1800);
+    await b.settleCall("failed-opening", 0);
+    expect(await b.reserveCall("learner-a", "student", "retry", 1800)).toMatchObject({ seconds: 600 });
+    expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], max_call_minutes: 0 }).success).toBe(false);
+    expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], billing: "invalid" }).success).toBe(false);
+    expect(PackageSchema.safeParse({}).success).toBe(false);
+  });
+});
 
 describe("real learner portal", () => {
   it("keeps deleted-list assessments discoverable without selecting deleted material for new lessons", async () => {

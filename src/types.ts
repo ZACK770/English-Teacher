@@ -108,6 +108,15 @@ export interface Package {
   validity_days: number;
   active: boolean;
   phone_enabled: boolean;
+  billing?: 'prepaid' | 'monthly' | 'yearly' | 'one_time';
+  max_call_minutes?: number;
+  automated_purchase?: boolean;
+  duration_months?: number;
+  annual_price_ils?: number;
+  first_month_price_ils?: number;
+  anchor_price_ils?: number;
+  recommended?: boolean;
+  tagline?: string;
 }
 
 export interface Receipt {
@@ -177,6 +186,7 @@ export interface PbxRoute {
 }
 
 export interface AccessPolicy {
+  opening_seconds?: number;
   id: string;
   enabled: boolean;
   product: ProductFamily;
@@ -378,5 +388,4 @@ export interface HabitStreak {
   minutes_today: number;
   reward_unlocked: boolean;
 }
-
 

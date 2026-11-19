@@ -9,8 +9,8 @@ export const EconomicsExcelView: React.FC = () => {
   const [excelRows, setExcelRows] = useState(INITIAL_EXCEL_ROWS);
   const [totalLeads, setTotalLeads] = useState(1000);
   const [conversionRatePct, setConversionRatePct] = useState(8.5); // 8.5% conversion
-  const [avgPackagePriceIls, setAvgPackagePriceIls] = useState(250);
-  const [giftMinutesPerLead, setGiftMinutesPerLead] = useState(20);
+  const [avgPackagePriceIls, setAvgPackagePriceIls] = useState(119);
+  const [giftMinutesPerLead, setGiftMinutesPerLead] = useState(10);
   const [directCostPerMinuteIls, setDirectCostPerMinuteIls] = useState(0.18);
   const [fixedMonthlyCostIls, setFixedMonthlyCostIls] = useState(500);
 

@@ -337,6 +337,7 @@ function AccessNotice({ account }: { account: Account }) {
   if (!a?.limited) return null;
   const minutes = remainingMinutes(account);
   if (minutes > 0) return <p role="status" className="sk-access"><strong>מסלול {a.plan_name || "פעיל"}</strong> · נשארו {minutes} דקות · עד {a.max_call_minutes || 5} דקות בכל שיחה. בסוף כל שיחה המורה מסכם ושומר הכול.</p>;
+  if (a.opening_minutes) return <p role="status" className="sk-access"><strong>שיעור פתיחה ללא עלות</strong> · עד {a.opening_minutes} דקות, באופן חד־פעמי. לאחריו 2 שיחות של עד 5 דקות בחודש.</p>;
   if (a.free_calls_left > 0) return <p role="status" className="sk-access"><strong>מסלול טעימה</strong> · נשארו לך {a.free_calls_left} שיחות החודש, עד {a.free_call_minutes} דקות כל אחת. רוצה יותר? <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE}, מקש 3</a></p>;
   return <p role="alert" className="sk-access is-empty"><strong>שיחות הטעימה של החודש נוצלו.</strong> כל מה שלמדת שמור. כדי להמשיך עכשיו: <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE} והקישו 3</a> לבחירת מסלול.</p>;
 }
