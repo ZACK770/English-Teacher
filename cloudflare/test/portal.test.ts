@@ -634,6 +634,14 @@ describe("approved pricing catalog", () => {
 });
 
 describe("public callback quota", () => {
+  it.each(["now", "scheduled"])("rejects the internal lesson source on public %s requests", async timing => {
+    const response = await request("/v1/public/callback", "", {
+      name: "Callback test", phone: "0500000001", timing, source: " lesson_followup ", for_whom: "self", consent: true,
+    });
+    expect(response.status).toBe(422);
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([]);
+    expect(db.sql.prepare("SELECT * FROM api_quota WHERE api GLOB 'public-callback:*'").all()).toEqual([]);
+  });
   it("does not let a scheduled lesson swallow an immediate website callback", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     await recordSalesTool(b, "learner-a", "booked", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" });

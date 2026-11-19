@@ -23,7 +23,7 @@ const RequestSchema = z.object({
   preferred_time: z.string().trim().max(80).default(""),
   preferred_at: z.string().datetime({ offset: true }).optional(),
   consent: z.literal(true),
-  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).default(""),
+  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).refine(source => source !== "lesson_followup").default(""),
   website: z.string().max(0).default(""),
 });
 
