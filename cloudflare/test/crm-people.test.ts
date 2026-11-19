@@ -56,6 +56,19 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM customer reset", () => {
+  beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse(now) + 11 * 60 * 1000); });
+  it.each(["session", "ivr-events", "ad-entries", "menu", "call_customers"].flatMap(source => [1, 9, 11].map(minutes => ({ source, minutes }))))("handles $source activity $minutes minutes ago", async ({ source, minutes }) => {
+    customer();
+    const at = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    if (source === "session") {
+      session(); sql.prepare("UPDATE sessions SET ended_at=?").run(at);
+    } else if (source === "call_customers" || source === "menu") {
+      insert("call_customers", { call_id: "menu-call", customer_id: "person1", profile_id: "ivr", channel: "phone", created_at: source === "call_customers" ? at : now });
+      if (source === "menu") insert("console_settings", { id: "ivr:menu-call", body: "{}", updated_at: at });
+    } else event(source, { at });
+    expect((await reset()).status).toBe(minutes < 10 ? 409 : 200);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: minutes < 10 ? 0 : 1 });
+  });
   it.each(["primary_phone", "customer_phones"])("preserves phone-matched data when %s assigns the number to another customer", async source => {
     customer(); customer("other", source === "primary_phone" ? "+972501234567" : "0507654321");
     if (source === "customer_phones") insert("customer_phones", { phone: "0501234567", customer_id: "other" });

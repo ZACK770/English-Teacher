@@ -18,6 +18,11 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
     UNION SELECT json_extract(body,'$.call_id') FROM console_records WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=?`, id, id, id, id, id, id, id);
   const callIds = [...new Set(callRows.flatMap(r => r.call_id ? [r.call_id, r.call_id.split("~")[0]] : []))];
   const calls = JSON.stringify(callIds);
+  const recent = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  if ((await rows(`SELECT 1 FROM sessions WHERE student_id=? AND (julianday(started_at)>=julianday(?) OR julianday(ended_at)>=julianday(?))
+    UNION ALL SELECT 1 FROM call_customers WHERE customer_id=? AND julianday(created_at)>=julianday(?)
+    UNION ALL SELECT 1 FROM console_records WHERE kind IN ('ivr-events','ad-entries') AND (json_extract(body,'$.customer_id')=? OR json_extract(body,'$.call_id') IN (SELECT value FROM json_each(?))) AND (julianday(json_extract(body,'$.at'))>=julianday(?) OR julianday(created_at)>=julianday(?))
+    UNION ALL SELECT 1 FROM console_settings WHERE id IN (SELECT 'ivr:'||value FROM json_each(?)) AND julianday(updated_at)>=julianday(?) LIMIT 1`, id, recent, recent, id, recent, id, calls, recent, recent, calls, recent)).length) throw new HttpError(409, "לא ניתן למחוק לקוח שהייתה לו פעילות בעשר הדקות האחרונות. יש להמתין ולנסות שוב.");
   if ((await rows("SELECT 1 FROM active_calls WHERE call_id IN (SELECT value FROM json_each(?)) AND lease_expires_at>? LIMIT 1", calls, Date.now() / 1000)).length) throw new HttpError(409, "לא ניתן למחוק לקוח במהלך שיחה פעילה. יש לסיים את השיחה ולנסות שוב.");
   const subs = JSON.stringify((await rows("SELECT id FROM subscriptions WHERE customer_id=?", id)).map(r => r.id));
   const inSubs = "IN (SELECT value FROM json_each(?))";
