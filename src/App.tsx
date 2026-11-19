@@ -41,6 +41,7 @@ export const AppContent: React.FC = () => {
       } else if (
         [
           'overview',
+          'analytics',
           'campaigns',
           'economics',
           'bots',

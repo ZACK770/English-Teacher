@@ -1,4 +1,5 @@
 import { type Env, bearer, secureEqual, settings, HttpError } from "./env";
+import { ingestEvent } from "./analytics";
 import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
@@ -21,6 +22,11 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
   const s = settings(env);
   const path = url.pathname.replace(/^\/english(\/|$)/, "/") || "/";
   if (path === "/healthz") return Response.json({ status: "ok", service: "english-engine" });
+  if (path === "/v1/public/analytics-config" && request.method === "GET") return Response.json({
+    ga_measurement_id: /^G-[A-Z0-9]+$/.test(env.GA_MEASUREMENT_ID || "") ? env.GA_MEASUREMENT_ID : "",
+    cf_beacon_token: /^[a-f0-9]{32}$/.test(env.CF_BEACON_TOKEN || "") ? env.CF_BEACON_TOKEN : "",
+  }, { headers: { "Cache-Control": "no-store" } });
+  if (path === "/v1/public/events" && request.method === "POST") return ingestEvent(request, env);
   if (path === "/status" || path === "/api/status") return Response.json({ service: "English school voice engine", health: "/healthz", websocket: "/v1/technoline/stream", status: "production" });
   if (path === "/readyz") {
     const configured = !!env.GEMINI_API_KEY && !!env.ADMIN_BEARER_SECRET;

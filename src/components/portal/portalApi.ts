@@ -1,4 +1,5 @@
 import type { SubscriptionSummary } from "./SubscriptionPanel";
+import { attribution, track } from '../../analytics';
 export type Plan = { goal: string; level: string; difficulty: string; minutes: number; topic: string };
 export type LessonSettings = { level?: string; conversation_mode?: string; learning_load?: string; correction_policy?: string; closing_activity?: string };
 export type Teacher = LessonSettings & { id: string; name: string; base_bot: string; personality: string; voice: string; explanation: string; pace: string; corrections: string; topic: string; material_id: string };
@@ -25,10 +26,12 @@ export async function portalRequest<T>(path: string, token: string, body?: unkno
   const response = await fetch(apiPrefix + path, {
     method: method || (body === undefined ? "GET" : "POST"),
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined ? {} : { body: JSON.stringify(typeof body === 'object' && body !== null && (path.endsWith('/verify') || path === '/v1/portal/checkout') ? { ...body, attribution: attribution() } : body) }),
   });
   const json = await response.json().catch(() => null);
   if (!response.ok || !json) throw new PortalError(json?.detail || "לא הצלחנו להתחבר. ננסה שוב?", response.status);
+  if (json.new_account) track('sign_up', { method: path.includes('/email/') ? 'email' : 'phone' });
+  if (path === '/v1/portal/checkout' && json.id) track('begin_checkout', { reference: json.id, value: json.amount_ils, currency: 'ILS' }, json.id);
   return json as T;
 }
 export function initialToken() {

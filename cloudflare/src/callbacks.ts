@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { analyticsInput, conversion } from "./analytics";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
@@ -15,6 +16,7 @@ export function cleanupCallbackQuota(env: Env) {
 }
 
 const RequestSchema = z.object({
+  attribution: z.unknown().optional(),
   name: z.string().trim().min(1).max(80),
   phone: z.string().trim().max(20),
   for_whom: z.enum(["self", "daughter", "son", "other"]),
@@ -187,8 +189,7 @@ export async function testCallbackDial(request: Request, env: Env) {
 }
 
 export async function submitCallback(request: Request, env: Env): Promise<Response> {
-  if (Number(request.headers.get("Content-Length") ?? 0) > 4096) throw new HttpError(413, "Request too large");
-  const parsed = RequestSchema.safeParse(await request.json().catch(() => null));
+  const parsed = RequestSchema.safeParse(await analyticsInput(request));
   if (!parsed.success) throw new HttpError(422, "Invalid request");
   const body = parsed.data;
   const phone = normalizePhone(body.phone);
@@ -214,6 +215,7 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   await env.DB.prepare(
     "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,?,?,?,?,'queued',0,?,?,?)",
   ).bind(id, phone, body.name, body.for_whom, body.goal, body.timing, body.preferred_time || null, body.source || "landing", now, now, now, nextAttempt).run();
+  await conversion(env, "generate_lead", body.attribution, id);
   const shabbat = nextAttempt !== scheduled.toISOString();
   const status = body.timing === "now" && !shabbat && dialerConfigured(env)
     ? await dialCallbackRow(env, { id, phone, attempts: 0 }, new Date(now))

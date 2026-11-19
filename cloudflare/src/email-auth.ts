@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { conversion } from "./analytics";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex, tokenUrlsafe } from "./env";
 import { learnerBody } from "./learner";
@@ -38,7 +39,7 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     return Response.json({ challenge, expires_in: 600, retry_after: 60 }, { headers });
   }
   if (path === "/v1/portal/auth/email/verify") {
-    const input = await learnerBody(request, z.object({ challenge: z.string().regex(/^[a-f0-9]{48}$/), code: z.string().regex(/^\d{6}$/) }));
+    const input = await learnerBody(request, z.object({ challenge: z.string().regex(/^[a-f0-9]{48}$/), code: z.string().regex(/^\d{6}$/), attribution: z.unknown().optional() }));
     const key = prefix + input.challenge;
     const row = await env.DB.prepare(`UPDATE console_settings SET body=json_set(body,'$.attempts',json_extract(body,'$.attempts')+1)
       WHERE id=? AND json_extract(body,'$.attempts')<5 AND json_extract(body,'$.expires')>?
@@ -57,7 +58,8 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     }
     const token = tokenUrlsafe(32);
     await env.DB.prepare("INSERT INTO portal_tokens VALUES (?,?,?)").bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00")).run();
-    return Response.json({ token }, { headers });
+    if (!existing) await conversion(env, "sign_up", input.attribution, customerId, customerId);
+    return Response.json({ token, new_account: !existing }, { headers });
   }
   throw new HttpError(404, "Not found");
 }

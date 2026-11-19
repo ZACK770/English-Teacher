@@ -7,6 +7,7 @@ import { type Env } from "../src/env";
 import worker from "../src/index";
 import { standingOrderStart } from "../src/checkout";
 import { SubscriptionStore, addMonths } from "../src/subscriptions";
+import { attribution } from "./analytics-fixture";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 class SqlD1 {
@@ -49,6 +50,21 @@ async function hook(data: Record<string, unknown>) {
   return worker.fetch(new Request("https://speakcall.app/v1/payments/nedarim/webhook", { method: "POST", body: raw, headers: { "x-nedarim-timestamp": ts, "x-nedarim-signature": "v1=" + sig } }), env);
 }
 let keva: Record<string, string> = {};
+
+it("attributes signed purchases to the stored checkout even without a browser and deduplicates webhook retries", async () => {
+  const response = await req("/v1/portal/checkout", { package_id: "school-foundations", attribution });
+  expect(response.status).toBe(200);
+  const order = await response.json() as any;
+  expect(db.sql.prepare("SELECT customer_id,reference,first_touch FROM analytics_events WHERE event='begin_checkout'").get()).toMatchObject({ customer_id: "c1", reference: order.id, first_touch: JSON.stringify(attribution.first_touch) });
+  const charge = { MosadNumber: "7019554", TransactionId: "98765", Confirmation: "5", Amount: String(order.amount_ils), Currency: "1", Groupe: "dibura-" + order.id };
+  expect((await hook({ ...charge, Amount: "1" })).status).toBe(400);
+  expect(db.sql.prepare("SELECT COUNT(*) AS n FROM analytics_events WHERE event='purchase'").get()?.n).toBe(0);
+  expect((await hook(charge)).status).toBe(200);
+  expect((await hook(charge)).status).toBe(200);
+  expect(db.sql.prepare("SELECT customer_id,order_id,value,currency,first_touch,last_touch FROM analytics_events WHERE event='purchase'").all()).toEqual([
+    expect.objectContaining({ customer_id: "c1", order_id: order.id, value: order.amount_ils, currency: "ILS", first_touch: JSON.stringify(attribution.first_touch), last_touch: JSON.stringify(attribution.last_touch) }),
+  ]);
+});
 beforeEach(async () => {
   db = new SqlD1();
   env = { DB: db, ADMIN_BEARER_SECRET: "a", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "npk_x", NEDARIM_WEBHOOK_SECRET: "whsec_test", NEDARIM_API_VALID: "valid12345" } as unknown as Env;
