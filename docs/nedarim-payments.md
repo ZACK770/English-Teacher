@@ -25,6 +25,20 @@ an extra payment under the same order is intentionally not credited automaticall
 Cancellation/failure offers service or return, rather than automatically charging again.
 Orders have one purchase per telephone call; selected orders expire after 30 minutes.
 
+## Phone plans (/3)
+
+Monthly plans and term tracks are sold on the same callback, in the approved menu
+order (`PHONE_PITCH` in `cloudflare/src/payments.ts`; a pitch is read only while
+the console price matches it).
+
+- Monthly: a pending `standing_orders` row is created on selection and the PBX
+  `creditCard` module runs with `paymentsMode=kevaMonthly`, `sum`=monthly price,
+  `category=dibura-<standing order id>`. The signed Keva-creation webhook activates
+  it; the first signed Keva charge settles the phone order and opens the
+  subscription; later charges renew it once each.
+- Term tracks: `payments`=`max_installments` (caller picks 1..N), regular mode,
+  `category=dibura-<order id>`; the signed charge opens a `term_months` subscription.
+
 ## Configuration (secrets in Render only)
 
 - NEDARIM_MOSAD_ID: institution 7019554 (Dibura).

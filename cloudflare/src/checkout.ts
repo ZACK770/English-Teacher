@@ -2,10 +2,11 @@ import { z } from "zod";
 import { conversion } from "./analytics";
 import { BusinessStore, PackageSchema } from "./business";
 import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
-import { PREFIX, agorot, safeMessage } from "./payments";
+import { PREFIX, PaymentStore, agorot, safeMessage } from "./payments";
 import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
 import { manageKeva as manage } from "./nedarim";
+import { MASTERY_ID } from "../../src/pricing";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -20,7 +21,7 @@ export const checkoutConfigured = (env: Env) =>
 export function webTerms(pkg: Pkg) {
   if (!pkg.active || pkg.price_ils <= 0 || pkg.billing === "yearly") return null;
   if (pkg.billing === "monthly") return { now: pkg.price_ils, monthly: pkg.price_ils, installments: 1 };
-  return { now: pkg.price_ils, monthly: 0, installments: pkg.duration_months ?? 1 };
+  return { now: pkg.price_ils, monthly: 0, installments: pkg.max_installments ?? pkg.duration_months ?? 1 };
 }
 
 const MONTH_MS = 30 * 86400_000;
@@ -60,7 +61,7 @@ export class CheckoutStore {
     const customer = await this.business.record("customers", customerId);
     if (!body || !customer) throw new HttpError(404, "המסלול לא נמצא.");
     const pkg = PackageSchema.parse(body);
-    if (pkg.duration_months === 12 && (!domain || domain === "everyday" || !vocabularyCatalog.some(t => t.domain === domain))) throw new HttpError(422, "יש לבחור תחום אוצר מילים נוסף למסלול שליטה מלאה.");
+    if (packageId === MASTERY_ID && (!domain || domain === "everyday" || !vocabularyCatalog.some(t => t.domain === domain))) throw new HttpError(422, "יש לבחור תחום אוצר מילים נוסף למסלול שליטה מלאה.");
     const terms = webTerms(pkg);
     if (!terms) throw new HttpError(422, "המסלול הזה לא פתוח לרכישה באתר.");
     const cutoff = new Date(Date.now() - ORDER_TTL_MS).toISOString().replace("Z", "+00:00");
@@ -68,7 +69,7 @@ export class CheckoutStore {
       "SELECT id,snapshot FROM payment_orders WHERE customer_id=? AND package_id=? AND channel='web' AND state='issued' AND created_at>? ORDER BY created_at DESC LIMIT 1",
     ).bind(customerId, packageId, cutoff).first<{ id: string; snapshot: string }>();
     if (reusable) {
-      if (pkg.duration_months === 12 && domain) await this.db.prepare("UPDATE payment_orders SET snapshot=?,updated_at=? WHERE id=? AND state='issued'").bind(JSON.stringify({ ...JSON.parse(reusable.snapshot), guarantee_domain: domain }), nowIso(), reusable.id).run();
+      if (packageId === MASTERY_ID && domain) await this.db.prepare("UPDATE payment_orders SET snapshot=?,updated_at=? WHERE id=? AND state='issued'").bind(JSON.stringify({ ...JSON.parse(reusable.snapshot), guarantee_domain: domain }), nowIso(), reusable.id).run();
       return this.view(reusable.id, customerId);
     }
     const unfinished = await this.db.prepare(
@@ -172,6 +173,18 @@ export class CheckoutStore {
     }
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
     const subscriptions = new SubscriptionStore(this.db);
+    const first = await this.db.prepare("SELECT channel,transaction_id,receipt_id,amount_agorot FROM payment_orders WHERE id=?").bind(sub.first_order_id).first<{ channel: string; transaction_id: string | null; receipt_id: string | null; amount_agorot: number }>();
+    // A phone standing order has no separate first charge: its first monthly charge settles the phone order and opens the subscription.
+    if (first?.channel === "phone") {
+      if (first.transaction_id === transactionId) {
+        if (agorot(data.Amount) !== first.amount_agorot) throw new Error("Payment amount mismatch");
+        return { paid: true, receipt_id: first.receipt_id, duplicate: true };
+      }
+      if (!sub.entitlement_id) {
+        if (sub.state === "cancelled") throw new Error("Standing order was cancelled");
+        return new PaymentStore(this.business).settle({ ...data, KevaId: "", Groupe: PREFIX + sub.first_order_id }, mosadId, true);
+      }
+    }
     if (!sub.entitlement_id) {
       const order = await this.db.prepare("SELECT o.id,r.id AS receipt_id,r.created_at FROM payment_orders o JOIN sales_receipts r ON r.id=o.receipt_id AND r.customer_id=o.customer_id WHERE o.id=? AND o.channel='web' AND o.state='paid'").bind(sub.first_order_id).first<{ id: string; receipt_id: string; created_at: string }>();
       if (!order || sub.state === "cancelled") throw new Error("First payment must settle before renewal");

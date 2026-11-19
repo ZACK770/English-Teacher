@@ -9,6 +9,7 @@ export type SubscriptionSummary = {
   guarantee_status: string | null; extension_months: number; members: { customer_id: string; name: string; phone: string }[];
 };
 type Plan = { id: string; name: string; product: string; billing: string; duration_months?: number; active: boolean };
+const MASTERY_ID = "school-mastery";
 const statuses: Record<string, string> = { active: "פעיל", paused: "מוקפא", cancelled: "מבוטל", expired: "הסתיים", past_due: "ממתין לתשלום", trial: "ניסיון" };
 const guarantees: Record<string, string> = { pending: "טרם הגיע מועד המדידה", granted: "אושרו 3 חודשים נוספים ללא עלות", not_eligible: "יעד השליטה הושג — אין הארכה" };
 const money = (value: number) => new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 2 }).format(value / 100);
@@ -45,7 +46,7 @@ export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh 
     ]).then(([s, p]) => {
       if (!live) return;
       setItems(s.items);
-      const available = p.items.filter(p => p.active && p.product === "school" && (p.billing === "monthly" || [6, 12].includes(p.duration_months ?? 0)));
+      const available = p.items.filter(p => p.active && p.product === "school" && (p.billing === "monthly" || !!p.duration_months));
       setPlans(available); setPlanId(available[0]?.id ?? "");
     }).catch(e => { if (live) setError(errorMessage(e)); });
     return () => { live = false; };
@@ -64,8 +65,8 @@ export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh 
     <fieldset disabled={busy}>
       {admin && <div className="subscription-create">
         <label>מסלול<select value={planId} onChange={e => setPlanId(e.target.value)}>{!plans.length && <option value="">אין מסלולים זמינים</option>}{plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-        {selectedPlan?.duration_months === 12 && <label>תחום נוסף לשליטה מלאה<select value={domain} onChange={e => setDomain(e.target.value)}>{Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>}
-        <button type="button" disabled={!planId} onClick={() => void act("", { customer_id: customerId, plan_id: planId, ...(selectedPlan?.duration_months === 12 ? { domains: [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain }] } : {}) })}>יצירת מנוי</button>
+        {selectedPlan?.id === MASTERY_ID && <label>תחום נוסף לשליטה מלאה<select value={domain} onChange={e => setDomain(e.target.value)}>{Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>}
+        <button type="button" disabled={!planId} onClick={() => void act("", { customer_id: customerId, plan_id: planId, ...(selectedPlan?.id === MASTERY_ID ? { domains: [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain }] } : {}) })}>יצירת מנוי</button>
         <small>רישום זכאות בלבד — לא מתבצע חיוב אשראי.</small>
       </div>}
       {!items.length && !error && <p>עדיין אין מנוי בחשבון.</p>}

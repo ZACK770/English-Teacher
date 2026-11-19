@@ -135,7 +135,7 @@ describe("subscription promises against production SQL", () => {
     await store.pause(sub.id, 60, "2026-02-20");
     await store.tick("2026-04-25");
     expect(receipts()[0].expires_at).toBe("2026-04-30T00:00:00.000+00:00");
-    expect((await store.get(sub.id)).term_end).toBe("2026-08-30T00:00:00.000+00:00");
+    expect((await store.get(sub.id)).term_end).toBe("2026-06-30T00:00:00.000+00:00");
   });
   it("cancels future grants but keeps existing paid minutes until expiry", async () => {
     const sub = await store.create("owner", "school-step", at);
@@ -148,6 +148,7 @@ describe("subscription promises against production SQL", () => {
     expect((await b.reserveCall("owner", "teacher", "cancelled-owner", 60)).mode).toBe("paid");
   });
   it("cron grants prepaid mastery months plus a single three-month guarantee extension, never monthly renewals", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',6) WHERE kind='packages' AND id='school-foundations'");
     const sub = await store.create("owner", "school-foundations", at);
     await store.create("owner", "school-step", at);
     await expect(store.evaluateGuarantee(sub.id, "2026-06-30")).rejects.toThrow("not due");
@@ -160,6 +161,7 @@ describe("subscription promises against production SQL", () => {
     expect((await store.get(sub.id)).extension_months).toBe(3);
   });
   it("uses measurable whole-domain mastery, averages domains equally and does not extend eligible success", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',6) WHERE kind='packages' AND id='school-foundations'");
     const domains = [{ domain: "everyday", levels: ["beginner" as const] }];
     const pool = vocabularyCatalog.filter(t => t.domain === "everyday" && t.level === "beginner");
     expect(pool.length).toBeGreaterThan(100);
@@ -292,6 +294,7 @@ describe("subscription promises against production SQL", () => {
     expect(summary.members).toHaveLength(1);
   });
   it("anchors month-end renewals and never grants an extra mastery period after February", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',6) WHERE kind='packages' AND id='school-foundations'");
     const sub = await store.create("owner", "school-foundations", "2026-01-31");
     await store.tick("2026-07-30");
     expect(receipts()).toHaveLength(6);

@@ -23,6 +23,7 @@ export const PackageSchema = z.object({
   billing: z.enum(["prepaid", "monthly", "yearly", "one_time"]).default("prepaid"),
   automated_purchase: z.boolean().default(true),
   duration_months: z.number().int().min(1).max(12).optional(),
+  max_installments: z.number().int().min(1).max(36).optional(),
   annual_price_ils: z.number().min(0).optional(),
   first_month_price_ils: z.number().min(0).optional(),
   anchor_price_ils: z.number().min(0).optional(),

@@ -754,12 +754,12 @@ describe("approved pricing catalog", () => {
     expect(await b.record("packages", "pkg_translator_free")).toEqual(translator);
   });
 
-  it("blocks direct and hidden purchase and manual wallet grants for representative-only offers", async () => {
+  it("sells plans only through card orders on the phone and blocks manual wallet grants", async () => {
     for (const pkg of PRICING_PACKAGES.filter(p => !p.automated_purchase)) {
-      await expect(new PaymentStore(b).create("buy-" + pkg.id, "learner-a", pkg.id, true)).rejects.toThrow("נציג");
+      await expect(new PaymentStore(b).create("buy-" + pkg.id, "learner-a", pkg.id)).resolves.toMatchObject({ state: "selected", amount_agorot: pkg.price_ils * 100 });
       await expect(b.receipt({ customer_id: "learner-a", package_id: pkg.id, reference: "manual:" + pkg.id, amount_ils: pkg.price_ils })).rejects.toThrow("נציג");
     }
-    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()?.n).toBe(0);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM standing_orders").get()?.n).toBe(3);
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()?.n).toBe(0);
   });
 

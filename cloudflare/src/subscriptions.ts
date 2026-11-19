@@ -3,6 +3,7 @@ import { BusinessStore, normalizedPhone } from "./business";
 import { type Env, HttpError, randomHex, sha256Hex } from "./env";
 import { LearningStore, vocabularyCatalog } from "./learning";
 import { disableKeva, enableKeva, updateKevaAmount } from "./nedarim";
+import { MASTERY_ID } from "../../src/pricing";
 
 export const DomainSchema = z.object({ domain: z.string(), levels: z.array(z.enum(["beginner", "intermediate", "fluent"])).optional() });
 type Domain = z.infer<typeof DomainSchema>;
@@ -61,10 +62,10 @@ export class SubscriptionStore {
     if (!plan || !pkg || !(await this.db.prepare("SELECT id FROM customers WHERE id=?").bind(customerId).first())) throw new Error("Unknown customer or plan");
     const term = source ? source.termMonths : pkg.duration_months ?? null;
     const minutes = source?.monthlyMinutes ?? plan.included_minutes;
-    if (!source && plan.billing !== "monthly" && ![6, 12].includes(term)) throw new Error("Not a subscription plan");
+    if (!source && plan.billing !== "monthly" && !term) throw new Error("Not a subscription plan");
     const selected = z.array(DomainSchema).parse(domains ?? JSON.parse(plan.domains_json));
     if (term && (!selected.length || selected.some(d => !vocabularyCatalog.some(t => t.domain === d.domain && (!d.levels || d.levels.includes(t.level as any)))))) throw new Error("Guarantee domains must have measurable vocabulary");
-    if (term === 12 && (!source || domains) && !selected.some(d => d.domain !== "everyday")) throw new Error("Choose an additional vocabulary domain for mastery");
+    if (planId === MASTERY_ID && term && (!source || domains) && !selected.some(d => d.domain !== "everyday")) throw new Error("Choose an additional vocabulary domain for mastery");
     const id = source?.id ?? randomHex(12), end = source?.period?.end ?? addMonths(at, 1);
     await this.db.batch([
       this.db.prepare(`INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_start,current_period_end,created_at,updated_at,term_months,pause_year_start,guarantee_status,domains_json,monthly_minutes,term_end,period_number)
