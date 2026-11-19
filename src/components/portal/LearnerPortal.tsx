@@ -7,7 +7,7 @@ import { LearningProgress } from "./LearningProgress";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
-import { TeacherMark } from "./LineTeacher";
+import { isFemale, TeacherMark } from "./LineTeacher";
 export { TeacherMark } from "./LineTeacher";
 import "./portal.css";
 

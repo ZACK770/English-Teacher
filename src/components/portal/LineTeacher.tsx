@@ -1,10 +1,11 @@
 import "./line-teacher.css";
 
 const femaleVoices = ["Aoede", "Kore", "Leda", "Zephyr", "Callirrhoe", "Autonoe", "Despina", "Erinome", "Laomedeia", "Achernar", "Gacrux", "Pulcherrima", "Vindemiatrix", "Sulafat"];
+export const isFemale = (voice?: string) => femaleVoices.includes(voice || "");
 
 export function TeacherMark({ teacher, index = 0, className = "" }: { teacher?: { name: string; voice?: string }; index?: number; className?: string }) {
   const seed = teacher ? [...teacher.name].reduce((n, c) => n + c.charCodeAt(0), 0) : index;
-  const female = femaleVoices.includes(teacher?.voice || "");
+  const female = isFemale(teacher?.voice);
   return <svg className={"line-teacher " + className} viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <circle className="line-teacher-halo" cx="50" cy="50" r="46" />
     <g className="line-teacher-portrait">

@@ -83,12 +83,14 @@
 .sk-land-symbol-breathe { animation: sk-land-breathe 4s ease-in-out infinite; }
 .sk-land-rings { stroke: var(--accent); stroke-width: .8; animation: sk-land-halo 4s ease-in-out infinite; }
 .sk-land-signal { stroke: var(--accent); animation: sk-land-halo 4s ease-in-out -1s infinite; }
-.sk-land-tail { stroke: var(--accent); }
+.sk-land-tail { stroke: var(--accent); transform-box: fill-box; transform-origin: center; }
 .sk-land-draw path { stroke-dasharray: 1; animation: sk-land-draw 1.8s ease-out both; }
+.sk-land-draw .sk-land-tail { animation: sk-land-draw 1.8s ease-out both, sk-land-tail 4s ease-in-out infinite; }
 .sk-land-step-icon { width: 30px; height: 30px; stroke-width: 1.5; color: var(--accent); margin-bottom: 16px; animation: sk-land-breathe 4s ease-in-out infinite; }
 .sk-land-steps li:nth-child(2) .sk-land-step-icon { animation-delay: -.7s; }
 .sk-land-steps li:nth-child(3) .sk-land-step-icon { animation-delay: -1.4s; }
-@keyframes sk-land-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.5px) scale(1.025); } }
+@keyframes sk-land-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.5px) scale(1.03); } }
+@keyframes sk-land-tail { 0%,100% { translate: 0 0; } 50% { translate: 0 -1px; } }
 @keyframes sk-land-halo { 0%,100% { transform: scale(1); opacity: .25; } 50% { transform: scale(1.04); opacity: .65; } }
 @keyframes sk-land-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 .sk-land-quote { font-size: clamp(21px, 2.6vw, 35px); font-weight: 800; letter-spacing: -.025em; }
