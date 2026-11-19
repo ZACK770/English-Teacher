@@ -1,4 +1,5 @@
 import { LessonSettings } from "./portalApi";
+import { ProChoices } from "./ProBadge";
 
 export const levelNames = { beginner: "צעדים ראשונים", intermediate: "מסתדר בשיחה", fluent: "מדבר ורוצה לדייק" };
 export const modeNames = { guided: "לומדים יחד", conversation: "לומדים דרך שיחה", roleplay: "פשוט מדברים" };
@@ -15,7 +16,7 @@ export function LessonSettingsFields({ value, onChange, compact = false }: { val
     ...compact ? [] : [["correction_policy", "מתי לתקן?", value.conversation_mode === "roleplay" ? { on_request: correctionPolicies.on_request, after_activity: correctionPolicies.after_activity } : correctionPolicies, value.conversation_mode === "guided" || !value.conversation_mode ? "after_answer" : "after_activity"]],
     ["closing_activity", "איך נסיים לתרגל?", closingNames, "roleplay"],
   ] as [keyof LessonSettings, string, Record<string, string>, string][];
-  return <div className="sk-lesson-fields">{fields.map(([key, label, choices, fallback]) => <label key={key}>{label}<select value={value[key] || fallback} onChange={e => {
+  return <div className="sk-lesson-fields">{fields.map(([key, label, choices, fallback]) => key === "level" ? <fieldset key={key}><legend>{label}</legend><ProChoices kind="level" label={label} value={value.level || fallback} values={choices} onChange={level => onChange({ ...value, level })} /></fieldset> : <label key={key}>{label}<select value={value[key] || fallback} onChange={e => {
     const next = { ...value, [key]: e.target.value };
     if (next.conversation_mode === "roleplay" && next.correction_policy === "after_answer") next.correction_policy = "after_activity";
     onChange(next);

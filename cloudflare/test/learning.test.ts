@@ -11,6 +11,7 @@ import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, 
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
+import { isProDomain, isProLevel, isProSelection, resolveFreeSelection } from "../src/pro-access";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -37,8 +38,114 @@ class SqlD1 {
 let db: SqlD1, store: LearningStore, b: BusinessStore;
 const plan: LessonPlan = { level: "intermediate", conversation_mode: "conversation", correction_policy: "after_activity", learning_load: "light", closing_activity: "roleplay", topic: "business", vocabulary: vocabularyCatalog.filter(t => ["business.invoice", "business.payment", "business.receipt"].includes(t.id)), grammar: [] };
 const result = (score = 100, activity_id = "practice-1") => ({ activity_id, vocabulary: [{ word_id: "business.invoice", score }] });
-beforeEach(() => { db = new SqlD1(); store = new LearningStore(db as unknown as D1Database); b = new BusinessStore(db as unknown as D1Database); });
+beforeEach(() => {
+  db = new SqlD1(); store = new LearningStore(db as unknown as D1Database); b = new BusinessStore(db as unknown as D1Database);
+  for (const customer of ["alice", "dana"]) db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,?,?,'school',?,100,0,300,'2999-01-01','2020-01-01')").run(customer, customer, "school-pace", customer);
+});
 afterEach(() => db.sql.close());
+
+describe("Pro access and free fallback", () => {
+  beforeEach(() => db.sql.exec("DELETE FROM sales_receipts"));
+  const lesson = async () => (await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false))).lesson!;
+  const grant = () => db.sql.exec("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('paid','alice','school-pace','school','paid',119,0,200,'2999-01-01','2020-01-01')");
+
+  it.each(["everyday", "core", "property"])("allows both free levels for %s but marks fluent Pro", domain => {
+    expect(isProDomain(domain)).toBe(false);
+    for (const level of ["beginner", "intermediate"]) {
+      expect(isProSelection(domain, level)).toBe(false);
+      expect(resolveFreeSelection(domain, level, false)).toEqual({ domain, level });
+    }
+    expect(isProLevel("fluent")).toBe(true);
+    expect(resolveFreeSelection(domain, "fluent", false)).toEqual({ domain, level: "intermediate" });
+  });
+  it.each(["travel", "business", "flights", "medicine", "academic", "cars", "career", "school", "", "unknown", "material:one"])("restricts %s at every level and leaves paid choices unchanged", domain => {
+    expect(isProDomain(domain)).toBe(true);
+    for (const level of ["beginner", "intermediate", "fluent"]) {
+      expect(isProSelection(domain, level)).toBe(true);
+      expect(resolveFreeSelection(domain, level, false)).toEqual({ domain: "everyday", level: level === "fluent" ? "intermediate" : level });
+      expect(resolveFreeSelection(domain, level, true)).toEqual({ domain, level });
+    }
+    expect(isProDomain("recommended")).toBe(false);
+  });
+  it("falls back after saved teacher overrides without rewriting preferences", async () => {
+    const teacher = await b.save(teachersKind("alice"), TeacherSchema.parse({ name: "David", base_bot: "teacher", topic: "business", level: "fluent" }));
+    await b.savePreference("alice", { active_teacher: teacher.id, topic: "property", level: "beginner" });
+    const effective = await lesson();
+    expect(effective).toMatchObject({ topic: "everyday", level: "intermediate" });
+    expect(effective.vocabulary.every(t => t.domain === "everyday" && t.level !== "fluent")).toBe(true);
+    expect(await b.record(teachersKind("alice"), teacher.id)).toMatchObject({ topic: "business", level: "fluent" });
+    expect(await b.loadContext("preferences:alice")).toMatchObject({ topic: "property", level: "beginner" });
+    grant();
+    expect(await lesson()).toMatchObject({ topic: "business", level: "fluent" });
+  });
+  it.each(["work", "travel", "study"])("constrains recommended %s goals and all vocabulary to free domains", async goal => {
+    await saveIntake(b, "alice", null, { goal, level: "fluent", topic: "recommended" });
+    const effective = await lesson();
+    expect(effective.level).toBe("intermediate");
+    expect(effective.vocabulary.length).toBeGreaterThan(0);
+    expect(effective.vocabulary.every(t => ["everyday", "property"].includes(t.domain) && t.level !== "fluent")).toBe(true);
+    await b.savePreference("alice", { level: "beginner" });
+    expect((await lesson()).vocabulary.every(t => ["everyday", "property"].includes(t.domain))).toBe(true);
+  });
+  it("keeps property intermediate free and resolves bank core to everyday", async () => {
+    await b.savePreference("alice", { topic: "property", level: "intermediate" });
+    expect(await lesson()).toMatchObject({ topic: "property", level: "intermediate" });
+    await b.savePreference("alice", { topic: "core" });
+    expect(await lesson()).toMatchObject({ topic: "everyday", level: "intermediate" });
+  });
+  it("never advances a free recommendation to fluent after mastering the free vocabulary", async () => {
+    for (const domain of ["everyday", "property"]) {
+      const targets = vocabularyCatalog.filter(t => t.domain === domain && t.level !== "fluent");
+      for (let i = 0; i < targets.length; i += 8) {
+        const vocabulary = targets.slice(i, i + 8);
+        for (const call of ["one", "two"]) {
+          const id = domain + i + call;
+          await store.begin("alice", id, { ...plan, topic: domain, vocabulary });
+          expect(await store.record("alice", id, { activity_id: "practice-1", vocabulary: vocabulary.map(t => ({ word_id: t.id, score: 100 })) })).toBe(true);
+        }
+      }
+    }
+    await b.savePreference("alice", { topic: "recommended", level: "intermediate" });
+    expect((await lesson()).vocabulary.every(t => ["everyday", "property"].includes(t.domain) && t.level !== "fluent")).toBe(true);
+  });
+  it("keeps grammar recommendations in a free domain", async () => {
+    await saveIntake(b, "alice", null, { goal: "work", level: "intermediate" });
+    await b.savePreference("alice", { track: "grammar" });
+    expect(await lesson()).toMatchObject({ topic: "everyday", level: "intermediate", vocabulary: [] });
+  });
+  it("does not bypass free scope through personal materials", async () => {
+    await b.save("learner-materials:alice", { name: "Work", words: ["invoice — חשבונית"] }, "work");
+    await b.savePreference("alice", { topic: "business", level: "fluent", material_id: "work" });
+    expect((await lesson()).vocabulary.every(t => t.domain === "everyday" && t.level !== "fluent")).toBe(true);
+  });
+  it("requires current, unspent, school receipts and exposes the same access flag", async () => {
+    expect(await b.hasPaidAccess("alice")).toBe(false);
+    expect(await b.accessSummary("alice", [])).toMatchObject({ paid: false });
+    grant();
+    expect(await b.accessSummary("alice", [])).toMatchObject({ paid: true });
+    for (const assignment of ["expires_at='2020-01-01'", "valid_from='2999-01-01'", "minutes=0", "product='translator'"]) {
+      db.sql.exec("UPDATE sales_receipts SET expires_at='2999-01-01',valid_from=NULL,minutes=200,product='school'");
+      db.sql.exec("UPDATE sales_receipts SET " + assignment);
+      expect(await b.hasPaidAccess("alice")).toBe(false);
+    }
+  });
+  it("allows an active school subscription even when its receipt is exhausted, but not expired, trial or paused", async () => {
+    await b.save("customers", { name: "Alice", phone: "0500000001" }, "alice");
+    db.sql.exec("INSERT INTO plans(id,name,product,billing,price_agorot,created_at,updated_at) VALUES ('pro','Pro','school','monthly',11900,'2020-01-01','2020-01-01')");
+    db.sql.exec("INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_end,created_at,updated_at) VALUES ('sub','alice','pro','active',11900,'2020-01-01','2999-01-01','2020-01-01','2020-01-01')");
+    expect(await b.hasPaidAccess("alice")).toBe(true);
+    for (const status of ["expired", "trial", "paused", "cancelled"]) {
+      db.sql.prepare("UPDATE subscriptions SET status=?").run(status);
+      expect(await b.hasPaidAccess("alice")).toBe(false);
+    }
+    db.sql.exec("UPDATE subscriptions SET status='active',current_period_end='2020-01-01'");
+    expect(await b.hasPaidAccess("alice")).toBe(false);
+  });
+  it("propagates access lookup failures rather than granting Pro", async () => {
+    db.sql.exec("DROP TABLE sales_receipts");
+    await expect(lesson()).rejects.toThrow();
+  });
+});
 
 describe("targeted learning contract and production SQL", () => {
   it("distinguishes no lesson, no targets, no evidence and stored results without fabricating grades", async () => {
