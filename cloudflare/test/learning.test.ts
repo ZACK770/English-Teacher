@@ -6,7 +6,7 @@ import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, 
 import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
-import { applyLearnerControls, LearnerPreferencesSchema, saveIntake } from "../src/learner";
+import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, saveIntake } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -217,6 +217,12 @@ describe("learner settings to Gemini", () => {
       },
     });
     expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");
+  });
+  it("takes the intake goal from what the learner said when it names exactly one purpose", () => {
+    expect(goalFromLearnerSpeech("study", "דני. אני רוצה ללמוד אנגלית בשביל טיול לחו\"ל")).toBe("travel");
+    expect(goalFromLearnerSpeech("study", "אני רוצה ללמוד אנגלית לבגרות")).toBe("study");
+    expect(goalFromLearnerSpeech("work", "לעבודה וגם לטיולים")).toBe("work");
+    expect(goalFromLearnerSpeech("other", "סתם ככה")).toBe("other");
   });
   it("saves a partial phone intake with defaults and marks the first call as pending until then", async () => {
     const before = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
