@@ -4,7 +4,7 @@ import { submitCallback } from "../../src/components/join/callbackApi";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("join callback submission", () => {
-  const request = { name: "Learner", phone: "0501234567", for_whom: "self" as const, goal: "", timing: "now" as const, preferred_time: "", consent: true as const };
+  const request = { name: "Learner", phone: "0501234567", for_whom: "self", goal: "", timing: "now", preferred_time: "", consent: true };
 
   it.each(["/join", "/english/join"])("posts to the existing server endpoint from %s", async pathname => {
     vi.stubGlobal("location", { pathname });
