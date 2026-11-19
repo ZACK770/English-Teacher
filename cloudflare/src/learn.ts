@@ -13,8 +13,14 @@ import { compilePrompt } from "./prompt";
 import { LearningStore } from "./learning";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; elapsedSeconds: number }
+interface LiveOptions {
+  storeTranscript?: boolean;
+  beforeConnect?: () => Promise<void>;
+  learning?: (args: unknown) => Promise<boolean>;
+  intake?: (args: unknown) => Promise<boolean>;
+}
 
-async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, storeTranscript = true, learning?: (args: unknown) => Promise<boolean>, intake?: (args: unknown) => Promise<boolean>): Promise<LiveResult> {
+async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, { storeTranscript = true, beforeConnect, learning, intake }: LiveOptions = {}): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -28,9 +34,8 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
     budgetError = new GeminiBudgetError(reason);
     ai.close();
   });
-  let timer: ReturnType<typeof setTimeout>;
-  const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), timeoutMs); });
-  const work = (async () => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const work = async () => {
     await ai.connect();
     startedAt = Date.now();
     await progress.logLatency(profileId, callId, "gemini_connected", Date.now() - t0, 0);
@@ -61,14 +66,17 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
       } else if (event.type === "turn_complete") { meter.tutorTurns = 1; break; }
       else if (event.type === "closed" || event.type === "go_away") break;
     }
-  })();
+  };
   try {
-    await Promise.race([work, deadline]);
+    if (beforeConnect) await beforeConnect();
+    if (budgetError) throw budgetError;
+    const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), timeoutMs); });
+    await Promise.race([work(), deadline]);
     if (budgetError) throw budgetError;
   } catch (error) {
     throw budgetError ?? error;
   } finally {
-    clearTimeout(timer!);
+    clearTimeout(timer);
     if (startedAt !== null) elapsedSeconds = (Date.now() - startedAt) / 1000;
     ai.close();
     await release();
@@ -114,7 +122,11 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
       await progress.logTurn(botId, callId, "input", text);
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web" });
-    result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, controls.store_transcripts, controls.lesson ? args => learning.record(customerId, callId, args) : undefined, async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args));
+    result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, {
+      storeTranscript: controls.store_transcripts,
+      learning: controls.lesson ? args => learning.record(customerId, callId, args) : undefined,
+      intake: async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args),
+    });
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     if (error instanceof GeminiBudgetError) { limited = true; throw error; }
@@ -145,19 +157,23 @@ export async function renderVoicePreview(request: Request, env: Env, s: Settings
   const cacheId = "portal-voice-preview:" + parsed.data.voice + ":v1";
   const cached = await b.getAudio(cacheId);
   if (cached) return Response.json({ audio_wav_base64: b64encode(cached.wav) });
-  if (!await b.consumeMonthlyQuota("portal-voice-preview", 30) || !await b.consumeMonthlyQuota("portal-voice-preview:" + customerId, 3)) throw new HttpError(429, "מכסת דגימות הקול לחודש הזה נוצלה. אפשר לנסות את המורה בשיחה.");
   const progress = new ProgressStore(env.DB);
   const text = "Hi! Good to meet you. Let's take it one sentence at a time.";
   const controls = { ...controlsFromSettings(false), base_prompt: ANNOUNCER, opening_message: text, voice: parsed.data.voice, language_code: "en-US" };
   const artifact = await compilePrompt(controls, "", s.studentId, s);
   try {
-    const result = await runLive(env, s, progress, s.studentId, "preview-" + randomHex(12), artifact.setup_message, text, 15, 30000, false);
+    const result = await runLive(env, s, progress, s.studentId, "preview-" + randomHex(12), artifact.setup_message, text, 15, 30000, {
+      storeTranscript: false,
+      beforeConnect: async () => {
+        if (!await b.consumeMonthlyQuota("portal-voice-preview", 30) || !await b.consumeMonthlyQuota("portal-voice-preview:" + customerId, 3)) throw new HttpError(429, "מכסת דגימות הקול לחודש הזה נוצלה. אפשר לנסות את המורה בשיחה.");
+      },
+    });
     if (!result.audio.length) throw new Error("No audio");
     const file = wav(result.audio, 24000);
     await b.saveAudio(cacheId, await sha256Hex(text), file);
     return Response.json({ audio_wav_base64: b64encode(file) });
   } catch (error) {
-    if (error instanceof GeminiBudgetError) throw error;
+    if (error instanceof HttpError) throw error;
     throw new HttpError(502, "הדוגמה לא נטענה. אפשר לנסות שוב, או פשוט להתחיל שיחה.");
   }
 }

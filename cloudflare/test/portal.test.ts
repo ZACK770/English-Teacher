@@ -701,6 +701,14 @@ describe("school history after navigation migration", () => {
 });
 
 describe("monthly voice preview quota", () => {
+  it("does not spend preview credits when Gemini admission is denied", async () => {
+    env.GEMINI_DAILY_BUDGET_USD = "0.01";
+    const response = await request("/v1/portal/voice-preview", tokenA, { voice: "Puck" });
+    expect(response.status).toBe(429);
+    expect(await response.text()).toContain("מכסת השימוש היומית");
+    expect(db.sql.prepare("SELECT api FROM api_quota WHERE api LIKE 'portal-voice-preview%'").all()).toEqual([]);
+  });
+
   it("reports the enforced calendar-month period and resets the monthly quota", async () => {
     vi.useFakeTimers();
     try {
