@@ -370,17 +370,29 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     }
     return paymentResponse(store, env, base, params, customerId, packageIds);
   }
-  const packages = Object.fromEntries((await store.business.list("packages")).map((p) => [p.id, p]));
+  const all = await store.business.list("packages");
+  const packages = Object.fromEntries(all.map((p) => [p.id, p]));
   const lines: string[] = [];
   packageIds.forEach((id, index) => {
     const p = packages[id];
     if (p && p.active && canPurchaseAutomatically(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
-      const product = p.product === "school" ? "בית הספר" : "התרגומון";
-      lines.push(`לחבילת ${product}, ${p.name}, במחיר ${p.price_ils} שקלים, הקישו ${index + 1}.`);
+      lines.push(`לרכישה מיידית של ${p.name}: ${p.minutes} דקות, בתוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
     }
   });
-  if (!lines.length) return selectionMenu("isaacPayExit", "החבילות עדיין אינן פתוחות לרכישה. לשירות הקישו 9. לחזרה הקישו 0.");
-  return selectionMenu("isaacPackage", lines.join(" ") + " לשירות הקישו 9. לחזרה הקישו 0.", ["0", "9", ...packageIds.map((_, i) => String(i + 1))].join(","));
+  const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 && !canPurchaseAutomatically(p)).sort((a, b) => a.price_ils - b.price_ils);
+  const describe = (p: Record<string, any>) => p.billing === "monthly"
+    ? `${p.name}, ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
+    : `${p.name}, ${p.minutes} דקות למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
+  const monthly = plans.filter((p) => p.billing === "monthly").map(describe);
+  const courses = plans.filter((p) => p.billing !== "monthly").map(describe);
+  const intro = [
+    "מחלקת המנויים של ספיקול.",
+    monthly.length ? "המנויים החודשיים: " + monthly.join(" ") : "",
+    courses.length ? "מסלולי הלימוד המלאים: " + courses.join(" ") : "",
+    plans.length ? "ההצטרפות למנוי או למסלול נעשית באתר ספיקול או באמצעות נציג. להשארת פרטים ונציג יחזור אליכם, הקישו 9." : "לשירות הקישו 9.",
+  ].filter(Boolean).join(" ");
+  if (!lines.length) return selectionMenu("isaacPayExit", intro + " לחזרה לתפריט הראשי הקישו 0.");
+  return selectionMenu("isaacPackage", [intro, ...lines, "לחזרה לתפריט הראשי הקישו 0."].join(" "), ["0", "9", ...packageIds.map((_, i) => String(i + 1))].join(","));
 }
 
 export async function handleWebhook(request: Request, env: Env): Promise<Record<string, unknown>> {
