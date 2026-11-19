@@ -230,6 +230,7 @@ export class TutorSession {
       this.abort.abort(new Error("session_finished"));
       this.input.end();
       this.ai?.close();
+      const budgetRelease = releaseBudget?.();
       try {
         if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
         if (releaseBudget && this.callId && this.customerId && this.controls) {
@@ -240,13 +241,14 @@ export class TutorSession {
           await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
           await this.latency("session_saved");
         }
+        await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
           const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
-        await releaseBudget?.();
+        await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
         this.output = [];
         try { this.pbx.close(1000, "session ended"); } catch { /* peer already closed */ }

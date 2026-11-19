@@ -124,6 +124,29 @@ it("routes a caller out of minutes to the quota menu even when Gemini is unavail
   expect(env.GEMINI_BUDGET.getByName).not.toHaveBeenCalled();
 });
 
+it("releases the shared Gemini slot before transferring to a PBX menu", async () => {
+  const original = env.GEMINI_BUDGET.getByName("speakcall");
+  const order: string[] = [];
+  env.GEMINI_BUDGET = { getByName: () => ({
+    fetch: async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/release")) order.push("release");
+      return original.fetch(url, init);
+    },
+  }) } as unknown as DurableObjectNamespace;
+  await progress.saveControls("student", { ...controlsFromSettings(false), session_end_action: "return_to_menu" });
+  vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue(undefined);
+  vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "next").mockResolvedValue({ type: "closed" });
+  const socket = { send: vi.fn(() => order.push("transfer")), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, { ...settings(env), returnExtension: "/99" }, crypto.randomUUID());
+  await tutor.run(JSON.stringify({
+    type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "phone-transfer", caller: "0500000002",
+  }), "student", false);
+  expect(socket.send).toHaveBeenCalledWith(transferCommand("/99"));
+  expect(order).toEqual(["release", "transfer"]);
+});
+
 describe("approved pricing catalog", () => {
   it("seeds the approved school catalog and mirrors accurate billing types", async () => {
     for (const pkg of PRICING_PACKAGES.filter(p => p.product === "school")) {
