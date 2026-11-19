@@ -234,7 +234,7 @@ export const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'cust_01',
     name: 'משתמש בדיקה',
-    phone: '052-7698420',
+    phone: '050-0000000',
     source: 'direct',
     preferred_bot: 'shochi-robot',
     notes: 'חשבון ברירת מחדל לבדיקות טלפוניה והתנסות עצמית. זכאי לשיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש.',
@@ -408,7 +408,7 @@ export const INITIAL_ECONOMICS: Economics = {
 };
 
 export const INITIAL_PBX_CONFIG: PbxConfig = {
-  phone: '079-580-0000',
+  phone: '050-0000000',
   project_path: '/99',
   managed_channel_configured: true,
   payment_configured: true,
