@@ -30,7 +30,7 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
   const name = campaignName(campaign);
   if (context.entry !== "ad") {
     const saved = await b.loadContext("preferences:" + customerId);
-    const newCaller = !saved.plan && !saved.intro_school_seen && !saved.ad_campaign;
+    const newCaller = !saved.plan && !saved.intro_school_seen;
     await b.saveContext(callId, { entry: "ad", campaign: name, ad_new_caller: newCaller });
     if (!saved.ad_campaign) await b.savePreference(customerId, { ad_campaign: name });
     await b.save(AD_ENTRIES, { call_id: callId, customer_id: customerId, campaign: name, new_caller: newCaller, at: nowIso() }, randomHex(16));
@@ -110,7 +110,7 @@ const emailArgs = z.object({ email: z.string().trim().toLowerCase().max(120).ema
 const linkArgs = z.object({ plan_id: z.enum(PLAN_IDS), channel: z.enum(["sms", "email"]) });
 
 export function paymentLink(planId: PlanId, campaign: string) {
-  return `${SALES_SITE}/join?plan=${encodeURIComponent(planId)}&src=${encodeURIComponent("ad-" + campaign)}`;
+  return `${SALES_SITE}/learn?plan=${encodeURIComponent(planId)}&src=${encodeURIComponent("ad-" + campaign)}`;
 }
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -152,7 +152,7 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     const { email, words, summary } = parsed.data;
     await b.savePreference(customerId, { email });
     const sent = await sendMail(mail, email, "המילים שלך מהשיעור בספיקול", wordsEmail(words, summary));
-    await b.save(SALES_FOLLOWUPS, { ...base, type: "email", email, words: words ?? [], status: sent ? "sent" : "pending" });
+    await b.save(SALES_FOLLOWUPS, { ...base, type: "email", email, words: words ?? [], summary: summary ?? "", status: sent ? "sent" : "pending" });
     return true;
   }
   if (name === "request_payment_link") {
@@ -188,6 +188,6 @@ export async function adCampaignReport(env: Env) {
   }
   return {
     campaigns: Object.values(rows).sort((a, b) => b.calls - a.calls),
-    followups: followups.filter((f) => f.status === "pending").slice(0, 100),
+    followups: await Promise.all(followups.filter((f) => f.status === "pending").map(async (f): Promise<Record<string, any>> => ({ ...f, phone: (await b.record("customers", f.customer_id))?.phone ?? "" }))),
   };
 }

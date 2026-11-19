@@ -4,7 +4,7 @@ import { useApp } from '../../store/AppContext';
 import { portalRequest } from '../portal/portalApi';
 
 type CampaignRow = { campaign: string; calls: number; new_callers: number; returning_callers: number; lessons_booked: number; emails: number; payment_links: number };
-type Followup = { id: string; type: string; campaign: string; customer_id: string; at: string; plan_id?: string; channel?: string; email?: string; link?: string; day?: string; part_of_day?: string };
+type Followup = { id: string; type: string; campaign: string; customer_id: string; phone?: string; at: string; plan_id?: string; channel?: string; email?: string; link?: string; day?: string; part_of_day?: string };
 type Report = { campaigns: CampaignRow[]; followups: Followup[] };
 
 const days: Record<string, string> = { today: 'היום', tomorrow: 'מחר', this_week: 'השבוע', other: 'מועד אחר' };
@@ -51,7 +51,7 @@ export const AdCampaignsPanel: React.FC = () => {
         <div className="space-y-2">
           <h3 className="font-bold text-[#172b35]">לטיפול הצוות</h3>
           <ul className="text-sm space-y-1">
-            {report.followups.map(f => <li key={f.id} className="break-all">{new Date(f.at).toLocaleString('he-IL')} · {f.campaign} · {followupText(f)}</li>)}
+            {report.followups.map(f => <li key={f.id} className="break-all">{new Date(f.at).toLocaleString('he-IL')} · {f.phone || f.customer_id} · {f.campaign} · {followupText(f)}</li>)}
           </ul>
         </div>
       )}

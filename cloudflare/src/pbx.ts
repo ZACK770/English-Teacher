@@ -289,6 +289,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     }
     result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
   } else if (p.PBXcallStatus === "HANGUP") result = { type: "hangup" };
+  else if (route === "ad" && p.isaacTeacher !== undefined) result = ivrResponse("school", p, copy, s.projectPath);
   else if (route === "ad") result = await startAdEntry(b, progress, s, callId, customerId, p.campaign);
   else if ((route === "main" && p.isaacMain === "1") || (route === "school" && [undefined, "1"].includes(p.isaacTeacher)) || (route === "mode" && ["1", "2"].includes(p.isaacMode))) {
     result = await startSchool(b, progress, s, callId, customerId);
