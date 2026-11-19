@@ -170,7 +170,7 @@ export class TutorSession {
       await this.latency("session_started");
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
-      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId);
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone");
       const opening = await quickOpening(this.b, this.callId);
       const adCall = (await this.b.loadContext(this.callId)).entry === "ad";
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
@@ -487,7 +487,7 @@ export class TutorSession {
       if (saved && this.controls) {
         const controls = this.controls = { ...this.controls, intake_pending: false };
         const bot = { id: this.profileId, role: "teacher" } as const;
-        const refresh = (teacher?: string) => applyLearnerControls(this.b, this.customerId, bot, controls, teacher);
+        const refresh = (teacher?: string) => applyLearnerControls(this.b, this.customerId, bot, controls, teacher, this.portal ? "web" : "phone");
         const lesson = await refresh(previewTeacher).then(c => c.lesson).catch(async error => {
           if (!previewTeacher || !(error instanceof HttpError) || error.status !== 404) throw error;
           const previous = controls.lesson;
@@ -499,7 +499,8 @@ export class TutorSession {
             topic: args.topic === undefined ? previous.topic : updated?.topic ?? previous.topic,
           };
         });
-        this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}; these override the requested direction when access is limited. The full saved plan applies from the next call. Start or continue the lesson now.`);
+        const access = this.portal ? "These override the requested direction when access is limited." : "The level immediately replaces the earlier conversational level; access limits apply to curriculum, not to the difficulty of your English conversation. Continue assessing only the original targets until the next call.";
+        this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}. ${access} The full saved plan applies from the next call. Start or continue the lesson now.`);
       }
       return saved;
     }

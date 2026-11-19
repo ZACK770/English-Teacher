@@ -47,6 +47,8 @@ export function adOpening(context: Record<string, any>): string | null {
   return "This returning learner pressed 1 at the end of a SpeakCall ad. Welcome them back briefly in Hebrew by name if known (\"טוב לשמוע אותך שוב\"), without the new-caller introduction or intake, and continue from their last lesson with one short question.";
 }
 
+export const PHONE_TUTOR_PITCH = 'Out of character only, when asked about SpeakCall or at a natural closing if appropriate: say at most one short line in warm Hebrew, then move on. Examples: "כאן אפשר פשוט לדבר ולהתאמן בקצב שלך. יש לנו סבלנות, גם כשצריך לנסות שוב." / "לא צריך לחכות עד שהאנגלית תהיה מושלמת. פשוט מתחילים לדבר. רוצה לנסות?" / "אפשר להמשיך לתרגל בכל פעם שנוח לך, לפי הדקות שבמסלול שלך." Do not interrupt practice, repeat a pitch, or imply unlimited free minutes.';
+
 export function adRuntimeContext(context: Record<string, any>): string {
   if (context.entry !== "ad") return "";
   const plans = (Object.entries(SALES_PLANS) as [PlanId, { name: string; price: string }][]).map(([id, p]) => `${p.name} (${id}): ${p.price}`).join("; ");
@@ -54,9 +56,10 @@ export function adRuntimeContext(context: Record<string, any>): string {
     "Ad caller flow (authoritative for this call; it replaces the longer first-call intake):",
     context.ad_new_caller
       ? "- Intake: ask one question at a time, only: first name, goal (why English: work, travel, study or other), level. Call save_intake as soon as you know goal and level. Skip lesson length, topic, style and teacher gender."
-      : "- Returning caller: no intake; continue the learner's lesson.",
-    "- First minute: give the learner one short English sentence that fits their goal, ask them to say it, and praise the attempt specifically in Hebrew.",
-    "- Closing (when the closing stage is reached or the learner wants to stop): a Hebrew summary with a concrete reward counted from this call only, e.g. \"היום אמרת 9 משפטים, ו־5 מילים חדשות כבר שלך\" (never inflate the numbers). Then book the next lesson: ask \"מחר בבוקר או בערב?\" and call schedule_next_lesson with the answer. Then ask for an email to send today's words; ask the learner to spell it, read it back once, and call save_email only after they confirm.",
+      : "- Returning caller: skip the introductory questionnaire. Continue the lesson; if no level was saved, calibrate briefly in conversation and save the goal and level once known.",
+    "- First minute: start at the learner's stated level, on a topic that fits their goal. For a beginner, a short sentence to practise is fine. For an intermediate or advanced learner, start with an open-ended question in natural English, not a repeat-after-me drill.",
+    "- Closing (when the closing stage is reached or the learner wants to stop): a Hebrew summary with a concrete reward counted from this call only, e.g. \"היום אמרת 9 משפטים, ו־5 מילים חדשות כבר שלך\" (never inflate the numbers). Then book the next lesson: ask \"מחר בבוקר או בערב?\" and call schedule_next_lesson with the answer. Then ask for an email to send today's words. Accept letters and digits alike, anywhere valid. Transcribe spoken or grouped numbers as digits in order, preserving leading zeroes. Ask only about ambiguous characters, read back the complete address once (including each digit), and call save_email after confirmation. Do not ask for a different address just because it contains digits.",
+    PHONE_TUTOR_PITCH,
     `- Plans you may describe when relevant or asked (approved prices, nothing else): ${plans}. After the 10-minute free opening lesson every learner keeps two free 5-minute calls per month. All plans are on the website speakool.net.`,
     "- When calling save_email, pass the English words practised in this call and a one-sentence Hebrew summary; the words are emailed right away.",
     "- At the end, recommend one plan that fits what you heard (price and one reason). If the learner wants it, offer the payment link by email (sent right away) or by SMS (the SpeakCall team sends it soon) and call request_payment_link. Never claim an SMS was already sent.",
@@ -84,7 +87,7 @@ export const SAVE_EMAIL_TOOL = {
   parameters: {
     type: "object",
     properties: {
-      email: { type: "string" },
+      email: { type: "string", description: "Exact confirmed address using digits 0-9 as spoken, including any leading zeros. Example: a012345@example.com." },
       words: { type: "array", items: { type: "string" }, description: "English words or short phrases practised in this call, up to 12" },
       summary: { type: "string", description: "One short Hebrew sentence on what the learner achieved today" },
     },
