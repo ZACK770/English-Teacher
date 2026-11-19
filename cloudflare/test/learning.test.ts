@@ -6,7 +6,7 @@ import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, 
 import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
-import { applyLearnerControls, LearnerPreferencesSchema } from "../src/learner";
+import { applyLearnerControls, LearnerPreferencesSchema, saveIntake } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -213,10 +213,18 @@ describe("learner settings to Gemini", () => {
     expect(intake).toMatchObject({
       parameters: {
         properties: { minutes: { type: "integer", description: expect.stringContaining("5, 10, or 20") } },
-        required: expect.arrayContaining(["minutes"]),
+        required: ["goal", "level"],
       },
     });
     expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");
+  });
+  it("saves a partial phone intake with defaults and marks the first call as pending until then", async () => {
+    const before = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(before.intake_pending).toBe(true);
+    expect(await saveIntake(b, "alice", "teacher", { goal: "travel", level: "beginner" })).toBe(true);
+    const after = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
+    expect(after.intake_pending).toBe(false);
+    expect((await b.loadContext("preferences:alice")).plan).toEqual({ goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" });
   });
   it("does not add grammar to recommended practice and only sends its targets when explicitly selected", async () => {
     await b.savePreference("alice", { topic: "business", track: "recommended" });
