@@ -15,6 +15,7 @@ import { dispatchVoicemails } from "./voicemails";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
 import { SubscriptionStore } from "./subscriptions";
 import { BusinessStore } from "./business";
+import { crmPeople } from "./crm-people";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -66,6 +67,8 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     const identity = await adminIdentity(request, env);
     if (!identity) throw new HttpError(401, "Unauthorized");
     if (!identity.bearer && request.method !== "GET") requireOrigin(request);
+    const crmResponse = await crmPeople(request, env, path);
+    if (crmResponse) return crmResponse;
     const ownerResponse = await adminOwners(request, env, path, identity);
     if (ownerResponse) return ownerResponse;
     if (path === "/v1/admin/gemini-budget" && request.method === "GET") return geminiBudgetStatus(env);
@@ -168,6 +171,12 @@ export default {
     try { response = await handle(request, env, ctx); }
     catch (error) {
       response = error instanceof HttpError ? Response.json({ detail: error.detail }, { status: error.status }) : Response.json({ detail: "Request failed" }, { status: 500 });
+    }
+    if (/^\/dashboard\/crm(\/|$)/.test(path) && response.headers.get("Content-Type")?.includes("text/html")) {
+      const html = (await response.text()).replace(/<link\b[^>]*href=["']https:\/\/fonts\.(?:googleapis|gstatic)\.com[^>]*>/g, "");
+      const headers = new Headers(response.headers);
+      headers.delete("Content-Length");
+      response = new Response(html, { status: response.status, headers });
     }
     if (log) await audit(env, request, path, actor, response.status).catch(() => undefined);
     return response;

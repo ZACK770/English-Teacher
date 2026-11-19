@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
-initAnalytics();
+if (!/^\/(english\/)?dashboard\/crm(\/|$)/.test(location.pathname)) initAnalytics();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
