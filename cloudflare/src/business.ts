@@ -260,9 +260,15 @@ export class BusinessStore {
       return allocation ? { seconds: maxSeconds, mode: "unrestricted" } : busy;
     }
     const { results: receipts } = await this.db
-      .prepare("SELECT id, package_id FROM sales_receipts WHERE customer_id=? AND product=? AND expires_at>? ORDER BY expires_at")
-      .bind(customerId, policy.product, now)
-      .all<{ id: string; package_id: string }>();
+      .prepare(`SELECT r.*, COALESCE(SUM(COALESCE(u.billed_seconds, u.reserved_seconds)),0) AS spent
+        FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
+        WHERE (r.customer_id=? OR r.subscription_id IN
+          (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+           WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status='active'))
+        AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+        AND r.product=? AND r.expires_at>? GROUP BY r.id ORDER BY r.expires_at`)
+      .bind(customerId, customerId, policy.product, now)
+      .all<Record<string, any>>();
     for (const receipt of receipts) {
       const pkg = PackageSchema.safeParse(await this.record("packages", receipt.package_id));
       const cap = pkg.success ? Math.min(maxSeconds, pkg.data.max_call_minutes * 60) : maxSeconds;
@@ -493,7 +499,7 @@ export class BusinessStore {
     const id = randomHex(10);
     const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");
     await this.db
-      .prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
       .bind(id, value.customer_id, value.package_id, pkg.product, value.reference, value.amount_ils, economics.vat_rate, pkg.minutes, expires, nowIso())
       .run();
     return { id, expires_at: expires };

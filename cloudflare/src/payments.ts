@@ -284,7 +284,7 @@ export class PaymentStore {
     const now = nowIso();
     const expires = new Date(Date.now() + receiptDays(pkg, order.channel) * 86400_000).toISOString().replace("Z", "+00:00");
     await this.db.batch([
-      this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
+      this.db.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
         receiptId, order.customer_id, order.package_id, pkg.product, `nedarim:${mosadId}:${transactionId}`, amount / 100, order.vat_rate, pkg.minutes, expires, now,
       ),
       this.db.prepare("UPDATE payment_orders SET state='paid',transaction_id=?,confirmation=?,receipt_id=?,updated_at=? WHERE id=? AND state!='paid'").bind(transactionId, confirmation, receiptId, now, orderId),

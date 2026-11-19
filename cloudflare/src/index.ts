@@ -13,6 +13,7 @@ import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
+import { SubscriptionStore } from "./subscriptions";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -149,6 +150,7 @@ export default {
     return response;
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(new SubscriptionStore(env.DB).tick());
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));

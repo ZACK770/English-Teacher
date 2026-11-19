@@ -13,6 +13,8 @@ import { renderNarration, renderVoicePreview } from "./learn";
 import { syncCrm } from "./crm";
 import { dispatchCallbacks, listCallbacks, testCallbackDial } from "./callbacks";
 import { listVoicemails, voicemailAudio } from "./voicemails";
+import { SubscriptionStore } from "./subscriptions";
+import { subscriptionApi } from "./subscription-api";
 
 const ROLES = ["teacher", "translator", "sales", "service", "custom"] as const;
 const channel = z.string().max(200).nullable().optional().transform((v) => (v ?? "").trim() || null);
@@ -226,6 +228,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
 
   if (seg[2] === "business") {
     const kind = seg[3];
+    if (kind === "subscriptions") return subscriptionApi(request, new SubscriptionStore(env.DB), seg.slice(4));
     if (kind === "performance" && seg[4]) return ok(await b.performance(seg[4]));
     if (kind === "customers" && seg[4] && seg[5] === "invite" && method === "POST") {
       try { return ok(await b.portalInvite(seg[4])); } catch { throw new HttpError(404, "Customer not found"); }
@@ -351,6 +354,7 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
   const progress = new ProgressStore(env.DB);
   const customerId = await b.portalCustomer(bearer(request.headers.get("Authorization")) ?? "");
   if (!customerId) throw new HttpError(401, "קישור הכניסה אינו תקין או שפג תוקפו");
+  if (path === "/v1/portal/subscriptions" || path.startsWith("/v1/portal/subscriptions/")) return subscriptionApi(request, new SubscriptionStore(env.DB), path.split("/").slice(4), customerId);
   if (path === "/v1/portal/voice-preview" && request.method === "POST") return renderVoicePreview(request, env, settings(env), customerId);
   if (path === "/v1/portal/me" && request.method === "GET") {
     const detail: Record<string, any> = await b.customerDetail(customerId);
@@ -368,6 +372,7 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
     detail.preferences = { ...detail.preferences, ...resolveLessonChoices(detail.preferences, selectedBot, selectedTeacher.success ? selectedTeacher.data : null) };
     detail.materials = await Promise.all((await b.list(materialsKind(customerId))).map(async material => ({ ...material, target_count: (await materialTargets({ id: material.id, words: material.words })).length })));
     detail.phones = (await env.DB.prepare("SELECT id,body FROM console_records WHERE kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?").bind(customerId).all<{ id: string; body: string }>()).results.map(r => ({ id: r.id, phone: JSON.parse(r.body).phone }));
+    detail.subscriptions = await new SubscriptionStore(env.DB).summary(customerId);
     const s = settings(env);
     detail.phone = s.systemPhone;
     detail.extension = s.projectPath;
