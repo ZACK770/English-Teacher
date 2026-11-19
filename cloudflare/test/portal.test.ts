@@ -461,6 +461,19 @@ describe("real learner portal", () => {
     expect((await connect()).status).toBe(401);
     expect(forward).toHaveBeenCalledOnce();
   });
+  it.each(["speakcall.app", "www.speakcall.app"])("serves the SpeakCall landing page on %s", async (host) => {
+    const index = readFileSync(new FileURL("../../index.html", import.meta.url), "utf8");
+    env.ASSETS = { fetch: async (r: Request) => new URL(r.url).pathname === "/index.html"
+      ? new Response(index, { headers: { "Content-Type": "text/html" } })
+      : new Response(null, { status: 404 }) } as Fetcher;
+    const page = await worker.fetch(new Request(`https://${host}/`), env);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("<title>SpeakCall — פשוט לדבר.</title>");
+    expect(html).toContain('<link rel="canonical" href="https://speakcall.app/" />');
+    expect(html).toContain('<meta property="og:title" content="SpeakCall — פשוט לדבר." />');
+    expect(html).toContain('<meta property="og:url" content="https://speakcall.app/" />');
+  });
   it("loads the learner bundle under the existing impact.net /english path", async () => {
     env.ASSETS = { fetch: async (r: Request) => new URL(r.url).pathname === "/index.html"
       ? new Response('<script src="/assets/app.js"></script><link href="/assets/app.css">', { headers: { "Content-Type": "text/html" } })

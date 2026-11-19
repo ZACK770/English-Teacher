@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { submitCallback } from './callbackApi';
+import { LegalFooter } from '../legal/LegalFooter';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
 export const JoinLanding: React.FC = () => {
@@ -62,10 +63,10 @@ export const JoinLanding: React.FC = () => {
         <div className="max-w-[1280px] mx-auto flex items-center justify-between gap-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-xl shadow-md">
-              ד
+              ס
             </div>
             <div>
-              <span className="font-extrabold text-lg tracking-tight text-slate-100 block">לישנא אחרינא</span>
+              <span className="font-extrabold text-lg tracking-tight text-slate-100 block">ספיקול (SpeakCall)</span>
               <span className="text-[11px] text-slate-400 block font-medium">בית ספר ללימוד אנגלית מדוברת בטלפון ובמחשב</span>
             </div>
           </div>
@@ -154,7 +155,7 @@ export const JoinLanding: React.FC = () => {
 
                 <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl text-sm leading-relaxed text-slate-300 space-y-3.5">
                   <p>
-                    אני משמש כמורה פרטי, סבלני ומקצועי, בבית הספר ללמידה אנגלית <strong>'לישנא אחרינא'</strong>.
+                    אני משמש כמורה פרטי, סבלני ומקצועי, בבית הספר ללמידה אנגלית <strong>ספיקול</strong>.
                     כמוני יש שם עוד מורים ומורות וירטואליים מהשורה הראשונה.
                   </p>
                   <p>
@@ -222,7 +223,7 @@ export const JoinLanding: React.FC = () => {
                     אתם מכירים את הרגע שמתכוננים שעות למבחן באנגלית, מקבלים ציון טוב על הנייר – אבל כשצריך לפתוח את הפה ולומר משפט אחד פשוט, פשוט קופאים מבושה?
                   </p>
                   <p>
-                    בבית הספר <strong>'לישנא אחרינא'</strong> פיתחנו מורים וירטואליים סבלניים בטלפון ובמחשב.
+                    בבית הספר <strong>ספיקול</strong> פיתחנו מורים וירטואליים סבלניים בטלפון ובמחשב.
                     המורה מדבר בגובה העיניים, מלמד מילים ומשפטים צעד-אחר-צעד, ומפרגן על כל ניסיון.
                   </p>
                   <p>
@@ -430,6 +431,7 @@ export const JoinLanding: React.FC = () => {
           </div>
         </div>
       </main>
+      <LegalFooter />
     </div>
   );
 };

@@ -29,11 +29,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
             className="flex items-center gap-2.5 cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center text-emerald-400 font-extrabold text-lg shadow-sm group-hover:border-emerald-500/50 transition-colors">
-              ד
+              ס
             </div>
             <div>
               <div className="font-extrabold text-slate-100 text-base leading-tight group-hover:text-emerald-400 transition-colors flex items-center gap-1.5">
-                <span>לישנא אחרינא</span>
+                <span>ספיקול</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                   LIVE
                 </span>

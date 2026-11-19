@@ -18,7 +18,7 @@ export function SpeakoolLanding() {
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
-      <a className="sk-brand" href={base + "/"}>speakool<span className="sk-brand-dot">.</span></a>
+      <a className="sk-brand" dir="ltr" href={base + "/"}>SpeakCall<span className="sk-brand-dot">.</span></a>
       <nav><a href="#how">איך זה עובד</a><a href="#plans">מסלולים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
     </header>
     <main>
@@ -88,6 +88,6 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>המשפט הראשון הוא הכי קשה.<br />השאר כבר זורם.</h2><a className="sk-primary" href={learn}>בוא נדבר <ArrowLeft size={18} /></a></section>
     </main>
-    <footer className="sk-shell sk-land-foot"><span>speakool<span className="sk-brand-dot">.</span></span><a href={tel}>{PHONE_LINE}</a></footer>
+    <footer className="sk-shell sk-land-foot"><span dir="ltr">SpeakCall<span className="sk-brand-dot">.</span></span><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
   </div>;
 }

@@ -175,16 +175,16 @@ export class LearningStore {
     const { primary, rest } = recommendedDomains(level, goal);
     const rank = (l: string) => levelOrder.indexOf(l as LessonPlan["level"]);
     const levels = levelOrder.slice(rank(level));
-    const pick = (domains: string[], limit: number, taken: LearningTarget[]) => {
+    const pick = (domains: string[], limit: number, taken: LearningTarget[], within = levels) => {
       const out: LearningTarget[] = [];
-      for (const l of levels) for (const domain of domains) {
+      for (const l of within) for (const domain of domains) {
         if (out.length >= limit) return out;
         const open = vocabularyCatalog.filter(t => t.domain === domain && rank(t.level) <= rank(l) && !mastered(t) && !taken.includes(t) && !out.includes(t));
         out.push(...order(stats, open, limit - out.length, l));
       }
       return out;
     };
-    const goalPicks = level === "beginner" ? pick(goalDomains[goal || ""] || [], Math.floor(count / 3), []) : [];
+    const goalPicks = level === "beginner" ? pick(goalDomains[goal || ""] || [], Math.floor(count / 3), [], [level]) : [];
     const main = pick(primary, count - goalPicks.length, goalPicks);
     main.push(...pick(rest, count - goalPicks.length - main.length, [...goalPicks, ...main]));
     const chosen = [...main, ...goalPicks];

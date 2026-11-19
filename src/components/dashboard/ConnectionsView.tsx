@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Key, Globe, Radio, Check, Copy, ExternalLink, Zap } from 'lucide-react';
 
+const NEDARIM_WEBHOOK_URL = 'https://speakcall.app/v1/payments/nedarim/webhook';
+
 export const ConnectionsView: React.FC = () => {
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -114,14 +116,14 @@ export const ConnectionsView: React.FC = () => {
                 <input
                   type="text"
                   readOnly
-                  value="https://english.the-impact.net/v1/payments/nedarim/callback"
+                  value={NEDARIM_WEBHOOK_URL}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px]"
                 />
                 <button
                   onClick={() =>
                     copyToClipboard(
                       'nedarim',
-                      'https://english.the-impact.net/v1/payments/nedarim/callback'
+                      NEDARIM_WEBHOOK_URL
                     )
                   }
                   className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50"

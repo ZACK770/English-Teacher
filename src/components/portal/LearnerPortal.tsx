@@ -19,7 +19,7 @@ function IconButton({ label, children, onClick, active = false }: { label: strin
   return <button type="button" className={"sk-icon " + (active ? "is-active" : "")} aria-label={label} aria-pressed={active} title={label} onClick={onClick}>{children}<span className="sk-tooltip">{label}</span></button>;
 }
 function Brand({ onClick }: { onClick: () => void }) {
-  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><AudioLines strokeWidth={1.5} /><span>speakool<span className="sk-brand-dot">.</span></span></button>;
+  return <button className="sk-brand" dir="ltr" onClick={onClick} aria-label="ספיקול — למסך הבית"><AudioLines strokeWidth={1.5} /><span>SpeakCall<span className="sk-brand-dot">.</span></span></button>;
 }
 function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
   return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">

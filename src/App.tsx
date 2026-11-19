@@ -6,6 +6,8 @@ import { LearnerPortal } from './components/portal/LearnerPortal';
 import { JoinLanding } from './components/join/JoinLanding';
 import { SpeakoolLanding } from './components/portal/SpeakoolLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
+import { LegalPage, type LegalPageName } from './components/legal/LegalPage';
+import { LegalFooter } from './components/legal/LegalFooter';
 
 export const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy' | 'home'>(() => !location.hash && !/\/(learn|join|dashboard)/.test(location.pathname) ? 'home' : 'learn');
@@ -70,7 +72,10 @@ export const AppContent: React.FC = () => {
           <DashboardLayout currentTab={dashboardTab} onSelectTab={handleSelectDashboardTab} />
         )}
         {currentView === 'learn' && (
-          <LearnerPortal />
+          <>
+            <LearnerPortal />
+            <LegalFooter />
+          </>
         )}
         {currentView === 'join' && <JoinLanding />}
         {currentView === 'home' && <SpeakoolLanding />}
@@ -81,6 +86,11 @@ export const AppContent: React.FC = () => {
 };
 
 export const App: React.FC = () => {
+  const path = window.location.pathname.replace(/^\/english(?=\/|$)/, '').replace(/\/$/, '');
+  const legalPage = path.slice(1);
+  if (['terms', 'privacy', 'accessibility'].includes(legalPage)) {
+    return <LegalPage page={legalPage as LegalPageName} />;
+  }
   return (
     <AppProvider>
       <AppContent />
