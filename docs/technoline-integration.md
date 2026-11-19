@@ -31,18 +31,23 @@ Never log URLs, secrets, raw provider exceptions or card fields. Both Worker
 configs redact URL query strings in Cloudflare logs and traces; callback events
 allowlist selected fields. Redaction does not remove already-retained logs.
 
-### Moving the live Worker callbacks out of the URL
+### Moving callbacks to body-only authentication
 
-Keep the existing query credential during the cutover. Provision a separate
-`TLIVR_CALLBACK_BODY_SECRET` in the Worker, then canary a Technoline API extension
-with a query-free URL, `method: POST`, and the secret as a fixed `callback_key`
-field via `addParams`. Verify that the provider sends it in the form body, that it
-does not appear in provider logs, and that both the initial and chained callbacks
-work during a real call. See the [Technoline API module docs](https://pbx.tlivr.com/apiModuleDocs.html).
-Snapshot existing extension settings without secret values before any edit.
-After all live callback extensions are verified, remove the Worker's legacy
-`TLIVR_CALLBACK_SECRET` to invalidate the original credential. This does not
-change the separate WebSocket channel or its token.
+Cloudflare redaction only protects requests that reach the Worker. Read back
+the PBX extension settings first: the callback URL can point to a different
+origin from the streaming channel, including the legacy Render service.
+
+For extensions that use the Worker, keep the legacy credential during cutover.
+Provision a distinct `TLIVR_CALLBACK_BODY_SECRET`, snapshot existing settings
+without secret values, and canary an extension with a query-free URL, POST, and
+the secret in `addParams.callback_key`. The [Technoline API module docs](https://pbx.tlivr.com/apiModuleDocs.html)
+describe POST moving provider parameters to the form body but leaving the
+configured URL unchanged. Verify the actual request and provider logs, plus
+the initial and chained callbacks in a real call, before migrating other
+extensions. Do not use the legacy Render reconcile operation for this migration;
+it writes query credentials. Once no live extensions use the old key, remove
+`TLIVR_CALLBACK_SECRET` to invalidate it. This does not change the WebSocket
+channel or its token.
 
 Pre-change backups are outside Git in the current chat work/pbx-backups.
 Server reconciliation saves redacted per-extension snapshots before writes.
