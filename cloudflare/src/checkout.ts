@@ -73,9 +73,12 @@ export class CheckoutStore {
     if (!terms) throw new HttpError(422, "המסלול הזה לא פתוח לרכישה באתר.");
     const cutoff = new Date(Date.now() - ORDER_TTL_MS).toISOString().replace("Z", "+00:00");
     const reusable = await this.db.prepare(
-      "SELECT id FROM payment_orders WHERE customer_id=? AND package_id=? AND channel='web' AND state='issued' AND created_at>? ORDER BY created_at DESC LIMIT 1",
-    ).bind(customerId, packageId, cutoff).first<{ id: string }>();
-    if (reusable) return this.view(reusable.id, customerId);
+      "SELECT id,snapshot FROM payment_orders WHERE customer_id=? AND package_id=? AND channel='web' AND state='issued' AND created_at>? ORDER BY created_at DESC LIMIT 1",
+    ).bind(customerId, packageId, cutoff).first<{ id: string; snapshot: string }>();
+    if (reusable) {
+      if (pkg.duration_months === 12 && domain) await this.db.prepare("UPDATE payment_orders SET snapshot=?,updated_at=? WHERE id=? AND state='issued'").bind(JSON.stringify({ ...JSON.parse(reusable.snapshot), guarantee_domain: domain }), nowIso(), reusable.id).run();
+      return this.view(reusable.id, customerId);
+    }
     const unfinished = await this.db.prepare(
       "SELECT o.id FROM payment_orders o JOIN standing_orders s ON s.id=o.subscription_id WHERE o.customer_id=? AND o.package_id=? AND o.state='paid' AND s.state='pending' ORDER BY o.created_at DESC LIMIT 1",
     ).bind(customerId, packageId).first<{ id: string }>();

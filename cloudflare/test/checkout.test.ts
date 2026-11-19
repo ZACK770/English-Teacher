@@ -68,6 +68,12 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
+  it("settles legacy mastery snapshots using the configured default domains", async () => {
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "travel" })).json() as any;
+    db.sql.prepare("UPDATE payment_orders SET snapshot=json_remove(snapshot,'$.guarantee_domain') WHERE id=?").run(o.id);
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "89", Confirmation: "5", Amount: "1490", Currency: "1", Groupe: "dibura-" + o.id })).status).toBe(200);
+    expect(JSON.parse((await new SubscriptionStore(env.DB).get(o.id)).domains_json)).toEqual([{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }]);
+  });
   it("adopts a legacy paid standing order without crediting its first receipt again", async () => {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
     await hook({ MosadNumber: "7019554", TransactionId: "80", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
@@ -91,6 +97,7 @@ describe("website checkout", () => {
     expect(calls[0]).toMatchObject({ PaymentType: "Ragil", Amount: "1490", Tashlumim: "12", Groupe: "dibura-" + o.id, ApiValid: "valid12345" });
     const again = await (await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "travel" })).json() as any;
     expect(again.id).toBe(o.id);
+    expect(((await (await req("/v1/portal/checkout", { package_id: "school-mastery", domain: "business" })).json()) as any).id).toBe(o.id);
     const paid = { MosadNumber: "7019554", TransactionId: "9001", Confirmation: "77", Amount: "1490", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" };
     expect((await hook({ ...paid, Amount: "1" })).status).toBe(400);
     expect((await hook(paid)).status).toBe(200);
@@ -100,7 +107,7 @@ describe("website checkout", () => {
     const store = new SubscriptionStore(env.DB);
     const sub = await store.get(o.id);
     expect(sub).toMatchObject({ term_months: 12, monthly_minutes: 300, period_number: 1, price_agorot: 149000 });
-    expect(JSON.parse(sub.domains_json)).toContainEqual({ domain: "travel" });
+    expect(JSON.parse(sub.domains_json)).toContainEqual({ domain: "business" });
     expect(db.sql.prepare("SELECT entitlement_id FROM payment_orders WHERE id=?").get(o.id)?.entitlement_id).toBe(sub.id);
     await store.tick(addMonths(sub.started_at, 1));
     await store.tick(addMonths(sub.started_at, 1));

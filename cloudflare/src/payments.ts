@@ -290,7 +290,7 @@ export class PaymentStore {
     ];
     if (order.channel === "web" && (pkg.billing === "monthly" || pkg.duration_months)) {
       await new SubscriptionStore(this.db).create(order.customer_id, order.package_id, now,
-        pkg.duration_months === 12 ? [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain: JSON.parse(order.snapshot).guarantee_domain }] : undefined,
+        pkg.duration_months === 12 && JSON.parse(order.snapshot).guarantee_domain ? [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain: JSON.parse(order.snapshot).guarantee_domain }] : undefined,
         { id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: pkg.duration_months ?? null, receiptId, chargeAgorot: amount, vatRate: order.vat_rate,
           statements: [
             ...settlement,

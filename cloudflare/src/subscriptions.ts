@@ -44,7 +44,7 @@ export class SubscriptionStore {
     if (!source && plan.billing !== "monthly" && ![6, 12].includes(term)) throw new Error("Not a subscription plan");
     const selected = z.array(DomainSchema).parse(domains ?? JSON.parse(plan.domains_json));
     if (term && (!selected.length || selected.some(d => !vocabularyCatalog.some(t => t.domain === d.domain && (!d.levels || d.levels.includes(t.level as any)))))) throw new Error("Guarantee domains must have measurable vocabulary");
-    if (term === 12 && !selected.some(d => d.domain !== "everyday")) throw new Error("Choose an additional vocabulary domain for mastery");
+    if (term === 12 && (!source || domains) && !selected.some(d => d.domain !== "everyday")) throw new Error("Choose an additional vocabulary domain for mastery");
     const id = source?.id ?? randomHex(12), end = addMonths(at, 1);
     await this.db.batch([
       this.db.prepare(`INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_start,current_period_end,created_at,updated_at,term_months,pause_year_start,guarantee_status,domains_json,monthly_minutes,term_end)
