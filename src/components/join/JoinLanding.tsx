@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { LegalFooter } from '../legal/LegalFooter';
 import { useApp } from '../../store/AppContext';
 import { PhoneCall, Bot, Gift, CheckCircle, Volume2, Sparkles, ArrowLeft } from 'lucide-react';
 
@@ -428,6 +429,7 @@ export const JoinLanding: React.FC = () => {
           </div>
         </div>
       </main>
+      <LegalFooter />
     </div>
   );
 };
