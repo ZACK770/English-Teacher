@@ -228,15 +228,15 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   const query = new URL(request.url).searchParams;
   const legacy = query.getAll("key");
   const legacyAuth = legacy.length === 1 && secureEqual(legacy[0], s.callbackSecret);
-  const bodySecret = env.TLIVR_CALLBACK_BODY_SECRET ?? "";
+  const bodySecrets = [env.TLIVR_CALLBACK_BODY_SECRET ?? "", env.TLIVR_CALLBACK_BODY_NEXT_SECRET ?? ""];
   const contentType = request.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
-  const canUseBodyAuth = !!bodySecret && request.method === "POST" && contentType === "application/x-www-form-urlencoded"
+  const canUseBodyAuth = bodySecrets.some(Boolean) && request.method === "POST" && contentType === "application/x-www-form-urlencoded"
     && legacy.length === 0 && !query.has("callback_key");
   if (!s.projectEnabled || (!legacyAuth && !canUseBodyAuth)) throw new HttpError(401, "Unauthorized");
   const clock = Date.now();
   const form = await callbackForm(request);
   const credentials = form.getAll("callback_key");
-  if (canUseBodyAuth && (credentials.length !== 1 || !secureEqual(credentials[0], bodySecret))) throw new HttpError(401, "Unauthorized");
+  if (canUseBodyAuth && (credentials.length !== 1 || !bodySecrets.some((secret) => secureEqual(credentials[0], secret)))) throw new HttpError(401, "Unauthorized");
   query.delete("key");
   query.delete("callback_key");
   form.delete("key");
