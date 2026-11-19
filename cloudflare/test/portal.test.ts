@@ -245,15 +245,23 @@ describe("quick teacher direction", () => {
     expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
   });
 
-  it.each(["before save", "before pace refresh", "before direction refresh"])("keeps a browser lesson running when its teacher is deleted %s", async when => {
+  it.each(["before save", "before write", "before pace refresh", "before level refresh", "before direction refresh"])("keeps a browser lesson running when its teacher is deleted %s", async when => {
     const kind = teachersKind("learner-a");
-    const web = await b.save(kind, TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "intermediate" }));
+    const web = await b.save(kind, TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "intermediate", topic: "everyday" }));
+    await b.savePreference("learner-a", { topic: "property" });
     const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: web.id }) as any;
     session.profileId = "student"; session.customerId = "learner-a"; session.callId = "deleted-teacher";
     session.controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false), web.id);
     session.ai = { addContext: vi.fn() };
     const deleteTeacher = async () => expect((await request("/v1/portal/teachers/" + web.id, tokenA, undefined, "DELETE")).ok).toBe(true);
     if (when === "before save") await deleteTeacher();
+    else if (when === "before write") {
+      const batch = db.batch.bind(db);
+      vi.spyOn(db, "batch").mockImplementationOnce(async statements => {
+        await deleteTeacher();
+        return batch(statements);
+      });
+    }
     else {
       const savePreference = session.b.savePreference.bind(session.b);
       vi.spyOn(session.b, "savePreference").mockImplementationOnce(async (...args) => {
@@ -261,10 +269,13 @@ describe("quick teacher direction", () => {
         await deleteTeacher();
       });
     }
-    const direction = when === "before direction refresh" ? { level: "beginner", topic: "property" } : { pace: "slow" };
-    expect(await session.recordTool({ name: "save_intake", args: { goal: "other", ...direction } })).toBe(when !== "before save");
+    const direction = when === "before direction refresh" ? { level: "beginner", topic: "property" } : when === "before level refresh" ? { level: "beginner" } : { pace: "slow" };
+    const saved = when.endsWith("refresh");
+    expect(await session.recordTool({ name: "save_intake", args: { goal: "other", ...direction } })).toBe(saved);
     expect(await b.record(kind, web.id)).toBeNull();
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM console_audit WHERE action=? AND entity_id=?").get("save:" + kind, web.id)?.n).toBe(saved ? 2 : 1);
     if (when === "before direction refresh") expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('topic="property", level="beginner"'));
+    else if (when === "before level refresh") expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('topic="everyday", level="beginner"'));
     else if (when === "before pace refresh") expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
     else expect(session.ai.addContext).not.toHaveBeenCalled();
   });

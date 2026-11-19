@@ -477,7 +477,7 @@ export class TutorSession {
           return {
             ...previous,
             level: args.level === undefined ? previous.level : updated?.level ?? previous.level,
-            topic: updated?.topic ?? previous.topic,
+            topic: args.topic === undefined ? previous.topic : updated?.topic ?? previous.topic,
           };
         });
         this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}; these override the requested direction when access is limited. The full saved plan applies from the next call. Start or continue the lesson now.`);
