@@ -119,6 +119,8 @@ export function normalizedPhone(value: string): string {
 
 const month = () => new Date().toISOString().slice(0, 7);
 const RESERVATION_TTL_MS = 3 * 60 * 60 * 1000;
+const reservationCutoff = () => new Date(Date.now() - RESERVATION_TTL_MS).toISOString().replace("Z", "+00:00");
+const UNMETERED_SESSION_PRODUCT = "unrestricted";
 
 export interface Allowance { seconds: number; mode: string; extension?: string; intro?: string }
 
@@ -244,8 +246,19 @@ export class BusinessStore {
     const policyRow = await this.record("policies", botId);
     const teacher = !policyRow && await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(botId).first();
     const policy = AccessPolicySchema.parse(policyRow ?? (teacher ? SCHOOL_FREE_POLICY : {}));
-    if (!policy.enabled) return { seconds: maxSeconds, mode: "unrestricted" };
     const now = nowIso();
+    const cutoff = reservationCutoff();
+    const activeSession = "SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL AND created_at>?";
+    const busy = { seconds: 0, mode: "busy", extension: policy.blocked_extension };
+    if (!policy.enabled) {
+      const allocation = await this.db.prepare(`
+        INSERT OR IGNORE INTO usage_allocations
+          (call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
+        SELECT ?,?,?,NULL,0,NULL,? WHERE NOT EXISTS (${activeSession})
+        RETURNING call_id
+      `).bind(callId, customerId, UNMETERED_SESSION_PRODUCT, now, customerId, cutoff).first();
+      return allocation ? { seconds: maxSeconds, mode: "unrestricted" } : busy;
+    }
     const { results: receipts } = await this.db
       .prepare("SELECT id, package_id FROM sales_receipts WHERE customer_id=? AND product=? AND expires_at>? ORDER BY expires_at")
       .bind(customerId, policy.product, now)
@@ -262,8 +275,8 @@ export class BusinessStore {
           FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
           WHERE r.id=? AND r.expires_at>? GROUP BY r.id
         )
-        WHERE remaining>=1 RETURNING reserved_seconds
-      `).bind(callId, cap, now, receipt.id, now).first<{ reserved_seconds: number }>();
+        WHERE remaining>=1 AND NOT EXISTS (${activeSession}) RETURNING reserved_seconds
+      `).bind(callId, cap, now, receipt.id, now, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
     }
     const anonymous = customerId.startsWith("anonymous-");
@@ -271,9 +284,9 @@ export class BusinessStore {
       const openingProduct = policy.product + "-opening";
       const seconds = Math.min(maxSeconds, policy.opening_seconds);
       const opening = await this.db.prepare(`INSERT OR IGNORE INTO usage_allocations
-        SELECT ?,?,?,NULL,?,NULL,? WHERE NOT EXISTS
-        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND (billed_seconds IS NULL OR billed_seconds>=60))`)
-        .bind(callId, customerId, openingProduct, seconds, now, customerId, openingProduct).run();
+        SELECT ?,?,?,NULL,?,NULL,? WHERE NOT EXISTS (${activeSession}) AND NOT EXISTS
+        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND billed_seconds>=60)`)
+        .bind(callId, customerId, openingProduct, seconds, now, customerId, cutoff, customerId, openingProduct).run();
       if (opening.meta.changes) {
         return { seconds, mode: "free" };
       }
@@ -288,9 +301,9 @@ export class BusinessStore {
         WHERE (
           SELECT COUNT(*) FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL
             AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)
-        ) < ?
+        ) < ? AND NOT EXISTS (${activeSession})
         RETURNING reserved_seconds
-      `).bind(callId, customerId, policy.product, seconds, now, customerId, policy.product, monthPrefix, policy.free_calls_month).first();
+      `).bind(callId, customerId, policy.product, seconds, now, customerId, policy.product, monthPrefix, policy.free_calls_month, customerId, cutoff).first();
       if (allocation) return { seconds, mode: "free" };
     }
     if (policy.basic_enabled && !anonymous) {
@@ -306,13 +319,14 @@ export class BusinessStore {
         WHERE remaining>=10 AND (
           SELECT COUNT(*) FROM usage_allocations WHERE customer_id=? AND product=? AND created_at LIKE ?
             AND (billed_seconds IS NULL OR billed_seconds>0)
-        ) < ?
+        ) < ? AND NOT EXISTS (${activeSession})
         RETURNING reserved_seconds
       `).bind(callId, customerId, product, Math.min(maxSeconds, policy.basic_call_seconds), now,
-        policy.basic_month_seconds, product, monthPrefix, customerId, product, now.slice(0, 10) + "%", policy.basic_calls_day)
+        policy.basic_month_seconds, product, monthPrefix, customerId, product, now.slice(0, 10) + "%", policy.basic_calls_day, customerId, cutoff)
         .first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "basic", intro: policy.basic_intro_text };
     }
+    if (await this.db.prepare(activeSession).bind(customerId, cutoff).first()) return busy;
     return { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
   }
 
@@ -328,9 +342,8 @@ export class BusinessStore {
   }
 
   async releaseStaleReservations() {
-    const cutoff = new Date(Date.now() - RESERVATION_TTL_MS).toISOString().replace("Z", "+00:00");
     await this.db.prepare("UPDATE usage_allocations SET billed_seconds=0 WHERE billed_seconds IS NULL AND created_at<=?")
-      .bind(cutoff)
+      .bind(reservationCutoff())
       .run();
   }
 
@@ -522,7 +535,8 @@ export class BusinessStore {
     const [salesResult, usageResult] = await this.db.batch<Record<string, any>>([
       this.db.prepare("SELECT * FROM sales_receipts ORDER BY created_at DESC"),
       this.db.prepare(`SELECT s.call_id,s.duration_seconds,s.estimated_cost_usd,s.started_at,c.customer_id,c.bot_id,b.role,u.receipt_id,u.call_id AS metered_call
-        FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id LEFT JOIN bots b ON b.id=c.bot_id LEFT JOIN usage_allocations u ON u.call_id=s.call_id`),
+        FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id LEFT JOIN bots b ON b.id=c.bot_id
+        LEFT JOIN usage_allocations u ON u.call_id=s.call_id AND u.product<>?`).bind(UNMETERED_SESSION_PRODUCT),
     ]);
     const sales = salesResult.results;
     const usage = usageResult.results;

@@ -418,34 +418,39 @@ describe("call minute reservations", () => {
 
   const reserve = (callId: string, seconds = 60, customer = "learner-a") => b.reserveCall(customer, "student", callId, seconds);
 
-  it("atomically splits the last paid minute and blocks any further calls", async () => {
+  it("allows only one concurrent paid call and preserves the unused balance", async () => {
     await b.save("policies", { enabled: true }, "student");
     await buyMinute();
     const callIds = ["phone", "browser", "another"];
     const results = await Promise.all(callIds.map(id => reserve(id, 40)));
-    expect(results.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 20, 40]);
-    const larger = callIds[results.findIndex(row => row.seconds === 40)];
-    const smaller = callIds[results.findIndex(row => row.seconds === 20)];
-    await b.settleCall(larger, 90);
-    await b.settleCall(larger, 0);
-    await b.settleCall(smaller, 5);
-    expect((await reserve(larger)).mode).toBe("blocked");
-    expect((await b.customerDetail("learner-a")).receipts[0].spent_seconds).toBe(45);
-    expect((await reserve("next")).seconds).toBe(15);
+    expect(results.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 0, 40]);
+    const winner = callIds[results.findIndex(row => row.seconds === 40)];
+    await b.settleCall(winner, 90);
+    await b.settleCall(winner, 0);
+    expect((await reserve(winner)).mode).toBe("blocked");
+    expect((await b.customerDetail("learner-a")).receipts[0].spent_seconds).toBe(40);
+    expect((await reserve("next")).seconds).toBe(20);
   });
 
   it("grants the last free-call slot only once", async () => {
     await b.save("policies", { enabled: true, free_calls_month: 1 }, "student");
-    expect((await Promise.all([reserve("one"), reserve("two")])).map(row => row.mode).sort()).toEqual(["blocked", "free"]);
+    const callIds = ["one", "two"];
+    const calls = await Promise.all(callIds.map(id => reserve(id)));
+    expect(calls.map(row => row.mode).sort()).toEqual(["busy", "free"]);
+    await b.settleCall(callIds[calls.findIndex(row => row.mode === "free")], 60);
+    expect((await reserve("three")).mode).toBe("blocked");
   });
 
-  it("grants the last monthly voice slot only once while the opening lesson is held", async () => {
+  it("blocks both monthly contenders during an opening lesson and admits only one after it ends", async () => {
     await b.save("policies", SCHOOL_FREE_POLICY, "student");
-    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 600 });
     expect(await b.reserveCall("learner-a", "student", "first-monthly", 120, "text")).toMatchObject({ mode: "free", seconds: 120 });
     await b.settleCall("first-monthly", 120);
+    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 600 });
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
 
+    const whileOpening = await Promise.all([reserve("held-one", 600), reserve("held-two", 600)]);
+    expect(whileOpening.map(call => call.mode)).toEqual(["busy", "busy"]);
+    await b.settleCall("opening", 600);
     const calls = await Promise.all([reserve("voice-one", 600), reserve("voice-two", 600)]);
     expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 300]);
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0 });
@@ -457,6 +462,44 @@ describe("call minute reservations", () => {
     expect(sameCustomer.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 30]);
     const differentCustomer = await Promise.all([reserve("three", 60, "learner-b"), reserve("four", 60, "learner-c")]);
     expect(differentCustomer.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 10]);
+  });
+
+  it("blocks a second phone or web session for the same caller and admits another after release", async () => {
+    await b.save("policies", { enabled: false, blocked_extension: "/99/8" }, "student");
+    const frame = (callId: string, token = "test-channel") => JSON.stringify({
+      type: "start", token, format: "pcm16;rate=8000;ch=1", callId, caller: "0500000001",
+    });
+    const socket = () => ({ send: vi.fn(), close: vi.fn() });
+    let finish!: () => void;
+    let onConnect!: () => void;
+    const finished = new Promise<void>(resolve => { finish = resolve; });
+    const connected = new Promise<void>(resolve => { onConnect = resolve; });
+    const connect = vi.spyOn(GeminiLive.prototype, "connect").mockImplementationOnce(async () => {
+      onConnect();
+      await finished;
+      throw new Error("Test call ended");
+    }).mockRejectedValue(new Error("Test model unavailable"));
+    const first = new TutorSession(socket() as unknown as WebSocket, env, settings(env), "first-owner");
+    const active = first.run(frame("first-phone"), "student", false);
+    try {
+      await Promise.race([connected, active.then(() => { throw new Error("First call never connected"); })]);
+      const secondPhone = socket();
+      await new TutorSession(secondPhone as unknown as WebSocket, env, settings(env), "second-owner")
+        .run(frame("second-phone"), "student", false);
+      expect(secondPhone.send).toHaveBeenCalledWith(JSON.stringify({ type: "transfer_extension", target: "/99/8" }));
+      const browser = socket();
+      await new TutorSession(browser as unknown as WebSocket, env, settings(env), "web-owner", null, { customerId: "learner-a", teacherId: "" })
+        .run(frame("browser", "portal"), "student", false);
+      expect(browser.send).toHaveBeenCalledWith(JSON.stringify({ type: "hangup", reason: "customer_busy" }));
+      const text = await request("/v1/bots/student/turn", tokenA, { text: "Hello" });
+      expect(text.status).toBe(409);
+      expect(await text.json()).toMatchObject({ detail: expect.stringContaining("שיחה פעילה") });
+      expect(connect).toHaveBeenCalledTimes(1);
+    } finally {
+      finish();
+      await active;
+    }
+    expect(await reserve("after-release")).toMatchObject({ mode: "unrestricted", seconds: 60 });
   });
 
   it("releases the paid hold when web-turn setup fails before Gemini starts", async () => {
@@ -489,7 +532,8 @@ describe("call minute reservations", () => {
     expect((await reserve("billed", 10)).seconds).toBe(10);
     await b.settleCall("billed", 10);
     expect((await reserve("stale", 40)).seconds).toBe(40);
-    expect((await reserve("active", 10)).seconds).toBe(10);
+    await b.save("policies", { enabled: true, free_calls_month: 1 }, "student");
+    expect((await reserve("active", 10, "learner-b")).seconds).toBe(10);
     db.sql.prepare("UPDATE usage_allocations SET created_at=? WHERE call_id IN ('stale','billed')")
       .run(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().replace("Z", "+00:00"));
     db.sql.prepare("UPDATE usage_allocations SET created_at=? WHERE call_id='active'")
@@ -499,7 +543,8 @@ describe("call minute reservations", () => {
     await worker.scheduled({} as ScheduledController, env, ctx as ExecutionContext);
     await Promise.all(work);
     await b.settleCall("stale", 40);
-    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 40 });
+    expect((await reserve("active-retry", 10, "learner-b")).mode).toBe("busy");
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 50 });
   });
 });
 

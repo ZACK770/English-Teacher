@@ -170,12 +170,12 @@ export class TutorSession {
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
-      reserved = allowance.seconds > 0 && allowance.mode !== "unrestricted";
+      reserved = allowance.seconds > 0;
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
         this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
-        this.reason = "access_blocked";
+        this.reason = allowance.mode === "busy" ? "customer_busy" : "access_blocked";
         return;
       }
       if (this.abort.signal.aborted) return;
