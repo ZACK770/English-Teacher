@@ -10,11 +10,12 @@ import { grammarCatalog, grammarIds, learningChoices, LearningStore, materialTar
 const pace = z.enum(["slow", "normal", "fast"]);
 const corrections = z.enum(["gentle", "balanced", "all"]);
 const personality = z.enum(["warm", "focused", "playful"]);
+export const DEFAULT_TEACHER_VOICE = "Puck";
 export const TeacherSchema = z.object({
   name: z.string().trim().min(1).max(40),
   base_bot: z.string().min(1).max(63),
   personality: personality.default("warm"),
-  voice: z.enum(VOICE_OPTIONS).default("Aoede"),
+  voice: z.enum(VOICE_OPTIONS).default(DEFAULT_TEACHER_VOICE),
   explanation: z.enum(["hebrew", "mixed", "english"]).default("mixed"),
   pace: pace.default("normal"),
   corrections: corrections.default("gentle"),
@@ -35,7 +36,6 @@ export const PlanSchema = z.object({
 });
 export const DEFAULT_TEACHER_NAME = "דוד";
 export const FEMALE_TEACHER_NAME = "אסתי";
-export const DEFAULT_TEACHER_VOICE = "Puck";
 const FEMALE_VOICES = new Set(["Zephyr", "Kore", "Leda", "Aoede", "Callirrhoe", "Autonoe", "Despina", "Erinome", "Laomedeia", "Achernar", "Gacrux", "Pulcherrima", "Vindemiatrix", "Sulafat"]);
 export const isFemaleVoice = (voice: string) => FEMALE_VOICES.has(voice);
 export const PHONE_SIGNUP_NAME = "לקוח מהטלפון";

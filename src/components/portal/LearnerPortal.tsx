@@ -255,7 +255,7 @@ function directionDraft(p: Preferences, teacher?: Teacher): DirectionDraft {
     level, conversation_mode: mode, pace: teacher?.pace || p.pace || (level === "beginner" ? "slow" : "normal"),
     correction_policy: teacher?.correction_policy || p.correction_policy || (mode === "guided" ? "after_answer" : "after_activity"),
     learning_load: teacher?.learning_load || p.learning_load || "light", closing_activity: teacher?.closing_activity || p.closing_activity || "roleplay",
-    learner_name: p.learner_name || "", personality: teacher?.personality || p.personality || "warm", teacher_gender: isFemale(teacher?.voice) ? "female" : "male", voice: teacher?.voice || "Aoede", name: "", material_id: teacher?.material_id || p.material_id || "",
+    learner_name: p.learner_name || "", personality: teacher?.personality || p.personality || "warm", teacher_gender: isFemale(teacher?.voice) ? "female" : "male", voice: teacher?.voice || "Puck", name: "", material_id: teacher?.material_id || p.material_id || "",
   };
 }
 function directionSteps(d: DirectionDraft, purpose: "plan" | "teacher", askTeacher: boolean): DirectionStep[] {

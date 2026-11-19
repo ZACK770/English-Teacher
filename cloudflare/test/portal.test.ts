@@ -5,7 +5,7 @@ import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
-import { applyLearnerControls, materialsKind, teachersKind } from "../src/learner";
+import { applyLearnerControls, materialsKind, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, quickOpening, runtimeContext, startSchool } from "../src/pbx";
 import { adCampaignReport, recordSalesTool } from "../src/ad-entry";
@@ -24,6 +24,12 @@ import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
 import { syncCrm } from "../src/crm";
 import { FRAME_BYTES, wav } from "../src/audio";
 import { cleanupCallbackQuota } from "../src/callbacks";
+
+it("defaults new teachers to a male voice without overriding an explicit female choice", () => {
+  const teacher = { name: "מורה", base_bot: "student" };
+  expect(TeacherSchema.parse(teacher).voice).toBe("Puck");
+  expect(TeacherSchema.parse({ ...teacher, voice: "Aoede" }).voice).toBe("Aoede");
+});
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
 describe("email login", () => {
