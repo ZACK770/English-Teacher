@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { BusinessStore } from "./business";
 import { type Env, nowIso, randomHex, sha256Hex, type Settings } from "./env";
-import { enqueueLessonCallback, followupLessonTime } from "./callbacks";
+import { enqueueLessonCallback, followupLessonTime, SPEAKCALL_PHONE, tomorrowAt } from "./callbacks";
+import { DEFAULT_TEACHER_NAME, PHONE_SIGNUP_NAME } from "./learner";
 import { ProgressStore } from "./progress";
 import { startSchool, type IVRResponse } from "./pbx";
 
@@ -42,12 +43,27 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
 export function adOpening(context: Record<string, any>): string | null {
   if (context.entry !== "ad") return null;
   if (context.ad_new_caller) {
-    return "The caller just pressed 1 at the end of a SpeakCall radio/phone ad offering a free lesson. Say exactly, warmly and briefly in Hebrew: \"היי, הגעת לספיקול. המורה מחכה לך, ועשר הדקות הראשונות עלינו.\" Then introduce yourself by name in one short sentence and ask only for the learner's first name. No menu, no registration, no speech.";
+    return "The caller just pressed 1 at the end of a SpeakCall ad. Say warmly and briefly in Hebrew: \"שלום, הגעת לספיקול!\" Introduce yourself by name and ask for their first name only if unknown. Do not mention a duration, menu or registration in the opening.";
   }
   return "This returning learner pressed 1 at the end of a SpeakCall ad. Welcome them back briefly in Hebrew by name if known (\"טוב לשמוע אותך שוב\"), without the new-caller introduction or intake, and continue from their last lesson with one short question.";
 }
 
 export const PHONE_TUTOR_PITCH = 'Out of character only, when asked about SpeakCall or at a natural closing if appropriate: say at most one short line in warm Hebrew, then move on. Examples: "כאן אפשר פשוט לדבר ולהתאמן בקצב שלך. יש לנו סבלנות, גם כשצריך לנסות שוב." / "לא צריך לחכות עד שהאנגלית תהיה מושלמת. פשוט מתחילים לדבר. רוצה לנסות?" / "אפשר להמשיך לתרגל בכל פעם שנוח לך, לפי הדקות שבמסלול שלך." Do not interrupt practice, repeat a pitch, or imply unlimited free minutes.';
+export const PHONE_NUMBER_GUIDANCE = `If asked how to call SpeakCall again, the only allowed number is ${SPEAKCALL_PHONE}. Never repeat or offer a different phone number.`;
+
+export const SUMMARY_CALLBACK_TOOL = {
+  name: "request_summary_callback",
+  description: "Queue one voice recap to this caller after hangup, only when they say the explicit consent phrase in this turn.",
+  parameters: { type: "object", properties: {} },
+};
+
+export const SUMMARY_CALLBACK_GUIDANCE = 'At a natural close after practice or when asked, offer one optional short voice recap after hangup. Say: "אם תרצה שנחזור למספר שממנו התקשרת ונקריא סיכום קצר ואת הנקודות שצברת, אמור: אני רוצה שיחת סיכום." Wait for that explicit request and call request_summary_callback. Only if it returns saved=true say "אקבע שיחת סיכום קצרה אחרי שנסיים; אפשר לשמור את המספר להמשך אימון." Do not promise delivery. Do not confuse it with tomorrow\'s lesson. Never ask for a phone number.';
+
+export function isSummaryCallConsent(speech: string) {
+  return /^(?:כן )?(?:אני רוצה שיחת סיכום|(?:תתקשר|תתקשרו) אלי[י]? עם (?:שיחת )?סיכום|(?:שלח|שלחו) לי שיחת סיכום)$/.test(
+    speech.normalize("NFKC").replace(/[.!?,;:]/g, " ").replace(/\s+/g, " ").trim(),
+  );
+}
 
 export function adRuntimeContext(context: Record<string, any>): string {
   if (context.entry !== "ad") return "";
@@ -55,17 +71,19 @@ export function adRuntimeContext(context: Record<string, any>): string {
   return [
     "Ad caller flow (authoritative for this call; it replaces the longer first-call intake):",
     context.ad_new_caller
-      ? "- Intake: ask one question at a time, only: first name, goal (why English: work, travel, study or other), level. Call save_intake as soon as you know goal and level. Skip lesson length, topic, style and teacher gender."
+      ? '- Intake: ask one thing at a time, briefly learn their first name if unknown and their level. Then ask: "ספר לי על הפעם האחרונה שהבנת שאתה חייב לדעת אנגלית. מה קרה?" Their story is the lesson, not a questionnaire. Ask intermediate and advanced learners to tell it in natural English; offer beginners a short English sentence from their own story. Call save_intake as soon as you know their goal and level, with learner_name only if given. Skip lesson length, topic, style and teacher gender.'
       : "- Returning caller: skip the introductory questionnaire. Continue the lesson; if no level was saved, calibrate briefly in conversation and save the goal and level once known.",
     "- First minute: start at the learner's stated level, on a topic that fits their goal. For a beginner, a short sentence to practise is fine. For an intermediate or advanced learner, start with an open-ended question in natural English, not a repeat-after-me drill.",
-    "- Closing (when the closing stage is reached or the learner wants to stop): a Hebrew summary with a concrete reward counted from this call only, e.g. \"היום אמרת 9 משפטים, ו־5 מילים חדשות כבר שלך\" (never inflate the numbers). Ask when to call tomorrow for the next lesson, and call schedule_next_lesson if the caller agrees.",
+    '- At a natural pause, describe the method in one sentence: "אצלנו לומדים לדבר דרך שיחה. השיטה מזהה אילו מילים ונושאים כדאי לך לחזק, ומתאימה את האימון למה שחשוב לך לדעת להגיד." Do not make proficiency guarantees.',
+    '- Only after the application signals 90 seconds of practice and the learner has shown interest in continuing, ask "באיזו שעה נוח לך שנמשיך מחר?" Call schedule_next_lesson only if they explicitly agree and give a time or part of the day. If saved=true, say that the time was recorded, subject to available minutes, and invite them to complete registration at speakool.net so they can keep practising with their saved progress. Do not request an email for registration or claim you can register them in this conversation.',
+    "- Closing: give a short Hebrew recap with one actual result from this call. Do not inflate counts, interrupt practice or hold someone on the line to sell.",
     "- Do not offer to email the lesson summary or collect an email address unprompted. Only if the caller explicitly asks for delivery by email, accept letters and digits alike, preserving all digits and leading zeros. Clarify only ambiguous characters. Call prepare_email with the complete address, then say only \"הכתובת היא [address]. הכתובת נכונה?\". Say each digit and symbol in English (zero, one, at, dot, etc.). Wait for an explicit yes before calling save_email with the identical address. If corrected, prepare and read back the corrected address. If confirmation fails, try the read-back once more or say the email was not sent.",
     PHONE_TUTOR_PITCH,
-    `- Plans you may describe when relevant or asked (approved prices, nothing else): ${plans}. After the 10-minute free opening lesson every learner keeps two free 5-minute calls per month. All plans are on the website speakool.net.`,
+    `- If asked about pricing, answer briefly and recommend at most one relevant plan with its price and one reason to subscribe: ${plans}. All plans are at speakool.net. Do not announce a session length or assume free minutes remain.`,
     "- For an accepted read-back, you MUST call save_email with the English words practised in this call and a one-sentence Hebrew summary before continuing the conversation. Say the address was saved or the email sent only if save_email returns saved=true; prepare_email never saves or sends anything.",
     "- At the end, you may recommend one plan (price and one reason). Only if the learner asks for a payment link by email or SMS, call request_payment_link for that channel. Never claim an SMS was already sent.",
     "- Never offer a discounted first month, a 29 shekel price, a free trial that requires a credit card, or any price or benefit not listed here. Do not pressure; one offer is enough.",
-    "- Close by reminding them of the two free 5-minute calls each month and that the plans are on speakool.net, then say goodbye and call end_session.",
+    "- Say goodbye once and call end_session.",
   ].join("\n");
 }
 
@@ -77,6 +95,7 @@ export const SCHEDULE_LESSON_TOOL = {
     properties: {
       day: { type: "string", enum: ["today", "tomorrow", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "this_week", "other"] },
       part_of_day: { type: "string", enum: ["morning", "noon", "afternoon", "evening"] },
+      time: { type: "string", description: "Exact Israeli local time for tomorrow in 24-hour HH:mm, only if the learner stated it. Omit for an approximate part of day." },
       note: { type: "string", description: "The learner's words in Hebrew, short" },
     },
     required: ["day", "part_of_day"],
@@ -116,7 +135,7 @@ export const PAYMENT_LINK_TOOL = {
 export const SALES_TOOLS = [SCHEDULE_LESSON_TOOL, PREPARE_EMAIL_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_TOOL];
 export const SALES_TOOL_NAMES = new Set(SALES_TOOLS.map((t) => t.name));
 
-const scheduleArgs = z.object({ day: z.string().max(40).default("other"), part_of_day: z.enum(["morning", "noon", "afternoon", "evening"]), note: z.string().max(200).optional() });
+const scheduleArgs = z.object({ day: z.string().max(40).default("other"), part_of_day: z.enum(["morning", "noon", "afternoon", "evening"]), time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(), note: z.string().max(200).optional() });
 const emailAddress = z.string().trim().toLowerCase().max(120).email();
 const emailArgs = z.object({ email: emailAddress, words: z.array(z.string().trim().min(1).max(60)).max(12).optional(), summary: z.string().trim().max(300).optional() });
 const linkArgs = z.object({ plan_id: z.enum(PLAN_IDS), channel: z.enum(["sms", "email"]) });
@@ -160,26 +179,35 @@ export function paymentLink(planId: PlanId, campaign: string) {
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-async function sendMail(mail: SendEmail | undefined, to: string, subject: string, lines: string[]): Promise<boolean> {
+async function sendMail(mail: SendEmail | undefined, to: string, subject: string, lines: string[], html = `<div dir="rtl" lang="he">${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>`): Promise<boolean> {
   if (!mail) return false;
   try {
-    await mail.send({ from: SALES_SENDER, to, subject, text: lines.join("\n"), html: `<div dir="rtl" lang="he">${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>` });
+    await mail.send({ from: SALES_SENDER, to, subject, text: lines.join("\n"), html });
     return true;
   } catch {
     return false;
   }
 }
 
-export function wordsEmail(words: string[] = [], summary = ""): string[] {
-  return [
-    "שלום מספיקול,",
+export function wordsEmail(words: string[] = [], summary = "", teacher = DEFAULT_TEACHER_NAME, learner = "", female = false) {
+  const greeting = `שלום${learner ? " " + learner : ""}, ${female ? "זו" : "זה"} ${teacher} המורה שלך מספיקול.`;
+  const text = [
+    greeting,
     ...(summary ? [summary] : []),
     ...(words.length ? ["המילים שתרגלת היום:", ...words.map((w) => "• " + w)] : []),
-    "בכל חודש יש לך שתי שיחות חינמיות של 5 דקות. המסלולים באתר: " + SALES_SITE,
+    "להמשך תרגול: " + SALES_SITE,
   ];
+  const html = `<div dir="rtl" lang="he" style="font:16px Arial,sans-serif;color:#172334;line-height:1.6;background:#f3f6fa;padding:20px">
+    <div style="max-width:540px;margin:auto;background:#fff;border:1px solid #dce4ee;border-radius:12px;padding:24px">
+    <p style="color:#174d77;font-weight:bold;margin-top:0">ספיקול · סיכום שיעור</p>
+    <h1 style="font-size:21px">${escapeHtml(greeting)}</h1>
+    ${summary ? `<p>${escapeHtml(summary)}</p>` : ""}
+    ${words.length ? `<h2 style="font-size:17px">המילים שתרגלת היום</h2><ul>${words.map(word => `<li><span dir="ltr">${escapeHtml(word)}</span></li>`).join("")}</ul>` : ""}
+    <p><a href="${SALES_SITE}" style="color:#174d77">להמשך תרגול בספיקול</a></p></div></div>`;
+  return { text, html };
 }
 
-export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = ""): Promise<boolean> {
+export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = "", teacher?: { name?: string; female?: boolean }): Promise<boolean> {
   if (customerId.startsWith("anonymous-")) return false;
   const context = await b.loadContext(callId);
   const campaign = campaignName(context.campaign);
@@ -189,8 +217,11 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     if (!parsed.success) return false;
     const id = (await sha256Hex("lesson:" + customerId + ":" + callId)).slice(0, 32);
     const existing = await b.record(SALES_FOLLOWUPS, id);
-    const unchanged = existing && existing.day === parsed.data.day && existing.part_of_day === parsed.data.part_of_day;
-    const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at) : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
+    const unchanged = existing && existing.day === parsed.data.day && existing.part_of_day === parsed.data.part_of_day && existing.time === parsed.data.time;
+    const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at)
+      : parsed.data.time ? (parsed.data.day === "tomorrow" ? tomorrowAt(parsed.data.time, new Date(base.at)) : null)
+        : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
+    if (!at) return false;
     if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at, callerPhone)) return false;
     await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at, scheduled_at: at.toISOString(), callback_id: id } });
     await b.save(SALES_FOLLOWUPS, { ...base, at: existing?.at ?? base.at, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);
@@ -200,8 +231,12 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     const parsed = emailArgs.safeParse(args);
     if (!parsed.success) return false;
     const { email, words, summary } = parsed.data;
+    const preferences = await b.loadContext("preferences:" + customerId);
+    const customerName = String((await b.record("customers", customerId))?.name ?? "").trim();
+    const learnerName = String(preferences.learner_name || (customerName === PHONE_SIGNUP_NAME ? "" : customerName)).trim().slice(0, 40);
     await b.savePreference(customerId, { email });
-    const sent = await sendMail(mail, email, "המילים שלך מהשיעור בספיקול", wordsEmail(words, summary));
+    const message = wordsEmail(words, summary, teacher?.name, learnerName, teacher?.female);
+    const sent = await sendMail(mail, email, "סיכום השיעור שלך בספיקול", message.text, message.html);
     await b.save(SALES_FOLLOWUPS, { ...base, type: "email", email, words: words ?? [], summary: summary ?? "", status: sent ? "sent" : "pending" });
     return sent;
   }

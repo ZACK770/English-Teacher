@@ -2,6 +2,7 @@ import { canPurchaseAutomatically } from "../../src/pricing";
 import { adOpening, adRuntimeContext, PHONE_TUTOR_PITCH, startAdEntry } from "./ad-entry";
 import { z } from "zod";
 import { BusinessStore } from "./business";
+import { canCallWithLessonSummary, normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
 import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
 import { ProgressStore } from "./progress";
@@ -298,6 +299,9 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     result = await startTranslation(b, progress, s, callId, customerId);
   } else if (route === "teachers" || route === "bots") result = await chooseTeacher(b, progress, s, p, callId, customerId, route === "bots");
   else result = ivrResponse(route, p, copy, s.projectPath);
+  if (result.goTo === extensionPath(system.base, "/7") && system.phone === SPEAKCALL_PHONE && canCallWithLessonSummary(env, p.PBXphone ?? "")) {
+    await b.saveContext(callId, { summary_callback_caller: await sha256Hex(normalizePhone(p.PBXphone)!) });
+  }
   if (route === "options" && result.type === "simpleMenu") {
     const others = (await progress.listBots()).some((bot) => bot.enabled && bot.phone_enabled && !["teacher", "translator"].includes(bot.role));
     result.enabledKeys = "0,1,2,3,4" + (others ? ",6" : "");
