@@ -61,4 +61,5 @@
 @media (max-width: 640px) {
   .sk-entry-dialog { position: fixed; inset: auto 0 0; margin: 0; max-width: none; width: 100%; max-height: calc(100dvh - 12px); border-radius: 23px 23px 0 0; }
   .sk-entry-dialog .sk-entry-panel { max-width: none; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .sk-quick-direction { margin-top: 20px; }
 }

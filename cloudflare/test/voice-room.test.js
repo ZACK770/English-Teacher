@@ -85,8 +85,8 @@ describe("voice socket closure", () => {
     expect(render()).toContain("החיבור לשיחה נסגר לפני שהמורה התחיל לדבר");
     expect(render()).not.toContain("יתרת הדקות");
     expect(render()).not.toContain("שיחות הטעימה נוצלו");
-    expect(render()).toContain("נסו שוב");
-    expect(render()).toContain("בחזרה לפורטל");
+    expect(render()).toContain("לנסות שוב");
+    expect(render()).toContain("חזרה לאזור האישי");
     expect(stop).toHaveBeenCalled();
   });
   it("preserves a real server access rejection instead of replacing it with the generic error", async () => {
