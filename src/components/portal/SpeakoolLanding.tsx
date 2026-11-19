@@ -1,5 +1,6 @@
 import { ArrowLeft, Phone } from "lucide-react";
 import { PHONE_LINE, TeacherMark } from "./LearnerPortal";
+import { LegalFooter } from "../legal/LegalFooter";
 import "./portal.css";
 import "./landing.css";
 import { FREE_TIER_TEXT, MONTHLY_TERMS, MASTERY_GUARANTEE, PRICING_PACKAGES } from "../../pricing";
@@ -89,5 +90,6 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-final"><h2>המשפט הראשון הוא הכי קשה.<br />השאר כבר זורם.</h2><a className="sk-primary" href={learn}>בוא נדבר <ArrowLeft size={18} /></a></section>
     </main>
     <footer className="sk-shell sk-land-foot"><span dir="ltr">SpeakCall<span className="sk-brand-dot">.</span></span><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
+    <LegalFooter />
   </div>;
 }

@@ -25,6 +25,8 @@ describe("site and dashboard pricing", () => {
     expect(source).toContain("{FREE_TIER_TEXT}");
     expect(source).toContain("{MONTHLY_TERMS}");
     expect(source).toContain("{MASTERY_GUARANTEE}");
+    expect(source).toContain('import { LegalFooter } from "../legal/LegalFooter";');
+    expect(source).toContain("<LegalFooter />");
     expect(source).toContain("לעומת מנוי שוטף לאותה תקופה");
     expect(source.match(/href=\{join\}/g)).toHaveLength(2);
     expect(source.match(/מומלץ/g)).toHaveLength(2);
