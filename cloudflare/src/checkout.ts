@@ -4,10 +4,10 @@ import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
 import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
+import { manageKeva as manage } from "./nedarim";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
-const MANAGE_URL = "https://matara.pro/nedarimplus/Reports/Manage3.aspx";
 const ORDER_TTL_MS = 30 * 60_000;
 
 type Pkg = z.output<typeof PackageSchema>;
@@ -44,15 +44,6 @@ async function createTransaction(env: Env, fields: Record<string, string>): Prom
     throw new HttpError(502, data?.Message ? "נדרים פלוס: " + safeMessage(data.Message) : "לא הצלחנו לפתוח את התשלום כרגע. כדאי לנסות שוב בעוד רגע.");
   }
   return String(data.ID);
-}
-
-async function manage(env: Env, fields: Record<string, string>) {
-  const response = await fetch(MANAGE_URL, {
-    method: "POST",
-    body: new URLSearchParams({ MosadId: env.NEDARIM_MOSAD_ID ?? "", ApiPassword: env.NEDARIM_API_KEY ?? "", ...fields }),
-    signal: AbortSignal.timeout(15000),
-  });
-  return response.text();
 }
 
 export class CheckoutStore {
@@ -214,7 +205,6 @@ export class CheckoutStore {
     }
     const expected = await subscriptions.renewalAmount(sub.entitlement_id);
     const amount = agorot(data.Amount);
-    if (amount !== expected && amount !== sub.monthly_agorot) throw new Error("Payment amount mismatch");
     const now = nowIso();
     const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate, statements: [
       ...(amount === expected ? [] : [this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("subscription_amount_difference:" + reference)).slice(0, 32), sub.first_order_id, "subscription_amount_difference", `הפרש גבייה במנוי: נדרש ${expected / 100} ₪, חויב ${amount / 100} ₪, יתרה להסדרה ${(expected - amount) / 100} ₪`, now)]),
