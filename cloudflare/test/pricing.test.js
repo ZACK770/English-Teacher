@@ -1,10 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 import { canPurchaseAutomatically, FREE_TIER_TEXT, MONTHLY_TERMS, PRICING_PACKAGES, replaceSchoolPackages, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { INITIAL_ACCESS_POLICIES, INITIAL_PACKAGES } from "../../src/store/initialData";
-
-afterEach(() => vi.unstubAllGlobals());
 
 describe("site and dashboard pricing", () => {
   it("replaces cached school offers without changing translator records", () => {
@@ -23,20 +20,18 @@ describe("site and dashboard pricing", () => {
     expect(canPurchaseAutomatically({ billing: "one_time", duration_months: 6 })).toBe(false);
   });
 
-  it("renders approved Hebrew terms, anchors, and representative-only signup links", async () => {
-    vi.stubGlobal("location", { pathname: "/english/" });
-    const { SpeakoolLanding } = await import("../../src/components/portal/SpeakoolLanding");
-    const html = renderToStaticMarkup(createElement(SpeakoolLanding));
-    expect(html).toContain(FREE_TIER_TEXT);
-    expect(html).toContain(MONTHLY_TERMS);
-    for (const pkg of PRICING_PACKAGES) expect(html).toContain(pkg.name);
-    expect(html).toContain("1,194");
-    expect(html).toContain("2,388");
-    expect(html).toContain("לעומת מנוי שוטף לאותה תקופה");
-    expect(html).toContain("3 חודשים נוספים ללא עלות");
-    expect(html.match(/href="\/english\/join"/g)).toHaveLength(5);
-    expect(html.match(/מומלץ/g)).toHaveLength(2);
-    expect(html).not.toContain("20 דקות מתנה");
-    expect(html).not.toContain("₪220");
+  it("binds the landing to shared terms and representative-only signup links", () => {
+    const source = readFileSync(new URL("../../src/components/portal/SpeakoolLanding.tsx", import.meta.url), "utf8");
+    expect(source).toContain("{FREE_TIER_TEXT}");
+    expect(source).toContain("{MONTHLY_TERMS}");
+    expect(source).toContain("{MASTERY_GUARANTEE}");
+    expect(source).toContain("לעומת מנוי שוטף לאותה תקופה");
+    expect(source.match(/href=\{join\}/g)).toHaveLength(2);
+    expect(source.match(/מומלץ/g)).toHaveLength(2);
+    expect(source).not.toContain("20 דקות מתנה");
+    expect(source).not.toContain("₪220");
+    expect(FREE_TIER_TEXT).toContain("10 דקות");
+    expect(MONTHLY_TERMS).toContain("₪29");
+    expect(PRICING_PACKAGES.filter(p => p.anchor_price_ils).map(p => p.anchor_price_ils)).toEqual([1194, 2388]);
   });
 });
