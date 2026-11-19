@@ -31,6 +31,7 @@ export class TutorSession {
   private meteredAt: number | null = null;
   private disconnected = false;
   private reason = "";
+  private intakeReminded = false;
   private returnPath: string | null = null;
   private pbxBase: string | null = null;
 
@@ -314,7 +315,7 @@ export class TutorSession {
         for (const call of event.calls) {
           const saved = await this.recordTool(call);
           this.ai!.submitToolResult(call, saved);
-          if (call.name === "end_session") return;
+          if (call.name === "end_session" && saved) return;
         }
       } else if (event.type === "go_away") {
         const handle = this.ai!.resumeHandle;
@@ -348,10 +349,17 @@ export class TutorSession {
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name === "save_intake") {
       const saved = await saveIntake(this.b, this.customerId, this.profileId, args);
+      if (saved && this.controls) this.controls = { ...this.controls, intake_pending: false };
       if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
       return saved;
     }
     if (call.name === "end_session") {
+      if (this.controls?.intake_pending && !this.intakeReminded) {
+        this.intakeReminded = true;
+        await this.progress.logDiagnostic(this.profileId, this.callId, "intake_missing_at_end").catch(() => {});
+        this.ai?.addContext("APPLICATION NOTE: the first-call intake was not saved. Do not hang up yet: call save_intake now with the goal and level the learner gave (omit unknown answers), then say goodbye and call end_session again.");
+        return false;
+      }
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
       if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);

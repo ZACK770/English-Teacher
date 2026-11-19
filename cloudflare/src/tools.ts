@@ -87,7 +87,7 @@ export const INTAKE_TOOL = {
       "personality": { "type": "string", "enum": ["warm", "focused", "playful"] },
       "teacher_gender": { "type": "string", "enum": ["male", "female"] }
     },
-    "required": ["goal", "level", "difficulty", "minutes", "topic"]
+    "required": ["goal", "level"]
   }
 };
 
