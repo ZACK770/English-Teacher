@@ -1,10 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { type Env } from "../src/env";
 import { deriveStatus, INACTIVE_DAYS, SHORT_SESSION_SECONDS } from "../src/crm-people";
 import worker from "../src/index";
+import { BusinessStore } from "../src/business";
+import { ProgressStore } from "../src/progress";
+import { startAdEntry } from "../src/ad-entry";
+import { sha256Hex } from "../src/env";
 
 let sql: DatabaseSync, env: Env;
 beforeEach(() => {
@@ -16,16 +20,20 @@ beforeEach(() => {
       const statement = {
         bind: (...values: any[]) => { args = values; return statement; },
         first: async () => sql.prepare(query).get(...args) || null,
-        all: async () => ({ results: sql.prepare(query).all(...args), success: true }),
+        all: async () => { const results = sql.prepare(query).all(...args); return { results, meta: { changes: Number((sql.prepare("SELECT changes() AS n").get() as any).n) }, success: true }; },
         run: async () => ({ meta: { changes: Number(sql.prepare(query).run(...args).changes) }, success: true }),
       };
       return statement;
     },
-    async batch(statements: any[]) { return Promise.all(statements.map(s => s.all())); },
+    async batch(statements: any[]) {
+      sql.exec("BEGIN");
+      try { const result = []; for (const s of statements) result.push(await s.all()); sql.exec("COMMIT"); return result; }
+      catch (e) { sql.exec("ROLLBACK"); throw e; }
+    },
   };
   env = { DB: db, ADMIN_BEARER_SECRET: "crm-test-secret" } as unknown as Env;
 });
-afterEach(() => sql.close());
+afterEach(() => { sql.close(); vi.restoreAllMocks(); });
 const now = new Date().toISOString();
 function customer(id = "person1", phone = "0501234567") {
   sql.prepare("INSERT INTO customers(id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?)").run(id, "שם מוקלד", phone, now, now);
@@ -37,6 +45,227 @@ function session(id = "call1", transcript: string | null = JSON.stringify([{ rol
   sql.prepare("INSERT INTO call_customers VALUES (?,?,?,'phone',?)").run(id, "person1", "teacher1", now);
 }
 const request = (path: string, auth = true, method = "GET") => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/" + path, { method, headers: auth ? { Authorization: "Bearer crm-test-secret" } : {} }), env);
+const reset = (confirm: unknown = "0501234567", id = "person1", headers: Record<string, string> = { Authorization: "Bearer crm-test-secret" }) => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/people/" + id, { method: "DELETE", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ confirm }) }), env);
+function insert(table: string, row: Record<string, unknown>) {
+  const keys = Object.keys(row);
+  sql.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...Object.values(row) as any[]);
+}
+function planAndSubscription(owner = "person1", status = "cancelled", id = "sub") {
+  sql.prepare("INSERT OR IGNORE INTO plans(id,name,product,billing,price_agorot,created_at,updated_at) VALUES ('plan','תכנית','school','monthly',100,?,?)").run(now, now);
+  insert("subscriptions", { id, customer_id: owner, plan_id: "plan", status, price_agorot: 100, started_at: now, created_at: now, updated_at: now });
+}
+
+describe("CRM customer reset", () => {
+  beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(Date.parse(now) + 11 * 60 * 1000); });
+  it.each(["session", "ivr-events", "ad-entries", "menu", "call_customers"].flatMap(source => [1, 9, 11].map(minutes => ({ source, minutes }))))("handles $source activity $minutes minutes ago", async ({ source, minutes }) => {
+    customer();
+    const at = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    if (source === "session") {
+      session(); sql.prepare("UPDATE sessions SET ended_at=?").run(at);
+    } else if (source === "call_customers" || source === "menu") {
+      insert("call_customers", { call_id: "menu-call", customer_id: "person1", bot_id: "ivr", channel: "phone", created_at: source === "call_customers" ? at : now });
+      if (source === "menu") event("ivr-events", { call_id: "menu-call", route: "main", at });
+    } else event(source, { at });
+    expect((await reset()).status).toBe(minutes < 10 ? 409 : 200);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: minutes < 10 ? 0 : 1 });
+  });
+  it.each(["primary_phone", "customer_phones"])("preserves phone-matched data when %s assigns the number to another customer", async source => {
+    customer(); customer("other", source === "primary_phone" ? "+972501234567" : "0507654321");
+    if (source === "customer_phones") insert("customer_phones", { phone: "0501234567", customer_id: "other" });
+    const hash = await sha256Hex("0501234567");
+    insert("console_records", { kind: "learner-phone-links", id: hash.slice(0, 24), body: JSON.stringify({ customer_id: "other", phone: "0501234567" }), created_at: now, updated_at: now });
+    insert("ivr_voicemails", { id: "other-vm", system_phone: "system", file_id: "file", customer_id: "other", caller_key: hash, created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
+    insert("callback_requests", { id: "other-callback", phone: "0501234567", name: "שם", for_whom: "self", goal: "lesson", timing: "now", source: "test", consent_at: now, created_at: now, updated_at: now });
+    event("sales-followups", { callback_id: "other-callback" });
+    const b = new BusinessStore(env.DB);
+    await b.putSetting("portal-auth:other", { phone: "0501234567" });
+    const deleteAudio = vi.fn(); env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
+    expect((await reset()).status).toBe(200);
+    expect(sql.prepare("SELECT id FROM ivr_voicemails").get()).toMatchObject({ id: "other-vm" });
+    expect(sql.prepare("SELECT id FROM callback_requests").get()).toMatchObject({ id: "other-callback" });
+    expect(await b.setting("portal-auth:other")).toEqual({ phone: "0501234567" });
+    expect(sql.prepare("SELECT id FROM console_records WHERE kind='learner-phone-links'").get()).toMatchObject({ id: hash.slice(0, 24) });
+    expect(deleteAudio).not.toHaveBeenCalled();
+  });
+  it.each(["issued", "awaiting_settlement", "selected", "paid"])("handles %s payment orders before reset", async state => {
+    customer();
+    insert("payment_orders", { id: "order", call_id: "payment-call", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state, created_at: now, updated_at: now });
+    const blocked = ["issued", "awaiting_settlement"].includes(state);
+    expect((await reset()).status).toBe(blocked ? 409 : 200);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()).toMatchObject({ n: blocked ? 1 : 0 });
+  });
+  it("requires admin, owner role, exact confirmation, and returns 404 after reset", async () => {
+    customer();
+    expect((await reset("0501234567", "person1", {})).status).toBe(401);
+    insert("admin_users", { id: "staff", username: "staff", display_name: "staff", role: "staff", created_at: now });
+    insert("admin_sessions", { token_hash: await sha256Hex("a".repeat(64)), user_id: "staff", created_at: now, expires_at: "2099-01-01" });
+    expect((await reset("0501234567", "person1", { Cookie: "admin_session=" + "a".repeat(64), Origin: "https://speakcall.app" })).status).toBe(403);
+    for (const value of ["wrong", null, 501234567]) expect((await reset(value)).status).toBe(400);
+    expect((await reset()).status).toBe(200);
+    expect((await reset()).status).toBe(404);
+  });
+  it.each(["call_customers", "sessions"])("blocks a live call linked through %s", async (source) => {
+    customer(); session();
+    if (source === "sessions") sql.prepare("DELETE FROM call_customers").run();
+    insert("active_calls", { call_id: "call1", profile_id: "teacher1", owner_id: "do", acquired_at: 0, lease_expires_at: Date.now() / 1000 + 60 });
+    expect((await reset()).status).toBe(409);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 1 });
+  });
+  it.each(["active", "past_due", "pending", "failed"])("blocks a provider-backed %s standing order", async (state) => {
+    customer();
+    insert("standing_orders", { id: "standing", customer_id: "person1", package_id: "p", snapshot: "{}", monthly_agorot: 100, first_order_id: "o", state, keva_id: "provider-standing-order", created_at: now, updated_at: now });
+    expect((await reset()).status).toBe(409);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM standing_orders").get()).toMatchObject({ n: 1 });
+  });
+  it.each(["active", "past_due", "pending", "failed"])("handles %s standing orders without a provider id", async state => {
+    customer();
+    insert("standing_orders", { id: "standing", customer_id: "person1", package_id: "p", snapshot: "{}", monthly_agorot: 100, first_order_id: "o", state, provider_ref: "checkout-reference", created_at: now, updated_at: now });
+    expect((await reset()).status).toBe(["active", "past_due"].includes(state) ? 409 : 200);
+  });
+  it.each(["active", "paused", "past_due"])("blocks a %s owned recurring subscription", async (status) => {
+    customer(); planAndSubscription("person1", status);
+    expect((await reset()).status).toBe(409);
+  });
+  it("blocks reset until another owner's family membership is removed", async () => {
+    customer(); customer("owner", "0507654321"); planAndSubscription("owner", "active");
+    insert("subscription_members", { subscription_id: "sub", customer_id: "person1", added_at: now });
+    const response = await reset();
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
+    expect(sql.prepare("SELECT * FROM subscriptions").get()).toMatchObject({ id: "sub", customer_id: "owner", status: "active" });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM subscription_members").get()).toMatchObject({ n: 1 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 2 });
+  });
+  it("preserves usage charged to another customer's receipt after family membership removal", async () => {
+    customer(); customer("owner", "0507654321");
+    insert("sales_receipts", { id: "family-receipt", customer_id: "owner", package_id: "p", product: "school", reference: "family-ref", amount_ils: 100, vat_rate: 0, minutes: 60, expires_at: now, created_at: now });
+    insert("usage_allocations", { call_id: "family-call", customer_id: "person1", product: "school", receipt_id: "family-receipt", reserved_seconds: 120, billed_seconds: 120, created_at: now });
+    expect((await reset()).status).toBe(200);
+    expect(sql.prepare("SELECT billed_seconds FROM usage_allocations").get()).toMatchObject({ billed_seconds: 120 });
+    expect(sql.prepare("SELECT customer_id FROM sales_receipts").get()).toMatchObject({ customer_id: "owner" });
+  });
+  it("allows an active prepaid entitlement that has no recurring billing", async () => {
+    customer(); planAndSubscription("person1", "active");
+    sql.prepare("UPDATE plans SET billing='prepaid'").run();
+    expect((await reset()).status).toBe(200);
+  });
+  it("supports id confirmation for a customer without a phone", async () => {
+    insert("customers", { id: "email-only", name: "שם", created_at: now, updated_at: now });
+    expect((await reset("email-only", "email-only")).status).toBe(200);
+  });
+  it("clears old preferences and sessions even when the recreated phone gets the same deterministic id", async () => {
+    const b = new BusinessStore(env.DB);
+    const oldId = await b.identifyCall("0501234567", "old-call", "ivr");
+    await b.savePreference(oldId, { plan: { level: "beginner" }, intro_school_seen: true });
+    session();
+    sql.prepare("UPDATE sessions SET student_id=?").run(oldId);
+    sql.prepare("UPDATE call_customers SET customer_id=? WHERE call_id='call1'").run(oldId);
+    expect((await reset("0501234567", oldId)).status).toBe(200);
+    const freshId = await b.identifyCall("0501234567", "fresh-call", "ivr");
+    expect(freshId).toBe(oldId);
+    expect(await b.loadContext("preferences:" + freshId)).toEqual({});
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions WHERE student_id=?").get(freshId)).toMatchObject({ n: 0 });
+    await startAdEntry(b, new ProgressStore(env.DB), {} as any, "fresh-call", freshId, "test");
+    expect(await b.loadContext("fresh-call")).toMatchObject({ ad_new_caller: true });
+  });
+  it("rolls back all D1 deletions and audit if a later deletion fails", async () => {
+    customer(); session();
+    insert("ivr_voicemails", { id: "vm", system_phone: "system", file_id: "file", customer_id: "person1", caller_key: "hash", created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
+    const deleteAudio = vi.fn(); env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
+    sql.exec("CREATE TRIGGER prevent_delete BEFORE DELETE ON customers BEGIN SELECT RAISE(ABORT,'test failure'); END");
+    expect((await reset()).status).toBe(500);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toMatchObject({ n: 1 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
+    expect(deleteAudio).not.toHaveBeenCalled();
+  });
+  it.each([true, false])("succeeds and logs best-effort audio cleanup failure with R2 binding %s", async binding => {
+    customer();
+    insert("ivr_voicemails", { id: "vm", system_phone: "system", file_id: "file", customer_id: "person1", caller_key: "hash", created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
+    if (binding) env.VOICEMAIL_AUDIO = { delete: vi.fn().mockImplementation(async () => {
+      expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 0 });
+      throw new Error("unavailable");
+    }) } as any;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const response = await reset();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ r2_objects: 0 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 0 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 1 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("crm_reset_audio_cleanup_failed"));
+  });
+  it("deletes the full linked history in FK-safe order and makes the phone a fresh caller", async () => {
+    customer("other", "0507654321");
+    const baseline = Object.fromEntries((sql.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(({ name }) => [name, (sql.prepare(`SELECT COUNT(*) AS n FROM ${name}`).get() as any).n]));
+    customer(); session(); planAndSubscription();
+    const b = new BusinessStore(env.DB);
+    await b.savePreference("person1", { plan: { level: "beginner" }, intro_school_seen: true, email: "yael@example.test" });
+    await b.savePreference("other", { intro_school_seen: true });
+    const phoneHash = await sha256Hex("0501234567");
+    for (const id of ["person1", phoneHash.slice(0, 24)]) insert("console_records", { kind: "learner-phone-links", id, body: "{}", created_at: now, updated_at: now });
+    insert("customer_phones", { phone: "0501234567", customer_id: "person1" });
+    for (const kind of ["enrollments", "ivr-events", "ad-entries", "sales-followups", "learner-phone-links"]) event(kind, { call_id: "call1", phone: "0501234567", callback_id: "cb" });
+    for (const kind of ["learner-teachers:person1", "learner-materials:person1"]) event(kind, {});
+    await b.saveContext("call1", { plan: "old" }); await b.saveContext("payments:call1", { value: "old" });
+    await b.putSetting("portal-auth:challenge", { phone: "0501234567", linkCustomer: "person1" });
+    await b.putSetting("portal-email:challenge", { email: "yael@example.test" });
+    await b.putSetting("voice-ticket:ticket", { customerId: "person1" });
+    await b.putSetting("economics", { usd_ils: 4 });
+    insert("api_quota", { month: "2026-11", api: "global", used: 10 });
+    insert("sales_receipts", { id: "receipt", customer_id: "person1", package_id: "p", product: "school", reference: "ref", amount_ils: 100, vat_rate: 0, minutes: 60, expires_at: now, created_at: now, subscription_id: "sub" });
+    insert("payment_orders", { id: "order", call_id: "call1", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state: "paid", receipt_id: "receipt", entitlement_id: "sub", created_at: now, updated_at: now });
+    insert("payment_issues", { id: "issue", order_id: "order", kind: "test", message: "test", created_at: now });
+    insert("installment_grants", { order_id: "order", month_index: 1, due_at: now, receipt_id: "receipt" });
+    insert("standing_orders", { id: "standing", customer_id: "person1", package_id: "p", snapshot: "{}", monthly_agorot: 100, first_order_id: "order", state: "cancelled", entitlement_id: "sub", created_at: now, updated_at: now });
+    insert("invoices", { id: "invoice", customer_id: "person1", subscription_id: "sub", amount_agorot: 100, status: "paid", issued_at: now, created_at: now });
+    insert("subscription_members", { subscription_id: "sub", customer_id: "other", added_at: now });
+    insert("subscription_renewals", { reference: "renewal", subscription_id: "sub", period_start: now, created_at: now });
+    insert("subscription_billing_locks", { subscription_id: "sub", token: "token", created_at: now });
+    insert("usage_allocations", { call_id: "call1", customer_id: "person1", product: "school-opening", receipt_id: "receipt", reserved_seconds: 120, billed_seconds: 120, created_at: now });
+    insert("portal_tokens", { token_hash: "portal", customer_id: "person1", expires_at: now });
+    insert("app_login_codes", { customer_id: "person1", code_hash: "code", expires_at_ms: 1, created_at: now });
+    insert("app_sessions", { token_hash: "app", customer_id: "person1", expires_at_ms: 1, created_at: now });
+    insert("customer_settings", { customer_id: "person1", body: "{}", updated_at: now });
+    insert("learning_lessons", { customer_id: "person1", call_id: "call1", plan_json: "{}", created_at: now });
+    insert("learning_targets", { customer_id: "person1", kind: "vocabulary", target_id: "word", body: "{}" });
+    insert("learning_batches", { customer_id: "person1", call_id: "call1", activity_id: "activity", created_at: now });
+    insert("learning_results", { customer_id: "person1", call_id: "call1", activity_id: "activity", kind: "vocabulary", target_id: "word", score: 100 });
+    insert("learning_exposures", { customer_id: "person1", call_id: "call1", target_id: "word", count: 1 });
+    insert("callback_requests", { id: "cb", phone: "+972501234567", name: "שם", for_whom: "self", goal: "lesson", timing: "now", source: "test", consent_at: now, created_at: now, updated_at: now });
+    insert("ivr_voicemails", { id: "vm", system_phone: "system", file_id: "file", customer_id: "person1", caller_key: phoneHash, created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
+    const r2Delete = vi.fn().mockResolvedValue(undefined); env.VOICEMAIL_AUDIO = { delete: r2Delete } as any;
+    insert("analytics_events", { id: "analytics", event: "sign_up", ts: now, origin: "server", visitor_id: "v", session_id: "s", path: "/", referrer: "", first_touch: "{}", last_touch: "{}", meta: "{}", customer_id: "person1", reference: "person1" });
+    insert("analytics_attribution", { kind: "sign_up", reference: "person1", attribution: "{}" });
+    insert("active_calls", { call_id: "call1", profile_id: "teacher1", owner_id: "expired", acquired_at: 0, lease_expires_at: 1 });
+    insert("conversation_turns", { call_id: "call1", profile_id: "teacher1", created_at: now, direction: "learner", text: "hello" });
+    insert("diagnostic_events", { call_id: "call1", profile_id: "teacher1", created_at: now, event_type: "test", details_json: "{}" });
+    insert("latency_events", { call_id: "call1", profile_id: "teacher1", created_at: now, event_name: "test", since_call_start_ms: 0, since_previous_ms: 0 });
+    insert("prompt_snapshots", { call_id: "call1", profile_id: "teacher1", created_at: now, fingerprint: "test", system_instruction: "old", opening_message: "old", history_context: "old", setup_json: "{}" });
+    insert("navigation_usage_events", { call_id: "call1", profile_id: "teacher1", channel: "phone", model: "test", reported_at: now, usage_json: "{}" });
+    insert("navigation_call_costs", { call_id: "call1", profile_id: "teacher1", computed_at: now, summary_json: "{}" });
+    insert("navigation_devices", { device_id: "device", traccar_device_id: 1, label: "device", created_at: now });
+    insert("navigation_assignments", { customer_id: "person1", device_id: "device", updated_at: now });
+    insert("navigation_destinations", { id: "destination", customer_id: "person1", label: "home", address: "test", created_at: now, updated_at: now });
+    insert("navigation_trips", { id: "trip", customer_id: "person1", device_id: "device", destination_label: "home", destination_address: "test", created_at_ms: 1, updated_at_ms: 1 });
+    const response = await reset();
+    expect(response.status).toBe(200);
+    const result = await response.json() as any;
+    expect(result.deleted).toMatchObject({ customers: 1, customer_phones: 1, sessions: 1, installment_grants: 1, subscriptions: 1, callback_requests: 1, learning_results: 1 });
+    for (const table of Object.keys(result.deleted).filter(t => t !== "console_settings")) expect(sql.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get(), table).toMatchObject({ n: baseline[table] });
+    expect(r2Delete).toHaveBeenCalledWith(["voicemails/vm.mp3"]);
+    const audit = sql.prepare("SELECT action,entity_id FROM console_audit").get() as any;
+    expect(audit.entity_id).toBe("person1"); expect(JSON.parse(audit.action)).toMatchObject({ action: "crm_customer_reset", actor: "bearer", counts: result.deleted });
+    expect(audit.action).not.toContain("0501234567");
+    expect(await b.setting("economics")).toEqual({ usd_ils: 4 });
+    expect(await b.loadContext("preferences:other")).toEqual({ intro_school_seen: true });
+    expect(sql.prepare("SELECT used FROM api_quota").get()).toMatchObject({ used: 10 });
+    const freshId = await b.identifyCall("+972501234567", "fresh-call", "ivr");
+    expect(await b.loadContext("preferences:" + freshId)).toEqual({});
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions WHERE student_id=?").get(freshId)).toMatchObject({ n: 0 });
+    await startAdEntry(b, new ProgressStore(env.DB), {} as any, "fresh-call", freshId, "test");
+    expect(await b.loadContext("fresh-call")).toMatchObject({ ad_new_caller: true });
+    expect(sql.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+});
 
 describe("CRM status priority", () => {
   const base = { paid: false, callback: false, offered: false, activity: false, longest: 120, last: now, sessions: 0 };

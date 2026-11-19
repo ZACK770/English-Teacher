@@ -3,6 +3,8 @@ import { SpeakCallLogo } from '../brand/SpeakCallLogo';
 import { legalBasePath } from '../../legalRoutes';
 
 type Identity = { username: string; role: 'owner' | 'staff' };
+export const AdminIdentityContext = React.createContext<Identity | null>(null);
+export function useAdminIdentity() { return React.useContext(AdminIdentityContext); }
 type AdminUser = Identity & { id: string; display_name: string; disabled: number };
 type AuditRow = { id: string; ts: string; actor: string; method: string; path: string; status: number };
 const prefix = location.pathname.startsWith('/english/') ? '/english' : '';
@@ -85,10 +87,10 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
     {error && <p role="alert">{error}</p>}
     <button className="bg-[#c0f67d] text-[#111a1a] p-3 rounded w-full" type="submit">כניסה</button>
   </form></main>;
-  return <><header dir="rtl" className="bg-slate-900 text-white p-3 flex flex-wrap gap-5 items-center">
+  return <AdminIdentityContext.Provider value={identity}><header dir="rtl" className="bg-slate-900 text-white p-3 flex flex-wrap gap-5 items-center">
     <span>{identity.username}</span>
     {identity.role === 'owner' && <button onClick={() => setPanel(!panel)}>{panel ? 'חזרה ללוח הניהול' : 'משתמשים ויומן פעולות'}</button>}
     <button onClick={async () => { try { await adminApi('auth/logout', 'POST'); setIdentity(null); setPanel(false); setError(''); } catch (e) { setError((e as Error).message); } }}>יציאה</button>
     {error && <span role="alert">{error}</span>}
-  </header>{panel ? <AdminUsers /> : children}</>;
+  </header>{panel ? <AdminUsers /> : children}</AdminIdentityContext.Provider>;
 }
