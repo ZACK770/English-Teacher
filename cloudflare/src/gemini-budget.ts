@@ -4,6 +4,7 @@ const LEASE_MS = 35_000;
 const CHECK_MS = 10_000;
 const LOCAL_DEADLINE_MS = 25_000;
 const MICROS = 1_000_000;
+export const BUDGET_GUARD_NAME = "speakcall-v2";
 
 export type BudgetDenial = "system_busy" | "gemini_budget_reached" | "gemini_guard_unavailable";
 export const budgetMessage: Record<BudgetDenial, string> = {
@@ -164,7 +165,7 @@ export class GeminiBudget {
 }
 
 async function callGuard(env: Env, op: Operation, id = "", cost = 0) {
-  const stub = env.GEMINI_BUDGET.getByName("speakcall", { locationHint: "weur" });
+  const stub = env.GEMINI_BUDGET.getByName(BUDGET_GUARD_NAME, { locationHint: "weur" });
   const request = stub.fetch("https://budget.internal/" + op, op === "status" ? undefined : {
     method: "POST", body: JSON.stringify({ id, cost }),
   });
