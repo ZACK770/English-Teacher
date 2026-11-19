@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Account, portalRequest, topics } from "./portalApi";
 import { ProBadge, ProChoices, ProNote } from "./ProBadge";
 import { isProVocabularySelection } from "../../../cloudflare/src/pro-access";
@@ -47,7 +47,14 @@ function WordDetails({ item, token }: { item: Item; token: string }) {
   </div>;
 }
 
-export function LearningProgress({ token, account }: { token: string; account: Account }) {
+type OpenDomain = (id: string, button: HTMLElement) => void;
+
+export function LearningProgress({ token, account, personalForm, personalOptions }: {
+  token: string;
+  account: Account;
+  personalForm: ReactNode;
+  personalOptions: (openDomain: OpenDomain, hasDomain: (id: string) => boolean) => ReactNode;
+}) {
   const [report, setReport] = useState<Report | null>(null);
   const [levelFilter, setLevelFilter] = useState("");
   const [error, setError] = useState("");
@@ -57,9 +64,9 @@ export function LearningProgress({ token, account }: { token: string; account: A
   const trigger = useRef<HTMLElement | null>(null);
   const load = useCallback(async () => {
     try { setError(""); setReport(await portalRequest<Report>("/v1/portal/learning", token)); }
-    catch { setError("טעינת ההתקדמות התעכבה. אפשר לנסות שוב."); }
+    catch { setError("טעינת ספריית המילים התעכבה. אפשר לנסות שוב."); }
   }, [token]);
-  useEffect(() => { void load(); }, [load, account.progress.session_count]);
+  useEffect(() => { void load(); }, [load, account.progress.session_count, account.materials]);
   const opened = domain !== null || word !== null;
   useEffect(() => {
     if (!opened) return;
@@ -69,19 +76,25 @@ export function LearningProgress({ token, account }: { token: string; account: A
     return () => { document.body.style.overflow = previous; dialog.current?.close(); trigger.current?.focus(); };
   }, [opened]);
   const close = () => { setDomain(null); setWord(null); };
+  const openDomain: OpenDomain = (id, button) => { trigger.current = button; setLevelFilter(""); setDomain(id); };
   const name = (id: string) => topics[id] || account.materials.find(m => "material:" + m.id === id)?.name || "רשימה קודמת";
-  if (error) return <div role="alert">{error}<button className="sk-link" onClick={() => void load()}>ננסה שוב</button></div>;
-  if (!report) return <p role="status">טוענים את ההתקדמות…</p>;
-  const words = report.items.filter(t => t.kind === "vocabulary" && t.domain === domain && (!levelFilter || t.level === levelFilter));
-  return <section className="sk-learning-progress"><h2>מילים שהופכות לשלך.</h2><p>{report.syllabus}</p>
-    {report.last_lesson && <aside className="sk-setting" role="status"><strong>השיחה האחרונה · {date(report.last_lesson.created_at)}</strong><p>{report.last_lesson.status === "no_targets" ? "עוד שיחה של חשיפה לאנגלית. בתרגול הבא אפשר להתקדם גם עם מילים ממוקדות." : report.last_lesson.status === "no_evidence" ? `${report.last_lesson.target_count} מילים מחכות לתרגול עצמאי. החשיפה בשיחה היא הצעד הראשון.` : `תרגלת ${report.last_lesson.result_count} מילים. ההתקדמות שלך מחכה בתחומים למטה.`}</p></aside>}
-    <div className="sk-domain-grid">{report.domains.map(d => <button className="sk-domain-card" key={d.domain} onClick={e => { trigger.current = e.currentTarget; setLevelFilter(""); setDomain(d.domain); }} aria-haspopup="dialog"><strong>{name(d.domain)}{isProVocabularySelection(d.domain, "beginner") && <ProBadge />}{d.archived ? " — היסטוריה" : ""}</strong><span className="sk-domain-count"><b>{d.assessed}</b> מילים תרגלת מתוך {d.total}</span><small>נחשפת ל־{report.items.filter(t => t.kind === "vocabulary" && t.domain === d.domain && t.exposures > 0).length} מילים ברשימה המוצגת</small>{d.archived ? <small>רגעי התרגול שלך שמורים כאן.</small> : <><meter min={0} max={100} value={d.coverage} aria-label={"התקדמות התרגול ב" + name(d.domain)} /><small>{d.mastered > 0 ? `${d.mastered} מילים כבר בשליטה מלאה · ` : "כל תרגול מקרב אותך · "}{d.total > 0 && d.mastered >= d.total ? "כל הכבוד, הגעת לשליטה מלאה!" : `עוד ${Math.max(1, Math.round(100 - d.mastery))}% מהמילים לשליטה מלאה`}</small></>}<span className="sk-domain-open">למילים ולרגעי ההצלחה ←</span></button>)}</div>
-    {report.domains.length === 0 && <p>כאן יצמח אוצר המילים שלך. מתחילים בשיחה הראשונה.</p>}
-    <h2>גם הדקדוק מתקדם.</h2><p>כאן אוספים הצלחות ממסלול הדקדוק.</p><div className="sk-word-grid">{report.items.filter(t => t.kind === "grammar").map(t => <button className="sk-word-chip" key={t.id} onClick={e => { trigger.current = e.currentTarget; setWord(t); }} aria-haspopup="dialog">{t.text}</button>)}</div>
-    <details className="sk-setting"><summary>איך מחשבים?</summary><p>{report.scoring}</p><p>ציוני המורה: 100 — עצמאי ונכון; 50 — חלקי או עם רמז משמעותי; 0 — ניסיון שניתן היה לבדוק ולא הצליח. אלו הערכות מורה שיכוילו מול שיחות אמיתיות. נקודות עידוד אינן ציון ידע.</p><p>ציון מילה הוא ביצוע בשיחה, לא אחוז ידיעה של כל האנגלית. הרמות הן דירוג קושי ראשוני, ואת רמת השיעור משנים בהעדפות.</p></details>
+  const words = report?.items.filter(t => t.kind === "vocabulary" && t.domain === domain && (!levelFilter || t.level === levelFilter)) ?? [];
+  const personalDomain = domain?.startsWith("material:");
+  return <section className="sk-learning-progress" aria-label="אפשרויות אוצר מילים">
+    <p>אפשר לעיין במילים לפי תחומי חיים, או ליצור רשימה משלך לשיחה הבאה.</p>
+    {personalForm}
+    <div className="sk-domain-grid">
+      {personalOptions(openDomain, id => report?.domains.some(d => d.domain === id) === true)}
+      {report?.domains.filter(d => !account.materials.some(m => "material:" + m.id === d.domain)).map(d => <button className="sk-domain-card" key={d.domain} type="button" onClick={e => openDomain(d.domain, e.currentTarget)} aria-haspopup="dialog"><strong>{name(d.domain)}{isProVocabularySelection(d.domain, "beginner") && <ProBadge />}{d.archived ? " — היסטוריה" : ""}</strong><span className="sk-domain-count"><b>{d.assessed}</b> מילים תרגלת מתוך {d.total}</span><small>נחשפת ל־{report.items.filter(t => t.kind === "vocabulary" && t.domain === d.domain && t.exposures > 0).length} מילים ברשימה המוצגת</small>{d.archived ? <small>רגעי התרגול שלך שמורים כאן.</small> : <><meter min={0} max={100} value={d.coverage} aria-label={"התקדמות התרגול ב" + name(d.domain)} /><small>{d.mastered > 0 ? `${d.mastered} מילים כבר בשליטה מלאה · ` : "כל תרגול מקרב אותך · "}{d.total > 0 && d.mastered >= d.total ? "כל הכבוד, הגעת לשליטה מלאה!" : `עוד ${Math.max(1, Math.round(100 - d.mastery))}% מהמילים לשליטה מלאה`}</small></>}<span className="sk-domain-open">למילים ולרגעי ההצלחה ←</span></button>)}
+    </div>
+    {error ? <div role="alert">{error}<button className="sk-link" onClick={() => void load()}>ננסה שוב</button></div> : !report ? <p role="status">טוענים את ספריית המילים…</p> : <>
+      {report.last_lesson && <aside className="sk-setting" role="status"><strong>השיחה האחרונה · {date(report.last_lesson.created_at)}</strong><p>{report.last_lesson.status === "no_targets" ? "עוד שיחה של חשיפה לאנגלית. בתרגול הבא אפשר להתקדם גם עם מילים ממוקדות." : report.last_lesson.status === "no_evidence" ? `${report.last_lesson.target_count} מילים מחכות לתרגול עצמאי. החשיפה בשיחה היא הצעד הראשון.` : `תרגלת ${report.last_lesson.result_count} מילים. ההתקדמות שלך מחכה בכרטיסי התחומים.`}</p></aside>}
+      <details className="sk-setting"><summary>תרגול דקדוק</summary><p>כאן אוספים הצלחות ממסלול הדקדוק.</p><div className="sk-word-grid">{report.items.filter(t => t.kind === "grammar").map(t => <button className="sk-word-chip" key={t.id} onClick={e => { trigger.current = e.currentTarget; setWord(t); }} aria-haspopup="dialog">{t.text}</button>)}</div></details>
+      <details className="sk-setting"><summary>איך מחשבים?</summary><p>{report.scoring}</p><p>ציוני המורה: 100 — עצמאי ונכון; 50 — חלקי או עם רמז משמעותי; 0 — ניסיון שניתן היה לבדוק ולא הצליח. אלו הערכות מורה שיכוילו מול שיחות אמיתיות. נקודות עידוד אינן ציון ידע.</p><p>ציון מילה הוא ביצוע בשיחה, לא אחוז ידיעה של כל האנגלית. הרמות הן דירוג קושי ראשוני, ואת רמת השיעור משנים בהעדפות.</p></details>
+    </>}
     <dialog ref={dialog} className="sk-progress-dialog" dir="rtl" aria-labelledby="sk-progress-title" onCancel={e => { e.preventDefault(); close(); }} onClick={e => { if (e.target === e.currentTarget) { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) close(); } }}>
       <div className="sk-progress-dialog-body"><header><div>{word && domain && <button className="sk-link" onClick={() => setWord(null)}>→ חזרה לכל המילים</button>}<p className="sk-progress-meta">{word ? "מילה אחת, עוד צעד קדימה" : "אוצר המילים שלך"}</p><h2 id="sk-progress-title" dir="auto">{word ? word.text : domain ? name(domain) : ""}</h2></div><button className="sk-dialog-close" aria-label="סגירה" onClick={close} autoFocus>×</button></header>
-        {word ? <WordDetails key={word.kind + word.id} item={word} token={token} /> : <><p>בוחרים מילה ומגלים את המשמעות ואת רגעי התרגול שלה.</p><ProChoices kind="level" label="סינון לפי רמה" value={levelFilter} onChange={setLevelFilter} isProOption={level => isProVocabularySelection(domain?.startsWith("material:") ? domain : "everyday", level)} values={{ "": "כל הרמות", ...wordLevels }} />{!account.access?.paid && domain && isProVocabularySelection(domain, levelFilter || "beginner") && <ProNote />}<p className="sk-progress-meta">✓ נחשפת או אמרת · ● בשליטה מלאה</p><div className="sk-word-grid">{words.map(t => <button className={"sk-word-chip" + (t.mastered ? " is-mastered" : encountered(t) ? " is-encountered" : "")} key={t.id} onClick={() => setWord(t)} aria-label={t.text + (t.mastered ? " — בשליטה מלאה" : encountered(t) ? " — נחשפת או אמרת" : " — פרטי מילה")}><span dir="auto">{t.text}</span>{t.mastered ? <span className="sk-mastery-dot" aria-hidden="true" /> : encountered(t) && <span className="sk-encountered-mark" aria-hidden="true">✓</span>}</button>)}</div>{words.length === 0 && <p>המילים הבאות מחכות לך ברמה אחרת. אפשר לבחור בכל הרמות ולהמשיך לגלות.</p>}</>}
+        {word ? <WordDetails key={word.kind + word.id} item={word} token={token} /> : domain && <><p>בוחרים מילה ומגלים את המשמעות ואת רגעי התרגול שלה.</p>{!personalDomain && <ProChoices kind="level" label="סינון לפי רמה" value={levelFilter} onChange={setLevelFilter} isProOption={level => isProVocabularySelection(domain, level)} values={{ "": "כל הרמות", beginner: wordLevels.beginner, intermediate: wordLevels.intermediate, fluent: wordLevels.fluent }} />}{!account.access?.paid && isProVocabularySelection(domain, levelFilter || "beginner") && <ProNote />}<p className="sk-progress-meta">✓ נחשפת או אמרת · ● בשליטה מלאה</p><div className="sk-word-grid">{words.map(t => <button className={"sk-word-chip" + (t.mastered ? " is-mastered" : encountered(t) ? " is-encountered" : "")} key={t.id} onClick={() => setWord(t)} aria-label={t.text + (t.mastered ? " — בשליטה מלאה" : encountered(t) ? " — נחשפת או אמרת" : " — פרטי מילה")}><span dir="auto">{t.text}</span>{t.mastered ? <span className="sk-mastery-dot" aria-hidden="true" /> : encountered(t) && <span className="sk-encountered-mark" aria-hidden="true">✓</span>}</button>)}</div>{words.length === 0 && <p>אין מילים ברמה הזו. אפשר לבחור בכל הרמות ולהמשיך לגלות.</p>}</>}
       </div>
     </dialog>
   </section>;
