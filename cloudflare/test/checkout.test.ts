@@ -71,6 +71,17 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
+  it("accepts a signed late charge after repeated family edits and flags only the collection difference", async () => {
+    const { o, store } = await monthly();
+    await store.addMember(o.id, "0502223333", "One");
+    await store.addMember(o.id, "0502224444", "Two");
+    await store.addMember(o.id, "0502225555", "Three");
+    const charge = { MosadNumber: "7019554", TransactionId: "102", Confirmation: "6", Amount: "59", Currency: "1", KevaId: "4242" };
+    expect((await hook(charge)).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
+    expect((await store.get(o.id)).period_number).toBe(2);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='subscription_amount_difference'").get()?.n).toBe(1);
+  });
   async function monthly() {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
     await hook({ MosadNumber: "7019554", TransactionId: "100", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
@@ -307,7 +318,7 @@ describe("website checkout", () => {
     vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
     expect((await hook(month)).status).toBe(200);
     expect((await hook(month)).status).toBe(200);
-    expect((await hook({ ...month, TransactionId: "3", Amount: "1" })).status).toBe(400);
+    expect((await hook({ ...month, TransactionId: "3", Currency: "2" })).status).toBe(400);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 2 });
     expect(await store.get(o.id)).toMatchObject({ period_number: 2 });
     expect((await store.summary("c1"))[0]).toMatchObject({ rollover_minutes: 200 });
@@ -336,7 +347,7 @@ describe("website checkout", () => {
     const store = new SubscriptionStore(env.DB, env);
     await store.addMember(o.id, "0502223333", "Family");
     const charge = { MosadNumber: "7019554", TransactionId: "11", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
-    expect((await hook({ ...charge, Amount: "1" })).status).toBe(400);
+    expect((await hook({ ...charge, Currency: "2" })).status).toBe(400);
     expect((await store.get(o.id)).period_number).toBe(1);
     vi.setSystemTime(new Date("2026-01-30T00:00:00Z"));
     expect((await req("/v1/portal/subscriptions/" + o.id + "/pause", { days: 7 })).status).toBe(200);
@@ -355,7 +366,7 @@ describe("website checkout", () => {
     const member = db.sql.prepare("SELECT customer_id FROM subscription_members").get()?.customer_id as string;
     await store.removeMember(o.id, member);
     expect((await hook(charge)).status).toBe(200);
-    expect((await hook({ ...charge, TransactionId: "12", Amount: "1" })).status).toBe(400);
+    expect((await hook({ ...charge, TransactionId: "12", Currency: "2" })).status).toBe(400);
     const request = new Request("https://speakcall.app/v1/admin/business/subscriptions/" + o.id + "/cancel", { method: "POST", headers: { Authorization: "Bearer a" }, body: "{}" });
     expect((await worker.fetch(request, env)).status).toBe(200);
     expect((await store.get(o.id)).status).toBe("cancelled");

@@ -205,7 +205,6 @@ export class CheckoutStore {
     }
     const expected = await subscriptions.renewalAmount(sub.entitlement_id);
     const amount = agorot(data.Amount);
-    if (amount !== expected && amount !== sub.monthly_agorot && amount !== sub.previous_monthly_agorot) throw new Error("Payment amount mismatch");
     const now = nowIso();
     const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate, statements: [
       ...(amount === expected ? [] : [this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("subscription_amount_difference:" + reference)).slice(0, 32), sub.first_order_id, "subscription_amount_difference", `הפרש גבייה במנוי: נדרש ${expected / 100} ₪, חויב ${amount / 100} ₪, יתרה להסדרה ${(expected - amount) / 100} ₪`, now)]),
