@@ -226,6 +226,7 @@ describe("quick teacher direction", () => {
     expect(await session.recordTool({ name: "save_intake", args: { goal: "other", pace: "slow" } })).toBe(true);
     expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
     expect(await b.record(kind, web.id)).toMatchObject({ level: "intermediate", pace: "slow" });
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM console_audit WHERE action=? AND entity_id=?").get("save:" + kind, web.id)?.n).toBe(2);
     if (phone) {
       expect(await b.record(kind, phone.id)).toMatchObject({ level: "beginner", pace: "normal" });
       expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "beginner", plan: { level: "beginner" } });
@@ -244,7 +245,7 @@ describe("quick teacher direction", () => {
     expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
   });
 
-  it.each(["before save", "before refresh"])("keeps a browser lesson running when its teacher is deleted %s", async when => {
+  it.each(["before save", "before pace refresh", "before direction refresh"])("keeps a browser lesson running when its teacher is deleted %s", async when => {
     const kind = teachersKind("learner-a");
     const web = await b.save(kind, TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "intermediate" }));
     const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: web.id }) as any;
@@ -260,9 +261,11 @@ describe("quick teacher direction", () => {
         await deleteTeacher();
       });
     }
-    expect(await session.recordTool({ name: "save_intake", args: { goal: "other", pace: "slow" } })).toBe(when === "before refresh");
+    const direction = when === "before direction refresh" ? { level: "beginner", topic: "property" } : { pace: "slow" };
+    expect(await session.recordTool({ name: "save_intake", args: { goal: "other", ...direction } })).toBe(when !== "before save");
     expect(await b.record(kind, web.id)).toBeNull();
-    if (when === "before refresh") expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
+    if (when === "before direction refresh") expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('topic="property", level="beginner"'));
+    else if (when === "before pace refresh") expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
     else expect(session.ai.addContext).not.toHaveBeenCalled();
   });
 

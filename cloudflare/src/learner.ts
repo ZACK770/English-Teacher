@@ -304,9 +304,15 @@ async function syncTeacherDirection(b: BusinessStore, customerId: string, teache
   const teacher = await b.record(kind, teacherId);
   if (!teacher) return false;
   for (const key of DIRECTION_KEYS) if (input[key] !== undefined) teacher[key] = input[key];
-  const updated = await b.db.prepare("UPDATE console_records SET body=?, updated_at=? WHERE kind=? AND id=? RETURNING id")
-    .bind(JSON.stringify(TeacherSchema.parse(teacher)), nowIso(), kind, teacherId).first();
-  return !!updated;
+  const now = nowIso();
+  const [updated] = await b.db.batch([
+    b.db.prepare("UPDATE console_records SET body=?, updated_at=? WHERE kind=? AND id=? RETURNING id")
+      .bind(JSON.stringify(TeacherSchema.parse(teacher)), now, kind, teacherId),
+    b.db.prepare(`INSERT INTO console_audit(action,entity_id,created_at)
+      SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM console_records WHERE kind=? AND id=?)`)
+      .bind("save:" + kind, teacherId, now, kind, teacherId),
+  ]);
+  return updated.results.length > 0;
 }
 
 const IntakeSchema = PlanSchema.extend({
