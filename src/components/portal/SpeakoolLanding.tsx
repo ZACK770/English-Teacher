@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Ear, Mic, RefreshCw } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { clearEntryChallenges, EntryDialog, type EntryChannel, type EntryMode } from "./QuickEntry";
 import { saveLearnerToken } from "./learnerToken";
 import { resumeLearnerSession } from "./portalApi";
@@ -89,7 +89,7 @@ export function SpeakoolLanding() {
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
-      <nav aria-label="ניווט ראשי"><a href="#how">השיטה</a><a href="#plans">מסלולים</a><button type="button" className="sk-land-login" onClick={e => openEntry("login", e.currentTarget)}>כניסה</button></nav>
+      <nav aria-label="ניווט ראשי"><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-blog" href={base + "/blog"}>מאמרים</a><button type="button" className="sk-land-login" onClick={e => openEntry("login", e.currentTarget)}>כניסה</button></nav>
     </header>
     <main>
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
@@ -99,13 +99,7 @@ export function SpeakoolLanding() {
           <div className="sk-land-hero-actions"><button ref={heroButton} type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={19} /></button><a href={tel}>לחייג בעצמי</a></div>
         </div>
         <div className="sk-land-hero-art" aria-hidden="true">
-          <svg className="sk-land-voice-art" viewBox="20 -10 280 280" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <g className="sk-land-rings"><circle cx="160" cy="130" r="105" /><circle cx="160" cy="130" r="121" /></g>
-            <g className="sk-land-signal"><path d="M74 98q-19 32 0 64M246 98q19 32 0 64M63 89q-26 41 0 82M257 89q26 41 0 82" /></g>
-            <g className="sk-land-symbol-breathe">
-              <path d="M194 96c-10-12-21-18-36-18-29 0-47 21-47 51s18 51 47 51c12 0 23-4 31-11l20 22v-35l-18-13c-6 13-17 21-33 21-19 0-29-15-29-35s10-35 29-35c12 0 22 6 29 17Z" />
-            </g>
-          </svg>
+          <img className="sk-land-voice-art" src="/brand/teachers/voice-hero.png" width="320" height="270" alt="" />
         </div>
       </section>
       <section id="free-lesson" className="sk-shell sk-land-offer" aria-labelledby="free-lesson-title">
@@ -118,7 +112,6 @@ export function SpeakoolLanding() {
             {legacyCallback && <LessonCallbackForm tel={tel} privacy={base + "/privacy"} />}
           </div>
           <div className="sk-land-clock" aria-hidden="true">
-            <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" /><circle cx="50" cy="50" r="45" pathLength="100" /></svg>
             <strong>10</strong><span>דקות · חינם</span>
           </div>
         </div>
@@ -127,9 +120,9 @@ export function SpeakoolLanding() {
         <p className="sk-land-kicker">שיטת ספיקול</p>
         <h2>השיחה חופשית. התרגול לא מקרי.</h2>
         <ol>
-          <li><Ear className="sk-land-step-icon" aria-hidden="true" /><b>01</b><h3>שומעים בהקשר</h3><p>בוחרים נושא שחשוב לך. פוגשים מילים בתוך שיחה, לא בתוך רשימה.</p></li>
-          <li><Mic className="sk-land-step-icon" aria-hidden="true" /><b>02</b><h3>מנסים בקול</h3><p>המורה נותן רמז כשנתקעים ומשאיר לך את התור לדבר.</p></li>
-          <li><RefreshCw className="sk-land-step-icon" aria-hidden="true" /><b>03</b><h3>חוזרים בשיחה אחרת</h3><p>בודקים מה כבר נשלף לבד ומה כדאי לחזק. לא מסמנים שליטה רק כי חזרת אחרי המורה.</p></li>
+          <li><img className="sk-land-step-icon" src="/brand/teachers/listen.png" width="30" height="30" alt="" /><b>01</b><h3>שומעים בהקשר</h3><p>בוחרים נושא שחשוב לך. פוגשים מילים בתוך שיחה, לא בתוך רשימה.</p></li>
+          <li><img className="sk-land-step-icon" src="/brand/teachers/speak.png" width="30" height="30" alt="" /><b>02</b><h3>מנסים בקול</h3><p>המורה נותן רמז כשנתקעים ומשאיר לך את התור לדבר.</p></li>
+          <li><img className="sk-land-step-icon" src="/brand/teachers/repeat.png" width="30" height="30" alt="" /><b>03</b><h3>חוזרים בשיחה אחרת</h3><p>בודקים מה כבר נשלף לבד ומה כדאי לחזק. לא מסמנים שליטה רק כי חזרת אחרי המורה.</p></li>
         </ol>
       </section>
       <section className="sk-shell sk-land-example">
@@ -190,7 +183,7 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><button type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={18} /></button></section>
     </main>
-    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
+    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href={base + "/blog"}>מאמרים</a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
     <LegalFooter />
     {entry && <EntryDialog mode={entry} channel={channel} onChannel={via => showEntry(entry, via)}
       privacy={base + "/privacy"} onClose={() => {
