@@ -1,4 +1,4 @@
-import { recordSalesTool, SALES_TOOL_NAMES } from "./ad-entry";
+import { isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, recordSalesTool, SALES_TOOL_NAMES } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
@@ -43,6 +43,7 @@ export class TutorSession {
   private disconnected = false;
   private reason = "";
   private intakeReminded = false;
+  private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
   private returnPath: string | null = null;
   private pbxBase: string | null = null;
 
@@ -363,17 +364,26 @@ export class TutorSession {
         continue;
       }
       if (event.type === "audio") {
+        if (this.pendingEmail?.phase === "readback") this.pendingEmail.audio ||= event.pcm24k.byteLength > 0;
         if (!this.firstAudio) { this.firstAudio = true; await this.latency("first_gemini_audio", { tutor_turn: this.meter.tutorTurns + 1 }); }
         this.meter.outputAudioBytes += event.pcm24k.byteLength;
         const [pcm, carry] = downsample24kTo8k(event.pcm24k, this.carry);
         this.carry = carry;
         this.enqueue(pcm);
       } else if (event.type === "interrupted") {
+        this.pendingEmail = null;
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
         await this.latency("tutor_interrupted");
       } else if (event.type === "transcript") {
+        const pending = this.pendingEmail;
+        if (pending) {
+          const expected = pending.phase === "readback" ? "tutor" : "learner";
+          const text = event.rawText ?? event.text;
+          if (event.role === expected && pending.text.length + text.length <= 1024) pending.text += text;
+          else this.pendingEmail = null;
+        }
         this.meter.transcript.push({ role: event.role, text: event.text });
         if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
         if (event.role === "learner") {
@@ -382,6 +392,9 @@ export class TutorSession {
           this.learnerSeen = true;
         }
       } else if (event.type === "turn_complete") {
+        const pending = this.pendingEmail;
+        this.pendingEmail = pending?.phase === "readback" && pending.audio && matchesEmailReadBack(pending.text, pending.email)
+          ? { ...pending, phase: "answer", text: "" } : null;
         this.meter.tutorTurns++;
         this.learnerSeen = false;
         this.firstAudio = false;
@@ -406,6 +419,7 @@ export class TutorSession {
   }
 
   private async reconnectGemini(preservePlayback = false) {
+    this.pendingEmail = null;
     this.failureStarted ??= Date.now();
     const handle = this.ai?.resumeHandle;
     this.ai?.close();
@@ -474,7 +488,20 @@ export class TutorSession {
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name && SALES_TOOL_NAMES.has(call.name)) {
       if (!this.controls?.sales || !this.customerId) return false;
-      const saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone).catch(() => false);
+      let allowed = true;
+      let saved = false;
+      if (call.name === "prepare_email") {
+        const email = normalizeSalesEmail(args.email);
+        this.pendingEmail = email ? { email, phase: "readback", text: "", audio: false } : null;
+        saved = !!email;
+      } else {
+        if (call.name === "save_email") {
+          const pending = this.pendingEmail;
+          this.pendingEmail = null;
+          allowed = pending?.phase === "answer" && normalizeSalesEmail(args.email) === pending.email && isEmailConfirmation(pending.text);
+        }
+        if (allowed) saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone).catch(() => false);
+      }
       await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, saved }).catch(() => {});
       return saved;
     }

@@ -3,7 +3,7 @@ import { b64decode, b64encode } from "./audio";
 export type GeminiEvent =
   | { type: "audio"; pcm24k: Uint8Array }
   | { type: "interrupted" }
-  | { type: "transcript"; role: "learner" | "tutor"; text: string }
+  | { type: "transcript"; role: "learner" | "tutor"; text: string; rawText?: string }
   | { type: "interim_transcript"; text: string }
   | { type: "voice_activity"; activity: "start" | "end"; offset_ms: number | null }
   | { type: "turn_complete" }
@@ -121,8 +121,8 @@ export class GeminiLive {
     if (server.interrupted) this.push({ type: "interrupted" });
     if (server.interimInputTranscription?.text) this.push({ type: "interim_transcript", text: String(server.interimInputTranscription.text) });
     for (const [key, role] of [["inputTranscription", "learner"], ["outputTranscription", "tutor"]] as const) {
-      const text = String(server[key]?.text ?? "").trim();
-      if (text) this.push({ type: "transcript", role, text });
+      const text = String(server[key]?.text ?? "");
+      if (text.trim()) this.push({ type: "transcript", role, text: text.trim(), rawText: text });
     }
     for (const part of server.modelTurn?.parts ?? []) {
       if (part.inlineData?.data) this.push({ type: "audio", pcm24k: b64decode(part.inlineData.data) });
