@@ -1225,7 +1225,8 @@ describe("real learner portal", () => {
     expect(runtime).toContain("59 ש\"ח לחודש");
     expect(runtime).toContain("1,490 ש\"ח");
     expect(runtime).toContain("Never offer a discounted first month");
-    expect(runtime).toContain("Preserve all digits and leading zeros");
+    expect(runtime).toContain("preserving all digits and leading zeros");
+    expect(runtime).toContain("Do not offer to email the lesson summary or collect an email address unprompted.");
     expect(runtime).toContain("not a repeat-after-me drill");
     expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בקצב שלך");
     expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited free minutes");
