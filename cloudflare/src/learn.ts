@@ -124,7 +124,7 @@ export async function renderVoicePreview(request: Request, env: Env, s: Settings
   const cacheId = "portal-voice-preview:" + parsed.data.voice + ":v1";
   const cached = await b.getAudio(cacheId);
   if (cached) return Response.json({ audio_wav_base64: b64encode(cached.wav) });
-  if (!await b.consumeMonthlyQuota("portal-voice-preview", 30) || !await b.consumeMonthlyQuota("portal-voice-preview:" + customerId, 3)) throw new HttpError(429, "שמענו מספיק דוגמאות להיום. אפשר לנסות את המורה בשיחה.");
+  if (!await b.consumeMonthlyQuota("portal-voice-preview", 30) || !await b.consumeMonthlyQuota("portal-voice-preview:" + customerId, 3)) throw new HttpError(429, "מכסת דגימות הקול לחודש הזה נוצלה. אפשר לנסות את המורה בשיחה.");
   const progress = new ProgressStore(env.DB);
   const text = "Hi! Good to meet you. Let's take it one sentence at a time.";
   const controls = { ...controlsFromSettings(false), base_prompt: ANNOUNCER, opening_message: text, voice: parsed.data.voice, language_code: "en-US" };

@@ -50,12 +50,13 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     const phoneHash = (await sha256Hex(phone)).slice(0, 24);
     const ipHash = (await sha256Hex(request.headers.get("CF-Connecting-IP") || "local")).slice(0, 24);
     const hour = nowIso().slice(0, 13), minute = nowIso().slice(0, 16);
-    for (const [key, limit] of [
+    const quotas = [
       [`portal-ring:phone:${phoneHash}:${minute}`, 1],
-      [`portal-ring:phone:${phoneHash}:${hour}`, 5],
-      [`portal-ring:ip:${ipHash}:${hour}`, 20],
-      [`portal-ring:day:${hour.slice(0, 10)}`, 500],
-    ] as const) {
+      [`portal-ring:phone:${phoneHash}:${hour}`, 10],
+      [`portal-ring:ip:${ipHash}:${hour}`, 40],
+      [`portal-ring:day:${hour.slice(0, 10)}`, 1000],
+    ] as const;
+    for (const [key, limit] of quotas) {
       if (!await b.consumeMonthlyQuota(key, limit)) throw new HttpError(429, "כבר שלחנו צלצול. נחכה קצת ואז ננסה שוב.");
     }
     const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, "0");
@@ -64,6 +65,7 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     let sent = false;
     try { sent = (await ring(env, phone, code)).ok; } catch { /* Provider details must stay server-side. */ }
     if (!sent) {
+      await Promise.all(quotas.slice(1).map(([key]) => b.refundMonthlyQuota(key, hour.slice(0, 7))));
       await env.DB.prepare("DELETE FROM console_settings WHERE id=?").bind("portal-auth:" + challenge).run();
       throw new HttpError(503, "הכניסה בצלצול לא זמינה כרגע. אפשר להיכנס עם הקישור האישי שקיבלת.");
     }
