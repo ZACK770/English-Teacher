@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { acquireGeminiBudget, applyBudget, budgetConfig, GeminiBudget, newBudgetLedger } from "../src/gemini-budget";
+import { acquireGeminiBudget, applyBudget, applyGeminiOutcome, budgetConfig, GeminiBudget, newBudgetLedger, reportGeminiOutcome } from "../src/gemini-budget";
 
 const now = Date.parse("2026-11-19T12:00:00Z");
 const limits = budgetConfig({} as Env);
@@ -110,4 +110,54 @@ it("retries a failed alert and records one successful send for the day", async (
   } finally {
     log.mockRestore();
   }
+});
+
+const memoryGuard = (env: Partial<Env>) => {
+  const store = new Map<string, unknown>();
+  const tasks: Promise<unknown>[] = [];
+  const ctx = {
+    waitUntil: (task: Promise<unknown>) => tasks.push(task),
+    storage: { kv: { get: (key: string) => structuredClone(store.get(key)), put: (key: string, value: unknown) => { store.set(key, structuredClone(value)); } } },
+  } as unknown as DurableObjectState;
+  const guard = new GeminiBudget(ctx, env as Env);
+  const caller = { ...env, GEMINI_BUDGET: { getByName: () => ({ fetch: (url: string, init?: RequestInit) => guard.fetch(new Request(url, init)) }) } } as unknown as Env;
+  return { guard, caller, tasks };
+};
+
+it("alerts once per hour after three Gemini failures in a row and resets on success", () => {
+  let result = applyGeminiOutcome(undefined, now, "failure", "credits depleted");
+  result = applyGeminiOutcome(result.state, now + 1000, "failure", "credits depleted");
+  expect(result.alert).toBe(false);
+  result = applyGeminiOutcome(result.state, now + 2000, "failure", "credits depleted");
+  expect(result).toMatchObject({ alert: true, state: { streak: 3, error: "credits depleted" } });
+  expect(applyGeminiOutcome(result.state, now + 3000, "failure").alert).toBe(false);
+  const reset = applyGeminiOutcome(result.state, now + 4000, "success").state;
+  expect(reset.streak).toBe(0);
+  let later = applyGeminiOutcome(reset, now + 3_600_000, "failure");
+  later = applyGeminiOutcome(later.state, now + 3_601_000, "failure");
+  expect(applyGeminiOutcome(later.state, now + 3_602_000, "failure").alert).toBe(true);
+  const stale = applyGeminiOutcome(applyGeminiOutcome(undefined, now, "failure").state, now + 31 * 60_000, "failure");
+  expect(stale.state.streak).toBe(1);
+});
+
+it("applies the caller's current concurrency limit even when the guard started with older settings", async () => {
+  const { guard, caller } = memoryGuard({ GEMINI_MAX_CONCURRENT: "25" });
+  caller.GEMINI_MAX_CONCURRENT = "40";
+  const stopped = vi.fn();
+  const releases = [];
+  for (let i = 0; i < 40; i++) releases.push(await acquireGeminiBudget(caller, () => 0, stopped));
+  await expect(acquireGeminiBudget(caller, () => 0, stopped)).rejects.toMatchObject({ reason: "system_busy" });
+  expect(await (await guard.fetch(new Request("https://budget.internal/status"))).json()).toMatchObject({ concurrent_limit: 25, active_jobs: 40 });
+  await Promise.all(releases.map(release => release()));
+});
+
+it("emails the failure alert address when Gemini calls keep failing", async () => {
+  const send = vi.fn().mockResolvedValue({});
+  const { caller, tasks } = memoryGuard({ GEMINI_BUDGET_EMAIL: { send } as unknown as SendEmail, GEMINI_BUDGET_EMAIL_TO: "ops@example.com", GEMINI_FAILURE_EMAIL_TO: "owner@example.com" });
+  for (let i = 0; i < 3; i++) await reportGeminiOutcome(caller, false, "Gemini closed during setup (1011): quota-detail-7731");
+  await reportGeminiOutcome(caller, false, "Gemini closed during setup (1011)");
+  await Promise.all(tasks);
+  expect(send).toHaveBeenCalledOnce();
+  expect(send.mock.calls[0][0]).toMatchObject({ to: "owner@example.com", from: "alerts@speakcall.app" });
+  expect(send.mock.calls[0][0].text).toContain("quota-detail-7731");
 });

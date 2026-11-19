@@ -6,7 +6,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
-import { acquireGeminiBudget, GeminiBudgetError } from "./gemini-budget";
+import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
@@ -27,6 +27,8 @@ export class TutorSession {
   private ai: GeminiLive | null = null;
   private reconnecting: Promise<void> | null = null;
   private reconnectAttempts = 0;
+  private lastGeminiError = "";
+  private geminiFailure = "";
   private failureStarted: number | null = null;
   private failureGapMs = 0;
   private finalMessage: string | null = null;
@@ -106,6 +108,7 @@ export class TutorSession {
     let releaseBudget: (() => Promise<void>) | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let hardLimit: ReturnType<typeof setTimeout> | undefined;
+    let geminiConnected = false;
     try {
       if (this.abort.signal.aborted) return;
       const initial = JSON.parse(raw);
@@ -220,6 +223,7 @@ export class TutorSession {
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
+        geminiConnected = true;
         ai.startGreeting(this.controls.opening_message);
         if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
         await this.latency("greeting_sent");
@@ -241,10 +245,15 @@ export class TutorSession {
         this.finalMessage = CALL_FAILURE_MESSAGE;
       }
       if (this.profileId && this.callId && !this.abort.signal.aborted) {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        await this.progress.logDiagnostic(this.profileId, this.callId, "call_failed", { error_type: error instanceof Error ? error.name : "Error", message: message.split(this.s.geminiKey).join("[redacted]").slice(0, 250) });
+        const message = (error instanceof Error ? error.message : "Unknown error").split(this.s.geminiKey).join("[redacted]");
+        await this.progress.logDiagnostic(this.profileId, this.callId, "call_failed", { error_type: error instanceof Error ? error.name : "Error", message: message.slice(0, 250) });
+        if (isGeminiError(error)) {
+          geminiConnected = false;
+          await reportGeminiOutcome(this.env, false, message);
+        }
       }
     } finally {
+      if (geminiConnected) void reportGeminiOutcome(this.env, !this.geminiFailure, this.geminiFailure);
       this.settling = true;
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (hardLimit !== undefined) clearTimeout(hardLimit);
@@ -287,6 +296,10 @@ export class TutorSession {
 
   private async runTasks(tasks: Promise<void>[]) {
     try { await Promise.race(tasks); }
+    catch (error) {
+      if (!this.abort.signal.aborted && !this.reason && isGeminiError(error)) this.geminiFailure = (error as Error).message.split(this.s.geminiKey).join("[redacted]").slice(0, 200);
+      throw error;
+    }
     finally {
       this.abort.abort(new Error("bridge_finished"));
       this.ai?.close();
@@ -410,16 +423,19 @@ export class TutorSession {
         if (!handle) replacement.startGreeting("Continue the interrupted lesson without repeating the greeting. Recent conversation: " + JSON.stringify(this.meter.transcript.slice(-20)));
         this.failureGapMs += Date.now() - this.failureStarted!;
         this.failureStarted = null;
+        this.lastGeminiError = "";
         this.lastHuman = Date.now();
         await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnected", { attempt, resumed: !!handle }).catch(() => {});
         return;
-      } catch {
+      } catch (error) {
         replacement.close();
+        this.lastGeminiError = (error instanceof Error ? error.message : "").split(this.s.geminiKey).join("[redacted]").slice(0, 150);
         await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnect_failed", { attempt }).catch(() => {});
       }
     }
     if (this.abort.signal.aborted) return;
     this.reason = "gemini_reconnect_exhausted";
+    this.geminiFailure = "Gemini reconnect exhausted: " + this.lastGeminiError;
     this.finalMessage = CALL_FAILURE_MESSAGE;
     await this.progress.logDiagnostic(this.profileId, this.callId, this.reason, { attempts: this.reconnectAttempts }).catch(() => {});
   }
