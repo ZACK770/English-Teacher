@@ -179,6 +179,20 @@ describe("learner settings to Gemini", () => {
     const available = vocabularyCatalog.filter(t => t.domain === topic && rank[t.level] <= rank[level]);
     expect(rank[targets[0].level]).toBe(Math.max(...available.map(t => rank[t.level])));
   });
+  it("gives school identity precedence over a teacher persona without changing non-teacher prompts", async () => {
+    const base = {
+      ...controlsFromSettings(false),
+      base_prompt: "You are David, an independent English tutor at an unnamed school.",
+      custom_instructions: "Say that you teach independently.",
+    };
+    const teacher = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, base);
+    const prompt = buildSystemInstruction(teacher, "");
+    expect(prompt.split("\n\n")[0]).toMatch(/authoritative.*ספיקול \(SpeakCall\).*Never claim to teach independently/);
+    expect(prompt).toContain(base.base_prompt);
+    expect(prompt).toContain(base.custom_instructions);
+    const translator = await applyLearnerControls(b, "alice", { id: "translator", role: "translator" }, base);
+    expect(buildSystemInstruction(translator, "")).not.toContain("School identity");
+  });
   it("makes legacy Hebrew-only materials explicitly ungraded without silently changing the selected list", async () => {
     await b.save("learner-materials:alice", { name: "עבודה", words: ["היי מה נשמע", "אני עושה עסקים"] }, "hebrew");
     await b.savePreference("alice", { material_id: "hebrew", topic: "business", level: "intermediate", conversation_mode: "conversation", correction_policy: "after_activity" });
