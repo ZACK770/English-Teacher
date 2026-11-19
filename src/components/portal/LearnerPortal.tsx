@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, Chevro
 import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
-import { EntryForm, QuickEntry, type EntryChannel } from "./QuickEntry";
+import { clearEntryChallenges, EntryForm, QuickEntry, type EntryChannel } from "./QuickEntry";
 import { legalBasePath } from "../../legalRoutes";
 import { clearLearnerToken, saveLearnerToken } from "./learnerToken";
 import { LearningProgress } from "./LearningProgress";
@@ -45,10 +45,10 @@ function TopicPicker({ value, onChange, recommended = ["recommended", "everyday"
   return <><ProChoices kind="domain" label="תחום לשיחה" value={value} values={Object.fromEntries(recommended.map(k => [k, topics[k]]))} onChange={onChange} /><details className="sk-more"><summary>יש לי משהו אחר בראש <ChevronDown size={14} /></summary><ProChoices kind="domain" label="תחומים נוספים" value={value} values={Object.fromEntries(Object.entries(topics).filter(([k]) => !recommended.includes(k)))} onChange={onChange} /></details></>;
 }
 
-function Login({ onToken, error }: { onToken: (token: string) => void; error: string }) {
+function Login({ onToken, onClose, error }: { onToken: (token: string) => void; onClose: () => void; error: string }) {
   const [channel, setChannel] = useState<EntryChannel>("phone");
   return <main className="sk-entry-page"><QuickEntry mode="login" channel={channel} onChannel={setChannel}
-    privacy={legalBasePath(location.pathname) + "/privacy"} onToken={onToken} error={error} /></main>;
+    privacy={legalBasePath(location.pathname) + "/privacy"} onToken={onToken} onClose={onClose} error={error} /></main>;
 }
 
 const quickLevels = { beginner: "צעדים ראשונים", intermediate: "מסתדר בשיחה", fluent: "מדבר ורוצה לדייק" };
@@ -89,7 +89,12 @@ export const LearnerPortal: React.FC = () => {
   const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null | undefined>();
   const mainRef = useRef<HTMLElement>(null);
   const login = (value: string) => { saveLearnerToken(value); setLoading(true); setToken(value); setError(""); };
-  const logout = () => { clearLearnerToken(); setAccount(null); setToken(""); setPage("home"); };
+  const returnToLanding = () => {
+    clearEntryChallenges();
+    location.replace(legalBasePath(location.pathname) + "/");
+  };
+  const logout = () => { clearLearnerToken(); returnToLanding(); };
+  const resetLogin = () => { clearLearnerToken(); setAccount(null); setToken(""); setError(""); };
   const refresh = useCallback(async () => {
     if (!token) { setLoading(false); return; }
     try { const data = await portalRequest<Account>("/v1/portal/me", token); setAccount(data); }
@@ -185,8 +190,8 @@ export const LearnerPortal: React.FC = () => {
     <QuickDirection busy={busy} error={error} onStart={choices => void startQuick(choices)} />
   </div></div></ProAccessProvider>;
   return <ProAccessProvider paid={account?.access?.paid === true}><div className="speakool" dir="rtl">
-    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
-      {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
+    <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={returnToLanding} /></header>}
+      {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} onClose={returnToLanding} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={resetLogin}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
         <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
         <fieldset className="sk-content-fieldset" disabled={busy}>
