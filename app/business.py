@@ -31,6 +31,18 @@ class Package(BaseModel):
     validity_days: int = Field(default=30, ge=1, le=3650)
     active: bool = False
     phone_enabled: bool = True
+    billing: Literal["prepaid", "monthly", "yearly", "one_time"] = "prepaid"
+    automated_purchase: bool = True
+    duration_months: int | None = Field(default=None, ge=1, le=12)
+
+
+def can_purchase_automatically(package: Package | dict) -> bool:
+    value = package.model_dump() if isinstance(package, Package) else package
+    return (
+        value.get("automated_purchase", True)
+        and not value.get("duration_months")
+        and value.get("billing", "prepaid") not in {"monthly", "yearly"}
+    )
 
 
 class Receipt(BaseModel):
@@ -516,6 +528,8 @@ class BusinessStore:
             if not package_row or not customer:
                 raise ValueError("לקוח או חבילה לא נמצאו")
             package = Package.model_validate_json(package_row["body"])
+            if not can_purchase_automatically(package):
+                raise ValueError("ההצטרפות למסלול זה דרך נציג")
             if not package.active:
                 raise ValueError("החבילה אינה פעילה")
             row_id = secrets.token_hex(10)
@@ -708,4 +722,3 @@ def install_business_api(app, require_admin):
             raise HTTPException(422, "נתונים לא תקינים או מספר טלפון שכבר רשום") from exc
 
     app.include_router(router)
-

@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
-from app.business import AccessPolicy, Package
+from app.business import AccessPolicy, Package, Receipt
 from app.config import Settings
 from app.main import create_app
 from app.payments import PREFIX, agorot, verify_signature
@@ -161,6 +161,32 @@ def test_unknown_caller_and_inactive_packages_cannot_purchase(client):
     assert phone(client).json()["name"] == "isaacPayExit"
     assert phone(client, PBXphone="private").json()["type"] != "creditCard"
     assert client.get("/v1/admin/payments/status").status_code == 401
+
+
+@pytest.mark.parametrize("terms", [
+    {"billing": "monthly"},
+    {"billing": "yearly"},
+    {"billing": "one_time", "automated_purchase": False},
+    {"billing": "one_time", "duration_months": 6},
+])
+def test_representative_only_packages_cannot_be_sold_as_one_time_wallets(client, terms):
+    business = client.app.state.business
+    package = business.save("packages", Package(
+        name="Representative", product="school", minutes=300, price_ils=690,
+        active=True, **terms,
+    ).model_dump())
+    for key, value in terms.items():
+        assert next(p for p in business.list("packages") if p["id"] == package["id"])[key] == value
+    customer_id = business.identify_call("0501234567", "blocked", "student")
+    assert phone(client).json()["name"] == "isaacPayExit"
+    with pytest.raises(ValueError, match="דרך נציג"):
+        client.app.state.payments.create("blocked", customer_id, package["id"], True)
+    with pytest.raises(ValueError, match="דרך נציג"):
+        business.receipt(Receipt(
+            customer_id=customer_id, package_id=package["id"],
+            reference="manual:blocked", amount_ils=690,
+        ))
+    assert not business.customer_detail(customer_id)["receipts"]
 
 
 def test_signature_uses_exact_bytes_and_money_is_exact():

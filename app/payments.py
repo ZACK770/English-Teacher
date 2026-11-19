@@ -18,7 +18,7 @@ from html import unescape
 
 from fastapi import Header, HTTPException, Query, Request
 
-from .business import Package, now
+from .business import Package, can_purchase_automatically, now
 
 PREFIX = "dibura-"
 
@@ -380,6 +380,8 @@ class PaymentStore:
             if not row or not customer:
                 raise ValueError("Unknown customer or package")
             package = Package.model_validate_json(row[0])
+            if not can_purchase_automatically(package):
+                raise ValueError("ההצטרפות למסלול זה דרך נציג")
             if not package.active or (not allow_hidden and not package.phone_enabled):
                 raise ValueError("Inactive package")
             amount = agorot(package.price_ils)
@@ -623,6 +625,7 @@ def payment_response(store, settings, params, customer_id, package_ids):
         package = packages.get(package_id)
         if (
             package
+            and can_purchase_automatically(package)
             and package["active"]
             and package["price_ils"] > 0
             and package.get("phone_enabled", True)
