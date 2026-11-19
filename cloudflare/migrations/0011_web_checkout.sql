@@ -20,3 +20,11 @@ CREATE TABLE IF NOT EXISTS standing_orders (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS standing_orders_customer ON standing_orders(customer_id, created_at);
+-- Mastery tracks paid at once (or in card installments) grant their minutes month by month.
+CREATE TABLE IF NOT EXISTS installment_grants (
+  order_id TEXT NOT NULL,
+  month_index INTEGER NOT NULL,
+  due_at TEXT NOT NULL,
+  receipt_id TEXT,
+  PRIMARY KEY (order_id, month_index)
+);

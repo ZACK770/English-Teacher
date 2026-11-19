@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BusinessStore, PackageSchema } from "./business";
-import { type Env, HttpError, nowIso, randomHex } from "./env";
+import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
@@ -12,12 +12,22 @@ type Pkg = z.output<typeof PackageSchema>;
 
 const iframeMosad = (env: Env) => env.NEDARIM_IFRAME_MOSAD ?? env.NEDARIM_MOSAD_ID ?? "";
 export const checkoutConfigured = (env: Env) =>
-  /^[0-9]{1,7}$/.test(iframeMosad(env)) && !!env.NEDARIM_API_VALID && !!env.NEDARIM_WEBHOOK_SECRET && /^[0-9]{7}$/.test(env.NEDARIM_MOSAD_ID ?? "");
+  /^[0-9]{1,7}$/.test(iframeMosad(env)) && !!env.NEDARIM_API_VALID && !!env.NEDARIM_API_KEY && !!env.NEDARIM_WEBHOOK_SECRET && /^[0-9]{7}$/.test(env.NEDARIM_MOSAD_ID ?? "");
 
 export function webTerms(pkg: Pkg) {
   if (!pkg.active || pkg.price_ils <= 0 || pkg.billing === "yearly") return null;
   if (pkg.billing === "monthly") return { now: pkg.first_month_price_ils ?? pkg.price_ils, monthly: pkg.price_ils, installments: 1 };
   return { now: pkg.price_ils, monthly: 0, installments: pkg.duration_months ?? 1 };
+}
+
+const MONTH_MS = 30 * 86400_000;
+const iso = (ms: number) => new Date(ms).toISOString().replace("Z", "+00:00");
+
+// Monthly plans carry unused minutes over for one month; mastery tracks grant their minutes one month at a time.
+export function receiptDays(pkg: Pkg, channel: string) {
+  if (channel !== "web") return pkg.validity_days;
+  if (pkg.billing === "monthly") return pkg.validity_days * 2;
+  return pkg.duration_months ? 30 : pkg.validity_days;
 }
 
 const ddmmyyyy = (d: Date) => [d.getUTCDate(), d.getUTCMonth() + 1].map((n) => String(n).padStart(2, "0")).join("/") + "/" + d.getUTCFullYear();
@@ -72,6 +82,10 @@ export class CheckoutStore {
       "SELECT id FROM payment_orders WHERE customer_id=? AND package_id=? AND channel='web' AND state='issued' AND created_at>? ORDER BY created_at DESC LIMIT 1",
     ).bind(customerId, packageId, cutoff).first<{ id: string }>();
     if (reusable) return this.view(reusable.id, customerId);
+    const unfinished = await this.db.prepare(
+      "SELECT o.id FROM payment_orders o JOIN standing_orders s ON s.id=o.subscription_id WHERE o.customer_id=? AND o.package_id=? AND o.state='paid' AND s.state='pending' ORDER BY o.created_at DESC LIMIT 1",
+    ).bind(customerId, packageId).first<{ id: string }>();
+    if (unfinished) return this.view(unfinished.id, customerId);
     const orderId = randomHex(16);
     const subscriptionId = terms.monthly ? randomHex(16) : null;
     const amount = agorot(terms.now);
@@ -175,11 +189,11 @@ export class CheckoutStore {
     const pkg = PackageSchema.parse(JSON.parse(sub.snapshot));
     const receiptId = randomHex(10);
     const now = nowIso();
-    const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");
+    const expires = iso(Date.now() + receiptDays(pkg, "web") * 86400_000);
     const vat = (await this.business.economics()).vat_rate;
     await this.db.batch([
       this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(receiptId, sub.customer_id, sub.package_id, pkg.product, reference, sub.monthly_agorot / 100, vat, pkg.minutes, expires, now),
-      this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,updated_at=? WHERE id=?").bind(now, now, sub.id),
+      this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(now, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:keva_charge", sub.id, now),
     ]);
     return { paid: true, receipt_id: receiptId, customer_id: sub.customer_id, subscription_id: sub.id };
@@ -190,7 +204,7 @@ export class CheckoutStore {
     if (!sub) return { ignored: true };
     const now = nowIso();
     await this.db.batch([
-      this.db.prepare("INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind(randomHex(16), sub.first_order_id, "keva_refusal", safeMessage(data.Message ?? "חיוב הוראת הקבע סורב"), now),
+      this.db.prepare("INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("keva_refusal:" + JSON.stringify(data))).slice(0, 32), sub.first_order_id, "keva_refusal", safeMessage(data.Message ?? "חיוב הוראת הקבע סורב"), now),
       this.db.prepare("UPDATE standing_orders SET state='past_due',updated_at=? WHERE id=? AND state='active'").bind(now, sub.id),
     ]);
     return { recorded: true };
@@ -200,7 +214,8 @@ export class CheckoutStore {
     const sub = await this.db.prepare("SELECT * FROM standing_orders WHERE id=? AND customer_id=?").bind(subscriptionId, customerId).first<Record<string, any>>();
     if (!sub) throw new HttpError(404, "המנוי לא נמצא.");
     if (sub.state === "cancelled") return { cancelled: true };
-    if (sub.keva_id) {
+    if (!sub.keva_id) throw new HttpError(409, "הוראת הקבע עוד לא הוקמה. אם חויבת, פנה אלינו ונבטל ידנית.");
+    {
       const text = (await manage(env, { Action: "DeleteKeva", KevaId: sub.keva_id }).catch(() => "")).trim();
       if (text !== "OK") throw new HttpError(502, "לא הצלחנו לבטל מול נדרים פלוס כרגע. נסו שוב או פנו לשירות.");
     }
@@ -208,6 +223,29 @@ export class CheckoutStore {
     await this.db.prepare("UPDATE standing_orders SET state='cancelled',cancelled_at=?,updated_at=? WHERE id=?").bind(now, now, sub.id).run();
     await this.business.audit("payment:keva_cancelled", sub.id);
     return { cancelled: true };
+  }
+
+  // Called after a web order settles: schedules months 2..N of a mastery track.
+  async scheduleGrants(order: Record<string, any>, pkg: Pkg) {
+    if (order.channel !== "web" || pkg.billing === "monthly" || !pkg.duration_months || pkg.duration_months < 2) return;
+    const start = Date.now();
+    await this.db.batch(Array.from({ length: pkg.duration_months - 1 }, (_, i) =>
+      this.db.prepare("INSERT OR IGNORE INTO installment_grants (order_id,month_index,due_at) VALUES (?,?,?)").bind(order.id, i + 2, iso(start + (i + 1) * MONTH_MS))));
+  }
+
+  async issueDueGrants(now = Date.now()) {
+    const due = await this.db.prepare(
+      "SELECT g.order_id,g.month_index,g.due_at,o.customer_id,o.package_id,o.snapshot,o.vat_rate,o.transaction_id FROM installment_grants g JOIN payment_orders o ON o.id=g.order_id WHERE g.receipt_id IS NULL AND g.due_at<=? AND o.state='paid' LIMIT 50",
+    ).bind(iso(now)).all<Record<string, any>>();
+    for (const g of due.results) {
+      const pkg = PackageSchema.parse(JSON.parse(g.snapshot));
+      const receiptId = randomHex(10);
+      const claimed = await this.db.prepare("UPDATE installment_grants SET receipt_id=? WHERE order_id=? AND month_index=? AND receipt_id IS NULL").bind(receiptId, g.order_id, g.month_index).run();
+      if (!claimed.meta.changes) continue;
+      await this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
+        receiptId, g.customer_id, g.package_id, pkg.product, `grant:${g.order_id}:${g.month_index}`, 0, g.vat_rate, pkg.minutes, iso(Date.parse(g.due_at) + MONTH_MS), nowIso()).run();
+    }
+    return due.results.length;
   }
 
   async billing(customerId: string) {

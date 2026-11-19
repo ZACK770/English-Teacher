@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, ChevronDown, Clock3, History, LogOut, Mic, MoreHorizontal, Phone, Plus, Settings2, Sprout, Trash2, Trophy, Upload, Users, X } from "lucide-react";
-import { Checkout } from "./Checkout";
+import { Billing, Checkout } from "./Checkout";
 import { Account, initialToken, Lesson, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { LearningProgress } from "./LearningProgress";
@@ -216,6 +216,7 @@ export const LearnerPortal: React.FC = () => {
           {page === "checkout" && <Checkout token={token} packageId={checkoutPlan} onDone={() => { history.replaceState(null, "", location.pathname); void refresh(); navigate("home"); }} />}
           {page === "achievements" && <Achievements account={account} token={token} />}
           {page === "settings" && <PreferencesForm key={JSON.stringify(p)} preferences={p} account={account} onSave={input => void run(() => save(input), "סגור. השיחה הבאה תהיה בדרך שלך.")} onTeachers={() => navigate("teachers")} onMaterials={() => navigate("materials")} onLogout={logout} phonesPanel={<PhoneLinks account={account} token={token} onRefresh={refresh} />} />}
+          {page === "settings" && <Billing token={token} />}
         </fieldset>
       </main>}
 

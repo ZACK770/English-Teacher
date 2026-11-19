@@ -1,5 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
-import { CheckoutStore } from "./checkout";
+import { CheckoutStore, receiptDays } from "./checkout";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
@@ -59,6 +59,7 @@ export class PaymentStore {
   async refusal(data: Record<string, any>, mosadId: string) {
     if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
     if (String(data.Status ?? "").toLowerCase() !== "error") throw new Error("Invalid refusal");
+    if (!["", "0", "undefined", "null"].includes(String(data.KevaId ?? ""))) return new CheckoutStore(this.business).kevaRefused(data);
     if (!(await this.issueForData(data, "refusal", data.Message ?? "החיוב סורב"))) return { ignored: true };
     const orderId = String(data.Groupe).slice(PREFIX.length);
     await this.db.prepare("UPDATE payment_orders SET state='failed',updated_at=? WHERE id=? AND state IN ('issued','awaiting_settlement')").bind(nowIso(), orderId).run();
@@ -281,7 +282,7 @@ export class PaymentStore {
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
     const receiptId = randomHex(10);
     const now = nowIso();
-    const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");
+    const expires = new Date(Date.now() + receiptDays(pkg, order.channel) * 86400_000).toISOString().replace("Z", "+00:00");
     await this.db.batch([
       this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
         receiptId, order.customer_id, order.package_id, pkg.product, `nedarim:${mosadId}:${transactionId}`, amount / 100, order.vat_rate, pkg.minutes, expires, now,
@@ -290,6 +291,7 @@ export class PaymentStore {
       this.db.prepare("UPDATE payment_issues SET status='resolved',resolved_at=?,resolution='התשלום אושר מול הסולק' WHERE order_id=? AND status='open' AND kind IN ('refusal','pbx_failure')").bind(now, orderId),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:nedarim_verified", orderId, now),
     ]);
+    await new CheckoutStore(this.business).scheduleGrants(order, pkg);
     return { paid: true, receipt_id: receiptId, customer_id: order.customer_id, package_id: order.package_id, amount_ils: amount / 100 };
   }
 }
@@ -380,7 +382,7 @@ export async function handleWebhook(request: Request, env: Env): Promise<Record<
   try {
     const keva = !["", "0", "undefined", "null"].includes(String(data.KevaId ?? ""));
     const checkout = new CheckoutStore(store.business);
-    if (String(data.Status ?? "").toLowerCase() === "error") return keva ? await checkout.kevaRefused(data) : await store.refusal(data, mosadId);
+    if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
     if (keva && !data.TransactionId) return await checkout.kevaCreated(data, mosadId);
     return await store.settle(data, mosadId);
   } catch {

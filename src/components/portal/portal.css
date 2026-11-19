@@ -100,3 +100,8 @@
 .speakool .sk-teacher-art{display:flex;justify-content:center;padding:6px 0}
 
 .speakool .sk-access{margin:18px 0 0;padding:14px 18px;border:1px solid var(--line);border-radius:6px;background:var(--card);font-size:15px}.speakool .sk-access strong{font-weight:600}.speakool .sk-access a{color:var(--accent);font-weight:600}.speakool .sk-access.is-empty{border-color:var(--accent);background:#fbefe9}
+
+.speakool .sk-card-frame { background: #fff; color: #1d1d1f; border-radius: 18px; padding: 12px 10px 4px; margin: 16px 0; box-shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.08); overflow: hidden; }
+.speakool .sk-checkout [role="alert"] { color: #b42318; background: #fff4f2; border-radius: 12px; padding: 10px 14px; }
+.speakool .sk-checkout .sk-muted { display: flex; gap: 6px; align-items: center; }
+.speakool .sk-billing-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
