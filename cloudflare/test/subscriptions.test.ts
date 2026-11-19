@@ -191,6 +191,10 @@ describe("subscription promises against production SQL", () => {
     const usage = db.sql.prepare("SELECT * FROM usage_allocations WHERE call_id='member-call'").get()!;
     expect(usage.customer_id).toBe(member.customer_id);
     expect(usage.receipt_id).toBe(receipts()[0].id);
+    expect((await b.reserveCall(member.customer_id, "teacher", "member-overlap", 60)).mode).toBe("busy");
+    expect((await b.reserveCall("owner", "teacher", "owner-parallel", 60)).mode).toBe("paid");
+    await b.settleCall("owner-parallel", 60);
+    await b.settleCall("member-call", 60);
     const learning = new LearningStore(db as unknown as D1Database);
     const target = vocabularyCatalog[0];
     await learning.begin(member.customer_id, "member-call", { level: "beginner", conversation_mode: "guided", correction_policy: "after_answer", learning_load: "light", closing_activity: "quiz", topic: target.domain, vocabulary: [target], grammar: [] });
