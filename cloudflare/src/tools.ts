@@ -83,7 +83,7 @@ export const INTAKE_TOOL = {
       "level": { "type": "string", "enum": ["beginner", "intermediate", "fluent"] },
       "difficulty": { "type": "string", "enum": ["speaking", "listening", "writing"] },
       "minutes": { "type": "integer", "description": "Lesson length in minutes. Choose 5, 10, or 20." },
-      "topic": { "type": "string", "description": "Use recommended when the learner has no specific topic preference", "enum": ["recommended", "everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars"] },
+      "topic": { "type": "string", "description": "Use recommended when the learner has no specific topic preference", "enum": ["recommended", "everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars", "career", "school"] },
       "personality": { "type": "string", "enum": ["warm", "focused", "playful"] },
       "teacher_gender": { "type": "string", "enum": ["male", "female"] }
     },

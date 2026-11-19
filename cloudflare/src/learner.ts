@@ -5,8 +5,7 @@ import { VOICE_OPTIONS } from "./controls";
 import { bearer, type Env, HttpError, randomHex, type Settings } from "./env";
 import { ProgressStore, type Bot } from "./progress";
 import { SCHOOL_SESSION_FILTER } from "./school-history";
-import { grammarCatalog, grammarIds, learningChoices, LearningStore, materialTargets, RECOMMENDED_TOPIC, recommendedDomains, vocabularyCatalog, type LessonPlan } from "./learning";
-import { syllabus } from "./vocabulary";
+import { grammarCatalog, grammarIds, learningChoices, LearningStore, materialTargets, RECOMMENDED_TOPIC, recommendedDomains, vocabularyCatalog, vocabularyDomains, type LessonPlan } from "./learning";
 
 const pace = z.enum(["slow", "normal", "fast"]);
 const corrections = z.enum(["gentle", "balanced", "all"]);
@@ -31,7 +30,7 @@ export const PlanSchema = z.object({
   level: z.enum(["beginner", "intermediate", "fluent"]),
   difficulty: z.enum(["speaking", "listening", "writing"]),
   minutes: z.union([z.literal(5), z.literal(10), z.literal(20)]),
-  topic: z.enum([RECOMMENDED_TOPIC, "everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars"]),
+  topic: z.enum([RECOMMENDED_TOPIC, "everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars", "career", "school"]),
 });
 export const DEFAULT_TEACHER_NAME = "דוד";
 export const FEMALE_TEACHER_NAME = "אסתי";
@@ -123,7 +122,7 @@ export async function applyLearnerControls(
   const choices = resolveLessonChoices(p, bot.id, teacher);
   const limit = { light: 3, normal: 5, intensive: 8 }[choices.learning_load];
   const rank = { beginner: 0, intermediate: 1, fluent: 2 };
-  const recommended = !words.success && !Object.hasOwn(syllabus, chosenTopic);
+  const recommended = !words.success && !vocabularyDomains.includes(chosenTopic);
   const store = new LearningStore(b.db);
   const suggestion = recommended && p.track !== "grammar" ? await store.recommend(customerId, choices.level, plan.success ? plan.data.goal : undefined, limit) : null;
   const topic = suggestion?.topic || (recommended ? recommendedDomains(choices.level, plan.success ? plan.data.goal : undefined).primary[0] : chosenTopic);

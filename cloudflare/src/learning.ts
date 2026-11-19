@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sha256Hex } from "./env";
-import { syllabus } from "./vocabulary";
+import { syllabus } from "./syllabus";
+import { VOCABULARY_BANKS } from "./vocabulary/index";
 
 export const learningChoices = {
   level: z.enum(["beginner", "intermediate", "fluent"]),
@@ -23,16 +24,33 @@ export type LessonPlan = {
   material_status?: { id: string; rows: number; target_count: number };
 };
 
-export const vocabularyCatalog: LearningTarget[] = Object.entries(syllabus).flatMap(([domain, words]) => words.map(([text, meaning_he, level, usage_example]) => ({
-  id: domain + "." + text.replace(/ /g, "-"), text, meaning_he, domain, level, usage_example,
+const bankDomains: Record<string, string> = { core: "everyday", travel: "travel", work: "career", business: "business", school: "school" };
+const cefrLevels: Record<string, LessonPlan["level"]> = { A1: "beginner", A2: "beginner", B1: "intermediate", B2: "fluent" };
+const targetId = (domain: string, text: string) => domain + "." + text.replace(/ /g, "-");
+const starterTargets: LearningTarget[] = Object.entries(syllabus).flatMap(([domain, words]) => words.map(([text, meaning_he, level, usage_example]) => ({
+  id: targetId(domain, text), text, meaning_he, domain, level, usage_example,
 })));
+const bankTargets: LearningTarget[] = VOCABULARY_BANKS.flatMap(bank => [...bank.levels].sort((a, b) => a.order - b.order).flatMap(level => level.words.map(w => {
+  const domain = bankDomains[bank.id] || bank.id;
+  return { id: targetId(domain, w.en), text: w.en, meaning_he: w.he, domain, level: cefrLevels[level.cefr] };
+})));
+const uniqueTargets = new Map(starterTargets.map(t => [t.id.toLowerCase(), t]));
+const leveledByBank = new Set<string>();
+for (const t of bankTargets) {
+  const key = t.id.toLowerCase(), starter = uniqueTargets.get(key);
+  if (!starter) uniqueTargets.set(key, t);
+  else if (!leveledByBank.has(key)) uniqueTargets.set(key, { ...starter, level: t.level });
+  leveledByBank.add(key);
+}
+export const vocabularyCatalog: LearningTarget[] = [...uniqueTargets.values()];
+export const vocabularyDomains = [...new Set(vocabularyCatalog.map(t => t.domain))];
 export const RECOMMENDED_TOPIC = "recommended";
-const goalDomains: Record<string, string[]> = { work: ["business", "property"], travel: ["travel", "flights"], study: ["academic", "medicine"], other: [] };
+const goalDomains: Record<string, string[]> = { work: ["career", "business", "property"], travel: ["travel", "flights"], study: ["school", "academic", "medicine"], other: [] };
 const levelOrder = ["beginner", "intermediate", "fluent"] as const;
 export function recommendedDomains(level: LessonPlan["level"], goal?: string) {
   const goals = goalDomains[goal || ""] || [];
   const primary = level === "beginner" ? ["everyday", ...goals] : [...goals, "everyday"];
-  return { primary, rest: Object.keys(syllabus).filter(d => !primary.includes(d)) };
+  return { primary, rest: vocabularyDomains.filter(d => !primary.includes(d)) };
 }
 export const grammarCatalog: LearningTarget[] = grammarIds.map((id, i) => ({
   id, text: ["Present tense", "Past tense", "Future tense", "Questions", "Negation", "Subject–verb agreement", "Prepositions", "Word order"][i],
@@ -157,13 +175,19 @@ export class LearningStore {
     const { primary, rest } = recommendedDomains(level, goal);
     const rank = (l: string) => levelOrder.indexOf(l as LessonPlan["level"]);
     const levels = levelOrder.slice(rank(level));
-    const tiers = [primary, rest].flatMap(domains => levels.flatMap(l => domains.map(domain => ({ domain, l }))));
-    const chosen: LearningTarget[] = [];
-    for (const { domain, l } of tiers) {
-      if (chosen.length >= count) break;
-      const open = vocabularyCatalog.filter(t => t.domain === domain && rank(t.level) <= rank(l) && !mastered(t) && !chosen.includes(t));
-      chosen.push(...order(stats, open, count - chosen.length, l));
-    }
+    const pick = (domains: string[], limit: number, taken: LearningTarget[], within = levels) => {
+      const out: LearningTarget[] = [];
+      for (const l of within) for (const domain of domains) {
+        if (out.length >= limit) return out;
+        const open = vocabularyCatalog.filter(t => t.domain === domain && rank(t.level) <= rank(l) && !mastered(t) && !taken.includes(t) && !out.includes(t));
+        out.push(...order(stats, open, limit - out.length, l));
+      }
+      return out;
+    };
+    const goalPicks = level === "beginner" ? pick(goalDomains[goal || ""] || [], Math.floor(count / 3), [], [level]) : [];
+    const main = pick(primary, count - goalPicks.length, goalPicks);
+    main.push(...pick(rest, count - goalPicks.length - main.length, [...goalPicks, ...main]));
+    const chosen = [...main, ...goalPicks];
     const topic = chosen[0]?.domain || primary[0];
     return { topic, vocabulary: chosen.length ? chosen : order(stats, vocabularyCatalog.filter(t => t.domain === topic && rank(t.level) <= rank(level)), count, level) };
   }
@@ -197,6 +221,13 @@ export class LearningStore {
       const assessed = words.filter(t => t.score !== null), mastered = words.filter(t => t.mastered).length;
       return { domain, archived, total: words.length, assessed: assessed.length, mastered, coverage: words.length ? Math.round(assessed.length / words.length * 100) : 0, mastery: words.length ? Math.round(mastered / words.length * 100) : 0, average_score: assessed.length ? Math.round(assessed.reduce((n, t) => n + t.score!, 0) / assessed.length) : null };
     });
+    const upcoming = new Map<string, number>();
+    const visible = items.filter(t => {
+      if (t.kind !== "vocabulary" || t.attempts || t.exposures || !pool.length) return true;
+      const key = t.domain + ":" + t.level, shown = upcoming.get(key) || 0;
+      upcoming.set(key, shown + 1);
+      return shown < 40;
+    });
     const latest = await this.db.prepare(`SELECT l.call_id,l.created_at,l.plan_json,
       (SELECT COUNT(*) FROM learning_results r WHERE r.customer_id=l.customer_id AND r.call_id=l.call_id) AS result_count
       FROM learning_lessons l WHERE l.customer_id=? ORDER BY l.created_at DESC,l.rowid DESC LIMIT 1`).bind(customerId).first<{ call_id: string; created_at: string; plan_json: string; result_count: number }>();
@@ -206,7 +237,7 @@ export class LearningStore {
       target_count: plan.vocabulary.length + plan.grammar.length,
       status: !plan.vocabulary.length && !plan.grammar.length ? "no_targets" : latest.result_count ? "assessed" : "no_evidence",
     } : null;
-    return { items, domains, last_lesson, scoring: "ממוצע עד שלוש הבדיקות האחרונות; שליטה מבוססת: 80 ומעלה ולפחות שתי הצלחות עצמאיות משיחות שונות בין שלוש הבדיקות. ללא הפחתה לפי זמן או תזמון חזרות.", syllabus: "מאגר פתיחה מוגדר ורשימות אישיות — לא כל אוצר המילים באנגלית" };
+    return { items: visible, domains, last_lesson, scoring: "ממוצע עד שלוש הבדיקות האחרונות; שליטה מבוססת: 80 ומעלה ולפחות שתי הצלחות עצמאיות משיחות שונות בין שלוש הבדיקות. ללא הפחתה לפי זמן או תזמון חזרות.", syllabus: "מאגרי מילים לפי תחום ורמה, ורשימות אישיות. בכל תחום ורמה מוצגות המילים שכבר תרגלת ו־40 המילים הבאות בתור." };
   }
 
   async history(customerId: string, kind: string, targetId: string) {

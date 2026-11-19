@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
-import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, vocabularyCatalog, type LessonPlan } from "../src/learning";
+import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, vocabularyCatalog, vocabularyDomains, type LessonPlan } from "../src/learning";
+import { syllabus } from "../src/syllabus";
+import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
 import { applyLearnerControls, LearnerPreferencesSchema } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
@@ -56,7 +58,8 @@ describe("targeted learning contract and production SQL", () => {
     const report = await store.report("alice");
     expect(report.items.find(t => t.id === "business.invoice")).toMatchObject({ score: 100, attempts: 1, status: "initial", mastered: false });
     expect(report.items.find(t => t.id === "business.payment")).toMatchObject({ score: null, attempts: 0, status: "unassessed" });
-    expect(report.domains.find(d => d.domain === "business")).toMatchObject({ total: 20, assessed: 1, mastered: 0, coverage: 5, mastery: 0 });
+    const businessTotal = vocabularyCatalog.filter(t => t.domain === "business").length;
+    expect(report.domains.find(d => d.domain === "business")).toMatchObject({ total: businessTotal, assessed: 1, mastered: 0, coverage: Math.round(100 / businessTotal), mastery: 0 });
   });
   it("replaces the complete activity atomically, keeping original order and omitting missing rather than zero", async () => {
     await store.begin("alice", "call", plan);
@@ -138,15 +141,20 @@ describe("targeted learning contract and production SQL", () => {
 });
 
 describe("learner settings to Gemini", () => {
-  it("has 160 unique targets, 20 per domain, each with a meaning, explicit level and contextual example", () => {
-    expect(vocabularyCatalog).toHaveLength(160);
-    expect(new Set(vocabularyCatalog.map(t => t.id)).size).toBe(160);
-    for (const domain of new Set(vocabularyCatalog.map(t => t.domain))) expect(vocabularyCatalog.filter(t => t.domain === domain)).toHaveLength(20);
+  it("keeps the 160 starter targets with examples first and adds every curated bank word once, each with a meaning and explicit level", () => {
+    const starter = Object.entries(syllabus).flatMap(([domain, words]) => words.map(([text]) => domain + "." + text.replace(/ /g, "-")));
+    expect(vocabularyCatalog.slice(0, 160).map(t => t.id)).toEqual(starter);
+    for (const target of vocabularyCatalog.slice(0, 160)) expect(target.usage_example!.length).toBeGreaterThan(0);
+    const bankKeys = new Set(VOCABULARY_BANKS.flatMap(bank => bank.levels.flatMap(l => l.words.map(w => bank.id + ":" + w.en.toLowerCase()))));
+    expect(vocabularyCatalog.length).toBeGreaterThanOrEqual(bankKeys.size);
+    expect(new Set(vocabularyCatalog.map(t => t.id.toLowerCase())).size).toBe(vocabularyCatalog.length);
     for (const target of vocabularyCatalog) {
       expect(["beginner", "intermediate", "fluent"]).toContain(target.level);
       expect(target.meaning_he.length).toBeGreaterThan(0);
-      expect(target.usage_example!.length).toBeGreaterThan(0);
     }
+    expect(vocabularyCatalog.filter(t => t.domain === "everyday").length).toBeGreaterThanOrEqual(3000);
+    expect(vocabularyCatalog.find(t => t.id === "travel.sightseeing")).toMatchObject({ level: "beginner", usage_example: "We spent the morning sightseeing." });
+    expect(vocabularyDomains).toEqual(expect.arrayContaining(["everyday", "travel", "career", "business", "school"]));
   });
   it.each(["beginner", "intermediate", "fluent"] as const)("selects level-appropriate targets for %s rather than always choosing the first basic words", async level => {
     await b.savePreference("alice", { topic: "business", level, learning_load: "light" });
@@ -258,7 +266,11 @@ describe("recommended vocabulary when no specific topic was chosen", () => {
   });
   it("starts beginners on everyday basics and moves to their intake goal once those are mastered", async () => {
     await b.savePreference("alice", { plan: { goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" }, topic: "recommended", learning_load: "intensive" });
-    expect((await lessonFor()).vocabulary.every(t => t.domain === "everyday")).toBe(true);
+    const first = (await lessonFor()).vocabulary;
+    expect(first).toHaveLength(8);
+    expect(first.slice(6)).toHaveLength(2);
+    expect(first.slice(0, 6).every(t => t.domain === "everyday" && t.level === "beginner")).toBe(true);
+    expect(first.slice(6).every(t => ["travel", "flights"].includes(t.domain) && t.level === "beginner")).toBe(true);
     await master(words("everyday", "beginner"));
     const next = await lessonFor();
     expect(next.topic).toBe("travel");
@@ -270,8 +282,24 @@ describe("recommended vocabulary when no specific topic was chosen", () => {
   it("starts intermediate learners on their goal domain at their level", async () => {
     await b.savePreference("alice", { plan: { goal: "work", level: "intermediate", difficulty: "speaking", minutes: 10, topic: "recommended" }, topic: "recommended" });
     const lesson = await lessonFor();
-    expect(lesson.topic).toBe("business");
-    expect(lesson.vocabulary.every(t => t.domain === "business" && t.level === "intermediate")).toBe(true);
+    expect(lesson.topic).toBe("career");
+    expect(lesson.vocabulary.every(t => t.domain === "career" && t.level === "intermediate")).toBe(true);
+  });
+  it("draws recommended and explicit lessons from the curated banks and keeps report payloads bounded", async () => {
+    await b.savePreference("alice", { topic: "school", level: "beginner", learning_load: "light" });
+    const school = await lessonFor();
+    const schoolBank = new Set(VOCABULARY_BANKS.find(bank => bank.id === "school")!.levels.flatMap(l => l.words.map(w => w.en)));
+    expect(school.vocabulary.length).toBeGreaterThan(0);
+    expect(school.vocabulary.every(t => t.domain === "school" && schoolBank.has(t.text))).toBe(true);
+    await master(words("everyday", "beginner").slice(0, 200));
+    await b.savePreference("alice", { topic: "recommended", level: "beginner", learning_load: "light" });
+    const next = await lessonFor();
+    const coreA1 = new Set(VOCABULARY_BANKS[0].levels[0].words.map(w => w.en));
+    expect(next.vocabulary.every(t => t.domain === "everyday" && coreA1.has(t.text))).toBe(true);
+    const report = await store.report("alice");
+    expect(report.items.filter(t => t.kind === "vocabulary" && !t.attempts && !t.exposures && t.domain === "everyday")).toHaveLength(40 * 3);
+    expect(report.items.filter(t => t.kind === "vocabulary" && !t.attempts && t.domain === "school" && t.level === "fluent")).toHaveLength(40);
+    expect(report.domains.find(d => d.domain === "everyday")!.total).toBe(words("everyday", "beginner").length + vocabularyCatalog.filter(t => t.domain === "everyday" && t.level !== "beginner").length);
   });
   it("fills a lesson across domains and steps up a level after the recommended words at the current level are mastered", async () => {
     await b.savePreference("alice", { topic: "recommended", level: "beginner", learning_load: "intensive" });
