@@ -7,7 +7,8 @@ import { startSchool, type IVRResponse } from "./pbx";
 export const AD_ENTRIES = "ad-entries";
 export const SALES_FOLLOWUPS = "sales-followups";
 export const DEFAULT_CAMPAIGN = "general";
-export const SALES_SITE = "https://speakcall.app";
+export const SALES_SITE = "https://speakool.net";
+export const SALES_SENDER = "noreply@speakcall.app";
 
 export const SALES_PLANS = {
   "school-step": { name: "צעד", price: "59 ש\"ח לחודש" },
@@ -55,10 +56,11 @@ export function adRuntimeContext(context: Record<string, any>): string {
       : "- Returning caller: no intake; continue the learner's lesson.",
     "- First minute: give the learner one short English sentence that fits their goal, ask them to say it, and praise the attempt specifically in Hebrew.",
     "- Closing (when the closing stage is reached or the learner wants to stop): a Hebrew summary with a concrete reward counted from this call only, e.g. \"היום אמרת 9 משפטים, ו־5 מילים חדשות כבר שלך\" (never inflate the numbers). Then book the next lesson: ask \"מחר בבוקר או בערב?\" and call schedule_next_lesson with the answer. Then ask for an email to send today's words; ask the learner to spell it, read it back once, and call save_email only after they confirm.",
-    `- Plans you may describe when relevant or asked (approved prices, nothing else): ${plans}. After the 10-minute free opening lesson every learner keeps two free 5-minute calls per month. All plans are on the website speakcall.app.`,
-    "- At the end, recommend one plan that fits what you heard (price and one reason). If the learner wants it, ask whether to get the payment link by SMS or email and call request_payment_link. Say the SpeakCall team will send the link; do not promise a specific minute.",
+    `- Plans you may describe when relevant or asked (approved prices, nothing else): ${plans}. After the 10-minute free opening lesson every learner keeps two free 5-minute calls per month. All plans are on the website speakool.net.`,
+    "- When calling save_email, pass the English words practised in this call and a one-sentence Hebrew summary; the words are emailed right away.",
+    "- At the end, recommend one plan that fits what you heard (price and one reason). If the learner wants it, offer the payment link by email (sent right away) or by SMS (the SpeakCall team sends it soon) and call request_payment_link. Never claim an SMS was already sent.",
     "- Never offer a discounted first month, a 29 shekel price, a free trial that requires a credit card, or any price or benefit not listed here. Do not pressure; one offer is enough.",
-    "- Close by reminding them of the two free 5-minute calls each month and that the plans are on speakcall.app, then say goodbye and call end_session.",
+    "- Close by reminding them of the two free 5-minute calls each month and that the plans are on speakool.net, then say goodbye and call end_session.",
   ].join("\n");
 }
 
@@ -77,12 +79,20 @@ export const SCHEDULE_LESSON_TOOL = {
 };
 export const SAVE_EMAIL_TOOL = {
   name: "save_email",
-  description: "Save the learner's email address after they spelled it and confirmed it, to send today's words.",
-  parameters: { type: "object", properties: { email: { type: "string" } }, required: ["email"] },
+  description: "Save the learner's email address after they spelled it and confirmed it. Today's new words are emailed to them immediately.",
+  parameters: {
+    type: "object",
+    properties: {
+      email: { type: "string" },
+      words: { type: "array", items: { type: "string" }, description: "English words or short phrases practised in this call, up to 12" },
+      summary: { type: "string", description: "One short Hebrew sentence on what the learner achieved today" },
+    },
+    required: ["email"],
+  },
 };
 export const PAYMENT_LINK_TOOL = {
   name: "request_payment_link",
-  description: "The learner asked to receive a payment link for one plan. The SpeakCall team sends it.",
+  description: "The learner asked to receive a payment link for one plan. By email it is sent immediately to the saved email; by SMS the SpeakCall team sends it.",
   parameters: {
     type: "object",
     properties: {
@@ -96,14 +106,35 @@ export const SALES_TOOLS = [SCHEDULE_LESSON_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_
 export const SALES_TOOL_NAMES = new Set(SALES_TOOLS.map((t) => t.name));
 
 const scheduleArgs = z.object({ day: z.enum(["today", "tomorrow", "this_week", "other"]), part_of_day: z.enum(["morning", "afternoon", "evening"]), note: z.string().max(200).optional() });
-const emailArgs = z.object({ email: z.string().trim().toLowerCase().max(120).email() });
+const emailArgs = z.object({ email: z.string().trim().toLowerCase().max(120).email(), words: z.array(z.string().trim().min(1).max(60)).max(12).optional(), summary: z.string().trim().max(300).optional() });
 const linkArgs = z.object({ plan_id: z.enum(PLAN_IDS), channel: z.enum(["sms", "email"]) });
 
 export function paymentLink(planId: PlanId, campaign: string) {
   return `${SALES_SITE}/join?plan=${encodeURIComponent(planId)}&src=${encodeURIComponent("ad-" + campaign)}`;
 }
 
-export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown): Promise<boolean> {
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+async function sendMail(mail: SendEmail | undefined, to: string, subject: string, lines: string[]): Promise<boolean> {
+  if (!mail) return false;
+  try {
+    await mail.send({ from: SALES_SENDER, to, subject, text: lines.join("\n"), html: `<div dir="rtl" lang="he">${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>` });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function wordsEmail(words: string[] = [], summary = ""): string[] {
+  return [
+    "שלום מספיקול,",
+    ...(summary ? [summary] : []),
+    ...(words.length ? ["המילים שתרגלת היום:", ...words.map((w) => "• " + w)] : []),
+    "בכל חודש יש לך שתי שיחות חינמיות של 5 דקות. המסלולים באתר: " + SALES_SITE,
+  ];
+}
+
+export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail): Promise<boolean> {
   if (customerId.startsWith("anonymous-")) return false;
   const context = await b.loadContext(callId);
   const campaign = campaignName(context.campaign);
@@ -118,8 +149,10 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
   if (name === "save_email") {
     const parsed = emailArgs.safeParse(args);
     if (!parsed.success) return false;
-    await b.savePreference(customerId, { email: parsed.data.email });
-    await b.save(SALES_FOLLOWUPS, { ...base, type: "email", email: parsed.data.email });
+    const { email, words, summary } = parsed.data;
+    await b.savePreference(customerId, { email });
+    const sent = await sendMail(mail, email, "המילים שלך מהשיעור בספיקול", wordsEmail(words, summary));
+    await b.save(SALES_FOLLOWUPS, { ...base, type: "email", email, words: words ?? [], status: sent ? "sent" : "pending" });
     return true;
   }
   if (name === "request_payment_link") {
@@ -127,7 +160,10 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     if (!parsed.success) return false;
     const email = (await b.loadContext("preferences:" + customerId)).email;
     if (parsed.data.channel === "email" && !email) return false;
-    await b.save(SALES_FOLLOWUPS, { ...base, type: "payment_link", ...parsed.data, ...(parsed.data.channel === "email" ? { email } : {}), link: paymentLink(parsed.data.plan_id, campaign) });
+    const link = paymentLink(parsed.data.plan_id, campaign);
+    const plan = SALES_PLANS[parsed.data.plan_id];
+    const sent = parsed.data.channel === "email" && await sendMail(mail, email, `קישור להצטרפות למסלול ${plan.name} בספיקול`, ["שלום מספיקול,", `לבקשתך, זה הקישור להצטרפות למסלול ${plan.name} (${plan.price}):`, link, "אם יש שאלה, אפשר פשוט לענות למייל או להתקשר."]);
+    await b.save(SALES_FOLLOWUPS, { ...base, type: "payment_link", ...parsed.data, ...(parsed.data.channel === "email" ? { email } : {}), link, status: sent ? "sent" : "pending" });
     return true;
   }
   return false;

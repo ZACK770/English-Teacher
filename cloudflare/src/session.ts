@@ -453,7 +453,7 @@ export class TutorSession {
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name && SALES_TOOL_NAMES.has(call.name)) {
       if (!this.controls?.sales || !this.customerId) return false;
-      const saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args).catch(() => false);
+      const saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL).catch(() => false);
       await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, saved }).catch(() => {});
       return saved;
     }

@@ -787,18 +787,24 @@ describe("real learner portal", () => {
     const customerId = (await b.customerForCall("ad-1"))!;
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" })).toBe(false);
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "not an email" })).toBe(false);
-    expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner@Example.com" })).toBe(true);
+    const mail = { send: vi.fn(async () => ({ messageId: "m" })) } as unknown as SendEmail;
+    expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner@Example.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
+    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner@example.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
     expect(await recordSalesTool(b, customerId, "ad-1", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "trial-29", channel: "sms" })).toBe(false);
-    expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" })).toBe(true);
+    expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" }, mail)).toBe(true);
+    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ to: "learner@example.com", text: expect.stringContaining("https://speakool.net/join?plan=school-pace&src=ad-radio-news") }));
+    expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-step", channel: "sms" }, mail)).toBe(true);
+    expect(mail.send).toHaveBeenCalledTimes(2);
     expect(await b.loadContext("preferences:" + customerId)).toMatchObject({ email: "learner@example.com", next_lesson: { day: "tomorrow", part_of_day: "evening" }, ad_campaign: "radio-news" });
     await call("ad-2", "radio-news");
     await call("ad-2", "radio-news");
     expect((await b.loadContext("ad-2")).ad_new_caller).toBe(false);
     expect(await quickOpening(b, "ad-2")).toContain("returning learner");
     const report = await adCampaignReport(pbxEnv);
-    expect(report.campaigns).toEqual([{ campaign: "radio-news", calls: 2, new_callers: 1, returning_callers: 1, lessons_booked: 1, emails: 1, payment_links: 1 }]);
-    expect(report.followups.find((f) => f.type === "payment_link")).toMatchObject({ link: "https://speakcall.app/join?plan=school-pace&src=ad-radio-news", email: "learner@example.com", status: "pending" });
+    expect(report.campaigns).toEqual([{ campaign: "radio-news", calls: 2, new_callers: 1, returning_callers: 1, lessons_booked: 1, emails: 1, payment_links: 2 }]);
+    expect(report.followups).toHaveLength(2);
+    expect(report.followups.find((f) => f.type === "payment_link")).toMatchObject({ channel: "sms", link: "https://speakool.net/join?plan=school-step&src=ad-radio-news", status: "pending" });
   });
   it("authenticates form-only PBX callbacks independently of the legacy URL credential", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "legacy", TLIVR_CALLBACK_BODY_SECRET: "body-secret" };
