@@ -563,6 +563,17 @@ describe("phone plans", () => {
     expect(await new SubscriptionStore(env.DB).get(order.id)).toMatchObject({ status: "active", term_months: 6, plan_id: "school-mastery" });
   });
 
+  it("flags a rejected first charge and shows a refused standing order whose setup webhook was missed", async () => {
+    const card = await phone({ isaacPackage: "1", isaacPayConfirm: "1" });
+    const sub = db.sql.prepare("SELECT * FROM standing_orders").get() as any;
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "31", Confirmation: "1", Amount: "1", Currency: "1", Groupe: card.category, KevaId: "6161" })).status).toBe(400);
+    expect(db.sql.prepare("SELECT order_id FROM payment_issues WHERE kind='settlement_review'").get()).toMatchObject({ order_id: sub.first_order_id });
+    db.sql.exec("UPDATE standing_orders SET keva_id=NULL");
+    await hook({ MosadNumber: "7019554", Status: "Error", Source: "Keva", KevaId: "6262", Groupe: card.category, Message: "סירוב" });
+    expect(db.sql.prepare("SELECT state,keva_id FROM standing_orders").get()).toMatchObject({ state: "past_due", keva_id: "6262" });
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_refusal'").get()?.n).toBe(1);
+  });
+
   it("cancels the pending standing order when the caller backs out", async () => {
     await phone({ isaacPackage: "1" });
     await phone({ isaacPackage: "1", isaacPayConfirm: "0" });

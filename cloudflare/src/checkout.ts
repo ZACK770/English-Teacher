@@ -182,7 +182,14 @@ export class CheckoutStore {
       }
       if (!sub.entitlement_id) {
         if (sub.state === "cancelled") throw new Error("Standing order was cancelled");
-        return new PaymentStore(this.business).settle({ ...data, KevaId: "", Groupe: PREFIX + sub.first_order_id }, mosadId, true);
+        const payments = new PaymentStore(this.business);
+        const firstCharge = { ...data, KevaId: "", Groupe: PREFIX + sub.first_order_id };
+        let settled: Record<string, unknown>;
+        try { settled = await payments.settle(firstCharge, mosadId, true); }
+        catch (error) { await payments.issueForData(firstCharge, "settlement_review", "").catch(() => false); throw error; }
+        const now = nowIso();
+        await this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(now, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id).run();
+        return settled;
       }
     }
     if (!sub.entitlement_id) {
@@ -230,7 +237,13 @@ export class CheckoutStore {
   }
 
   async kevaRefused(data: Record<string, any>) {
-    const sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
+    let sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
+    const subId = String(data.Groupe ?? "").startsWith(PREFIX) ? String(data.Groupe).slice(PREFIX.length) : "";
+    if (!sub && /^[0-9a-f]{32}$/.test(subId) && /^[0-9]{1,20}$/.test(String(data.KevaId))) {
+      // The setup webhook was missed: bind the Keva so the refusal is visible and the caller can cancel.
+      await this.db.prepare("UPDATE standing_orders SET keva_id=?,state=CASE WHEN state='pending' THEN 'active' ELSE state END,updated_at=? WHERE id=? AND keva_id IS NULL AND state!='cancelled'").bind(String(data.KevaId), nowIso(), subId).run();
+      sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
+    }
     if (!sub) return { ignored: true };
     const now = nowIso();
     await this.db.batch([
@@ -254,8 +267,10 @@ export class CheckoutStore {
       if (text !== "OK") throw new HttpError(502, "לא הצלחנו לבטל מול נדרים פלוס כרגע. נסו שוב או פנו לשירות.");
     }
     const now = nowIso();
-    if (sub.entitlement_id) await new SubscriptionStore(this.db).cancel(sub.entitlement_id, now);
     await this.db.prepare("UPDATE standing_orders SET state='cancelled',cancelled_at=?,updated_at=? WHERE id=?").bind(now, now, sub.id).run();
+    // Re-read: the first phone charge may have linked the subscription while Nedarim was cancelling.
+    const linked = await this.db.prepare("SELECT entitlement_id FROM standing_orders WHERE id=?").bind(sub.id).first<{ entitlement_id: string | null }>();
+    if (linked?.entitlement_id) await new SubscriptionStore(this.db).cancel(linked.entitlement_id, now);
     await this.business.audit("payment:keva_cancelled", sub.id);
     return { cancelled: true };
   }
