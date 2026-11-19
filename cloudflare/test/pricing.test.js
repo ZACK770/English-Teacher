@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { canPurchaseAutomatically, FREE_TIER_TEXT, MONTHLY_TERMS, PRICING_PACKAGES, replaceSchoolPackages, SCHOOL_FREE_POLICY } from "../../src/pricing";
+import { canPurchaseAutomatically, FREE_TIER_TEXT, MONTHLY_TERMS, MASTERY_GUARANTEE, PRICING_PACKAGES, replaceSchoolPackages, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { INITIAL_ACCESS_POLICIES, INITIAL_PACKAGES } from "../../src/store/initialData";
 
 describe("site and dashboard pricing", () => {
@@ -34,6 +34,8 @@ describe("site and dashboard pricing", () => {
     expect(source).not.toContain("₪220");
     expect(FREE_TIER_TEXT).toContain("10 דקות");
     expect(MONTHLY_TERMS).not.toContain("₪29");
+    expect(MONTHLY_TERMS).toContain("עד חודשיים בשנה");
+    expect(MASTERY_GUARANTEE).toContain("70% שליטה");
     expect(PRICING_PACKAGES.filter(p => p.anchor_price_ils).map(p => p.anchor_price_ils)).toEqual([1194, 2388]);
   });
 });

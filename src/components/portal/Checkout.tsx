@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CreditCard, Lock } from "lucide-react";
-import { portalRequest } from "./portalApi";
+import { portalRequest, topics } from "./portalApi";
 
 type Step = { kind: "charge" | "keva"; id: string };
 type Order = {
@@ -15,13 +15,15 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [domain, setDomain] = useState("");
   const pending = useRef<Step | null>(null);
   const orderRef = useRef<Order | null>(null);
   orderRef.current = order;
 
   useEffect(() => {
-    portalRequest<Order>("/v1/portal/checkout", token, { package_id: packageId }).then(setOrder, e => setError(e.message));
-  }, [token, packageId]);
+    if (packageId === "school-mastery" && !domain) return;
+    portalRequest<Order>("/v1/portal/checkout", token, { package_id: packageId, ...(domain ? { domain } : {}) }).then(setOrder, e => setError(e.message));
+  }, [token, packageId, domain]);
 
   const post = (data: unknown) => frame.current?.contentWindow?.postMessage(data, "https://www.matara.pro");
   const finish = async (o: Order) => {
@@ -64,7 +66,7 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
     post({ Name: "FinishTransaction", Value: order.steps[0].id });
   };
 
-  if (!order) return <section className="sk-step-card"><h2>מכינים את התשלום…</h2>{error && <p role="alert">{error}</p>}</section>;
+  if (!order) return <section className="sk-step-card"><h2>{packageId === "school-mastery" && !domain ? "תחום נוסף לשליטה מלאה" : "מכינים את התשלום…"}</h2>{packageId === "school-mastery" && !domain && <label>באיזה תחום נתרגל?<select value={domain} onChange={e => setDomain(e.target.value)}><option value="">בחירת תחום</option>{Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>}{error && <p role="alert">{error}</p>}</section>;
   const sub = order.subscription;
   return <section className="sk-step-card sk-checkout" dir="rtl">
     <h2>{done ? "ברוך הבא למסלול " + order.package_name + "." : "מסלול " + order.package_name}</h2>

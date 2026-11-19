@@ -2,8 +2,6 @@ import { type Env, bearer, secureEqual, settings, HttpError } from "./env";
 import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
-import { CheckoutStore } from "./checkout";
-import { BusinessStore } from "./business";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
@@ -13,6 +11,8 @@ import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
+import { SubscriptionStore } from "./subscriptions";
+import { BusinessStore } from "./business";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -149,13 +149,13 @@ export default {
     return response;
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(new SubscriptionStore(env.DB).tick().catch(() => undefined));
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
-    ctx.waitUntil(new CheckoutStore(new BusinessStore(env.DB)).issueDueGrants().catch(() => 0));
     ctx.waitUntil(new BusinessStore(env.DB).releaseStaleReservations());
   },
 };

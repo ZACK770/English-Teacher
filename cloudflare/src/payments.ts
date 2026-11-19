@@ -1,5 +1,6 @@
 import { BusinessStore, PackageSchema } from "./business";
-import { CheckoutStore, receiptDays } from "./checkout";
+import { CheckoutStore } from "./checkout";
+import { SubscriptionStore } from "./subscriptions";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
@@ -280,19 +281,32 @@ export class PaymentStore {
     if (!["issued", "awaiting_settlement", "failed"].includes(order.state)) throw new Error("Order was not confirmed");
     if (order.confirmation && confirmation !== order.confirmation) throw new Error("Confirmation mismatch");
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
-    const receiptId = randomHex(10);
     const now = nowIso();
-    const expires = new Date(Date.now() + receiptDays(pkg, order.channel) * 86400_000).toISOString().replace("Z", "+00:00");
-    await this.db.batch([
-      this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
-        receiptId, order.customer_id, order.package_id, pkg.product, `nedarim:${mosadId}:${transactionId}`, amount / 100, order.vat_rate, pkg.minutes, expires, now,
-      ),
+    const receiptId = randomHex(10);
+    const settlement = [
       this.db.prepare("UPDATE payment_orders SET state='paid',transaction_id=?,confirmation=?,receipt_id=?,updated_at=? WHERE id=? AND state!='paid'").bind(transactionId, confirmation, receiptId, now, orderId),
       this.db.prepare("UPDATE payment_issues SET status='resolved',resolved_at=?,resolution='התשלום אושר מול הסולק' WHERE order_id=? AND status='open' AND kind IN ('refusal','pbx_failure')").bind(now, orderId),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:nedarim_verified", orderId, now),
-      ...new CheckoutStore(this.business).grantStatements(order, pkg),
-    ]);
-    return { paid: true, receipt_id: receiptId, customer_id: order.customer_id, package_id: order.package_id, amount_ils: amount / 100 };
+    ];
+    if (order.channel === "web" && (pkg.billing === "monthly" || pkg.duration_months)) {
+      await new SubscriptionStore(this.db).create(order.customer_id, order.package_id, now,
+        pkg.duration_months === 12 && JSON.parse(order.snapshot).guarantee_domain ? [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain: JSON.parse(order.snapshot).guarantee_domain }] : undefined,
+        { id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: pkg.duration_months ?? null, receiptId, chargeAgorot: amount, vatRate: order.vat_rate,
+          statements: [
+            ...settlement,
+            this.db.prepare("UPDATE payment_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.id),
+            this.db.prepare("UPDATE standing_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.subscription_id),
+          ] });
+    } else {
+      const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");
+      await this.db.batch([
+        this.db.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(receiptId, order.customer_id, order.package_id, pkg.product, `nedarim:${mosadId}:${transactionId}`, amount / 100, order.vat_rate, pkg.minutes, expires, now),
+        ...settlement,
+      ]);
+    }
+    const paid = await this.db.prepare("SELECT transaction_id,receipt_id FROM payment_orders WHERE id=?").bind(order.id).first<{ transaction_id: string; receipt_id: string }>();
+    if (paid?.transaction_id !== transactionId) throw new Error("Additional transaction requires review");
+    return { paid: true, receipt_id: paid.receipt_id, customer_id: order.customer_id, package_id: order.package_id, amount_ils: amount / 100 };
   }
 }
 
