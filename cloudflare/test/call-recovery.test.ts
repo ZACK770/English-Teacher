@@ -68,7 +68,7 @@ it("reconnects with the same setup and resumption handle and excludes the gap", 
   expect(tutor.finalMessage).toBeNull();
 });
 
-it.each([[], [{ role: "learner", text: "hello" }]])("prompts an audible continuation without a resumption handle and with history %j", async (history) => {
+it.each([{ history: [] }, { history: [{ role: "learner", text: "hello" }] }])("prompts an audible continuation without a resumption handle and with history $history", async ({ history }) => {
   const { tutor } = session();
   tutor.ai.resumeHandle = null;
   tutor.meter.transcript.push(...history);
@@ -91,6 +91,29 @@ it("unexpected closure retries twice, records exhaustion, and selects a spoken a
   expect(tutor.reason).toBe("gemini_reconnect_exhausted");
   expect(tutor.failureStarted).not.toBeNull();
   expect(tutor.progress.logDiagnostic).toHaveBeenCalledWith("", "", "gemini_reconnect_exhausted", { attempts: 2 });
+});
+
+it("requests playback preservation when Gemini sends a graceful go-away", async () => {
+  const { tutor } = session();
+  tutor.ai.next = vi.fn().mockResolvedValue({ type: "go_away", detail: {} });
+  const reconnect = vi.spyOn(tutor, "reconnectGemini").mockImplementation(async () => { tutor.abort.abort(); });
+  await tutor.aiToOutput();
+  expect(reconnect).toHaveBeenCalledExactlyOnceWith(true);
+});
+
+it.each([true, false])("preserves buffered and partial playback only for graceful reconnection: %s", async (graceful) => {
+  const { tutor } = session();
+  const output = [new Uint8Array(320).fill(1)];
+  const partial = new Uint8Array([2, 3]);
+  const carry = new Uint8Array([4, 5]);
+  tutor.output = output;
+  tutor.partial = partial;
+  tutor.carry = carry;
+  vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
+  await tutor.reconnectGemini(graceful);
+  expect(tutor.output).toEqual(graceful ? output : []);
+  expect(tutor.partial).toEqual(graceful ? partial : new Uint8Array());
+  expect(tutor.carry).toEqual(graceful ? carry : new Uint8Array());
 });
 
 it("turns a mid-call provider error into a recoverable closure", async () => {

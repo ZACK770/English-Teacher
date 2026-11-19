@@ -364,7 +364,7 @@ export class TutorSession {
           if (call.name === "end_session" && saved) return;
         }
       } else if (event.type === "go_away") {
-        this.reconnecting = this.reconnectGemini();
+        this.reconnecting = this.reconnectGemini(true);
         await this.reconnecting;
         this.reconnecting = null;
         if (this.reason || this.abort.signal.aborted) return;
@@ -372,13 +372,15 @@ export class TutorSession {
     }
   }
 
-  private async reconnectGemini() {
+  private async reconnectGemini(preservePlayback = false) {
     this.failureStarted ??= Date.now();
     const handle = this.ai?.resumeHandle;
     this.ai?.close();
-    this.output = [];
-    this.partial = new Uint8Array();
-    this.carry = new Uint8Array();
+    if (!preservePlayback) {
+      this.output = [];
+      this.partial = new Uint8Array();
+      this.carry = new Uint8Array();
+    }
     while (!this.abort.signal.aborted && this.reconnectAttempts < 2 && this.artifact) {
       const attempt = ++this.reconnectAttempts;
       const setup = structuredClone(this.artifact.setup_message) as { setup: Record<string, unknown> };
