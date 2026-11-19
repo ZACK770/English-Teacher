@@ -142,7 +142,7 @@ export const CampaignsView: React.FC = () => {
             <span className="text-xs font-bold text-[#137c69] block mb-1">בדיקת שיחת מכירה ואינטייק</span>
             <h3 className="font-bold text-base text-[#172b35]">חיוג אינטייק יזום מבוט שוכי</h3>
             <p className="text-xs text-[#718087] mt-1">
-              ליד מטופס ההרשמה זכאי לשיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש. בקשת ההצטרפות מועברת לנציג.
+              ליד מטופס ההרשמה זכאי לשיעור פתיחה חד־פעמי של 7 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש. בקשת ההצטרפות מועברת לנציג.
             </p>
           </div>
 
@@ -179,9 +179,9 @@ export const CampaignsView: React.FC = () => {
           </div>
 
           <div className="p-3.5 bg-[#eff4f3] rounded-xl border border-[#d2e4de] text-xs text-[#137c69] space-y-1">
-            <strong>אומדן עלות שיעור הפתיחה (10 דק׳):</strong>
+            <strong>אומדן עלות שיעור הפתיחה (7 דק׳):</strong>
             <p className="text-[11px] text-[#4d6765]">
-              אומדן ₪1.80 לשיעור פתיחה לפי ₪0.18 לדקה, לפני השיחות החודשיות. מנויים החל מ־₪59 לחודש.
+              אומדן ₪1.26 לשיעור פתיחה לפי ₪0.18 לדקה, לפני השיחות החודשיות. מנויים החל מ־₪59 לחודש.
             </p>
           </div>
         </div>

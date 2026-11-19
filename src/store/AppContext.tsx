@@ -811,12 +811,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     },
     {
       extension: '99/3',
-      name: 'שיחת מכירה ואינטייק (שיעור פתיחה 10 דק)',
+      name: 'שיחת מכירה ואינטייק (שיעור פתיחה 7 דק)',
       bot_id: 'shochi-robot',
-      description: 'שיחה אישית מול שוכי עם אבחון רמה ראשוני ושיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש',
+      description: 'שיחה אישית מול שוכי עם אבחון רמה ראשוני ושיעור פתיחה חד־פעמי של 7 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש',
       ivr_file: 'intake_gift.wav',
       is_active: true,
-      system_prompt: 'You are Shochi greeting a new student who registered on the landing page. Welcome them, conduct a 2-minute friendly spoken intake to assess their level, celebrate their initiative, and explain that a one-time 10-minute opening lesson is available, followed by two calls of up to 5 minutes per month.'
+      system_prompt: 'You are Shochi greeting a new student who registered on the landing page. Welcome them, conduct a 2-minute friendly spoken intake to assess their level, celebrate their initiative, and explain that a one-time 7-minute opening lesson is available, followed by two calls of up to 5 minutes per month.'
     }
   ]);
 

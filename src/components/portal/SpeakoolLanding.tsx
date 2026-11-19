@@ -97,7 +97,7 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
         <div className="sk-land-hero-copy">
           <h1 id="landing-heading">פשוט לדבר <span>באנגלית.</span></h1>
-          <p className="sk-land-lede">שיעור ראשון של 10 דקות עם מורה AI.<br />בלי כרטיס אשראי.</p>
+          <p className="sk-land-lede">שיעור ראשון של 7 דקות עם מורה AI.<br />בלי כרטיס אשראי.</p>
           <div className="sk-land-hero-actions"><button ref={heroButton} type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={19} /></button><a href={tel}>לחייג בעצמי</a></div>
         </div>
         <div className="sk-land-hero-art" aria-hidden="true">
@@ -108,7 +108,7 @@ export function SpeakoolLanding() {
         <div className="sk-land-offer-panel">
           <div>
             <p className="sk-land-kicker">שיעור ראשון בחינם</p>
-            <h2 id="free-lesson-title">עשר דקות. בלי הרצאות.</h2>
+            <h2 id="free-lesson-title">שבע דקות. בלי הרצאות.</h2>
             <p>בוחרים נושא ומדברים בקצב שלך. המורה עוזר כשנתקעים ובסוף מסכם מה כדאי לתרגל בפעם הבאה.</p>
             <div className="sk-land-cta"><button type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={17} /></button></div>
             {legacyCallback && <LessonCallbackForm tel={tel} privacy={base + "/privacy"} />}

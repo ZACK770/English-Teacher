@@ -237,7 +237,7 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     phone: '050-0000000',
     source: 'direct',
     preferred_bot: 'shochi-robot',
-    notes: 'חשבון ברירת מחדל לבדיקות טלפוניה והתנסות עצמית. זכאי לשיעור פתיחה חד־פעמי של 10 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש.',
+    notes: 'חשבון ברירת מחדל לבדיקות טלפוניה והתנסות עצמית. זכאי לשיעור פתיחה חד־פעמי של 7 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש.',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     has_paid: false,
@@ -568,10 +568,10 @@ export const INITIAL_EXCEL_ROWS: UnitEconomicsExcelRow[] = [
   },
   {
     category: 'חבילת מתנה והיכרות (Gift Acquisition Pack)',
-    item: 'עלות נטו של שיעור פתיחה 10 דק׳ לליד',
+    item: 'עלות נטו של שיעור פתיחה 7 דק׳ לליד',
     cost_per_minute_ils: 0.18,
     monthly_fixed_ils: 0,
-    notes: '10 דקות * 0.18 ש״ח = 1.80 ש״ח לשיעור פתיחה; לא כולל שיחות חודשיות'
+    notes: '7 דקות * 0.18 ש״ח = 1.26 ש״ח לשיעור פתיחה; לא כולל שיחות חודשיות'
   },
   {
     category: 'הכנסות מתמחור חבילות (Revenue Packages)',

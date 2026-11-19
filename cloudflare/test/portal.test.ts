@@ -718,6 +718,15 @@ describe("IVR voicemail CRM", () => {
 });
 
 describe("approved pricing catalog", () => {
+  it("migrates the old opening allowance without changing other products, overrides, or monthly calls", async () => {
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, opening_seconds: 600 }, "legacy");
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, opening_seconds: 180 }, "custom");
+    await b.save("policies", { ...SCHOOL_FREE_POLICY, product: "translator", opening_seconds: 600 }, "translator");
+    db.sql.exec(readFileSync(new FileURL("../migrations/0019_seven_minute_opening.sql", import.meta.url), "utf8"));
+    expect(await b.record("policies", "legacy")).toMatchObject({ opening_seconds: 420, free_calls_month: 2, free_call_seconds: 300 });
+    expect(await b.record("policies", "custom")).toMatchObject({ opening_seconds: 180 });
+    expect(await b.record("policies", "translator")).toMatchObject({ opening_seconds: 600 });
+  });
   it("seeds the approved school catalog and mirrors accurate billing types", async () => {
     for (const pkg of PRICING_PACKAGES.filter(p => p.product === "school")) {
       expect(PackageSchema.parse(await b.record("packages", pkg.id))).toEqual(PackageSchema.parse(pkg));
@@ -766,9 +775,9 @@ describe("approved pricing catalog", () => {
   it("grants one opening lesson across teachers then two five-minute calls each month", async () => {
     await b.save("policies", SCHOOL_FREE_POLICY, "student");
     await b.save("policies", SCHOOL_FREE_POLICY, "another-teacher");
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
-    expect(await b.reserveCall("learner-a", "student", "opening", 1800)).toMatchObject({ seconds: 600, mode: "free" });
-    await b.settleCall("opening", 600);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
+    expect(await b.reserveCall("learner-a", "student", "opening", 1800)).toMatchObject({ seconds: 420, mode: "free" });
+    await b.settleCall("opening", 420);
     expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
     for (const id of ["free-a", "free-b"]) {
       expect(await b.reserveCall("learner-a", "another-teacher", id, 1800)).toMatchObject({ seconds: 300, mode: "free" });
@@ -784,7 +793,7 @@ describe("approved pricing catalog", () => {
     expect(await b.reserveCall("anonymous-hidden", "student", "hidden", 1800)).toMatchObject({ seconds: 0 });
     await b.reserveCall("learner-a", "student", "failed-opening", 1800);
     await b.settleCall("failed-opening", 0);
-    expect(await b.reserveCall("learner-a", "student", "retry", 1800)).toMatchObject({ seconds: 600 });
+    expect(await b.reserveCall("learner-a", "student", "retry", 1800)).toMatchObject({ seconds: 420 });
     expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], max_call_minutes: 0 }).success).toBe(false);
     expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], billing: "invalid" }).success).toBe(false);
     expect(PackageSchema.safeParse({}).success).toBe(false);
@@ -794,8 +803,8 @@ describe("approved pricing catalog", () => {
     await b.reserveCall("learner-a", "student", "short-opening", 1800);
     expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
     await b.settleCall("short-opening", seconds);
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
-    expect(await b.reserveCall("learner-a", "student", "retry-opening", 1800)).toMatchObject({ seconds: 600 });
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
+    expect(await b.reserveCall("learner-a", "student", "retry-opening", 1800)).toMatchObject({ seconds: 420 });
   });
 
   it("redeems the opening lesson at sixty billed seconds", async () => {
@@ -812,12 +821,12 @@ describe("approved pricing catalog", () => {
   });
 
   it("uses the free fallback only when no school policy exists", async () => {
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10, free_calls_left: 2 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 7, free_calls_left: 2 });
     await b.save("policies", { product: "translator", enabled: false }, "translator");
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 7 });
     await b.save("policies", { ...SCHOOL_FREE_POLICY, enabled: false }, "student");
     await b.save("policies", SCHOOL_FREE_POLICY, "another-teacher");
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 10 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ limited: true, opening_minutes: 7 });
   });
 
   it("keeps the opening lesson available after text allowances are used", async () => {
@@ -825,9 +834,9 @@ describe("approved pricing catalog", () => {
       expect(await b.reserveCall("learner-a", "student", id, 120, "text")).toMatchObject({ seconds: 120 });
       await b.settleCall(id, 120);
     }
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
     expect(await b.reserveCall("learner-a", "student", "text-c", 120, "text")).toMatchObject({ seconds: 0 });
-    expect(await b.reserveCall("learner-a", "student", "voice-opening", 1800)).toMatchObject({ seconds: 600 });
+    expect(await b.reserveCall("learner-a", "student", "voice-opening", 1800)).toMatchObject({ seconds: 420 });
   });
 });
 
@@ -935,12 +944,12 @@ describe("call minute reservations", () => {
     await b.save("policies", SCHOOL_FREE_POLICY, "student");
     expect(await b.reserveCall("learner-a", "student", "first-monthly", 120, "text")).toMatchObject({ mode: "free", seconds: 120 });
     await b.settleCall("first-monthly", 120);
-    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 600 });
+    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 420 });
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
 
     const whileOpening = await Promise.all([reserve("held-one", 600), reserve("held-two", 600)]);
     expect(whileOpening.map(call => call.mode)).toEqual(["busy", "busy"]);
-    await b.settleCall("opening", 600);
+    await b.settleCall("opening", 420);
     const calls = await Promise.all([reserve("voice-one", 600), reserve("voice-two", 600)]);
     expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 300]);
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0 });
@@ -1568,7 +1577,7 @@ describe("real learner portal", () => {
     const result = await request("/v1/bots/student/turn", tokenA, { text });
     expect(result.status).toBe(502);
     expect(db.sql.prepare("SELECT product FROM usage_allocations").all()).toEqual([{ product: "school" }]);
-    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(7);
     const snapshots = db.sql.prepare("SELECT opening_message,setup_json FROM prompt_snapshots").all();
     expect(snapshots.length).toBe(enabled ? 1 : 0);
     expect(JSON.stringify(snapshots).includes(text)).toBe(enabled);

@@ -70,7 +70,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, logoHre
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-[#c0f67d]" />
-              הרשמה · פתיחה 10 דק׳ + 2 שיחות של 5 דקות בחודש
+              הרשמה · פתיחה 7 דק׳ + 2 שיחות של 5 דקות בחודש
             </button>
 
             <button
