@@ -71,7 +71,7 @@ describe("website checkout", () => {
   it("does not credit a retried legacy recurring charge under the new reference format", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
-    await hook({ MosadNumber: "7019554", TransactionId: "60", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    await hook({ MosadNumber: "7019554", TransactionId: "60", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
     db.sql.exec("UPDATE standing_orders SET entitlement_id=NULL,state='active',keva_id='4242'; UPDATE payment_orders SET entitlement_id=NULL; UPDATE sales_receipts SET subscription_id=NULL,valid_from=NULL; DELETE FROM subscriptions;");
     const date = "2026-02-01T00:00:00.000+00:00";
     db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('old-renewal','c1','school-step','school','nedarim:7019554:61',59,0.18,60,?,?)").run(addMonths(date, 2), date);
@@ -92,7 +92,7 @@ describe("website checkout", () => {
   it("continues the calendar of an adopted standing order after previous paid renewals", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-31T00:00:00Z"));
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
-    await hook({ MosadNumber: "7019554", TransactionId: "70", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    await hook({ MosadNumber: "7019554", TransactionId: "70", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
     db.sql.exec("UPDATE standing_orders SET entitlement_id=NULL,state='active',keva_id='4242'; UPDATE payment_orders SET entitlement_id=NULL; UPDATE sales_receipts SET subscription_id=NULL,valid_from=NULL; DELETE FROM subscriptions;");
     for (const [id, date] of [["71", "2026-02-28T00:00:00.000+00:00"], ["72", "2026-03-31T00:00:00.000+00:00"]]) {
       db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,'c1','school-step','school',?,59,0.18,60,?,?)").run(id, "nedarim:7019554:" + id, addMonths(date, 2), date);
@@ -111,7 +111,7 @@ describe("website checkout", () => {
   });
   it("adopts a legacy paid standing order without crediting its first receipt again", async () => {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
-    await hook({ MosadNumber: "7019554", TransactionId: "80", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    await hook({ MosadNumber: "7019554", TransactionId: "80", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
     db.sql.exec("UPDATE standing_orders SET entitlement_id=NULL,state='active',keva_id='4242'; UPDATE payment_orders SET entitlement_id=NULL; UPDATE sales_receipts SET subscription_id=NULL,valid_from=NULL; DELETE FROM subscriptions;");
     const charge = { MosadNumber: "7019554", TransactionId: "81", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
     expect((await hook(charge)).status).toBe(200);
@@ -166,7 +166,7 @@ describe("website checkout", () => {
     const store = new SubscriptionStore(env.DB);
     expect(await store.get(o.id)).toMatchObject({ price_agorot: 11900, status: "active", period_number: 1 });
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(1);
-    expect(db.sql.prepare("SELECT amount_ils FROM sales_receipts").get()?.amount_ils).toBe(29);
+    expect(db.sql.prepare("SELECT amount_ils FROM sales_receipts").get()?.amount_ils).toBe(119);
     expect(db.sql.prepare("SELECT entitlement_id FROM standing_orders").get()?.entitlement_id).toBe(o.id);
     expect((await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any)).toMatchObject({ id: o.id, steps: [{ kind: "keva" }] });
     expect((await req("/v1/portal/subscriptions/" + o.subscription.id + "/cancel", {})).status).toBe(409);
@@ -204,7 +204,7 @@ describe("website checkout", () => {
   it("records charges during a pause, shifts future availability on resume and validates the family renewal amount", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
-    expect((await hook({ MosadNumber: "7019554", TransactionId: "10", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id })).status).toBe(200);
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "10", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id })).status).toBe(200);
     keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
     expect((await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" })).status).toBe(200);
     const store = new SubscriptionStore(env.DB);
@@ -239,7 +239,7 @@ describe("website checkout", () => {
 
   it("keeps a refused paused subscription frozen and resumes it as past due", async () => {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
-    await hook({ MosadNumber: "7019554", TransactionId: "20", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    await hook({ MosadNumber: "7019554", TransactionId: "20", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
     keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
     await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" });
     await req("/v1/portal/subscriptions/" + o.id + "/pause", { days: 7 });
@@ -255,19 +255,19 @@ describe("website checkout", () => {
   it("rolls back the subscription and first grant when a provider transaction belongs to another order", async () => {
     const a = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
     const c = await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any;
-    const payment = { MosadNumber: "7019554", TransactionId: "50", Confirmation: "5", Amount: "29", Currency: "1" };
+    const payment = { MosadNumber: "7019554", TransactionId: "50", Confirmation: "5", Amount: "59", Currency: "1" };
     expect((await hook({ ...payment, Groupe: "dibura-" + a.id })).status).toBe(200);
-    expect((await hook({ ...payment, Groupe: "dibura-" + c.id })).status).toBe(400);
+    expect((await hook({ ...payment, Amount: "119", Groupe: "dibura-" + c.id })).status).toBe(400);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM subscriptions").get()?.n).toBe(1);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(1);
     expect(db.sql.prepare("SELECT state FROM payment_orders WHERE id=?").get(c.id)?.state).toBe("issued");
-    expect((await hook({ ...payment, TransactionId: "51", Groupe: "dibura-" + c.id })).status).toBe(200);
+    expect((await hook({ ...payment, Amount: "119", TransactionId: "51", Groupe: "dibura-" + c.id })).status).toBe(200);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM subscriptions").get()?.n).toBe(2);
   });
 
   it("does not cancel either record when DeleteKeva fails", async () => {
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
-    await hook({ MosadNumber: "7019554", TransactionId: "60", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    await hook({ MosadNumber: "7019554", TransactionId: "60", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
     keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
     await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("ERROR")));
