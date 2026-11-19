@@ -14,6 +14,7 @@ vi.mock("react", async importOriginal => ({
   useEffect: effect => { if (hooks.capture) hooks.effects.push(effect); },
 }));
 vi.mock("../../src/components/portal/portalApi", () => ({ apiPrefix: "", portalRequest: vi.fn() }));
+vi.mock("lucide-react", () => ({ Mic: () => null, MicOff: () => null, PhoneOff: () => null }));
 import { VoiceRoom } from "../../src/components/portal/VoiceRoom";
 
 let resume, getUserMedia, done, cleanup;
