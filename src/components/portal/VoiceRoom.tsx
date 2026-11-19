@@ -172,7 +172,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
         url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
         url.searchParams.set("ticket", ticket);
         const socket = ws = new WebSocket(url);
-        let connected = false, playAt = 0;
+        let connected = false, receivedAudio = false, playAt = 0;
         socket.binaryType = "arraybuffer";
         socketTimer = setTimeout(() => fail(connectionError), 10000);
         const ready = () => {
@@ -199,7 +199,8 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
           }
           const samples = new Int16Array(event.data as ArrayBuffer);
           if (!samples.length) return;
-          if (!connected && samples.some(n => Math.abs(n) > 100)) ready();
+          receivedAudio ||= samples.some(n => Math.abs(n) > 100);
+          if (!connected && receivedAudio) ready();
           const buffer = audioContext.createBuffer(1, samples.length, 8000);
           buffer.getChannelData(0).set(Float32Array.from(samples, n => n / 32768));
           const audio = audioContext.createBufferSource(); audio.buffer = buffer; audio.connect(audioContext.destination);
@@ -210,7 +211,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
         socket.onerror = () => fail(connectionError);
         socket.onclose = () => {
           if (signal.aborted) return;
-          if (!connected) fail(earlyClose);
+          if (!receivedAudio) fail(earlyClose);
           else {
             setConnected(false);
             setState("עוד שיחה קטנה. עוד צעד קדימה.");

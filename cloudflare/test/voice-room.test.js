@@ -162,6 +162,14 @@ describe("voice socket closure", () => {
     expect(render()).toContain("חזרה לאזור האישי");
     expect(stop).toHaveBeenCalled();
   });
+  it("still offers retry if the socket closes after ready but before the teacher speaks", async () => {
+    const socket = await connect();
+    socket.onmessage({ data: JSON.stringify({ type: "ready" }) });
+    socket.onmessage({ data: JSON.stringify({ type: "hangup", reason: "idle_timeout" }) });
+    socket.onclose({ code: 1000, reason: "session ended", wasClean: true });
+    expect(render()).toContain("החיבור לשיחה נסגר לפני שהמורה התחיל לדבר");
+    expect(render()).toContain("לנסות שוב");
+  });
   it("preserves a real server access rejection instead of replacing it with the generic error", async () => {
     const socket = await connect();
     socket.onmessage({ data: JSON.stringify({ type: "hangup", reason: "access_blocked" }) });
