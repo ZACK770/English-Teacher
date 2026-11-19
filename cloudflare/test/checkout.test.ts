@@ -157,13 +157,15 @@ describe("website checkout", () => {
     const store = new SubscriptionStore(env.DB);
     await store.addMember(o.id, "0502223333", "Family");
     const charge = { MosadNumber: "7019554", TransactionId: "11", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
-    expect((await hook(charge)).status).toBe(400);
+    expect((await hook({ ...charge, Amount: "1" })).status).toBe(400);
     expect((await store.get(o.id)).period_number).toBe(1);
     vi.setSystemTime(new Date("2026-01-30T00:00:00Z"));
     expect((await req("/v1/portal/subscriptions/" + o.id + "/pause", { days: 7 })).status).toBe(200);
     vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
-    expect((await hook({ ...charge, Amount: "98" })).status).toBe(200);
-    expect((await hook({ ...charge, Amount: "98" })).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='subscription_amount_difference'").get()?.n).toBe(1);
+    expect(db.sql.prepare("SELECT message FROM payment_issues WHERE kind='subscription_amount_difference'").get()?.message).toContain("39");
     expect(await store.get(o.id)).toMatchObject({ status: "paused", period_number: 2 });
     vi.setSystemTime(new Date("2026-02-06T00:00:00Z"));
     expect((await req("/v1/portal/subscriptions/" + o.id + "/resume", {})).status).toBe(200);
@@ -173,7 +175,7 @@ describe("website checkout", () => {
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(2);
     const member = db.sql.prepare("SELECT customer_id FROM subscription_members").get()?.customer_id as string;
     await store.removeMember(o.id, member);
-    expect((await hook({ ...charge, Amount: "98" })).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
     expect((await hook({ ...charge, TransactionId: "12", Amount: "98" })).status).toBe(400);
     const request = new Request("https://speakcall.app/v1/admin/business/subscriptions/" + o.id + "/cancel", { method: "POST", headers: { Authorization: "Bearer a" }, body: "{}" });
     expect((await worker.fetch(request, env)).status).toBe(200);
