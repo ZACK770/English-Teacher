@@ -249,7 +249,7 @@ export class BusinessStore {
     const now = nowIso();
     const cutoff = reservationCutoff();
     const activeSession = "SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL AND created_at>?";
-    const busy = { seconds: 0, mode: "busy", extension: policy.blocked_extension };
+    const busy = { seconds: 0, mode: "busy" };
     if (!policy.enabled) {
       const allocation = await this.db.prepare(`
         INSERT OR IGNORE INTO usage_allocations

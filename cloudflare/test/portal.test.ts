@@ -21,6 +21,7 @@ import { PaymentStore } from "../src/payments";
 import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
 import { syncCrm } from "../src/crm";
+import { FRAME_BYTES, wav } from "../src/audio";
 import { cleanupCallbackQuota } from "../src/callbacks";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
@@ -485,9 +486,13 @@ describe("call minute reservations", () => {
     try {
       await Promise.race([connected, active.then(() => { throw new Error("First call never connected"); })]);
       const secondPhone = socket();
+      const notice = new Uint8Array(FRAME_BYTES).fill(3);
+      vi.mocked(env.ASSETS.fetch).mockResolvedValueOnce(new Response(wav(notice, 8000)));
       await new TutorSession(secondPhone as unknown as WebSocket, env, settings(env), "second-owner")
         .run(frame("second-phone"), "student", false);
-      expect(secondPhone.send).toHaveBeenCalledWith(JSON.stringify({ type: "transfer_extension", target: "/99/8" }));
+      expect(vi.mocked(env.ASSETS.fetch).mock.calls[0][0]).toMatchObject({ url: "https://assets.invalid/customer-busy.wav" });
+      expect(secondPhone.send).toHaveBeenNthCalledWith(1, notice);
+      expect(secondPhone.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "hangup" }));
       const browser = socket();
       await new TutorSession(browser as unknown as WebSocket, env, settings(env), "web-owner", null, { customerId: "learner-a", teacherId: "" })
         .run(frame("browser", "portal"), "student", false);

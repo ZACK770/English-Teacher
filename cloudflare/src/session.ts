@@ -1,5 +1,5 @@
 import { AsyncQueue, sleep } from "./async";
-import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k } from "./audio";
+import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
@@ -174,8 +174,13 @@ export class TutorSession {
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
+        if (allowance.mode === "busy") {
+          this.reason = "customer_busy";
+          if (!this.portal && !this.disconnected) await this.queueBusyNotice().catch(() => {});
+          return;
+        }
         this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
-        this.reason = allowance.mode === "busy" ? "customer_busy" : "access_blocked";
+        this.reason = "access_blocked";
         return;
       }
       if (this.abort.signal.aborted) return;
@@ -263,7 +268,7 @@ export class TutorSession {
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
-          const target = this.finalMessage ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+          const target = this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
@@ -509,8 +514,13 @@ export class TutorSession {
     }
   }
 
+  private async queueBusyNotice() {
+    const notice = await this.env.ASSETS.fetch(new Request("https://assets.invalid/customer-busy.wav"));
+    if (notice.ok) this.enqueue(wavToPcm(new Uint8Array(await notice.arrayBuffer())));
+  }
+
   private async drainFinalAudio() {
-    if (this.disconnected || !this.reason.startsWith("model:")) return;
+    if (this.disconnected || !(this.reason.startsWith("model:") || (this.reason === "customer_busy" && !this.portal))) return;
     if (this.partial.length) {
       const padded = new Uint8Array(FRAME_BYTES);
       padded.set(this.partial);
