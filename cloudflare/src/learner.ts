@@ -105,16 +105,20 @@ export function resolveLessonChoices(p: Record<string, any>, botId: string, teac
   } as Pick<LessonPlan, "level" | "conversation_mode" | "correction_policy" | "learning_load" | "closing_activity">;
 }
 
+async function lessonTeacher(b: BusinessStore, customerId: string, botId: string | null, p: Record<string, any>, previewTeacher?: string) {
+  const raw = await b.record(teachersKind(customerId), previewTeacher ?? p.active_teacher ?? "");
+  const parsed = TeacherSchema.safeParse(raw);
+  if (previewTeacher && !parsed.success) throw new HttpError(404, "המורה לא נמצא.");
+  return parsed.success && parsed.data.base_bot === botId ? parsed.data : null;
+}
+
 export async function applyLearnerControls(
   b: BusinessStore, customerId: string, bot: Pick<Bot, "id" | "role">, controls: TutorControls, previewTeacher?: string,
 ): Promise<TutorControls> {
   const p = await b.loadContext("preferences:" + customerId);
   const privacy = { store_transcripts: p.store_transcripts === true };
   if (bot.role !== "teacher") return { ...controls, ...privacy };
-  const raw = await b.record(teachersKind(customerId), previewTeacher ?? p.active_teacher ?? "");
-  const parsed = TeacherSchema.safeParse(raw);
-  if (previewTeacher && !parsed.success) throw new HttpError(404, "המורה לא נמצא.");
-  const teacher = parsed.success && parsed.data.base_bot === bot.id ? parsed.data : null;
+  const teacher = await lessonTeacher(b, customerId, bot.id, p, previewTeacher);
   const customer = await b.record("customers", customerId);
   const customerName = String(customer?.name || "").trim();
   const learnerName = String(p.learner_name || (customerName === PHONE_SIGNUP_NAME ? "" : customerName)).trim().slice(0, 40);
@@ -292,10 +296,14 @@ const DIRECTION_KEYS = ["personality", "pace", "corrections", "topic", "material
 
 export async function syncActiveTeacher(b: BusinessStore, customerId: string, input: Record<string, any>) {
   const current = await b.loadContext("preferences:" + customerId);
-  const teacher = current.active_teacher ? await b.record(teachersKind(customerId), current.active_teacher) : null;
+  if (current.active_teacher) await syncTeacherDirection(b, customerId, current.active_teacher, input);
+}
+
+async function syncTeacherDirection(b: BusinessStore, customerId: string, teacherId: string, input: Record<string, any>) {
+  const teacher = await b.record(teachersKind(customerId), teacherId);
   if (!teacher) return;
   for (const key of DIRECTION_KEYS) if (input[key] !== undefined) teacher[key] = input[key];
-  await b.save(teachersKind(customerId), TeacherSchema.parse(teacher), current.active_teacher);
+  await b.save(teachersKind(customerId), TeacherSchema.parse(teacher), teacherId);
 }
 
 const IntakeSchema = PlanSchema.extend({
@@ -328,15 +336,18 @@ export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
   return both.find(bot => bot.id === "isaac-basic")?.id || both[0]?.id || null;
 }
 
-export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
+export async function saveIntake(
+  b: BusinessStore, customerId: string, phoneBotId: string | null, args: unknown,
+  { lessonBotId = phoneBotId, previewTeacher }: { lessonBotId?: string | null; previewTeacher?: string } = {},
+) {
   const given = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const prior = await b.loadContext("preferences:" + customerId);
+  const teacher = await lessonTeacher(b, customerId, lessonBotId, prior, previewTeacher);
   const kept = (key: "level" | "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
   let level = given.level;
   if (level === undefined) {
-    const active = prior.active_teacher ? await b.record(teachersKind(customerId), prior.active_teacher) : null;
-    if (active || prior.trial_setup || PlanSchema.safeParse(prior.plan).success) {
-      level = kept("level") ?? PlanSchema.shape.level.safeParse(active?.level).data ?? (botId === "isaac-advanced" ? "fluent" : "beginner");
+    if (teacher || prior.trial_setup || PlanSchema.safeParse(prior.plan).success) {
+      level = kept("level") ?? resolveLessonChoices({}, lessonBotId ?? "", teacher).level;
     }
   }
   const parsed = IntakeSchema.safeParse({ ...given, level, minutes: kept("minutes"), topic: kept("topic"), difficulty: kept("difficulty") });
@@ -344,14 +355,15 @@ export async function saveIntake(b: BusinessStore, customerId: string, botId: st
   const { learner_name, personality: requestedStyle, teacher_gender, pace, conversation_mode, ...plan } = parsed.data;
   const direction = { ...(given.level !== undefined ? { level: plan.level } : {}), ...(given.topic ? { topic: plan.topic } : {}), ...(pace ? { pace } : {}), ...(conversation_mode ? { conversation_mode } : {}) };
   const style = requestedStyle ? { personality: requestedStyle } : {};
-  await syncActiveTeacher(b, customerId, { ...direction, ...style });
+  if (previewTeacher && teacher) await syncTeacherDirection(b, customerId, previewTeacher, { ...direction, ...style });
+  else if (!previewTeacher) await syncActiveTeacher(b, customerId, { ...direction, ...style });
   await b.savePreference(customerId, { plan, ...direction, ...style, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
-  if (!botId || (await b.list(teachersKind(customerId))).length) return true;
+  if (!phoneBotId || (await b.list(teachersKind(customerId))).length) return true;
   const fluent = plan.level === "fluent";
   const female = teacher_gender === "female";
   const mode = conversation_mode || (fluent ? "conversation" : "guided");
-  const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality: requestedStyle ?? personality.safeParse(prior.personality).data, voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: pace || (plan.level === "beginner" ? "slow" : "normal"), corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: mode, learning_load: "light", correction_policy: mode === "guided" ? "after_answer" : "after_activity", closing_activity: "roleplay" });
-  const saved = await b.save(teachersKind(customerId), teacher);
-  await b.savePreference(customerId, { active_teacher: saved.id, selected_bot: botId });
+  const newTeacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: phoneBotId, personality: requestedStyle ?? personality.safeParse(prior.personality).data, voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: pace || (plan.level === "beginner" ? "slow" : "normal"), corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: mode, learning_load: "light", correction_policy: mode === "guided" ? "after_answer" : "after_activity", closing_activity: "roleplay" });
+  const saved = await b.save(teachersKind(customerId), newTeacher);
+  await b.savePreference(customerId, { active_teacher: saved.id, selected_bot: phoneBotId });
   return true;
 }

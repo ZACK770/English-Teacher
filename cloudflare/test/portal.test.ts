@@ -213,15 +213,35 @@ describe("quick teacher direction", () => {
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "fluent", pace: "slow" });
   });
 
-  it("does not copy the preview teacher's level to the active teacher on a pace change", async () => {
-    const active = await b.save(teachersKind("learner-a"), TeacherSchema.parse({ name: "דוד", base_bot: "student", level: "beginner" }));
-    const preview = await b.save(teachersKind("learner-a"), TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "fluent" }));
-    await b.savePreference("learner-a", { active_teacher: active.id, level: "intermediate" });
-    const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false), preview.id);
-    expect(c.custom_instructions).toContain("Omit level unless the learner explicitly asks to change it.");
-    expect(await saveIntake(b, "learner-a", "student", { goal: "other", pace: "slow" })).toBe(true);
-    expect(await b.record(teachersKind("learner-a"), active.id)).toMatchObject({ level: "beginner", pace: "slow" });
-    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "intermediate", plan: { level: "intermediate" } });
+  it.each([false, true])("saves a pace change for a browser teacher, with active phone teacher=%s", async hasPhoneTeacher => {
+    const kind = teachersKind("learner-a");
+    const web = await b.save(kind, TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "intermediate" }));
+    const phone = hasPhoneTeacher ? await b.save(kind, TeacherSchema.parse({ name: "דוד", base_bot: "student", level: "beginner" })) : null;
+    if (phone) await b.savePreference("learner-a", { active_teacher: phone.id, level: "beginner" });
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: web.id }) as any;
+    session.profileId = "student"; session.customerId = "learner-a"; session.callId = "browser-pace";
+    session.controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false), web.id);
+    session.ai = { addContext: vi.fn() };
+    expect(session.controls.intake_pending).toBe(false);
+    expect(await session.recordTool({ name: "save_intake", args: { goal: "other", pace: "slow" } })).toBe(true);
+    expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
+    expect(await b.record(kind, web.id)).toMatchObject({ level: "intermediate", pace: "slow" });
+    if (phone) {
+      expect(await b.record(kind, phone.id)).toMatchObject({ level: "beginner", pace: "normal" });
+      expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "beginner", plan: { level: "beginner" } });
+    }
+  });
+
+  it("uses the web-only bot, not the phone fallback, to infer the saved level after skipping setup", async () => {
+    await b.savePreference("learner-a", { trial_setup: "skipped" });
+    const bot = { id: "isaac-advanced", role: "teacher" } as const;
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: "" }) as any;
+    session.profileId = bot.id; session.customerId = "learner-a"; session.callId = "advanced-pace";
+    session.controls = await applyLearnerControls(b, "learner-a", bot, controlsFromSettings(false), "");
+    session.ai = { addContext: vi.fn() };
+    expect(await session.recordTool({ name: "save_intake", args: { goal: "other", pace: "slow" } })).toBe(true);
+    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ selected_bot: "student", plan: { level: "fluent" } });
+    expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('level="intermediate"'));
   });
 
   it("still requires a level on first-call intake", async () => {

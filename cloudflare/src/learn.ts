@@ -127,7 +127,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, {
       storeTranscript: controls.store_transcripts,
       learning: controls.lesson ? args => learning.record(customerId, callId, args) : undefined,
-      intake: async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args),
+      intake: async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args, { lessonBotId: botId }),
     });
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
