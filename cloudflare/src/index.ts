@@ -13,7 +13,6 @@ import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
-import { BusinessStore } from "./business";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
