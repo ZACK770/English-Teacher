@@ -1,3 +1,4 @@
+import { adCampaignReport } from "./ad-entry";
 import { checkoutRoutes } from "./checkout";
 import { z } from "zod";
 import { BusinessStore, EconomicsSchema, MODELS, ReceiptSchema } from "./business";
@@ -144,6 +145,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   if (path === "/v1/admin/crm/voicemails" && method === "GET") return Response.json(await listVoicemails(env, url.searchParams.get("before")), { headers: { "Cache-Control": "no-store" } });
   const voicemail = path.match(/^\/v1\/admin\/crm\/voicemails\/([a-f0-9]{64})\/audio$/);
   if (voicemail && method === "GET") return voicemailAudio(env, voicemail[1]);
+  if (path === "/v1/admin/ad-campaigns" && method === "GET") return ok(await adCampaignReport(env));
   if (path === "/v1/admin/callbacks" && method === "GET") return ok(await listCallbacks(env));
   if (path === "/v1/admin/callbacks/dispatch" && method === "POST") return ok(await dispatchCallbacks(env));
   if (path === "/v1/admin/callbacks/dial-test" && method === "POST") return ok(await testCallbackDial(request, env));

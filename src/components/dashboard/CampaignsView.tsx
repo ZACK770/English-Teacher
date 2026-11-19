@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/AppContext';
+import { AdCampaignsPanel } from './AdCampaignsPanel';
 import { INITIAL_EMAIL_CAMPAIGNS } from '../../store/initialData';
 import { Mail, Copy, Check, Send, PhoneCall, Bot, Users, Sparkles } from 'lucide-react';
 
@@ -42,6 +43,7 @@ export const CampaignsView: React.FC = () => {
 
   return (
     <div className="space-y-8" dir="rtl">
+      <AdCampaignsPanel />
       {/* Top Head */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>

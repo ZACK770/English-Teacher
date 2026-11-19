@@ -1,3 +1,4 @@
+import { recordSalesTool, SALES_TOOL_NAMES } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
@@ -165,7 +166,9 @@ export class TutorSession {
       this.controls = await this.progress.loadControls(profileId, defaults);
       this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId);
       const opening = await quickOpening(this.b, this.callId);
-      if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
+      const adCall = (await this.b.loadContext(this.callId)).entry === "ad";
+      if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
+      if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson && !adCall ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
       if (this.abort.signal.aborted) return;
@@ -448,6 +451,12 @@ export class TutorSession {
       }
     }
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
+    if (call.name && SALES_TOOL_NAMES.has(call.name)) {
+      if (!this.controls?.sales || !this.customerId) return false;
+      const saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL).catch(() => false);
+      await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, saved }).catch(() => {});
+      return saved;
+    }
     if (call.name === "save_intake") {
       const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
       const goal = typeof args.goal === "string" && this.controls?.intake_pending ? goalFromLearnerSpeech(args.goal, heard) : args.goal;

@@ -11,6 +11,7 @@ export interface Env {
   GEMINI_RESERVE_USD_PER_MINUTE?: string;
   GEMINI_BUDGET_EMAIL?: SendEmail;
   GEMINI_BUDGET_EMAIL_TO?: string;
+  PORTAL_EMAIL?: SendEmail;
   ADMIN_BEARER_SECRET: string;
   GOOGLE_TTS_SERVICE_ACCOUNT_JSON?: string;
   GOOGLE_TTS_PROJECT?: string;
