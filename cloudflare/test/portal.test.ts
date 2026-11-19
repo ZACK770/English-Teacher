@@ -203,6 +203,15 @@ describe("quick teacher direction", () => {
     expect(await saveIntake(b, "learner-a", "student", { goal: "other", level: "beginner", pace: "slow" })).toBe(true);
     expect(await b.list(teachersKind("learner-a"))).toEqual([expect.objectContaining({ pace: "slow", personality: "focused" })]);
   });
+
+  it("keeps the saved fluent level separate from the free trial's effective lesson level", async () => {
+    await b.savePreference("learner-a", { trial_setup: "selected", level: "fluent" });
+    const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(c.lesson?.level).toBe("intermediate");
+    expect(c.custom_instructions).toContain('goal="other", level="fluent"');
+    expect(await saveIntake(b, "learner-a", "student", { goal: "other", level: "fluent", pace: "slow" })).toBe(true);
+    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "fluent", pace: "slow" });
+  });
 });
 
 class SqlD1 {
