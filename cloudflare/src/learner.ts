@@ -289,13 +289,14 @@ const IntakeSchema = PlanSchema.extend({
 });
 
 const goalWords: Record<string, RegExp> = {
-  travel: /טיול|לטייל|טיסה|לטוס|חופשה|חו"ל|נסיעה|travel|trip|vacation|holiday/i,
-  work: /עבודה|לעבוד|עסק|משרד|קריירה|ראיון|work|job|business|career/i,
-  study: /לימודים|אוניברסיטה|תואר|בית ספר|מבחן|בגרות|סטודנט|university|school|exam|college/i,
+  travel: /טיול|לטייל|טיסה|לטוס|חופשה|חו"ל|נסיעה|\b(?:travel|trip|vacation|holiday)/i,
+  work: /עבודה|לעבוד|עסק|משרד|קריירה|ראיון|\b(?:work|job|business|career)/i,
+  study: /לימודים|אוניברסיטה|תואר|בית ספר|מבחן|בגרות|סטודנט|\b(?:university|school|exams?\b|college)/i,
 };
 
 export function goalFromLearnerSpeech(goal: string, learnerText: string) {
-  const heard = Object.keys(goalWords).filter(g => goalWords[g].test(learnerText));
+  const said = learnerText.replace(/(?:^|\s)(?:לא|בלי|not|no)\s+(?:for\s+)?\S+/gi, " ");
+  const heard = Object.keys(goalWords).filter(g => goalWords[g].test(said));
   return heard.length === 1 && heard[0] !== goal ? heard[0] : goal;
 }
 

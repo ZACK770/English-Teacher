@@ -224,6 +224,9 @@ describe("learner settings to Gemini", () => {
     expect(goalFromLearnerSpeech("study", "קוראים לי דני. המטרה שלי בלימוד אנגלית היא טיולים. אני מתחיל.")).toBe("travel");
     expect(goalFromLearnerSpeech("work", "לעבודה וגם לטיולים")).toBe("work");
     expect(goalFromLearnerSpeech("other", "סתם ככה")).toBe("other");
+    expect(goalFromLearnerSpeech("other", "לא לעבודה, סתם בשביל המשפחה")).toBe("other");
+    expect(goalFromLearnerSpeech("other", "not for work, just family")).toBe("other");
+    expect(goalFromLearnerSpeech("study", "For example, I need English for travel")).toBe("travel");
   });
   it("saves a partial phone intake with defaults and marks the first call as pending until then", async () => {
     const before = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
