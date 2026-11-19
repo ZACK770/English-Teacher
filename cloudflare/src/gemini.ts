@@ -39,7 +39,8 @@ export class GeminiLive {
       await Promise.race([this.open(), timer]);
     } catch (error) {
       this.close();
-      throw error;
+      if (error instanceof Error && error.message.startsWith("Gemini")) throw error;
+      throw new Error("Gemini connect failed: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
     }
