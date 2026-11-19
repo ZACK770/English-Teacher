@@ -5,39 +5,31 @@ import { learnerBody, requireLearner } from "./learner";
 import { sendPortalCode } from "./portal-email";
 
 const prefix = "portal-email:";
-const emailLinks = "learner-email-links";
 const invalidCode = "הקוד שגוי, פג תוקפו או שנוצלו חמשת הניסיונות. אפשר לבקש קוד חדש.";
 const conflict = "הפרט הזה כבר מחובר לחשבון אחר. אפשר להיכנס דרכו או לפנות לתמיכה.";
-const legacyEmail = "SELECT id FROM console_records WHERE kind='customers' AND lower(trim(json_extract(body,'$.email')))=?";
-
-export async function hasPortalEmail(db: D1Database, customerId: string) {
-  return !!await db.prepare("SELECT 1 FROM console_records WHERE kind=? AND json_extract(body,'$.customer_id')=? LIMIT 1")
-    .bind(emailLinks, customerId).first();
-}
+const emailLookup = "SELECT id FROM console_records WHERE kind='customers' AND lower(trim(json_extract(body,'$.email')))=?";
 
 async function emailOwner(db: D1Database, email: string, linkCustomer?: string): Promise<string> {
-  const hash = await sha256Hex(email);
-  const emailCustomer = "email-" + hash;
   const now = nowIso();
-  if (linkCustomer) await db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
-    SELECT ?,?,?,?,? WHERE NOT EXISTS (${legacyEmail})`)
-    .bind(emailLinks, hash, JSON.stringify({ customer_id: linkCustomer }), now, now, email).run();
-  else {
-    const hasLink = "SELECT 1 FROM console_records WHERE kind=? AND id=?";
-    await db.batch([
-      db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
-        SELECT 'customers',?,?,?,? WHERE NOT EXISTS (${hasLink}) AND NOT EXISTS (${legacyEmail})`)
-        .bind(emailCustomer, JSON.stringify({ name: "", phone: "", email, source: "portal", preferred_bot: "", notes: "" }), now, now, emailLinks, hash, email),
-      db.prepare(`INSERT OR IGNORE INTO customers(id,name,source,created_at,updated_at)
-        SELECT ?,'','portal',?,? WHERE EXISTS (SELECT 1 FROM console_records WHERE kind='customers' AND id=?)`)
-        .bind(emailCustomer, now, now, emailCustomer),
-    ]);
+  if (linkCustomer) {
+    const linked = await db.prepare(`UPDATE console_records SET body=json_set(body,'$.email',?), updated_at=?
+      WHERE kind='customers' AND id=? AND COALESCE(lower(trim(json_extract(body,'$.email'))),'') IN ('',?)
+        AND NOT EXISTS (SELECT 1 FROM (${emailLookup}) WHERE id<>?)
+      RETURNING id`).bind(email, now, linkCustomer, email, email, linkCustomer).first<{ id: string }>();
+    if (!linked) throw new HttpError(409, conflict);
+    return linked.id;
   }
-  const linked = await db.prepare("SELECT json_extract(body,'$.customer_id') AS id FROM console_records WHERE kind=? AND id=?")
-    .bind(emailLinks, hash).first<{ id: string }>();
-  const owner = linked || await db.prepare(legacyEmail + " ORDER BY created_at,id LIMIT 1").bind(email).first<{ id: string }>();
+  const emailCustomer = "email-" + randomHex(16);
+  await db.batch([
+    db.prepare(`INSERT INTO console_records(kind,id,body,created_at,updated_at)
+      SELECT 'customers',?,?,?,? WHERE NOT EXISTS (${emailLookup})`)
+      .bind(emailCustomer, JSON.stringify({ name: "", phone: "", email, source: "portal", preferred_bot: "", notes: "" }), now, now, email),
+    db.prepare(`INSERT INTO customers(id,name,source,created_at,updated_at)
+      SELECT ?,'','portal',?,? WHERE EXISTS (SELECT 1 FROM console_records WHERE kind='customers' AND id=?)`)
+      .bind(emailCustomer, now, now, emailCustomer),
+  ]);
+  const owner = await db.prepare(emailLookup + " ORDER BY created_at,id LIMIT 1").bind(email).first<{ id: string }>();
   if (!owner) throw new HttpError(503, "לא הצלחנו לחבר את המייל. אפשר לנסות שוב.");
-  if (linkCustomer && owner.id !== linkCustomer) throw new HttpError(409, conflict);
   return owner.id;
 }
 
@@ -88,7 +80,10 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     const customerId = await emailOwner(env.DB, claim.email, claim.linkCustomer);
     if (claim.linkCustomer) return Response.json({ linked: true }, { headers });
     const token = tokenUrlsafe(32);
-    await env.DB.prepare("INSERT INTO portal_tokens VALUES (?,?,?)").bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00")).run();
+    const issued = await env.DB.prepare(`INSERT INTO portal_tokens
+      SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM (${emailLookup}) WHERE id=?) RETURNING customer_id`)
+      .bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00"), claim.email, customerId).first();
+    if (!issued) throw new HttpError(401, invalidCode);
     return Response.json({ token }, { headers });
   }
   throw new HttpError(404, "Not found");

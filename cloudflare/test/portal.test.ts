@@ -95,6 +95,23 @@ describe("email login", () => {
     expect((await (await request("/v1/portal/me", tokenA)).json() as any).customer.has_email).toBe(false);
   });
 
+  it("does not accept an old linked address for the recovered account after staff change the email and rotate sessions", async () => {
+    const email = "recovered@example.com";
+    const first = await (await start(email, tokenA, "link_email")).json() as any;
+    expect((await verify(first.challenge, sentCode(), tokenA)).status).toBe(200);
+    expect(await b.record("customers", "learner-a")).toMatchObject({ email });
+    const path = "/v1/admin/business/customers/learner-a";
+    expect((await request(path, env.ADMIN_BEARER_SECRET, { name: "Learner A", phone: "0500000001", email: "replacement@example.com" }, "PUT")).status).toBe(200);
+    await b.portalInvite("learner-a");
+    expect(await b.portalCustomer(tokenA)).toBeNull();
+    const next = await (await start(email)).json() as any;
+    const { token } = await (await verify(next.challenge, sentCode())).json() as any;
+    expect(await b.portalCustomer(token)).not.toBe("learner-a");
+    const replacement = await (await start("replacement@example.com")).json() as any;
+    const accepted = await (await verify(replacement.challenge, sentCode())).json() as any;
+    expect(await b.portalCustomer(accepted.token)).toBe("learner-a");
+  });
+
   it("matches an existing customer email case-insensitively without changing phone or revoking other tokens", async () => {
     await b.save("customers", { name: "Learner A", phone: "0500000001", email: "Learner@Example.COM" }, "learner-a");
     const { challenge } = await (await start()).json() as any;

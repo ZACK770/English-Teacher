@@ -5,7 +5,6 @@ import { BusinessStore, EconomicsSchema, MODELS, ReceiptSchema } from "./busines
 import { adultControls, controlsFromSettings, TutorControlsSchema, VOICE_OPTIONS, type TutorControls } from "./controls";
 import { type Env, type Settings, HttpError, paymentsConfigured, secureEqual, sha256Hex, tokenUrlsafe, bearer, settings } from "./env";
 import { learnerRoutes, materialsKind, teachersKind, resolveLessonChoices, TeacherSchema } from "./learner";
-import { hasPortalEmail } from "./email-auth";
 import { materialTargets } from "./learning";
 import { PaymentStore, PREFIX, agorot } from "./payments";
 import { IVRCopySchema, getCopy, narrationForSlot } from "./pbx";
@@ -366,7 +365,7 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
   if (path === "/v1/portal/me" && request.method === "GET") {
     const detail: Record<string, any> = await b.customerDetail(customerId);
     const c = detail.customer;
-    detail.customer = { id: c.id, name: c.name, phone: c.phone, preferred_bot: c.preferred_bot, has_email: !!c.email?.trim() || await hasPortalEmail(env.DB, customerId) };
+    detail.customer = { id: c.id, name: c.name, phone: c.phone, preferred_bot: c.preferred_bot, has_email: !!c.email?.trim() };
     detail.bots = (await progress.listBots()).filter((x) => x.enabled && x.web_enabled && ["teacher", "translator"].includes(x.role)).map((x) => ({ id: x.id, label: x.label, role: x.role, phone_enabled: x.phone_enabled }));
     detail.progress = await progress.report(customerId);
     detail.progress.sessions = detail.progress.sessions.map(({ estimated_cost_usd, cost_basis, model, usage, ...session }: Record<string, any>) => session);
