@@ -39,18 +39,24 @@ export const JoinLanding: React.FC = () => {
 
     setIsSubmitting(true);
     try {
+      const preferredAt = timing === 'scheduled' ? new Date(preferredTime) : null;
+      if (preferredAt && (!Number.isFinite(preferredAt.getTime()) || preferredAt.getTime() < Date.now())) {
+        throw new Error('invalid schedule');
+      }
+      const readableTime = preferredAt?.toLocaleString('he-IL') ?? '';
       await submitCallback({
         name,
         phone: cleanPhone,
         for_whom: forWhom,
         goal,
         timing,
-        preferred_time: timing === 'scheduled' ? preferredTime : '',
+        preferred_time: readableTime,
+        preferred_at: preferredAt?.toISOString(),
         consent: true
       });
       setSubmittedSuccess(true);
     } catch {
-      setErrorMessage('לא הצלחנו לשלוח את הבקשה. נסו שוב.');
+      setErrorMessage('לא הצלחנו לשמור את הבקשה. בדקו את מועד השיחה ונסו שוב.');
     } finally {
       setIsSubmitting(false);
     }
@@ -361,12 +367,14 @@ export const JoinLanding: React.FC = () => {
                   <div>
                     <label className="font-bold text-slate-300 block mb-1">מתי נוח לכם שנתקשר?</label>
                     <input
-                      type="text"
+                      type="datetime-local"
+                      required
+                      min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
                       value={preferredTime}
                       onChange={e => setPreferredTime(e.target.value)}
-                      placeholder="למשל: היום ב-20:00 בערב"
                       className="w-full p-2.5 rounded-xl border border-slate-800 text-xs bg-slate-950 text-slate-100"
                     />
+                    <p className="text-slate-400 mt-1">נחייג בין 08:00 ל-22:00, לא בשבת</p>
                   </div>
                 )}
 

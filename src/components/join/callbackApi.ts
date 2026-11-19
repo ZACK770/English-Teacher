@@ -5,6 +5,7 @@ type CallbackRequest = {
   goal: string;
   timing: 'now' | 'scheduled';
   preferred_time: string;
+  preferred_at?: string;
   consent: true;
 };
 
