@@ -260,7 +260,7 @@ export class TutorSession {
               await this.b.settleCall(this.callId, billed);
             }
           }
-          if (releaseBudget) {
+          if (reserved && releaseBudget) {
             await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
             await this.latency("session_saved");
           }

@@ -501,6 +501,7 @@ describe("call minute reservations", () => {
       expect(text.status).toBe(409);
       expect(await text.json()).toMatchObject({ detail: expect.stringContaining("שיחה פעילה") });
       expect(connect).toHaveBeenCalledTimes(1);
+      expect((await progress.report("learner-a")).sessions).toEqual([]);
     } finally {
       finish();
       await active;
