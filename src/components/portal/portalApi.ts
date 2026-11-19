@@ -30,7 +30,7 @@ export async function portalRequest<T>(path: string, token: string, body?: unkno
   });
   const json = await response.json().catch(() => null);
   if (!response.ok || !json) {
-    if (response.status === 401 && path.startsWith("/v1/portal/") && token && token === readLearnerToken()) clearLearnerToken();
+    if (response.status === 401 && path.startsWith("/v1/portal/") && !path.startsWith("/v1/portal/auth/") && token && token === readLearnerToken()) clearLearnerToken();
     throw new PortalError(json?.detail || "לא הצלחנו להתחבר. ננסה שוב?", response.status);
   }
   return json as T;
