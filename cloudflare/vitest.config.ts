@@ -6,6 +6,7 @@ export default defineConfig({
   resolve: { alias: [
     { find: /^react$/, replacement: require.resolve("react") },
     { find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") },
+    { find: /^react\/jsx-dev-runtime$/, replacement: require.resolve("react/jsx-dev-runtime") },
   ] },
   test: { include: ["test/**/*.test.{ts,js}"] },
 });
