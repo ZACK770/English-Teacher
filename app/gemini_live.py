@@ -111,66 +111,6 @@ TRANSLATION_LANGUAGE_TOOL = {
 }
 
 
-ROUTE_TOOL = {
-    "name": "get_driving_route",
-    "description": (
-        "Get a live, traffic-aware driving route from Google Maps between two places in Israel. "
-        "Call it when the destination is known and again after the driver reports a new "
-        "location or a missed turn. Returns distance, minutes with traffic and turn steps."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "origin": {"type": "string", "description": "Driver's current location as an "
-                       "address, junction or landmark with city, in Hebrew."},
-            "destination": {"type": "string", "description": "Destination address or place "
-                            "with city, in Hebrew."},
-        },
-        "required": ["origin", "destination"],
-    },
-}
-
-
-NAV_TOOL = {
-    "name": "navigation_update",
-    "description": (
-        "The navigation engine; it remembers the whole trip (route, position, heading, what "
-        "the driver reported). Call it EVERY time the driver gives a destination, reports "
-        "where he is, what he sees, a turn he made (also a mistaken one), the road he is on, "
-        "the odometer, answers a direction question, or asks for the full route. Classify "
-        "the report correctly and never invent facts the driver did not say. Say the "
-        "returned 'say' (and 'then') exactly; never change left/right, ordinals, exits or "
-        "distances. If 'ask' is returned, ask exactly that and give no other directions."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "report": {"type": "string", "enum": ["at", "see", "passed", "turned", "on_road"],
-                       "description": "at=I am at/next to; see=I see a sign/street ahead "
-                       "(not reached); passed=I just passed it and continue; turned=I made a "
-                       "turn onto a street/road; on_road=I am on road X toward Y."},
-            "place": {"type": "string", "description": "Place/street/landmark the driver "
-                      "named, in Hebrew with city, e.g. 'רבי עקיבא 22, בני ברק'."},
-            "turn": {"type": "string", "enum": ["left", "right", "uturn", "straight"],
-                     "description": "For report=turned: the side the driver said."},
-            "road": {"type": "string", "description": "For turned/on_road: street name or "
-                     "road number the driver is now on, e.g. 'כביש 1' or 'ז׳בוטינסקי'."},
-            "toward": {"type": "string", "description": "Direction city on the sign, e.g. "
-                       "'תל אביב', when the driver said it."},
-            "destination": {"type": "string", "description":
-                            "Destination with city, in Hebrew. Only when given or changed."},
-            "odometer_km": {"type": "number", "description": "Trip-odometer reading in km."},
-            "direction": {"type": "string", "enum": ["confirmed", "opposite"], "description":
-                          "Only when the driver himself answered a direction question."},
-            "driver_words": {"type": "string", "description": "The driver's exact words in "
-                             "this turn, in Hebrew."},
-            "full_route": {"type": "boolean", "description": "True when the driver asks for "
-                           "all remaining turns; read them from 'full_route'."},
-        },
-    },
-}
-
-
 def build_setup_payload(settings: Settings) -> dict[str, Any]:
     generation_config: dict[str, Any] = {
         "responseModalities": ["AUDIO"],
@@ -199,9 +139,7 @@ def build_setup_payload(settings: Settings) -> dict[str, Any]:
             "outputAudioTranscription": {},
             "tools": [
                 {"functionDeclarations": [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL,
-                                          TRANSLATION_LANGUAGE_TOOL]
-                 + ([ROUTE_TOOL, NAV_TOOL] if settings.student_id in settings.navigation_bot_ids
-                    else [])}
+                                          TRANSLATION_LANGUAGE_TOOL]}
             ],
             "contextWindowCompression": {
                 "triggerTokens": settings.gemini_context_trigger_tokens,
@@ -351,4 +289,3 @@ class GeminiLive:
                 yield {"type": "tool_call", "calls": calls}
             if "goAway" in event:
                 yield {"type": "go_away", "detail": event["goAway"]}
-

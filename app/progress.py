@@ -485,7 +485,7 @@ class ProgressStore:
             "audience": row["audience"],
             "channel_id": row["channel_id"],
             "channel_configured": bool(row["channel_id"]),
-            "enabled": bool(row["enabled"]),
+            "enabled": bool(row["enabled"]) and bot_id != "voice-navigator-live",
             "phone_enabled": bool(row["phone_enabled"]),
             "web_enabled": bool(row["web_enabled"]),
             "active_version": int(row["active_version"]),

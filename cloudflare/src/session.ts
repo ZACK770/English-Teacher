@@ -3,13 +3,15 @@ import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_F
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
-import { type Env, type Settings, bearer, randomHex, secureEqual } from "./env";
+import { type Env, type Settings, bearer, extensionPath, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
 import { SessionMeter } from "./meter";
-import { markQuickIntro, quickOpening, runtimeContext } from "./pbx";
+import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
+import { applyLearnerControls, saveIntake } from "./learner";
+import { LearningStore } from "./learning";
 
 export class TutorSession {
   readonly meter = new SessionMeter();
@@ -30,6 +32,16 @@ export class TutorSession {
   private disconnected = false;
   private reason = "";
   private returnPath: string | null = null;
+  private pbxBase: string | null = null;
+
+  private extension(suffix = "") {
+    return extensionPath(this.pbxBase ?? this.s.projectPath, suffix);
+  }
+
+  private rebase(target: string) {
+    const primary = this.s.projectPath;
+    return this.pbxBase && this.pbxBase !== primary && withinBase(primary, target) ? this.extension(primary === "/" ? (target === "/" ? "" : target) : target.slice(primary.length)) : target;
+  }
   private callId = "";
   private customerId = "";
   private leaseCallId = "";
@@ -39,10 +51,14 @@ export class TutorSession {
   private firstSent = false;
   private learnerSeen = false;
   private settling = false;
+  private closingSent = false;
+  private lessonDurationMs = 0;
+  private allowanceMs = 0;
+  private finalSent = false;
   private b: BusinessStore;
   private progress: ProgressStore;
 
-  constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null = null) {
+  constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null = null, private portal?: { customerId: string; teacherId: string }) {
     this.b = new BusinessStore(env.DB);
     this.progress = new ProgressStore(env.DB);
   }
@@ -89,9 +105,14 @@ export class TutorSession {
         profileId = this.s.studentId;
       }
       if (shared) {
-        const start = parseStartFrame(raw, this.s.routerChannel ?? "");
+        const start = parseStartFrame(raw, this.s.routerChannels);
         profileId = (await this.b.loadContext(start.callId)).selected_bot;
-        if (!profileId) throw new Error("Select a bot in IVR first");
+        if (!profileId) {
+          const customerId = await this.b.identifyCall(start.caller || "private", start.callId, "ivr");
+          await startSchool(this.b, this.progress, this.s, start.callId, customerId);
+          profileId = (await this.b.loadContext(start.callId)).selected_bot;
+        }
+        if (!profileId) throw new Error("No phone teacher available");
       }
       if (!profileId) {
         const bots = await this.progress.listBots();
@@ -100,10 +121,10 @@ export class TutorSession {
       const bot = await this.progress.getBot(profileId);
       if (!bot || !bot.enabled || (shared && !bot.phone_enabled)) throw new Error("Tutor unavailable");
       this.profileId = profileId;
-      const channel = testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannel : bot.channel_id;
+      const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannels : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");
       this.leaseCallId = start.callId;
-      if (this.s.radioStreams[profileId] || this.s.navigationBotIds.includes(profileId)) {
+      if (this.s.radioStreams[profileId]) {
         throw new Error("This test endpoint currently supports teachers and translators only");
       }
       claimed = await this.progress.claimCall(start.callId, profileId, this.ownerId);
@@ -116,25 +137,40 @@ export class TutorSession {
       this.callId = shared ? start.callId.slice(0, 160) + "~" + randomHex(8) : start.callId;
       if (shared) {
         await this.b.linkCallSegment(start.callId, this.callId, profileId);
-        await this.b.saveContext(this.callId, await this.b.loadContext(start.callId));
+        const context = await this.b.loadContext(start.callId);
+        this.pbxBase = typeof context.pbx_base === "string" ? context.pbx_base : null;
+        await this.b.saveContext(this.callId, context);
       }
-      this.customerId = await this.b.identifyCall(start.caller, this.callId, profileId);
+      if (this.portal) {
+        this.customerId = this.portal.customerId;
+        await this.b.registerWebCall(this.callId, this.customerId, profileId);
+        await this.b.saveContext(this.callId, await this.b.loadContext("preferences:" + this.customerId));
+      } else {
+        this.customerId = await this.b.identifyCall(start.caller, this.callId, profileId);
+      }
       await this.latency("session_started");
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId);
       const opening = await quickOpening(this.b, this.callId);
-      if (opening) this.controls = { ...this.controls, opening_message: opening };
+      if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson ? " Follow the active Speakool lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
-        this.returnPath = allowance.extension ?? null;
+        this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
         this.reason = "access_blocked";
         return;
       }
+      if (this.controls.lesson) {
+        await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
+        await this.latency("learning_plan_ready", { vocabulary_targets: this.controls.lesson.vocabulary.length, grammar_targets: this.controls.lesson.grammar.length, material_rows: this.controls.lesson.material_status?.rows ?? null, material_targets: this.controls.lesson.material_status?.target_count ?? null });
+      }
+      this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
+      this.allowanceMs = allowance.seconds * 1000;
       hardLimit = setTimeout(() => {
-        if (this.profileId.startsWith("isaac-")) this.returnPath = this.s.projectPath + "/8";
+        if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
         this.stop("hard_time_limit");
       }, (allowance.seconds + 20) * 1000);
       await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
@@ -151,14 +187,16 @@ export class TutorSession {
         this.ai = ai;
         await ai.connect();
         if (this.abort.signal.aborted) return;
+        if (this.portal) this.pbx.send(JSON.stringify({ type: "ready" }));
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
         ai.startGreeting(this.controls.opening_message);
+        if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
         await this.latency("greeting_sent");
         clearTimeout(hardLimit);
         hardLimit = setTimeout(() => {
-          if (this.profileId.startsWith("isaac-")) this.returnPath = this.s.projectPath + "/8";
+          if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
           this.stop("hard_time_limit");
         }, allowance.seconds * 1000);
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);
@@ -187,8 +225,8 @@ export class TutorSession {
         }
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
-          const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.s.projectPath : this.s.returnExtension) : null);
-          this.pbx.send(target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
+          const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+          this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
@@ -257,7 +295,7 @@ export class TutorSession {
         await this.latency("tutor_interrupted");
       } else if (event.type === "transcript") {
         this.meter.transcript.push({ role: event.role, text: event.text });
-        await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
+        if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
         if (event.role === "learner") {
           this.lastHuman = Date.now();
           if (!this.learnerSeen) this.meter.learnerTurns++;
@@ -268,6 +306,9 @@ export class TutorSession {
         this.learnerSeen = false;
         this.firstAudio = false;
         await this.latency("tutor_turn_complete", { tutor_turn: this.meter.tutorTurns });
+        if (this.controls?.lesson) {
+          await new LearningStore(this.env.DB).exposures(this.customerId, this.callId, this.controls.lesson.vocabulary, this.meter.transcript.filter(t => t.role === "tutor").map(t => t.text).join(" "));
+        }
       } else if (event.type === "usage") this.meter.recordUsage(event.usage);
       else if (event.type === "tool_call") {
         for (const call of event.calls) {
@@ -293,10 +334,27 @@ export class TutorSession {
 
   private async recordTool(call: ToolCall): Promise<boolean> {
     const args = call.args ?? {};
+    if (call.name === "report_learning_batch") {
+      if (!this.controls?.lesson) return false;
+      try {
+        const saved = await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
+        await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_result", { saved, vocabulary_count: Array.isArray(args.vocabulary) ? args.vocabulary.length : null, grammar_count: Array.isArray(args.grammar) ? args.grammar.length : null }).catch(() => {});
+        return saved;
+      } catch {
+        await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_failed");
+        return false;
+      }
+    }
+    if (this.controls?.lesson && call.name === "record_learning_observation") return false;
+    if (call.name === "save_intake") {
+      const saved = await saveIntake(this.b, this.customerId, this.profileId, args);
+      if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
+      return saved;
+    }
     if (call.name === "end_session") {
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
-      const destinations: Record<string, string> = { main: "", school: "/1", translator: "/2", options: "/9" };
-      if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.s.projectPath + destinations[args.destination];
+      const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
+      if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);
       this.reason = "model:" + reason;
       return true;
     }
@@ -329,6 +387,17 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
+      if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
+        const target = this.lessonDurationMs;
+        if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
+          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
+          this.closingSent = true;
+        }
+      }
+      if (this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
+        this.ai?.addContext("APPLICATION CLOCK: about 20 seconds remain before the line closes. If not done yet, save the results and lesson summary now, then say one short warm goodbye in Hebrew.");
+        this.finalSent = true;
+      }
       await sleep(500, this.abort.signal);
     }
   }

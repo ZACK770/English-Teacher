@@ -237,12 +237,15 @@ def test_monthly_api_quota(tmp_path):
     assert not store.consume_monthly_quota("routes", 2)
 
 
-def test_route_tool_only_for_navigation_bots():
+def test_school_tools_do_not_include_driving_navigation():
     from app.gemini_live import build_setup_payload
 
     base = Settings(gemini_api_key=SecretStr("k"), admin_bearer_secret=SecretStr("x" * 40))
     def names(profile):
         setup = build_setup_payload(base.model_copy(update={"student_id": profile}))
         return [t["name"] for t in setup["setup"]["tools"][0]["functionDeclarations"]]
-    assert "get_driving_route" in names("voice-navigator-live")
-    assert "get_driving_route" not in names("isaac-translator")
+    for profile in ("student", "adult", "isaac-translator", "voice-navigator-live"):
+        assert set(names(profile)) == {
+            "record_learning_observation", "record_lesson_summary",
+            "end_session", "save_translation_language",
+        }
