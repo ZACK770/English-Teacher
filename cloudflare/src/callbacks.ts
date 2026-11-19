@@ -63,7 +63,11 @@ export function parsePreferredTime(text: string, now: Date): Date | null {
   let hasDay = false;
   const normalizedText = text.replace(/\b(\d{1,2})\.(\d{2})\b/g, (token, hour: string, minute: string, offset: number) => {
     const markedTime = /(?:בשעה|ב[-־]?)\s*$/.test(text.slice(0, offset));
-    return markedTime || +minute === 0 || +minute > 12 ? `${hour}:${minute}` : token;
+    const remaining = text.slice(0, offset) + " " + text.slice(offset + token.length);
+    const otherExplicitTime = /בשעה\s*\d{1,2}|\b\d{1,2}:\d{2}\b/.test(remaining);
+    const validDate = +hour >= 1 && +hour <= 31 && +minute >= 1 && +minute <= 12;
+    if (validDate && otherExplicitTime) return token;
+    return +hour <= 23 && +minute <= 59 && (markedTime || +minute === 0 || +minute > 12) ? `${hour}:${minute}` : token;
   });
   const dateToken = /\b(\d{1,2})[/.](\d{1,2})\b/g;
   const date = new RegExp(dateToken).exec(normalizedText);
