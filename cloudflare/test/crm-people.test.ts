@@ -56,6 +56,24 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM customer reset", () => {
+  it.each(["primary_phone", "customer_phones"])("preserves phone-matched data when %s assigns the number to another customer", async source => {
+    customer(); customer("other", source === "primary_phone" ? "+972501234567" : "0507654321");
+    if (source === "customer_phones") insert("customer_phones", { phone: "0501234567", customer_id: "other" });
+    const hash = await sha256Hex("0501234567");
+    insert("console_records", { kind: "learner-phone-links", id: hash.slice(0, 24), body: JSON.stringify({ customer_id: "other", phone: "0501234567" }), created_at: now, updated_at: now });
+    insert("ivr_voicemails", { id: "other-vm", system_phone: "system", file_id: "file", customer_id: "other", caller_key: hash, created_at: now, intake_day: "2026-11-19", audio_ready: 1 });
+    insert("callback_requests", { id: "other-callback", phone: "0501234567", name: "שם", for_whom: "self", goal: "lesson", timing: "now", source: "test", consent_at: now, created_at: now, updated_at: now });
+    event("sales-followups", { callback_id: "other-callback" });
+    const b = new BusinessStore(env.DB);
+    await b.putSetting("portal-auth:other", { phone: "0501234567" });
+    const deleteAudio = vi.fn(); env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
+    expect((await reset()).status).toBe(200);
+    expect(sql.prepare("SELECT id FROM ivr_voicemails").get()).toMatchObject({ id: "other-vm" });
+    expect(sql.prepare("SELECT id FROM callback_requests").get()).toMatchObject({ id: "other-callback" });
+    expect(await b.setting("portal-auth:other")).toEqual({ phone: "0501234567" });
+    expect(sql.prepare("SELECT id FROM console_records WHERE kind='learner-phone-links'").get()).toMatchObject({ id: hash.slice(0, 24) });
+    expect(deleteAudio).not.toHaveBeenCalled();
+  });
   it.each(["issued", "awaiting_settlement", "selected", "paid"])("handles %s payment orders before reset", async state => {
     customer();
     insert("payment_orders", { id: "order", call_id: "payment-call", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state, created_at: now, updated_at: now });

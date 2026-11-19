@@ -25,9 +25,12 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
     UNION ALL SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=? AND s.status IN ('active','paused','past_due') AND p.billing IN ('monthly','yearly') LIMIT 1`, id, subs, id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם הוראת קבע או מנוי מתחדש פעיל. יש לבטל תחילה את החיוב אצל ספק התשלום.");
   const phoneRows = await rows(`SELECT phone FROM customer_phones WHERE customer_id=? UNION SELECT primary_phone AS phone FROM customers WHERE id=?
     UNION SELECT json_extract(body,'$.phone') FROM console_records WHERE (kind='customers' AND id=?) OR (kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?)`, id, id, id, id);
-  const phones = [...new Set([...phoneRows.map(r => r.phone), person.phone].filter(Boolean).map(p => visiblePhone(p)).filter(Boolean))];
+  const otherPhones = await rows("SELECT phone FROM customer_phones WHERE customer_id<>? UNION SELECT primary_phone AS phone FROM customers WHERE id<>?", id, id);
+  const conflicting = new Set(otherPhones.map(r => r.phone && visiblePhone(r.phone)).filter(Boolean));
+  const phones = [...new Set([...phoneRows.map(r => r.phone), person.phone].filter(Boolean).map(p => visiblePhone(p)).filter(p => p && !conflicting.has(p)))];
   const hashes = await Promise.all(phones.map(p => sha256Hex(p!)));
-  const phoneJson = JSON.stringify([...new Set([...phoneRows.map(r => r.phone), ...phones, ...phones.filter(p => p!.startsWith("0")).flatMap(p => ["+972" + p!.slice(1), "972" + p!.slice(1)])].filter(Boolean))]);
+  const phoneJson = JSON.stringify([...new Set([...phoneRows.map(r => r.phone).filter(p => p && phones.includes(visiblePhone(p))), ...phones, ...phones.filter(p => p!.startsWith("0")).flatMap(p => ["+972" + p!.slice(1), "972" + p!.slice(1)])].filter(Boolean))]);
+  const conflictingJson = JSON.stringify([...otherPhones.map(r => r.phone), ...conflicting, ...[...conflicting].filter(p => p!.startsWith("0")).flatMap(p => ["+972" + p!.slice(1), "972" + p!.slice(1)])].filter(Boolean));
   const hashJson = JSON.stringify(hashes), linkIds = JSON.stringify(hashes.map(h => h.slice(0, 24)));
   const orders = JSON.stringify((await rows("SELECT id FROM payment_orders WHERE customer_id=?", id)).map(r => r.id));
   const receipts = JSON.stringify((await rows("SELECT id FROM sales_receipts WHERE customer_id=?", id)).map(r => r.id));
@@ -45,7 +48,7 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   for (const table of ["active_calls", "conversation_turns", "diagnostic_events", "latency_events", "prompt_snapshots", "navigation_usage_events", "navigation_call_costs"]) remove(table, "call_id IN (SELECT value FROM json_each(?))", calls);
   remove("sessions", "student_id=?", id);
   remove("call_customers", "customer_id=?", id);
-  remove("callback_requests", "phone IN (SELECT value FROM json_each(?)) OR id IN (SELECT json_extract(body,'$.callback_id') FROM console_records WHERE kind='sales-followups' AND json_extract(body,'$.customer_id')=?)", phoneJson, id);
+  remove("callback_requests", "phone NOT IN (SELECT value FROM json_each(?)) AND (phone IN (SELECT value FROM json_each(?)) OR id IN (SELECT json_extract(body,'$.callback_id') FROM console_records WHERE kind='sales-followups' AND json_extract(body,'$.customer_id')=?))", conflictingJson, phoneJson, id);
   remove("ivr_voicemails", "customer_id=? OR caller_key IN (SELECT value FROM json_each(?))", id, hashJson);
   remove("analytics_attribution", "reference IN (SELECT reference FROM analytics_events WHERE customer_id=? AND reference IS NOT NULL) OR reference=? OR reference IN (SELECT value FROM json_each(?))", id, id, orders);
   remove("analytics_events", "customer_id=?", id);
