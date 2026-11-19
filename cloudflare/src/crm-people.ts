@@ -1,6 +1,7 @@
 import { BusinessStore } from "./business";
 import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
+import { resetCustomer } from "./crm-reset";
 
 export const SHORT_SESSION_SECONDS = 60;
 export const INACTIVE_DAYS = 3;
@@ -118,10 +119,10 @@ function journey(data: Data, id: string) {
   for (const s of data.sessions.get(id) || []) { add("session-start", s, "תחילת שיחה", s.started_at); add("session-end", s, "סיום שיחה", s.ended_at, { summary: s.summary_he }); }
   return rows.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 }
-export async function crmPeople(request: Request, env: Env, path: string): Promise<Response | null> {
+export async function crmPeople(request: Request, env: Env, path: string, actor?: { role: string; username: string }): Promise<Response | null> {
   const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript)$/);
   if (!match) return null;
-  if (request.method !== "GET") throw new HttpError(405, "קריאה בלבד");
+  if (request.method !== "GET" && !(request.method === "DELETE" && match[2])) throw new HttpError(405, "פעולה לא נתמכת");
   const ok = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
   if (match[3]) {
     const row = await env.DB.prepare("SELECT transcript_json FROM sessions WHERE call_id=?").bind(decodeURIComponent(match[3])).first<Row>();
@@ -132,6 +133,7 @@ export async function crmPeople(request: Request, env: Env, path: string): Promi
   if (match[2]) {
     const id = decodeURIComponent(match[2]), p = data.people.get(id);
     if (!p) throw new HttpError(404, "הלקוח לא נמצא");
+    if (request.method === "DELETE") return resetCustomer(request, env, person(data, p), actor);
     return ok({ ...person(data, p), journey: journey(data, id), calls: (data.sessions.get(id) || []).map(s => costCall(data, s)).sort((a, b) => b.started_at.localeCompare(a.started_at)), assumptions: { usd_ils: data.economics.usd_ils, telephony_rate_ils: data.economics.forecast_cost_per_minute, telephony_note: "אומדן לפי עלות הדקה החזויה בהנחות העסק; אינו חיוב ספק מאומת" } });
   }
   const params = new URL(request.url).searchParams;

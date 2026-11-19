@@ -67,7 +67,7 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     const identity = await adminIdentity(request, env);
     if (!identity) throw new HttpError(401, "Unauthorized");
     if (!identity.bearer && request.method !== "GET") requireOrigin(request);
-    const crmResponse = await crmPeople(request, env, path);
+    const crmResponse = await crmPeople(request, env, path, identity);
     if (crmResponse) return crmResponse;
     const ownerResponse = await adminOwners(request, env, path, identity);
     if (ownerResponse) return ownerResponse;
