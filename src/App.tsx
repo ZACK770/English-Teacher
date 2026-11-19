@@ -4,19 +4,22 @@ import { Navbar } from './components/Navbar';
 import { DashboardLayout } from './components/dashboard/DashboardLayout';
 import { LearnerPortal } from './components/portal/LearnerPortal';
 import { JoinLanding } from './components/join/JoinLanding';
+import { SpeakoolLanding } from './components/portal/SpeakoolLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
 import { LegalPage, type LegalPageName } from './components/legal/LegalPage';
 import { LegalFooter } from './components/legal/LegalFooter';
 
 export const AppContent: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy'>('learn');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy' | 'home'>(() => !location.hash && !/\/(learn|join|dashboard)/.test(location.pathname) ? 'home' : 'learn');
   const [dashboardTab, setDashboardTab] = useState('overview');
 
   // Sync hash routing
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash.replace('#', '') || 'learn';
-      if (['learn', 'join', 'legacy'].includes(hash)) {
+      const path = window.location.pathname.replace(/^\/english/, '');
+      const fallback = path.startsWith('/dashboard/legacy') ? 'legacy' : path.startsWith('/dashboard') ? 'dashboard' : path.startsWith('/join') ? 'join' : path.startsWith('/learn') ? 'learn' : 'home';
+      const hash = window.location.hash.replace('#', '') || fallback;
+      if (['learn', 'join', 'legacy', 'home'].includes(hash)) {
         setCurrentView(hash as any);
       } else if (hash === 'dashboard') {
         setCurrentView('dashboard');
@@ -46,7 +49,7 @@ export const AppContent: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
 
-  const navigateTo = (view: 'dashboard' | 'learn' | 'join' | 'legacy') => {
+  const navigateTo = (view: 'dashboard' | 'learn' | 'join' | 'legacy' | 'home') => {
     setCurrentView(view);
     if (view === 'dashboard') {
       window.location.hash = dashboardTab;
@@ -62,19 +65,20 @@ export const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
-      <Navbar currentView={currentView} onNavigate={navigateTo} />
+      {currentView !== 'learn' && currentView !== 'home' && <Navbar currentView={currentView} onNavigate={navigateTo} />}
 
       <div className="flex-1">
         {currentView === 'dashboard' && (
           <DashboardLayout currentTab={dashboardTab} onSelectTab={handleSelectDashboardTab} />
         )}
         {currentView === 'learn' && (
-          <div className="p-4 sm:p-8 max-w-7xl mx-auto">
+          <>
             <LearnerPortal />
             <LegalFooter />
-          </div>
+          </>
         )}
         {currentView === 'join' && <JoinLanding />}
+        {currentView === 'home' && <SpeakoolLanding />}
         {currentView === 'legacy' && <LegacyConsole />}
       </div>
     </div>

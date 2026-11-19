@@ -101,7 +101,7 @@ export const PbxView: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold text-slate-800">הגדרות מרכזייה טלפונית (Technoline PBX)</h2>
           <p className="text-sm text-slate-500">
-            עץ השלוחות של שירות לישנא אחרינא בשלוחה הראשית 99. ניתוב שיחות אוטומטי, מורים קוליים ומכירות
+            עץ השלוחות של שירות ספיקול בשלוחה הראשית 99. ניתוב שיחות אוטומטי, מורים קוליים ומכירות
           </p>
         </div>
         <div className="flex items-center gap-2">

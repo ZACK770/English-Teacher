@@ -3,14 +3,15 @@ export interface StartFrame {
   caller: string;
 }
 
-export function parseStartFrame(raw: string, expectedChannel: string): StartFrame {
+export function parseStartFrame(raw: string, expectedChannel: string | string[]): StartFrame {
+  const allowed = (Array.isArray(expectedChannel) ? expectedChannel : [expectedChannel]).filter(Boolean);
   let p: Record<string, unknown>;
   try {
     p = JSON.parse(raw);
   } catch {
     throw new Error("Invalid start frame");
   }
-  if (!p || Array.isArray(p) || p.type !== "start" || !expectedChannel || p.token !== expectedChannel) {
+  if (!p || Array.isArray(p) || p.type !== "start" || typeof p.token !== "string" || !allowed.includes(p.token)) {
     throw new Error("Invalid channel");
   }
   const format = Object.fromEntries(

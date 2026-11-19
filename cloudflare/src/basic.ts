@@ -43,7 +43,7 @@ export class BasicTranslator {
     };
   }
 
-  async speak(input: string, lang: string): Promise<Uint8Array> {
+  async speak(input: string, lang: string, voice = "Standard-A"): Promise<Uint8Array> {
     const text = input.slice(0, 600);
     const language = lang.includes("-") ? lang : ({ he: "he-IL", en: "en-US" } as Record<string, string>)[lang] ?? lang;
     const { token, project } = await googleToken(this.env.GOOGLE_TTS_SERVICE_ACCOUNT_JSON, this.env.GOOGLE_TTS_PROJECT);
@@ -52,7 +52,7 @@ export class BasicTranslator {
     const audioConfig = { audioEncoding: "LINEAR16", sampleRateHertz: 8000 };
     let result;
     try {
-      result = await postJson(TTS_URL, { input: { text }, voice: { languageCode: language, name: `${language}-Standard-A` }, audioConfig }, headers, 15000);
+      result = await postJson(TTS_URL, { input: { text }, voice: { languageCode: language, name: `${language}-${voice}` }, audioConfig }, headers, 15000);
     } catch (error) {
       if ((error as { status?: number }).status !== 400) throw error;
       result = await postJson(TTS_URL, { input: { text }, voice: { languageCode: language }, audioConfig }, headers, 15000);
