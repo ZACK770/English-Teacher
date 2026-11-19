@@ -32,6 +32,8 @@ describe("site and dashboard pricing", () => {
     expect(source.match(/מומלץ/g)).toHaveLength(2);
     expect(source).not.toContain("20 דקות מתנה");
     expect(source).not.toContain("₪220");
+    expect(source).toContain('p.product === "school" && p.automated_purchase');
+    expect(source).not.toContain("תוספת דקות ותרגומון");
     expect(FREE_TIER_TEXT).toContain("10 דקות");
     expect(MONTHLY_TERMS).not.toContain("₪29");
     expect(MONTHLY_TERMS).toContain("עד חודשיים בשנה");

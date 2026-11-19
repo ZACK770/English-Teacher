@@ -151,11 +151,14 @@ export default {
     const sitePath = url.pathname.replace(/^\/english(\/|$)/, "/");
     const isPageRequest = (request.method === "GET" || request.method === "HEAD") && !request.headers.get("Upgrade")
       && !/^\/(v1|api)(\/|$)/.test(sitePath) && !["/healthz", "/status", "/readyz"].includes(sitePath);
+    const portalAlias = isPageRequest && (sitePath === "/portal" || sitePath === "/portal/");
+    if (portalAlias) url.pathname = url.pathname.replace(/\/portal\/?$/, "/learn");
     if ((url.hostname === "speakcall.app" || url.hostname === "www.speakcall.app") && isPageRequest) {
       url.protocol = "https:";
       url.host = "speakool.net";
       return Response.redirect(url.toString(), 302);
     }
+    if (portalAlias) return Response.redirect(url.toString(), 302);
     const path = url.pathname.replace(/^\/english(\/|$)/, "/");
     const log = request.method !== "GET" && (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/"));
     let actor = "anonymous";

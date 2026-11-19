@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildTechnolineCallbackBody, callbackFailure, dialTechnolineCallback, dispatchCallbacks, listCallbacks, nextCallingSlot, parsePreferredTime, resolveCallbackExtension, submitCallback, testCallbackDial } from "../src/callbacks";
+import { buildTechnolineCallbackBody, callbackFailure, dialTechnolineCallback, dispatchCallbacks, followupLessonTime, listCallbacks, nextCallingSlot, nextImmediateSlot, parsePreferredTime, resolveCallbackExtension, submitCallback, testCallbackDial } from "../src/callbacks";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 
@@ -13,11 +13,11 @@ describe("Technoline callback dialer", () => {
   it.each([
     ["2026-01-04T10:00:00Z", 2],
     ["2026-01-04T19:29:00Z", 2],
-    ["2026-01-04T19:30:00Z", 2],
-    ["2026-01-04T21:45:00Z", 2],
+    ["2026-01-04T19:30:00Z", 0],
+    ["2026-01-04T21:45:00Z", 0],
     ["2026-01-09T11:29:00Z", 2],
     ["2026-01-09T11:30:00Z", 0],
-    ["2026-01-04T05:45:00Z", 2],
+    ["2026-01-04T05:45:00Z", 0],
     ["2026-03-27T10:30:00Z", 0],
     ["2026-01-10T10:00:00Z", 0],
   ])("limits retries at %s", (now, expected) => {
@@ -116,19 +116,49 @@ describe("callback extension resolution", () => {
 });
 
 describe("Israeli calling hours", () => {
+  it("keeps only immediate form calls exempt from overnight hours", () => {
+    const night = new Date("2026-01-04T01:00:00Z");
+    expect(nextImmediateSlot(night)).toEqual(night);
+    expect(nextCallingSlot(night).toISOString()).toBe("2026-01-04T06:00:00.000Z");
+    expect(callbackFailure(1, night).nextAttemptAt).toBe("2026-01-04T06:00:00.000Z");
+  });
   it.each([
     ["2026-01-04T19:59:00Z", "2026-01-04T19:59:00Z"],
-    ["2026-01-04T20:00:00Z", "2026-01-04T20:00:00Z"],
-    ["2026-01-04T01:00:00Z", "2026-01-04T01:00:00Z"],
+    ["2026-01-04T20:00:00Z", "2026-01-05T06:00:00Z"],
+    ["2026-01-04T01:00:00Z", "2026-01-04T06:00:00Z"],
     ["2026-01-09T13:00:00Z", "2026-01-10T18:00:00Z"],
     ["2026-03-27T12:00:00Z", "2026-03-28T17:00:00Z"],
-    ["2026-07-05T00:00:00Z", "2026-07-05T00:00:00Z"],
+    ["2026-07-05T00:00:00Z", "2026-07-05T05:00:00Z"],
     ["2026-03-28T16:59:00Z", "2026-03-28T17:00:00Z"],
     ["2026-03-28T17:00:00Z", "2026-03-28T17:00:00Z"],
-    ["2026-10-24T21:00:00Z", "2026-10-24T21:00:00Z"],
+    ["2026-10-24T21:00:00Z", "2026-10-25T06:00:00Z"],
     ["2026-01-09T11:59:00Z", "2026-01-09T11:59:00Z"],
   ])("moves %s to %s", (input, expected) => {
     expect(nextCallingSlot(new Date(input)).toISOString()).toBe(new Date(expected).toISOString());
+  });
+});
+
+describe("follow-up lesson times", () => {
+  it.each([
+    ["tomorrow", "morning", "2026-01-05T08:00:00.000Z"],
+    ["tomorrow", "noon", "2026-01-05T14:00:00.000Z"],
+    ["tomorrow", "afternoon", "2026-01-05T14:00:00.000Z"],
+    ["tomorrow", "evening", "2026-01-05T17:00:00.000Z"],
+    ["monday", "morning", "2026-01-05T08:00:00.000Z"],
+    ["today", "morning", "2026-01-05T08:00:00.000Z"],
+    ["friday", "evening", "2026-01-10T18:00:00.000Z"],
+    ["this_week", "morning", "2026-01-04T15:00:00.000Z"],
+    ["other", "evening", "2026-01-04T15:00:00.000Z"],
+    ["unknown", "morning", "2026-01-04T15:00:00.000Z"],
+    ["", "", "2026-01-04T15:00:00.000Z"],
+  ])("resolves %s %s", (day, part, expected) => {
+    expect(followupLessonTime(day, part, new Date("2026-01-04T10:00:00Z")).toISOString()).toBe(expected);
+  });
+  it("moves an ambiguous weekend request to Sunday at 17:00 Israel time", () => {
+    expect(followupLessonTime("other", "evening", new Date("2026-01-09T10:00:00Z")).toISOString()).toBe("2026-01-11T15:00:00.000Z");
+  });
+  it("uses summer Israel time", () => {
+    expect(followupLessonTime("tomorrow", "morning", new Date("2026-07-05T10:00:00Z")).toISOString()).toBe("2026-07-06T07:00:00.000Z");
   });
 });
 
@@ -198,7 +228,7 @@ describe("callback retries", () => {
     const prepare = vi.fn().mockReturnValue({ bind });
     const env = { CALLBACK_RELAY_URL: "https://relay.test", CALLBACK_RELAY_SECRET: "test", DB: { prepare } } as unknown as Env;
     expect(await dispatchCallbacks(env)).toEqual({ skipped: "outside calling hours" });
-    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(2);
     expect(bind).toHaveBeenCalledWith("2026-01-10T01:00:00.000Z", "2026-01-10T01:00:00.000Z", "2026-01-10T00:45:00.000Z");
   });
 });
@@ -267,7 +297,7 @@ describe("immediate callback submission", () => {
     if (failure === "offline") fetcher.mockRejectedValue(new Error("offline"));
     else fetcher.mockResolvedValue(Response.json({ status: "ERROR", errorCode: 5 }));
     expect(await (await submit()).json()).toMatchObject({ status: "queued" });
-    expect(writes.at(-1)).toContain("2026-01-04T01:15:00.000Z");
+    expect(writes.at(-1)).toContain("2026-01-04T06:00:00.000Z");
   });
   it("does not dial duplicates", async () => {
     const { submit, fetcher, writes } = setup(undefined, true);

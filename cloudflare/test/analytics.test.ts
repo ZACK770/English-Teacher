@@ -26,7 +26,7 @@ beforeEach(() => {
   };
   env = { DB: db, ADMIN_BEARER_SECRET: "analytics-admin-test" } as unknown as Env;
 });
-afterEach(() => sql.close());
+afterEach(() => { sql.close(); vi.useRealTimers(); });
 const event = () => ({ event: "page_view", attribution, event_id: crypto.randomUUID() });
 const request = (path: string, body?: unknown, headers: Record<string, string> = {}) => worker.fetch(new Request("https://speakool.net" + path, {
   method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json", ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -76,6 +76,8 @@ describe("analytics ingestion and funnel", () => {
     expect((await request("/v1/public/events", event(), { Origin: "https://other.example" })).status).toBe(403);
   });
   it("deduplicates event ids and rate limits by IP/minute", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-19T12:00:00Z"));
     const body = event();
     for (let i = 0; i < 120; i++) expect((await request("/v1/public/events", body)).status).toBe(204);
     expect(sql.prepare("SELECT COUNT(*) AS n FROM analytics_events").get()?.n).toBe(1);

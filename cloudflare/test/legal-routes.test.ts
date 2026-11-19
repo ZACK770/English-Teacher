@@ -8,6 +8,23 @@ import { legalHref, legalPages } from "../../src/legalRoutes";
 const index = readFileSync(new NodeURL("../../index.html", import.meta.url), "utf8");
 
 describe("public legal page SPA routing", () => {
+  it.each(["/portal", "/portal/", "/english/portal"])("redirects %s to learning without losing the query", async path => {
+    const response = await worker.fetch(new Request(`https://example.com${path}?invite=a%2Fb&plan=school-step`), {} as Env);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe(`https://example.com${path.startsWith("/english") ? "/english" : ""}/learn?invite=a%2Fb&plan=school-step`);
+  });
+  it("redirects an empty portal query and leaves portal API authentication intact", async () => {
+    const page = await worker.fetch(new Request("https://example.com/portal"), {} as Env);
+    expect(page.headers.get("Location")).toBe("https://example.com/learn");
+    const api = await worker.fetch(new Request("https://example.com/v1/portal/me"), {} as Env);
+    expect(api.status).toBe(401);
+    expect(api.headers.get("Location")).toBeNull();
+  });
+  it("combines the legacy hostname and portal redirects", async () => {
+    const response = await worker.fetch(new Request("https://speakcall.app/english/portal?invite=a%2Fb"), {} as Env);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("https://speakool.net/english/learn?invite=a%2Fb");
+  });
   it.each(["/terms", "/privacy", "/accessibility", "/english/accessibility", "/terms/"])("serves the SPA on direct load of %s", async (path) => {
     const fetch = vi.fn(async (request: Request) => new URL(request.url).pathname === "/index.html"
       ? new Response('<div id="root"></div>', { headers: { "Content-Type": "text/html" } })
