@@ -225,12 +225,12 @@ export class CheckoutStore {
     return { cancelled: true };
   }
 
-  // Called after a web order settles: schedules months 2..N of a mastery track.
-  async scheduleGrants(order: Record<string, any>, pkg: Pkg) {
-    if (order.channel !== "web" || pkg.billing === "monthly" || !pkg.duration_months || pkg.duration_months < 2) return;
+  // Statements that schedule months 2..N of a mastery track; run in the settlement batch.
+  grantStatements(order: Record<string, any>, pkg: Pkg) {
+    if (order.channel !== "web" || pkg.billing === "monthly" || !pkg.duration_months || pkg.duration_months < 2) return [];
     const start = Date.now();
-    await this.db.batch(Array.from({ length: pkg.duration_months - 1 }, (_, i) =>
-      this.db.prepare("INSERT OR IGNORE INTO installment_grants (order_id,month_index,due_at) VALUES (?,?,?)").bind(order.id, i + 2, iso(start + (i + 1) * MONTH_MS))));
+    return Array.from({ length: pkg.duration_months - 1 }, (_, i) =>
+      this.db.prepare("INSERT OR IGNORE INTO installment_grants (order_id,month_index,due_at) VALUES (?,?,?)").bind(order.id, i + 2, iso(start + (i + 1) * MONTH_MS)));
   }
 
   async issueDueGrants(now = Date.now()) {
@@ -240,10 +240,11 @@ export class CheckoutStore {
     for (const g of due.results) {
       const pkg = PackageSchema.parse(JSON.parse(g.snapshot));
       const receiptId = randomHex(10);
-      const claimed = await this.db.prepare("UPDATE installment_grants SET receipt_id=? WHERE order_id=? AND month_index=? AND receipt_id IS NULL").bind(receiptId, g.order_id, g.month_index).run();
-      if (!claimed.meta.changes) continue;
-      await this.db.prepare("INSERT INTO sales_receipts VALUES (?,?,?,?,?,?,?,?,?,?)").bind(
-        receiptId, g.customer_id, g.package_id, pkg.product, `grant:${g.order_id}:${g.month_index}`, 0, g.vat_rate, pkg.minutes, iso(Date.parse(g.due_at) + MONTH_MS), nowIso()).run();
+      await this.db.batch([
+        this.db.prepare("UPDATE installment_grants SET receipt_id=? WHERE order_id=? AND month_index=? AND receipt_id IS NULL").bind(receiptId, g.order_id, g.month_index),
+        this.db.prepare("INSERT INTO sales_receipts SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM installment_grants WHERE order_id=? AND month_index=? AND receipt_id=?)").bind(
+          receiptId, g.customer_id, g.package_id, pkg.product, `grant:${g.order_id}:${g.month_index}`, 0, g.vat_rate, pkg.minutes, iso(Date.parse(g.due_at) + MONTH_MS), nowIso(), g.order_id, g.month_index, receiptId),
+      ]);
     }
     return due.results.length;
   }

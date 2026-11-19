@@ -290,8 +290,8 @@ export class PaymentStore {
       this.db.prepare("UPDATE payment_orders SET state='paid',transaction_id=?,confirmation=?,receipt_id=?,updated_at=? WHERE id=? AND state!='paid'").bind(transactionId, confirmation, receiptId, now, orderId),
       this.db.prepare("UPDATE payment_issues SET status='resolved',resolved_at=?,resolution='התשלום אושר מול הסולק' WHERE order_id=? AND status='open' AND kind IN ('refusal','pbx_failure')").bind(now, orderId),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:nedarim_verified", orderId, now),
+      ...new CheckoutStore(this.business).grantStatements(order, pkg),
     ]);
-    await new CheckoutStore(this.business).scheduleGrants(order, pkg);
     return { paid: true, receipt_id: receiptId, customer_id: order.customer_id, package_id: order.package_id, amount_ils: amount / 100 };
   }
 }
