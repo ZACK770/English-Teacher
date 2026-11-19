@@ -93,8 +93,6 @@ async function availableTeacher(progress: ProgressStore, id: string, phone = tru
 
 export function resolveLessonChoices(p: Record<string, any>, botId: string, teacher?: z.output<typeof TeacherSchema> | null) {
   const plan = PlanSchema.safeParse(p.plan);
-  const trialSetup = p.trial_setup === "selected" || p.trial_setup === "skipped";
-  const intakePending = !plan.success && !teacher && !trialSetup;
   const level = teacher?.level || p.level || (plan.success ? plan.data.level : botId === "isaac-advanced" ? "fluent" : "beginner");
   const conversation_mode = teacher?.conversation_mode || p.conversation_mode || (botId === "isaac-advanced" ? "conversation" : "guided");
   const requestedCorrection = teacher?.correction_policy || p.correction_policy || (conversation_mode === "guided" ? "after_answer" : "after_activity");
@@ -120,6 +118,8 @@ export async function applyLearnerControls(
   const customerName = String(customer?.name || "").trim();
   const learnerName = String(p.learner_name || (customerName === PHONE_SIGNUP_NAME ? "" : customerName)).trim().slice(0, 40);
   const plan = PlanSchema.safeParse(p.plan);
+  const trialSetup = p.trial_setup === "selected" || p.trial_setup === "skipped";
+  const intakePending = !plan.success && !teacher && !trialSetup;
   const chosenTopic = teacher?.topic || p.topic || (plan.success ? plan.data.topic : RECOMMENDED_TOPIC);
   const materialId = teacher?.material_id || p.material_id;
   const material = materialId ? await b.record(materialsKind(customerId), materialId) : null;
