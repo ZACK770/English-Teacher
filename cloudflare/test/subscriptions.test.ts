@@ -231,6 +231,16 @@ describe("subscription promises against production SQL", () => {
     date("2026-02-01");
     expect((await b.reserveCall("owner", "teacher", "on-time", 60)).mode).toBe("paid");
   });
+  it("preserves family access to unexpired minutes after cancellation, but not while paused", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    const member = await store.addMember(sub.id, "0503334444", "Family");
+    await store.pause(sub.id, 1, at);
+    expect((await b.reserveCall(member.customer_id, "teacher", "frozen-family", 60)).mode).toBe("blocked");
+    await store.cancel(sub.id, at);
+    expect((await b.reserveCall(member.customer_id, "teacher", "cancelled-family", 60)).mode).toBe("paid");
+    date(addMonths(at, 2));
+    expect((await b.reserveCall(member.customer_id, "teacher", "expired-family", 60)).mode).toBe("blocked");
+  });
   it("isolates bad subscriptions during scheduled processing", async () => {
     const bad = await store.create("owner", "school-foundations", at);
     const good = await store.create("owner", "school-foundations", at);

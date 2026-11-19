@@ -264,7 +264,7 @@ export class BusinessStore {
         FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
         WHERE (r.customer_id=? OR r.subscription_id IN
           (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
-           WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status='active'))
+           WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
         AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
         AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?) GROUP BY r.id ORDER BY r.expires_at`)
       .bind(customerId, customerId, policy.product, now, now)
