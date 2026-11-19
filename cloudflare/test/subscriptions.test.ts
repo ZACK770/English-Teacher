@@ -232,6 +232,19 @@ describe("subscription promises against production SQL", () => {
     expect((await store.get(good.id)).period_number).toBe(2);
     expect((await store.get(bad.id)).status).toBe("paused");
   });
+  it("does not revive a concurrently cancelled subscription or extend its receipts", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    await store.pause(sub.id, 7, at);
+    const paused = await store.get(sub.id);
+    const expiry = receipts()[0].expires_at;
+    vi.spyOn(store, "get").mockImplementationOnce(async () => {
+      db.sql.prepare("UPDATE subscriptions SET status='cancelled' WHERE id=?").run(sub.id);
+      return paused;
+    });
+    await expect(store.resume(sub.id, "2026-01-03")).rejects.toThrow("status changed");
+    expect((await store.get(sub.id)).status).toBe("cancelled");
+    expect(receipts()[0].expires_at).toBe(expiry);
+  });
   it("returns plan labels, rollover expiries, members and remaining annual pause days", async () => {
     const sub = await store.create("owner", "school-step", at);
     await store.recordRenewal(sub.id, addMonths(at, 1), "summary-renewal");

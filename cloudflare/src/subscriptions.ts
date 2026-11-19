@@ -99,7 +99,8 @@ export class SubscriptionStore {
     const yearEnd = addMonths(sub.started_at, (new Date(year).getUTCFullYear() - new Date(sub.started_at).getUTCFullYear() + 1) * 12);
     const daysThisYear = Math.min(days, (Date.parse(yearEnd) - Date.parse(at)) / DAY);
     if (sub.status !== "active" || !Number.isInteger(days) || days < 1 || days > 60 || used + daysThisYear > 60) throw new Error("Pause limit exceeded or subscription not active");
-    await this.db.prepare("UPDATE subscriptions SET status='paused',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
+    const changed = await this.db.prepare("UPDATE subscriptions SET status='paused',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
+    if (!changed.meta.changes) throw new Error("Subscription status changed");
     return this.get(id);
   }
   async resume(id: string, at = new Date().toISOString()) {
@@ -112,16 +113,19 @@ export class SubscriptionStore {
     const year = yearStart(sub.started_at, until);
     const used = (sub.pause_year_start === year ? sub.pause_days_used : 0) + (Date.parse(until) - Date.parse(sub.paused_at > year ? sub.paused_at : year)) / DAY;
     const receipts = (await this.db.prepare("SELECT id,expires_at FROM sales_receipts WHERE subscription_id=? AND expires_at>?").bind(id, sub.paused_at).all<Subscription>()).results;
-    await this.db.batch([
-      ...receipts.map(r => this.db.prepare("UPDATE sales_receipts SET expires_at=? WHERE id=?").bind(shift(r.expires_at, elapsed), r.id)),
-      this.db.prepare("UPDATE subscriptions SET status='active',current_period_end=?,term_end=?,paused_at=NULL,pause_until=NULL,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=?").bind(shift(sub.current_period_end, elapsed), sub.term_end ? shift(sub.term_end, elapsed) : null, year, used, at, id),
+    const changes = await this.db.batch([
+      ...receipts.map(r => this.db.prepare("UPDATE sales_receipts SET expires_at=? WHERE id=? AND EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND status='paused' AND paused_at=?)").bind(shift(r.expires_at, elapsed), r.id, id, sub.paused_at)),
+      this.db.prepare("UPDATE subscriptions SET status='active',current_period_end=?,term_end=?,paused_at=NULL,pause_until=NULL,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='paused' AND paused_at=? RETURNING id").bind(shift(sub.current_period_end, elapsed), sub.term_end ? shift(sub.term_end, elapsed) : null, year, used, at, id, sub.paused_at),
     ]);
+    if (!changes[changes.length - 1].results.length) throw new Error("Subscription status changed");
     return this.get(id);
   }
   async cancel(id: string, at = new Date().toISOString()) {
-    const sub = await this.get(id);
-    if (sub.status === "paused") await this.resume(id, at);
-    await this.db.prepare("UPDATE subscriptions SET status='cancelled',cancelled_at=?,updated_at=? WHERE id=?").bind(iso(at), iso(at), id).run();
+    let sub = await this.get(id);
+    if (sub.status === "cancelled") return sub;
+    if (sub.status === "paused") sub = await this.resume(id, at);
+    const changed = await this.db.prepare("UPDATE subscriptions SET status='cancelled',cancelled_at=?,updated_at=? WHERE id=? AND status=?").bind(iso(at), iso(at), id, sub.status).run();
+    if (!changed.meta.changes) throw new Error("Subscription status changed");
     return this.get(id);
   }
   async evaluateGuarantee(id: string, at = new Date().toISOString()) {
