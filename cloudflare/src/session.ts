@@ -220,7 +220,6 @@ export class TutorSession {
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
         await this.latency("gemini_connected");
-        void reportGeminiOutcome(this.env, true);
         ai.startGreeting(this.controls.opening_message);
         if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). Mention it once, briefly and warmly in Hebrew, early in the call, and say you will wrap up with a short summary before the time ends.");
         await this.latency("greeting_sent");
@@ -230,6 +229,7 @@ export class TutorSession {
           this.stop("hard_time_limit");
         }, allowance.seconds * 1000);
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);
+        await reportGeminiOutcome(this.env, this.reason !== "gemini_reconnect_exhausted", "Gemini reconnect exhausted");
       }
     } catch (error) {
       if (error instanceof GeminiBudgetError) {

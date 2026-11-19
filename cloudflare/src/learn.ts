@@ -37,7 +37,6 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
   let timer: ReturnType<typeof setTimeout> | undefined;
   const work = async () => {
     await ai.connect();
-    void reportGeminiOutcome(env, true);
     startedAt = Date.now();
     await progress.logLatency(profileId, callId, "gemini_connected", Date.now() - t0, 0);
     ai.startGreeting(opening);
@@ -74,6 +73,7 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
     const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), timeoutMs); });
     await Promise.race([work(), deadline]);
     if (budgetError) throw budgetError;
+    void reportGeminiOutcome(env, true);
   } catch (error) {
     throw budgetError ?? error;
   } finally {
