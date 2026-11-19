@@ -1,3 +1,4 @@
+import { checkoutRoutes } from "./checkout";
 import { z } from "zod";
 import { BusinessStore, EconomicsSchema, MODELS, ReceiptSchema } from "./business";
 import { adultControls, controlsFromSettings, TutorControlsSchema, VOICE_OPTIONS, type TutorControls } from "./controls";
@@ -372,5 +373,5 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
     detail.extension = s.projectPath;
     return Response.json(detail, { headers: { "Cache-Control": "no-store" } });
   }
-  return learnerRoutes(request, env, path, customerId, settings(env));
+  return (await checkoutRoutes(request, env, path, customerId)) ?? learnerRoutes(request, env, path, customerId, settings(env));
 }

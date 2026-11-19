@@ -1,4 +1,5 @@
 import { BusinessStore, PackageSchema } from "./business";
+import { CheckoutStore } from "./checkout";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
@@ -258,6 +259,7 @@ export class PaymentStore {
     if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
     if (![undefined, null, "", "OK"].includes(data.Status)) return { ignored: true };
     const category = String(data.Groupe ?? "");
+    if (!["", "0"].includes(String(data.KevaId ?? ""))) return new CheckoutStore(this.business).kevaCharge(data, mosadId);
     if (!category.startsWith(PREFIX)) return { ignored: true };
     const orderId = category.slice(PREFIX.length);
     if (!/^[0-9a-f]{32}$/.test(orderId)) return { ignored: true };
@@ -376,7 +378,10 @@ export async function handleWebhook(request: Request, env: Env): Promise<Record<
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid settlement");
   } catch { throw new HttpError(400, "Settlement requires review"); }
   try {
-    if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
+    const keva = !["", "0", "undefined", "null"].includes(String(data.KevaId ?? ""));
+    const checkout = new CheckoutStore(store.business);
+    if (String(data.Status ?? "").toLowerCase() === "error") return keva ? await checkout.kevaRefused(data) : await store.refusal(data, mosadId);
+    if (keva && !data.TransactionId) return await checkout.kevaCreated(data, mosadId);
     return await store.settle(data, mosadId);
   } catch {
     if (String(data.MosadNumber ?? "") === mosadId) await store.issueForData(data, "settlement_review", "").catch(() => false);
