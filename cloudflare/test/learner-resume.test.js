@@ -10,8 +10,6 @@ vi.mock("react", async importOriginal => ({
 }));
 vi.mock("../../src/components/portal/portalApi", () => ({ resumeLearnerSession: vi.fn() }));
 vi.mock("../../src/components/portal/LearnerPortal", () => ({ PHONE_LINE: "076-5673575" }));
-vi.mock("../../src/components/portal/EmailLogin", () => ({ EmailLogin: () => null }));
-vi.mock("../../src/components/portal/DirectVoice", () => ({ DirectVoice: () => null }));
 vi.mock("../../src/components/portal/LessonCallbackForm", () => ({ LessonCallbackForm: () => null }));
 vi.mock("../../src/components/legal/LegalFooter", () => ({ LegalFooter: () => null }));
 vi.mock("../../src/components/brand/SpeakCallLogo", () => ({ SpeakCallLogo: () => null }));

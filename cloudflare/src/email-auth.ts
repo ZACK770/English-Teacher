@@ -1,11 +1,45 @@
 import { z } from "zod";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex, tokenUrlsafe } from "./env";
-import { learnerBody } from "./learner";
+import { learnerBody, requireLearner } from "./learner";
 import { sendPortalCode } from "./portal-email";
 
 const prefix = "portal-email:";
+const emailLinks = "learner-email-links";
 const invalidCode = "הקוד שגוי, פג תוקפו או שנוצלו חמשת הניסיונות. אפשר לבקש קוד חדש.";
+const conflict = "הפרט הזה כבר מחובר לחשבון אחר. אפשר להיכנס דרכו או לפנות לתמיכה.";
+const legacyEmail = "SELECT id FROM console_records WHERE kind='customers' AND lower(trim(json_extract(body,'$.email')))=?";
+
+export async function hasPortalEmail(db: D1Database, customerId: string) {
+  return !!await db.prepare("SELECT 1 FROM console_records WHERE kind=? AND json_extract(body,'$.customer_id')=? LIMIT 1")
+    .bind(emailLinks, customerId).first();
+}
+
+async function emailOwner(db: D1Database, email: string, linkCustomer?: string): Promise<string> {
+  const hash = await sha256Hex(email);
+  const emailCustomer = "email-" + hash;
+  const now = nowIso();
+  if (linkCustomer) await db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
+    SELECT ?,?,?,?,? WHERE NOT EXISTS (${legacyEmail})`)
+    .bind(emailLinks, hash, JSON.stringify({ customer_id: linkCustomer }), now, now, email).run();
+  else {
+    const hasLink = "SELECT 1 FROM console_records WHERE kind=? AND id=?";
+    await db.batch([
+      db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
+        SELECT 'customers',?,?,?,? WHERE NOT EXISTS (${hasLink}) AND NOT EXISTS (${legacyEmail})`)
+        .bind(emailCustomer, JSON.stringify({ name: "", phone: "", email, source: "portal", preferred_bot: "", notes: "" }), now, now, emailLinks, hash, email),
+      db.prepare(`INSERT OR IGNORE INTO customers(id,name,source,created_at,updated_at)
+        SELECT ?,'','portal',?,? WHERE EXISTS (SELECT 1 FROM console_records WHERE kind='customers' AND id=?)`)
+        .bind(emailCustomer, now, now, emailCustomer),
+    ]);
+  }
+  const linked = await db.prepare("SELECT json_extract(body,'$.customer_id') AS id FROM console_records WHERE kind=? AND id=?")
+    .bind(emailLinks, hash).first<{ id: string }>();
+  const owner = linked || await db.prepare(legacyEmail + " ORDER BY created_at,id LIMIT 1").bind(email).first<{ id: string }>();
+  if (!owner) throw new HttpError(503, "לא הצלחנו לחבר את המייל. אפשר לנסות שוב.");
+  if (linkCustomer && owner.id !== linkCustomer) throw new HttpError(409, conflict);
+  return owner.id;
+}
 
 export async function emailAuth(request: Request, env: Env, path: string): Promise<Response | null> {
   if (!path.startsWith("/v1/portal/auth/email/")) return null;
@@ -13,7 +47,11 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
   const b = new BusinessStore(env.DB);
   const headers = { "Cache-Control": "no-store" };
   if (path === "/v1/portal/auth/email/start") {
-    const input = await learnerBody(request, z.object({ email: z.string().trim().toLowerCase().max(254).email() }));
+    const input = await learnerBody(request, z.object({
+      email: z.string().trim().toLowerCase().max(254).email(),
+      purpose: z.enum(["login", "link_email"]).default("login"),
+    }));
+    const linkCustomer = input.purpose === "link_email" ? await requireLearner(request, env) : undefined;
     const emailHash = await sha256Hex(input.email);
     const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "local");
     const now = nowIso();
@@ -29,7 +67,7 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
     let value: number;
     do { value = crypto.getRandomValues(new Uint32Array(1))[0]; } while (value >= 4294000000);
     const code = String(value % 1000000).padStart(6, "0");
-    await b.putSetting(prefix + challenge, { email: input.email, hash: await sha256Hex(challenge + ":" + code), attempts: 0, expires: Date.now() + 600000 });
+    await b.putSetting(prefix + challenge, { email: input.email, linkCustomer, hash: await sha256Hex(challenge + ":" + code), attempts: 0, expires: Date.now() + 600000 });
     try { await sendPortalCode(env, input.email, code); }
     catch {
       await env.DB.prepare("DELETE FROM console_settings WHERE id=?").bind(prefix + challenge).run();
@@ -45,16 +83,10 @@ export async function emailAuth(request: Request, env: Env, path: string): Promi
       RETURNING body`).bind(key, Date.now()).first<{ body: string }>();
     const claim = row ? JSON.parse(row.body) : null;
     if (!claim || !secureEqual(await sha256Hex(input.challenge + ":" + input.code), claim.hash)) throw new HttpError(401, invalidCode);
+    if (claim.linkCustomer && await requireLearner(request, env) !== claim.linkCustomer) throw new HttpError(403, "הקוד שייך לחשבון אחר.");
     if (!await env.DB.prepare("DELETE FROM console_settings WHERE id=? RETURNING id").bind(key).first()) throw new HttpError(401, invalidCode);
-    const existing = await env.DB.prepare("SELECT id FROM console_records WHERE kind='customers' AND lower(trim(json_extract(body,'$.email')))=? ORDER BY created_at,id LIMIT 1").bind(claim.email).first<{ id: string }>();
-    const customerId = existing?.id || "email-" + await sha256Hex(claim.email);
-    if (!existing) {
-      const now = nowIso();
-      await env.DB.batch([
-        env.DB.prepare("INSERT OR IGNORE INTO console_records VALUES ('customers',?,?,?,?)").bind(customerId, JSON.stringify({ name: "", phone: "", email: claim.email, source: "portal", preferred_bot: "", notes: "" }), now, now),
-        env.DB.prepare("INSERT OR IGNORE INTO customers(id,name,source,created_at,updated_at) VALUES (?,'','portal',?,?)").bind(customerId, now, now),
-      ]);
-    }
+    const customerId = await emailOwner(env.DB, claim.email, claim.linkCustomer);
+    if (claim.linkCustomer) return Response.json({ linked: true }, { headers });
     const token = tokenUrlsafe(32);
     await env.DB.prepare("INSERT INTO portal_tokens VALUES (?,?,?)").bind(await sha256Hex(token), customerId, new Date(Date.now() + 7 * 86400000).toISOString().replace("Z", "+00:00")).run();
     return Response.json({ token }, { headers });

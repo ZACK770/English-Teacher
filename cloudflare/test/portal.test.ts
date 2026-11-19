@@ -32,9 +32,9 @@ describe("email login", () => {
     sent = [];
     env.PORTAL_EMAIL = { send: vi.fn(async message => { sent.push(message as typeof sent[number]); return { messageId: "test" }; }) } as SendEmail;
   });
-  const start = (email = "learner@example.com") => request("/v1/portal/auth/email/start", "", { email });
-  const verify = (challenge: string, value: string) => request("/v1/portal/auth/email/verify", "", { challenge, code: value });
-  const sentCode = () => sent.at(-1)!.subject.match(/\d{6}/)![0];
+  const start = (email = "learner@example.com", token = "", purpose = "login") => request("/v1/portal/auth/email/start", token, { email, purpose });
+  const verify = (challenge: string, value: string, token = "") => request("/v1/portal/auth/email/verify", token, { challenge, code: value });
+  const sentCode = () => sent.at(-1)!.text!.match(/\d{6}/)![0];
 
   it("normalizes email, hashes the code, sends Hebrew multipart content, creates a learner and issues a single-use seven-day login", async () => {
     const response = await start("  Learner@Example.com  ");
@@ -43,6 +43,7 @@ describe("email login", () => {
     expect(expires_in).toBe(600);
     expect(sent[0].to).toBe("learner@example.com");
     expect(sent[0].html).toContain('dir="rtl"');
+    expect(sent[0].subject).not.toContain(sentCode());
     expect(sent[0].text).toContain(sentCode());
     const stored = JSON.parse(String(db.sql.prepare("SELECT body FROM console_settings WHERE id=?").get("portal-email:" + challenge)!.body));
     expect(stored.hash).toHaveLength(64);
@@ -53,10 +54,39 @@ describe("email login", () => {
     const account = await (await request("/v1/portal/me", token)).json() as any;
     expect((await b.record("customers", account.customer.id))!.email).toBe("learner@example.com");
     expect(account.customer.phone).toBe("");
+    expect(account.customer.has_email).toBe(true);
     expect(await b.portalCustomer(token)).toBe(account.customer.id);
     const row = db.sql.prepare("SELECT expires_at FROM portal_tokens WHERE customer_id=?").get(account.customer.id)!;
     expect(Date.parse(String(row.expires_at)) - Date.now()).toBeGreaterThan(7 * 86400000 - 5000);
     expect((await verify(challenge, sentCode())).status).toBe(401);
+  });
+
+  it("links a verified email to the current learner and reuses the account for future sign-ins", async () => {
+    const email = "Alias@Example.com";
+    expect((await start(email, "", "link_email")).status).toBe(401);
+    const { challenge } = await (await start(email, tokenA, "link_email")).json() as any;
+    const code = sentCode();
+    expect((await verify(challenge, code, tokenB)).status).toBe(403);
+    expect((await verify(challenge, code)).status).toBe(401);
+    expect((await (await request("/v1/portal/me", tokenA)).json() as any).customer.has_email).toBe(false);
+    expect(await (await verify(challenge, code, tokenA)).json()).toEqual({ linked: true });
+    expect((await (await request("/v1/portal/me", tokenA)).json() as any).customer.has_email).toBe(true);
+    expect((await verify(challenge, code, tokenA)).status).toBe(401);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 61000);
+      const next = await (await start(email.toLowerCase())).json() as any;
+      const { token } = await (await verify(next.challenge, sentCode())).json() as any;
+      expect(await b.portalCustomer(token)).toBe("learner-a");
+      expect(await b.list("customers")).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("refuses linking to a different account that already owns the email", async () => {
+    await b.save("customers", { name: "Learner B", phone: "0500000002", email: "Learner@Example.COM" }, "learner-b");
+    const { challenge } = await (await start("learner@example.com", tokenA, "link_email")).json() as any;
+    expect((await verify(challenge, sentCode(), tokenA)).status).toBe(409);
+    expect((await (await request("/v1/portal/me", tokenA)).json() as any).customer.has_email).toBe(false);
   });
 
   it("matches an existing customer email case-insensitively without changing phone or revoking other tokens", async () => {
@@ -121,6 +151,24 @@ describe("email login", () => {
     expect((await start()).status).toBe(503);
     expect(db.sql.prepare("SELECT id FROM console_settings WHERE id LIKE 'portal-email:%'").all()).toHaveLength(0);
     expect(db.sql.prepare("SELECT id FROM console_records WHERE id LIKE 'email-%'").all()).toHaveLength(0);
+  });
+});
+
+describe("quick teacher direction", () => {
+  it("uses the saved level and style for voice controls without starting a second intake", async () => {
+    expect((await request("/v1/portal/preferences", tokenA, { quick_entry: "selected", level: "intermediate", personality: "focused" })).status).toBe(200);
+    const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(c.lesson?.level).toBe("intermediate");
+    expect(c.custom_instructions).toContain("Personality: focused.");
+    expect(c.intake_pending).toBe(false);
+  });
+
+  it("keeps existing lesson choices when the learner skips setup", async () => {
+    expect((await request("/v1/portal/preferences", tokenA, { quick_entry: "skipped" })).status).toBe(200);
+    const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
+    expect(c.lesson?.level).toBe("beginner");
+    expect(c.custom_instructions).toContain("Personality: warm.");
+    expect(c.intake_pending).toBe(false);
   });
 });
 

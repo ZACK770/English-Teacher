@@ -4,11 +4,11 @@ export type Plan = { goal: string; level: string; difficulty: string; minutes: n
 export type LessonSettings = { level?: string; conversation_mode?: string; learning_load?: string; correction_policy?: string; closing_activity?: string };
 export type Teacher = LessonSettings & { id: string; name: string; base_bot: string; personality: string; voice: string; explanation: string; pace: string; corrections: string; topic: string; material_id: string };
 export type Material = { id: string; name: string; words: string[]; target_count?: number };
-export type Preferences = LessonSettings & { learner_name?: string; selected_bot?: string; active_teacher?: string; pace?: string; corrections?: string; minutes?: number; language?: string; track?: string; topic?: string; material_id?: string; store_transcripts?: boolean; plan?: Plan; mode?: string; grammar_targets?: string[] };
+export type Preferences = LessonSettings & { personality?: string; quick_entry?: "selected" | "skipped"; learner_name?: string; selected_bot?: string; active_teacher?: string; pace?: string; corrections?: string; minutes?: number; language?: string; track?: string; topic?: string; material_id?: string; store_transcripts?: boolean; plan?: Plan; mode?: string; grammar_targets?: string[] };
 export type Lesson = { call_id: string; started_at: string; duration_seconds: number; summary_he: string; success_he: string; next_step_he: string; points: number; observations: { skill: string; result: string; correction: string; score: number }[] };
 export type Account = {
   subscriptions?: SubscriptionSummary[];
-  customer: { id: string; name: string; phone: string; preferred_bot: string };
+  customer: { id: string; name: string; phone: string; preferred_bot: string; has_email?: boolean };
   bots: { id: string; label: string; role: string; phone_enabled: boolean }[];
   teachers: Teacher[]; materials: Material[]; preferences: Preferences; phone: string; extension: string;
   phones: { id: string; phone: string }[];
@@ -40,7 +40,7 @@ export function initialToken() {
   try { hash = decodeURIComponent(location.hash.slice(1)); } catch { return readLearnerToken(); }
   if (/^[A-Za-z0-9_-]{30,128}$/.test(hash)) {
     saveLearnerToken(hash);
-    history.replaceState(null, "", location.pathname);
+    history.replaceState(null, "", location.pathname + location.search);
     return hash;
   }
   return readLearnerToken();

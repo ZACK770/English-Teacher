@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Phone, Monitor, Ear, Mic, RefreshCw } from "lucide-react";
-import { EmailLogin } from "./EmailLogin";
-import { DirectVoice } from "./DirectVoice";
+import { ArrowLeft, Ear, Mic, RefreshCw } from "lucide-react";
+import { clearEntryChallenges, EntryDialog, type EntryChannel, type EntryMode } from "./QuickEntry";
+import { saveLearnerToken } from "./learnerToken";
 import { resumeLearnerSession } from "./portalApi";
 import { PHONE_LINE } from "./LearnerPortal";
 import { LegalFooter } from "../legal/LegalFooter";
@@ -29,9 +29,14 @@ const domains = [
 ];
 
 export function SpeakoolLanding() {
-  const [voiceToken, setVoiceToken] = useState("");
   const base = legalBasePath(location.pathname);
   const learn = base + "/learn";
+  const [entry, setEntry] = useState<EntryMode | null>(() => {
+    const saved = new URLSearchParams(location.search).get("entry");
+    return saved === "trial" || saved === "login" ? saved : location.hash === "#computer-call" ? "trial" : null;
+  });
+  const [channel, setChannel] = useState<EntryChannel>(() => new URLSearchParams(location.search).get("via") === "email" || location.hash === "#computer-call" ? "email" : "phone");
+  const [legacyCallback, setLegacyCallback] = useState(location.hash === "#lesson-phone");
   useEffect(() => {
     let disposed = false;
     const resume = () => {
@@ -50,45 +55,52 @@ export function SpeakoolLanding() {
   const [domain, setDomain] = useState(0);
   const progress = domains[domain];
   useEffect(() => {
-    const section = document.getElementById(location.hash.slice(1));
-    if (section?.closest(".sk-land")) section.scrollIntoView();
-  }, []);
-  if (voiceToken) return <DirectVoice token={voiceToken} onDone={() => { history.replaceState(null, "", base + "/"); setVoiceToken(""); }} />;
+    const showHash = () => {
+      setLegacyCallback(location.hash === "#lesson-phone");
+      if (location.hash === "#computer-call") { setChannel("email"); setEntry("trial"); }
+      const section = document.getElementById(location.hash.slice(1));
+      if (section?.closest(".sk-land")) section.scrollIntoView();
+    };
+    showHash();
+    window.addEventListener("hashchange", showHash);
+    return () => window.removeEventListener("hashchange", showHash);
+  }, [legacyCallback]);
+  function showEntry(mode: EntryMode | null, via: EntryChannel = "phone") {
+    const url = new URL(location.href);
+    if (mode) {
+      url.searchParams.set("entry", mode);
+      url.searchParams.set("via", via);
+    } else {
+      url.searchParams.delete("entry");
+      url.searchParams.delete("via");
+      if (url.hash === "#computer-call") url.hash = "";
+      clearEntryChallenges();
+    }
+    history.replaceState(null, "", url);
+    setChannel(via);
+    setEntry(mode);
+  }
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
-      <nav aria-label="ניווט ראשי"><a href="#free-lesson">שיעור ראשון</a><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
+      <nav aria-label="ניווט ראשי"><a href="#how">השיטה</a><a href="#plans">מסלולים</a><button type="button" className="sk-land-login" onClick={() => showEntry("login")}>כניסה</button></nav>
     </header>
     <main>
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
-        <div>
-          <p className="sk-land-kicker">אנגלית מדוברת · שיעור ראשון חינם</p>
-          <h1 id="landing-heading">המורה מחכה.<span>עכשיו תור הפה.</span></h1>
-          <p className="sk-land-lede">עשר דקות בחינם עם מורה AI סבלני. מדברים בקול, מקבלים עזרה כשנתקעים, וחוזרים למילים בשיחה הבאה.</p>
-          <div className="sk-entry-cards">
-            <section className="sk-entry-card"><Phone aria-hidden="true" /><h2>המורה יחייג אליי</h2><LessonCallbackForm tel={tel} privacy={base + "/privacy"} /></section>
-            <section className="sk-entry-card" id="computer-call"><Monitor aria-hidden="true" /><h2>שיחה מהמחשב</h2><p>קוד קצר במייל — ומתחילים לדבר עם המורה.</p><EmailLogin onToken={token => { history.pushState(null, "", learn); setVoiceToken(token); }} /></section>
-          </div>
-          <div className="sk-land-options">
-            <a href={tel}><Phone aria-hidden="true" size={14} /> לחייג בעצמי: <bdi>{PHONE_LINE}</bdi></a>
-          </div>
+        <div className="sk-land-hero-copy">
+          <h1 id="landing-heading">פשוט לדבר <span>באנגלית.</span></h1>
+          <p className="sk-land-lede">שיעור ראשון של 10 דקות עם מורה AI.<br />בלי כרטיס אשראי.</p>
+          <div className="sk-land-hero-actions"><button type="button" className="sk-primary" onClick={() => showEntry("trial")}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={19} /></button><a href={tel}>לחייג בעצמי</a></div>
         </div>
-        <figure className="sk-land-call">
-          <div className="sk-land-caller"><strong>מורה ה־AI של ספיקול</strong><span>דוגמה משיעור</span></div>
-          <svg className="sk-land-voice-art" viewBox="0 0 320 270" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <div className="sk-land-hero-art" aria-hidden="true">
+          <svg className="sk-land-voice-art" viewBox="20 -10 280 280" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <g className="sk-land-rings"><circle cx="160" cy="130" r="105" /><circle cx="160" cy="130" r="121" /></g>
             <g className="sk-land-signal"><path d="M74 98q-19 32 0 64M246 98q19 32 0 64M63 89q-26 41 0 82M257 89q26 41 0 82" /></g>
-            <g className="sk-land-symbol-breathe"><g className="sk-land-draw">
-              <path pathLength="1" d="M194 96c-10-12-21-18-36-18-29 0-47 21-47 51s18 51 47 51c12 0 23-4 31-11l20 22v-35l-18-13c-6 13-17 21-33 21-19 0-29-15-29-35s10-35 29-35c12 0 22 6 29 17Z" />
-              <path className="sk-land-tail" pathLength="1" d="m189 169 20 22v-25" />
-            </g></g>
+            <g className="sk-land-symbol-breathe">
+              <path d="M194 96c-10-12-21-18-36-18-29 0-47 21-47 51s18 51 47 51c12 0 23-4 31-11l20 22v-35l-18-13c-6 13-17 21-33 21-19 0-29-15-29-35s10-35 29-35c12 0 22 6 29 17Z" />
+            </g>
           </svg>
-          <div className="sk-land-quote" dir="ltr" lang="en">“Ready? Let’s talk.”</div>
-          <figcaption>
-            נתקעת באנגלית? אפשר לשאול בעברית.
-            <div className="sk-land-words"><span>מילים שעולות בשיחה</span><div dir="ltr" lang="en"><b>Actually</b><b>Schedule</b><b>Available</b></div></div>
-          </figcaption>
-        </figure>
+        </div>
       </section>
       <section id="free-lesson" className="sk-shell sk-land-offer" aria-labelledby="free-lesson-title">
         <div className="sk-land-offer-panel">
@@ -96,8 +108,8 @@ export function SpeakoolLanding() {
             <p className="sk-land-kicker">שיעור ראשון בחינם</p>
             <h2 id="free-lesson-title">עשר דקות. בלי הרצאות.</h2>
             <p>בוחרים נושא ומדברים בקצב שלך. המורה עוזר כשנתקעים ובסוף מסכם מה כדאי לתרגל בפעם הבאה.</p>
-            <div className="sk-land-cta"><a className="sk-primary" href="#lesson-phone">שהמורה יחייג אליי</a><a className="sk-secondary" href="#computer-call">שיחה מהמחשב <ArrowUpRight aria-hidden="true" size={17} /></a></div>
-            <small>בלי כרטיס אשראי. בלי צורך להתכונן.</small>
+            <div className="sk-land-cta"><button type="button" className="sk-primary" onClick={() => showEntry("trial")}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={17} /></button></div>
+            {legacyCallback && <LessonCallbackForm tel={tel} privacy={base + "/privacy"} />}
           </div>
           <div className="sk-land-clock" aria-hidden="true">
             <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" /><circle cx="50" cy="50" r="45" pathLength="100" /></svg>
@@ -170,9 +182,17 @@ export function SpeakoolLanding() {
         <small>כל המחירים כוללים מע״מ. התשלום בכרטיס אשראי בדף המאובטח של נדרים פלוס.</small>
       </section>
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
-      <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><a className="sk-primary" href="#free-lesson">לשיעור ראשון בחינם <ArrowLeft aria-hidden="true" size={18} /></a></section>
+      <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><button type="button" className="sk-primary" onClick={() => showEntry("trial")}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={18} /></button></section>
     </main>
     <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
     <LegalFooter />
+    {entry && <EntryDialog mode={entry} channel={channel} onChannel={via => showEntry(entry, via)}
+      privacy={base + "/privacy"} onClose={() => showEntry(null)}
+      onToken={token => {
+        saveLearnerToken(token);
+        showEntry(null);
+        history.pushState(null, "", learn);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }} />}
   </div>;
 }

@@ -133,7 +133,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
           cleanup();
         };
       } catch (e) {
-        if (!disposed && e instanceof DOMException && e.name === "NotAllowedError") setError("אין גישה למיקרופון – אפשרו גישה בדפדפן ונסו שוב");
+        if (!disposed && e instanceof DOMException && e.name === "NotAllowedError") setError("כדי לדבר כאן צריך לאפשר גישה למיקרופון בדפדפן.");
         else if (!disposed) setError(e instanceof Error ? e.message : "לא הצלחנו לפתוח את המיקרופון.");
         cleanup();
       }
@@ -148,7 +148,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
     return () => clearInterval(timer);
   }, [connected]);
   const toggleMic = () => { streamRef.current?.getAudioTracks().forEach(t => { t.enabled = muted; }); setMuted(!muted); };
-  const exit = <button className="sk-primary" onClick={() => closeRef.current()}><PhoneOff size={17} />{connected ? "נסיים כאן" : "בחזרה לפורטל"}</button>;
+  const exit = <button className="sk-primary" onClick={() => closeRef.current()}><PhoneOff size={17} />{connected ? "נסיים כאן" : "חזרה לאזור האישי"}</button>;
   if (needsGesture) return <div className="sk-call"><button className="sk-primary" onClick={() => startRef.current()}>התחל לדבר</button>{exit}</div>;
   return <div className="sk-call">
     <div className={"sk-voice-orb " + (connected ? "is-speaking" : "")}><span /><span /><span /><Mic size={38} strokeWidth={1.1} /></div>
@@ -157,7 +157,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
     {connected && <p className="sk-timer" dir="ltr">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</p>}
     <div className="sk-actions">
       {connected && <button className="sk-icon" title={muted ? "פתיחת מיקרופון" : "השתקת מיקרופון"} aria-label={muted ? "פתיחת מיקרופון" : "השתקת מיקרופון"} aria-pressed={muted} onClick={toggleMic}>{muted ? <MicOff /> : <Mic />}</button>}
-      {error && !connected && <button className="sk-secondary" onClick={() => startRef.current()}>נסו שוב</button>}
+      {error && !connected && <button className="sk-secondary" onClick={() => startRef.current()}>לנסות שוב</button>}
       {exit}
     </div><small>כמו בטלפון, גם כאן השיחה משתמשת בדקות הלימוד שלך.</small>
   </div>;
