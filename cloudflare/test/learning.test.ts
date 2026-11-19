@@ -113,10 +113,13 @@ describe("Pro access and free fallback", () => {
     await b.savePreference("alice", { track: "grammar" });
     expect(await lesson()).toMatchObject({ topic: "everyday", level: "intermediate", vocabulary: [] });
   });
-  it("does not bypass free scope through personal materials", async () => {
+  it("allows unpaid personal materials while retaining the life-area and level fallback", async () => {
     await b.save("learner-materials:alice", { name: "Work", words: ["invoice — חשבונית"] }, "work");
     await b.savePreference("alice", { topic: "business", level: "fluent", material_id: "work" });
-    expect((await lesson()).vocabulary.every(t => t.domain === "everyday" && t.level !== "fluent")).toBe(true);
+    const effective = await lesson();
+    expect(effective).toMatchObject({ topic: "everyday", level: "intermediate", material_status: { id: "work", rows: 1, target_count: 1 } });
+    expect(effective.vocabulary).toHaveLength(1);
+    expect(effective.vocabulary[0]).toMatchObject({ text: "invoice", domain: "material:work", level: "custom" });
   });
   it("requires current, unspent, school receipts and exposes the same access flag", async () => {
     expect(await b.hasPaidAccess("alice")).toBe(false);

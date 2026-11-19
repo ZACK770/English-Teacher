@@ -120,7 +120,7 @@ export async function applyLearnerControls(
   const paid = await b.hasPaidAccess(customerId);
   const materialId = teacher?.material_id || p.material_id;
   const material = materialId ? await b.record(materialsKind(customerId), materialId) : null;
-  const words = MaterialSchema.safeParse(paid ? material : null);
+  const words = MaterialSchema.safeParse(material);
   const choices = resolveLessonChoices(p, bot.id, teacher);
   const effective = resolveFreeSelection(requestedTopic, choices.level, paid);
   const chosenTopic = effective.domain === "core" ? "everyday" : effective.domain;
@@ -140,7 +140,7 @@ export async function applyLearnerControls(
   };
   const direction = [
     `SpeakCall learner preferences: topic=${JSON.stringify(topic)}${recommended ? " (recommended by the application from the learner's level, goal and progress)" : ""}; practice=${JSON.stringify(p.track || "recommended")}.`,
-    !paid ? "Free access: teach only everyday or property at beginner or intermediate level. Saved Pro requests do not grant access; use this effective lesson, including after intake changes." : "",
+    !paid ? "Free access: life areas are limited to everyday or property at beginner or intermediate level; personal vocabulary materials remain available. Saved Pro requests do not grant access; use this effective lesson, including after intake changes." : "",
     `Speech pace: ${teacher?.pace || p.pace || "normal"}; articulate clearly with natural English pronunciation, not an exaggerated accent. Pace is separate from ability and learning load. The active correction policy below replaces legacy correction-frequency settings.`,
     `Personality: ${teacher?.personality || "warm"}. Help language: Hebrew; the active conversation mode controls when to offer help.`,
     plan.success ? `Learner intake: ${JSON.stringify({ ...plan.data, topic, level: choices.level })}. Adapt to the level and goal, focus on the stated difficulty.` : "",
