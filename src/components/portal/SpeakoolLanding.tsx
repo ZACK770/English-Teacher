@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Phone } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Phone, Monitor } from "lucide-react";
+import { EmailLogin } from "./EmailLogin";
+import { DirectVoice } from "./DirectVoice";
 import { PHONE_LINE } from "./LearnerPortal";
 import { LegalFooter } from "../legal/LegalFooter";
 import { legalBasePath } from "../../legalRoutes";
@@ -27,6 +29,7 @@ const domains = [
 ];
 
 export function SpeakoolLanding() {
+  const [voiceToken, setVoiceToken] = useState("");
   const base = legalBasePath(location.pathname);
   const learn = base + "/learn";
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
@@ -36,6 +39,7 @@ export function SpeakoolLanding() {
     const section = document.getElementById(location.hash.slice(1));
     if (section?.closest(".sk-land")) section.scrollIntoView();
   }, []);
+  if (voiceToken) return <DirectVoice token={voiceToken} onDone={() => { history.replaceState(null, "", base + "/"); setVoiceToken(""); }} />;
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"}><img src={logo} width={708} height={170} alt="SpeakCall — עמוד הבית" /></a>
@@ -47,9 +51,11 @@ export function SpeakoolLanding() {
           <p className="sk-land-kicker">אנגלית מדוברת · שיעור ראשון חינם</p>
           <h1 id="landing-heading">המורה מחכה.<span>עכשיו תור הפה.</span></h1>
           <p className="sk-land-lede">עשר דקות בחינם עם מורה AI סבלני. מדברים בקול, מקבלים עזרה כשנתקעים, וחוזרים למילים בשיחה הבאה.</p>
-          <LessonCallbackForm tel={tel} privacy={base + "/privacy"} />
+          <div className="sk-entry-cards">
+            <section className="sk-entry-card"><Phone aria-hidden="true" /><h2>המורה יחייג אליי</h2><LessonCallbackForm tel={tel} privacy={base + "/privacy"} /></section>
+            <section className="sk-entry-card" id="computer-call"><Monitor aria-hidden="true" /><h2>שיחה מהמחשב</h2><p>קוד קצר במייל — ומתחילים לדבר עם המורה.</p><EmailLogin onToken={token => { history.pushState(null, "", learn); setVoiceToken(token); }} /></section>
+          </div>
           <div className="sk-land-options">
-            <a href={learn}>לתרגול מהמחשב <ArrowUpRight aria-hidden="true" size={14} /></a>
             <a href={tel}><Phone aria-hidden="true" size={14} /> לחייג בעצמי: <bdi>{PHONE_LINE}</bdi></a>
           </div>
         </div>
@@ -69,7 +75,7 @@ export function SpeakoolLanding() {
             <p className="sk-land-kicker">שיעור ראשון בחינם</p>
             <h2 id="free-lesson-title">עשר דקות. בלי הרצאות.</h2>
             <p>בוחרים נושא ומדברים בקצב שלך. המורה עוזר כשנתקעים ובסוף מסכם מה כדאי לתרגל בפעם הבאה.</p>
-            <div className="sk-land-cta"><a className="sk-primary" href="#lesson-phone">שהמורה יחייג אליי</a><a className="sk-secondary" href={learn}>לתרגול מהמחשב <ArrowUpRight aria-hidden="true" size={17} /></a></div>
+            <div className="sk-land-cta"><a className="sk-primary" href="#lesson-phone">שהמורה יחייג אליי</a><a className="sk-secondary" href="#computer-call">שיחה מהמחשב <ArrowUpRight aria-hidden="true" size={17} /></a></div>
             <small>בלי כרטיס אשראי. בלי צורך להתכונן.</small>
           </div>
           <div className="sk-land-clock" aria-hidden="true">

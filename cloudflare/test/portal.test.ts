@@ -25,6 +25,87 @@ import { FRAME_BYTES, wav } from "../src/audio";
 import { cleanupCallbackQuota } from "../src/callbacks";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
+describe("email login", () => {
+  let sent: { to?: unknown; subject: string; text?: string; html?: string }[];
+  beforeEach(() => {
+    sent = [];
+    env.PORTAL_EMAIL = { send: vi.fn(async message => { sent.push(message as typeof sent[number]); return { messageId: "test" }; }) } as SendEmail;
+  });
+  const start = (email = "learner@example.com") => request("/v1/portal/auth/email/start", "", { email });
+  const verify = (challenge: string, value: string) => request("/v1/portal/auth/email/verify", "", { challenge, code: value });
+  const sentCode = () => sent.at(-1)!.subject.match(/\d{6}/)![0];
+
+  it("normalizes email, hashes the code, sends Hebrew multipart content, creates a learner and issues a single-use seven-day login", async () => {
+    const response = await start("  Learner@Example.com  ");
+    expect(response.status).toBe(200);
+    const { challenge, expires_in } = await response.json() as any;
+    expect(expires_in).toBe(600);
+    expect(sent[0].to).toBe("learner@example.com");
+    expect(sent[0].html).toContain('dir="rtl"');
+    expect(sent[0].text).toContain(sentCode());
+    const stored = JSON.parse(String(db.sql.prepare("SELECT body FROM console_settings WHERE id=?").get("portal-email:" + challenge)!.body));
+    expect(stored.hash).toHaveLength(64);
+    expect(stored.code).toBeUndefined();
+    const result = await verify(challenge, sentCode());
+    expect(result.status).toBe(200);
+    const { token } = await result.json() as any;
+    const account = await (await request("/v1/portal/me", token)).json() as any;
+    expect((await b.record("customers", account.customer.id))!.email).toBe("learner@example.com");
+    expect(account.customer.phone).toBe("");
+    expect(await b.portalCustomer(token)).toBe(account.customer.id);
+    const row = db.sql.prepare("SELECT expires_at FROM portal_tokens WHERE customer_id=?").get(account.customer.id)!;
+    expect(Date.parse(String(row.expires_at)) - Date.now()).toBeGreaterThan(7 * 86400000 - 5000);
+    expect((await verify(challenge, sentCode())).status).toBe(401);
+  });
+
+  it("matches an existing customer email case-insensitively without changing phone or revoking other tokens", async () => {
+    await b.save("customers", { name: "Learner A", phone: "0500000001", email: "Learner@Example.COM" }, "learner-a");
+    const { challenge } = await (await start()).json() as any;
+    const { token } = await (await verify(challenge, sentCode())).json() as any;
+    expect(await b.portalCustomer(token)).toBe("learner-a");
+    expect(await b.portalCustomer(tokenA)).toBe("learner-a");
+    expect((await b.record("customers", "learner-a"))!.phone).toBe("0500000001");
+  });
+
+  it("rejects wrong codes and locks after five attempts even with the correct code", async () => {
+    const { challenge } = await (await start()).json() as any;
+    const wrong = sentCode() === "000000" ? "111111" : "000000";
+    for (let n = 0; n < 5; n++) expect((await verify(challenge, wrong)).status).toBe(401);
+    expect((await verify(challenge, sentCode())).status).toBe(401);
+  });
+
+  it("allows a correct code after a wrong attempt, but not an expired challenge", async () => {
+    const { challenge } = await (await start()).json() as any;
+    expect((await verify(challenge, sentCode() === "000000" ? "111111" : "000000")).status).toBe(401);
+    expect((await verify(challenge, sentCode())).status).toBe(200);
+    const next = await (await start("other@example.com")).json() as any;
+    db.sql.prepare("UPDATE console_settings SET body=json_set(body,'$.expires',0) WHERE id=?").run("portal-email:" + next.challenge);
+    expect((await verify(next.challenge, sentCode())).status).toBe(401);
+  });
+
+  it("rate limits email and IP without disclosing account existence", async () => {
+    expect((await start()).status).toBe(200);
+    expect((await start("LEARNER@example.com")).status).toBe(429);
+    for (let n = 1; n < 40; n++) expect((await start(`learner${n}@example.com`)).status).toBe(200);
+    expect((await start("last@example.com")).status).toBe(429);
+    expect(sent).toHaveLength(40);
+  });
+
+  it("rejects empty, malformed inputs and unknown challenges", async () => {
+    for (const email of ["", "invalid", "a\r\nb@example.com"]) expect((await start(email)).status).toBe(422);
+    expect((await verify("a".repeat(48), "123456")).status).toBe(401);
+    expect((await verify("", "")).status).toBe(422);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("fails closed and removes the challenge if email sending fails", async () => {
+    env.PORTAL_EMAIL = { send: vi.fn(async () => { throw new Error("provider unavailable"); }) } as unknown as SendEmail;
+    expect((await start()).status).toBe(503);
+    expect(db.sql.prepare("SELECT id FROM console_settings WHERE id LIKE 'portal-email:%'").all()).toHaveLength(0);
+    expect(db.sql.prepare("SELECT id FROM console_records WHERE id LIKE 'email-%'").all()).toHaveLength(0);
+  });
+});
+
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
   constructor() {

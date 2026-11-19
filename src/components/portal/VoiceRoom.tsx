@@ -37,6 +37,8 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [needsGesture, setNeedsGesture] = useState(false);
+  const startRef = useRef<() => void>(() => {});
   const closeRef = useRef<() => void>(() => {});
   const streamRef = useRef<MediaStream | null>(null);
   useEffect(() => {
@@ -56,10 +58,16 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
       if (context && context.state !== "closed") void context.close();
     };
     closeRef.current = () => { disposed = true; cleanup(); onDone(); };
-    const start = async () => {
+    const start = async (gesture = false) => {
       try {
         if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) throw new Error("לשיחה קולית צריך דפדפן עדכני וחיבור מאובטח.");
         context = new AudioContext();
+        if (context.state === "suspended" && !gesture) {
+          await context.close();
+          setNeedsGesture(true);
+          return;
+        }
+        setNeedsGesture(false);
         await context.resume();
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
         if (disposed) { stream.getTracks().forEach(t => t.stop()); return; }
@@ -115,8 +123,13 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
           }
           cleanup();
         };
-      } catch (e) { if (!disposed) setError(e instanceof Error ? e.message : "לא הצלחנו לפתוח את המיקרופון."); cleanup(); }
+      } catch (e) {
+        if (!disposed && e instanceof DOMException && e.name === "NotAllowedError") setNeedsGesture(true);
+        else if (!disposed) setError(e instanceof Error ? e.message : "לא הצלחנו לפתוח את המיקרופון.");
+        cleanup();
+      }
     };
+    startRef.current = () => { void start(true); };
     void start();
     return () => { disposed = true; cleanup(); };
   }, [token, botId, teacherId]);
@@ -126,6 +139,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
     return () => clearInterval(timer);
   }, [connected]);
   const toggleMic = () => { streamRef.current?.getAudioTracks().forEach(t => { t.enabled = muted; }); setMuted(!muted); };
+  if (needsGesture) return <div className="sk-call"><button className="sk-primary" onClick={() => startRef.current()}>התחל לדבר</button></div>;
   return <div className="sk-call">
     <div className={"sk-voice-orb " + (connected ? "is-speaking" : "")}><span /><span /><span /><Mic size={38} strokeWidth={1.1} /></div>
     <p className="sk-eyebrow">שיחה עם {name}</p><h2>{error ? "רגע קטן." : "פשוט לדבר."}</h2>

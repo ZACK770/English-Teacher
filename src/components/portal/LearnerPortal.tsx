@@ -3,6 +3,8 @@ import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, Chevro
 import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
+import { EmailLogin } from "./EmailLogin";
+import { DirectVoice } from "./DirectVoice";
 import { LearningProgress } from "./LearningProgress";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
@@ -100,12 +102,14 @@ function Login({ onToken, error }: { onToken: (token: string) => void; error: st
         {challenge && <button type="button" className="sk-link" onClick={() => { setChallenge(""); setCode(""); }}>מספר אחר או צלצול נוסף</button>}
       </form>
       <details className="sk-more"><summary>יש לי קישור אישי <Plus size={13} /></summary><form onSubmit={e => { e.preventDefault(); const t = personal.includes("#") ? personal.split("#").pop()! : personal.trim(); if (/^[A-Za-z0-9_-]{30,128}$/.test(t)) onToken(t); else setNotice("אפשר להדביק כאן את הקישור האישי המלא שקיבלת."); }}><label htmlFor="personal-link" className="sk-sr">קישור אישי</label><input id="personal-link" type="text" dir="ltr" value={personal} onChange={e => setPersonal(e.target.value)} placeholder="הקישור שקיבלת" required /><button className="sk-secondary">כניסה עם הקישור</button></form></details>
+      <section className="sk-email-option"><h2>כניסה במייל · שיחה מהמחשב</h2><EmailLogin onToken={onToken} /></section>
       {notice && <p className="sk-error" role="alert">{notice}</p>}
     </section><div className="sk-login-art"><ConversationArt /><p>לא צריך לדבר שוטף.<br />צריך רק להתחיל.</p></div>
   </main>;
 }
 
 export const LearnerPortal: React.FC = () => {
+  const [directToken, setDirectToken] = useState("");
   const [token, setToken] = useState(initialToken);
   const [account, setAccount] = useState<Account | null>(null);
   const [checkoutPlan] = useState(() => new URLSearchParams(location.search).get("plan") || "");
@@ -120,7 +124,7 @@ export const LearnerPortal: React.FC = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null | undefined>();
   const mainRef = useRef<HTMLElement>(null);
-  const login = (value: string) => { sessionStorage.setItem("learnerToken", value); setToken(value); setError(""); };
+  const login = (value: string) => { sessionStorage.setItem("learnerToken", value); setToken(value); setError(""); setDirectToken(value); };
   const logout = () => { sessionStorage.removeItem("learnerToken"); setAccount(null); setToken(""); setPage("home"); };
   const refresh = useCallback(async () => {
     if (!token) { setLoading(false); return; }
@@ -189,6 +193,7 @@ export const LearnerPortal: React.FC = () => {
       <button className="sk-panel-card" onClick={() => navigate("achievements")}><strong>המילים שלך</strong><p>{activeMaterial ? "בשיחה הבאה: " + activeMaterial.name : nextWords(p.topic || p.plan?.topic)}</p><p>ציון מתעדכן רק כשמילה נבדקה באמת בשיחה.</p></button>
     </div>
   </>;
+  if (directToken) return <DirectVoice token={directToken} onDone={() => { setDirectToken(""); void refresh(); }} />;
   return <div className="speakool" dir="rtl">
     <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
