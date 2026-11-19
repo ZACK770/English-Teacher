@@ -1,4 +1,5 @@
 import { canPurchaseAutomatically } from "../../src/pricing";
+import { adOpening, adRuntimeContext, startAdEntry } from "./ad-entry";
 import { z } from "zod";
 import { BusinessStore } from "./business";
 import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
@@ -165,6 +166,8 @@ export async function runtimeContext(b: BusinessStore, callId: string): Promise<
   if (v.language) lines.push(`Translation target selected in IVR: ${v.language}.`);
   if (v.mode === "free") lines.push("Caller chose free conversation; do not force a structured course lesson.");
   if (v.mode === "course") lines.push("Caller chose a structured lesson; follow the assigned course if present, otherwise start with a short level calibration and a useful basic lesson.");
+  const ad = adRuntimeContext(v);
+  if (ad) lines.push(ad);
   return lines.join("\n");
 }
 
@@ -176,6 +179,8 @@ export async function quickOpening(b: BusinessStore, callId: string): Promise<st
     const intro = saved.intro_translation_seen ? "" : "ספיקול, תרגום. לתפריט אמרו: תפריט. ";
     return `אמרו רק: ${intro}אמרו את המשפט לתרגום. המתינו לדיבור, ללא הסברים נוספים.`;
   }
+  const ad = adOpening(context);
+  if (ad) return ad;
   if (context.quick_entry === "school") {
     const intro = saved.intro_school_seen ? "" : "פתחו בקצרה: ספיקול, פשוט לדבר. לתפריט אמרו: תפריט. ";
     return intro + "התחילו מיד בלמידה בספיקול, ללא תפריט, הרשמה או נאום פתיחה. אם קיים שיעור משויך, המשיכו ממנו בשאלה קצרה אחת. אחרת פתחו בעברית בתרגול אנגלית קל ובשאלה אחת. התאימו את הרמה להיסטוריה.";
@@ -284,6 +289,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     }
     result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
   } else if (p.PBXcallStatus === "HANGUP") result = { type: "hangup" };
+  else if (route === "ad") result = await startAdEntry(b, progress, s, callId, customerId, p.campaign);
   else if ((route === "main" && p.isaacMain === "1") || (route === "school" && [undefined, "1"].includes(p.isaacTeacher)) || (route === "mode" && ["1", "2"].includes(p.isaacMode))) {
     result = await startSchool(b, progress, s, callId, customerId);
   } else if ((route === "translator" && [undefined, "1", "START"].includes(p.isaacTranslation)) || route === "start-translation" || (route === "languages" && Object.hasOwn(languages, p.isaacLanguage))) {
