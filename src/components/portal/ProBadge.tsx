@@ -23,8 +23,8 @@ export function SelectionBadge({ domain = "recommended", level = "beginner" }: {
   return isProSelection(domain, level) ? <ProBadge /> : null;
 }
 
-export function ProChoices({ values, value, onChange, kind, label }: { values: Record<string, string>; value?: string; onChange: (value: string) => void; kind: "domain" | "level"; label: string }) {
+export function ProChoices({ values, value, onChange, kind, label, isProOption }: { values: Record<string, string>; value?: string; onChange: (value: string) => void; kind: "domain" | "level"; label: string; isProOption?: (id: string) => boolean }) {
   const { selectPro } = useProAccess();
-  const pro = (id: string) => !!id && (kind === "domain" ? isProDomain(id) : isProLevel(id));
+  const pro = (id: string) => !!id && (isProOption ? isProOption(id) : kind === "domain" ? isProDomain(id) : isProLevel(id));
   return <div className="sk-pro-choices" role="group" aria-label={label}>{Object.entries(values).map(([id, text]) => <button type="button" key={id} aria-pressed={value === id} className={"sk-choice " + (value === id ? "is-selected" : "")} onClick={() => { if (pro(id)) selectPro(); onChange(id); }}><span>{text}</span>{pro(id) && <ProBadge />}</button>)}</div>;
 }

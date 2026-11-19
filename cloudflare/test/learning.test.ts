@@ -11,7 +11,7 @@ import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, 
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
-import { isProDomain, isProLevel, isProSelection, resolveFreeSelection } from "../src/pro-access";
+import { isProDomain, isProLevel, isProSelection, isProVocabularySelection, resolveFreeSelection } from "../src/pro-access";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -120,6 +120,16 @@ describe("Pro access and free fallback", () => {
     expect(effective).toMatchObject({ topic: "everyday", level: "intermediate", material_status: { id: "work", rows: 1, target_count: 1 } });
     expect(effective.vocabulary).toHaveLength(1);
     expect(effective.vocabulary[0]).toMatchObject({ text: "invoice", domain: "material:work", level: "custom" });
+  });
+  it("never marks personal vocabulary domains or custom levels Pro", () => {
+    for (const domain of ["material:work", "material:deleted-list", "material:"]) {
+      for (const level of ["beginner", "intermediate", "fluent", "custom", ""]) expect(isProVocabularySelection(domain, level)).toBe(false);
+    }
+    for (const domain of ["everyday", "property", "business", ""]) expect(isProVocabularySelection(domain, "custom")).toBe(false);
+    expect(isProVocabularySelection("everyday", "beginner")).toBe(false);
+    expect(isProVocabularySelection("property", "intermediate")).toBe(false);
+    expect(isProVocabularySelection("everyday", "fluent")).toBe(true);
+    expect(isProVocabularySelection("business", "beginner")).toBe(true);
   });
   it("requires current school receipts and exposes the same access flag regardless of balance", async () => {
     expect(await b.hasPaidAccess("alice")).toBe(false);
