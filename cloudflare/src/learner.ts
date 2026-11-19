@@ -134,7 +134,7 @@ export async function applyLearnerControls(
     ...(words.success && p.track !== "grammar" ? { material_status: { id: materialId, rows: words.data.words.length, target_count: pool.length } } : {}),
   };
   const direction = [
-    `Speakool learner preferences: topic=${JSON.stringify(topic)}${recommended ? " (recommended by the application from the learner's level, goal and progress)" : ""}; practice=${JSON.stringify(p.track || "recommended")}.`,
+    `SpeakCall learner preferences: topic=${JSON.stringify(topic)}${recommended ? " (recommended by the application from the learner's level, goal and progress)" : ""}; practice=${JSON.stringify(p.track || "recommended")}.`,
     `Speech pace: ${teacher?.pace || p.pace || "normal"}; articulate clearly with natural English pronunciation, not an exaggerated accent. Pace is separate from ability and learning load. The active correction policy below replaces legacy correction-frequency settings.`,
     `Personality: ${teacher?.personality || "warm"}. Help language: Hebrew; the active conversation mode controls when to offer help.`,
     plan.success ? `Learner intake: ${JSON.stringify(plan.data)}. Adapt to the level and goal, focus on the stated difficulty.` : "",
