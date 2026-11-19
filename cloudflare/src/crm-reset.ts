@@ -26,7 +26,7 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   if ((await rows("SELECT 1 FROM active_calls WHERE call_id IN (SELECT value FROM json_each(?)) AND lease_expires_at>? LIMIT 1", calls, Date.now() / 1000)).length) throw new HttpError(409, "לא ניתן למחוק לקוח במהלך שיחה פעילה. יש לסיים את השיחה ולנסות שוב.");
   const subs = JSON.stringify((await rows("SELECT id FROM subscriptions WHERE customer_id=?", id)).map(r => r.id));
   const inSubs = "IN (SELECT value FROM json_each(?))";
-  if ((await rows(`SELECT 1 FROM standing_orders WHERE (customer_id=? OR entitlement_id ${inSubs}) AND state<>'cancelled'
+  if ((await rows(`SELECT 1 FROM standing_orders WHERE (customer_id=? OR entitlement_id ${inSubs}) AND state<>'cancelled' AND (state IN ('active','past_due') OR COALESCE(keva_id,'')<>'')
     UNION ALL SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=? AND s.status IN ('active','paused','past_due') AND p.billing IN ('monthly','yearly') LIMIT 1`, id, subs, id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם הוראת קבע או מנוי מתחדש פעיל. יש לבטל תחילה את החיוב אצל ספק התשלום.");
   const phoneRows = await rows(`SELECT phone FROM customer_phones WHERE customer_id=? UNION SELECT primary_phone AS phone FROM customers WHERE id=?
     UNION SELECT json_extract(body,'$.phone') FROM console_records WHERE (kind='customers' AND id=?) OR (kind='learner-phone-links' AND json_extract(body,'$.customer_id')=?)`, id, id, id, id);

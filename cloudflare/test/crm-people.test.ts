@@ -111,11 +111,16 @@ describe("CRM customer reset", () => {
     expect((await reset()).status).toBe(409);
     expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 1 });
   });
-  it.each(["active", "past_due", "pending", "failed"])("blocks a %s standing order", async (state) => {
+  it.each(["active", "past_due", "pending", "failed"])("blocks a provider-backed %s standing order", async (state) => {
     customer();
-    insert("standing_orders", { id: "standing", customer_id: "person1", package_id: "p", snapshot: "{}", monthly_agorot: 100, first_order_id: "o", state, created_at: now, updated_at: now });
+    insert("standing_orders", { id: "standing", customer_id: "person1", package_id: "p", snapshot: "{}", monthly_agorot: 100, first_order_id: "o", state, keva_id: "provider-standing-order", created_at: now, updated_at: now });
     expect((await reset()).status).toBe(409);
     expect(sql.prepare("SELECT COUNT(*) AS n FROM standing_orders").get()).toMatchObject({ n: 1 });
+  });
+  it.each(["active", "past_due", "pending", "failed"])("handles %s standing orders without a provider id", async state => {
+    customer();
+    insert("standing_orders", { id: "standing", customer_id: "person1", package_id: "p", snapshot: "{}", monthly_agorot: 100, first_order_id: "o", state, provider_ref: "checkout-reference", created_at: now, updated_at: now });
+    expect((await reset()).status).toBe(["active", "past_due"].includes(state) ? 409 : 200);
   });
   it.each(["active", "paused", "past_due"])("blocks a %s owned recurring subscription", async (status) => {
     customer(); planAndSubscription("person1", status);
