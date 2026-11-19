@@ -57,6 +57,10 @@ export const AppContent: React.FC = () => {
           'connections',
         ].includes(hash)
       ) {
+        if (hash === 'customers') {
+          window.location.replace(`${legalBasePath(window.location.pathname)}/dashboard/crm`);
+          return;
+        }
         setCurrentView('dashboard');
         setDashboardTab(hash);
       } else {
@@ -83,6 +87,10 @@ export const AppContent: React.FC = () => {
   };
 
   const handleSelectDashboardTab = (tab: string) => {
+    if (tab === 'customers') {
+      window.location.href = `${legalBasePath(window.location.pathname)}/dashboard/crm`;
+      return;
+    }
     setDashboardTab(tab);
     window.location.hash = tab;
   };
