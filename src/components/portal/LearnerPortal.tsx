@@ -3,6 +3,8 @@ import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, Chevro
 import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
+import { EmailLogin } from "./EmailLogin";
+import { DirectVoice } from "./DirectVoice";
 import { LearningProgress } from "./LearningProgress";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { SubscriptionPanel } from "./SubscriptionPanel";
@@ -74,7 +76,7 @@ function Login({ onToken, error }: { onToken: (token: string) => void; error: st
     finally { setBusy(false); }
   };
   return <main className="sk-login">
-    <section className="sk-login-copy"><h1>פשוט<br />לדבר<span>.</span></h1><p className="sk-lede">את השפה הראשונה שלך לא למדת מספר.<br />הקשבת. ניסית. דיברת.<br />בוא נעשה את זה שוב. הפעם באנגלית.</p>
+    <section className="sk-login-copy"><h1>פשוט{" "}<br />לדבר<span>.</span></h1><p className="sk-lede">את השפה הראשונה שלך לא למדת מספר.<br />הקשבת. ניסית. דיברת.<br />בוא נעשה את זה שוב. הפעם באנגלית.</p>
       <form onSubmit={submit} className="sk-login-form">
         <label htmlFor="sk-phone">{challenge ? "מה שש הספרות האחרונות של המספר שצלצל?" : "באיזה מספר נדבר?"}</label>
         {!challenge ? <input id="sk-phone" type="tel" dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="050-000-0000" required /> : <input id="sk-phone" key="otp" autoFocus dir="ltr" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" pattern="[0-9]{6}" required />}
@@ -82,13 +84,15 @@ function Login({ onToken, error }: { onToken: (token: string) => void; error: st
         <small>{challenge ? "לא צריך לענות. רק להעתיק את שש הספרות האחרונות." : "צלצול אחד, בלי הודעות ובלי סיסמאות."}</small>
         {challenge && <button type="button" className="sk-link" onClick={() => { setChallenge(""); setCode(""); }}>מספר אחר או צלצול נוסף</button>}
       </form>
-      <details className="sk-more"><summary>יש לי קישור אישי <Plus size={13} /></summary><form onSubmit={e => { e.preventDefault(); const t = personal.includes("#") ? personal.split("#").pop()! : personal.trim(); if (/^[A-Za-z0-9_-]{30,128}$/.test(t)) onToken(t); else setNotice("אפשר להדביק כאן את הקישור האישי המלא שקיבלת."); }}><label htmlFor="personal-link" className="sk-sr">קישור אישי</label><input id="personal-link" type="text" dir="ltr" value={personal} onChange={e => setPersonal(e.target.value)} placeholder="הקישור שקיבלת" required /><button className="sk-secondary">כניסה עם הקישור</button></form></details>
+      <form className="sk-more sk-personal-login" onSubmit={e => { e.preventDefault(); const t = personal.includes("#") ? personal.split("#").pop()! : personal.trim(); if (/^[A-Za-z0-9_-]{30,128}$/.test(t)) onToken(t); else setNotice("אפשר להדביק כאן את הקישור האישי המלא שקיבלת."); }}><label htmlFor="personal-link">קישור אישי</label><input id="personal-link" type="text" dir="ltr" value={personal} onChange={e => setPersonal(e.target.value)} placeholder="הקישור שקיבלת" required /><button className="sk-secondary">כניסה עם הקישור</button></form>
+      <section className="sk-email-option"><h2>כניסה במייל · שיחה מהמחשב</h2><EmailLogin onToken={onToken} /></section>
       {notice && <p className="sk-error" role="alert">{notice}</p>}
     </section><div className="sk-login-art"><ConversationArt /><p>לא צריך לדבר שוטף.<br />צריך רק להתחיל.</p></div>
   </main>;
 }
 
 export const LearnerPortal: React.FC = () => {
+  const [directToken, setDirectToken] = useState("");
   const [token, setToken] = useState(initialToken);
   const [account, setAccount] = useState<Account | null>(null);
   const [checkoutPlan] = useState(() => new URLSearchParams(location.search).get("plan") || "");
@@ -103,7 +107,7 @@ export const LearnerPortal: React.FC = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null | undefined>();
   const mainRef = useRef<HTMLElement>(null);
-  const login = (value: string) => { sessionStorage.setItem("learnerToken", value); setToken(value); setError(""); };
+  const login = (value: string) => { sessionStorage.setItem("learnerToken", value); setToken(value); setError(""); setDirectToken(value); };
   const logout = () => { sessionStorage.removeItem("learnerToken"); setAccount(null); setToken(""); setPage("home"); };
   const refresh = useCallback(async () => {
     if (!token) { setLoading(false); return; }
@@ -156,7 +160,8 @@ export const LearnerPortal: React.FC = () => {
         <h2>{p.plan ? <>{topics[p.topic || p.plan.topic] || "שיחה קטנה"}. במילים שלך.</> : <>פשוט לדבר.</>}</h2>
         <p>{teacherName} כבר על הקו · {p.minutes || p.plan?.minutes || 10} דקות · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}</p>
         {p.track !== "grammar" && activeMaterial?.target_count === 0 && <p role="status" className="sk-notice">לרשימה ״{activeMaterial.name}״ עוד אין יעדי אנגלית, אז מדברים בלי ציוני מילים. <button className="sk-link" onClick={() => navigate("materials")}>לרשימות</button></p>}
-        <div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={19} />{account.progress.session_count ? "להמשיך בטלפון" : "בוא נדבר בטלפון"}</button><button className="sk-secondary" onClick={() => talk()}><Mic size={18} />לדבר כאן</button><button className="sk-link" onClick={() => navigate(p.plan ? "plan" : "intake")}>{p.plan ? "התוכנית שלי" : "נכיר רגע?"}</button></div>
+        <section className="sk-phone-inline" aria-label="שיחה בטלפון"><h3>{account.progress.session_count ? "להמשיך בטלפון" : "בוא נדבר בטלפון"}</h3><PhoneInstructions account={account} teacherName={teacherName} /></section>
+        <div className="sk-actions"><button className="sk-secondary" onClick={() => talk()}><Mic size={18} />לדבר כאן</button><button className="sk-link" onClick={() => navigate(p.plan ? "plan" : "intake")}>{p.plan ? "התוכנית שלי" : "נכיר רגע?"}</button></div>
       </div>
       <div className="sk-hero-art"><ConversationArt /></div>
     </section>
@@ -172,6 +177,7 @@ export const LearnerPortal: React.FC = () => {
       <button className="sk-panel-card" onClick={() => navigate("achievements")}><strong>המילים שלך</strong><p>{activeMaterial ? "בשיחה הבאה: " + activeMaterial.name : nextWords(p.topic || p.plan?.topic)}</p><p>ציון מתעדכן רק כשמילה נבדקה באמת בשיחה.</p></button>
     </div>
   </>;
+  if (directToken) return <DirectVoice token={directToken} onDone={() => { setDirectToken(""); void refresh(); }} />;
   return <div className="speakool" dir="rtl">
     <div className={"sk-shell" + (account ? " has-side" : "")}>{account ? <aside className="sk-side"><Brand collapse onClick={() => navigate("home")} /><nav className="sk-sidenav" aria-label="הפורטל שלי">{nav.map(([id, label, icon]) => <button key={id} aria-label={label} className={page === id || (id === "home" && (page === "plan" || page === "intake")) ? "is-active" : ""} aria-current={page === id ? "page" : undefined} onClick={() => navigate(id)}>{icon}<span>{label}</span></button>)}</nav><button className="sk-side-out" aria-label="יציאה" onClick={logout}><LogOut size={20} /><span>יציאה</span></button></aside> : <header className="sk-header"><Brand onClick={() => navigate("home")} /></header>}
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={logout}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
@@ -207,13 +213,17 @@ export const LearnerPortal: React.FC = () => {
     </div>
     {note && <div className="sk-toast" role="status"><Check size={16} />{note}</div>}
     {busy && <span className="sk-saving" role="status">רק רגע, שומרים…</span>}
-    {phoneOpen && account && <Modal title="נתראה בצד השני של הקו." onClose={() => setPhoneOpen(false)}><p>מתקשרים מהמספר שמחובר לחשבון שלך, ומגיעים אל {teacherName}.</p><a className="sk-phone-number" href={"tel:" + account.phone} dir="ltr">{account.phone.replace(/(\d{3})(\d{3})(\d+)/, "$1-$2-$3")}<Phone size={23} /></a><p>מקישים <strong>1</strong> ונכנסים ישר לשיעור. מקש <strong>2</strong> הוא האזור האישי: מורה, סוג שיעור וחבילות. ובאמצע שיחה אפשר פשוט לבקש מהמורה לשנות כיוון — זה נשמר גם כאן.</p><div className="sk-phone-note"><Check size={16} />המורה, ההעדפות והמילים שלך כבר מחכים שם.</div><small>המספר המחובר: <bdi>{account.customer.phone}</bdi></small></Modal>}
+    {phoneOpen && account && <Modal title="נתראה בצד השני של הקו." onClose={() => setPhoneOpen(false)}><PhoneInstructions account={account} teacherName={teacherName} /></Modal>}
     {voice && <Modal title="בוא נדבר." onClose={() => { setVoice(null); void refresh(); }}><VoiceRoom token={token} {...voice} onDone={() => { setVoice(null); void refresh(); }} /></Modal>}
     {builder && account && <Modal title="מורה. בדיוק בראש שלך." error={error} busy={busy} onClose={() => setBuilder(false)}><Direction purpose="teacher" initial={directionDraft(p, active)} materials={account.materials} saving={busy} onFinish={async d => { if (await run(async () => { const saved = await portalRequest<Teacher>("/v1/portal/teachers", token, { name: d.name.trim(), base_bot: botId || baseTeachers[0]?.id || "", personality: d.personality, voice: d.voice, explanation: "hebrew", pace: d.pace, corrections: "gentle", topic: d.topic, material_id: d.material_id, level: d.level, conversation_mode: d.conversation_mode, learning_load: d.learning_load || "light", correction_policy: d.correction_policy, closing_activity: d.closing_activity || "roleplay" }); await save({ active_teacher: saved.id }); }, "נעים להכיר. המורה החדש שלך כבר בטלפון.")) setBuilder(false); }} onPreview={voiceName => {
       void run(async () => { const r = await portalRequest<{ audio_wav_base64: string }>("/v1/portal/voice-preview", token, { voice: voiceName }); const audio = new Audio("data:audio/wav;base64," + r.audio_wav_base64); await audio.play(); });
     }} /></Modal>}
   </div>;
 };
+
+function PhoneInstructions({ account, teacherName }: { account: Account; teacherName: string }) {
+  return <><p>מתקשרים מהמספר שמחובר לחשבון שלך, ומגיעים אל {teacherName}.</p><a className="sk-phone-number" href={"tel:" + account.phone} dir="ltr">{account.phone.replace(/(\d{3})(\d{3})(\d+)/, "$1-$2-$3")}<Phone size={23} /></a><p>מקישים <strong>1</strong> ונכנסים ישר לשיעור. מקש <strong>2</strong> הוא האזור האישי: מורה, סוג שיעור וחבילות. ובאמצע שיחה אפשר פשוט לבקש מהמורה לשנות כיוון — זה נשמר גם כאן.</p><div className="sk-phone-note"><Check size={16} />המורה, ההעדפות והמילים שלך כבר מחכים שם.</div><small>המספר המחובר: <bdi>{account.customer.phone || "טרם חובר מספר טלפון — אפשר להוסיף מספר בהעדפות"}</bdi></small></>;
+}
 
 function Empty({ icon, title, text, action, actionLabel }: { icon: React.ReactNode; title: string; text: string; action?: () => void; actionLabel?: string }) {
   return <div className="sk-empty"><div className="sk-empty-mark">{icon}</div><h2>{title}</h2><p>{text}</p>{action && <button className="sk-primary" onClick={action}>{actionLabel}<ArrowLeft size={16} /></button>}</div>;

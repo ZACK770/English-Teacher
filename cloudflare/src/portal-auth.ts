@@ -2,12 +2,14 @@ import { z } from "zod";
 import { BusinessStore, normalizedPhone } from "./business";
 import { type Env, HttpError, nowIso, randomHex, secureEqual, sha256Hex, tokenUrlsafe } from "./env";
 import { learnerBody, requireLearner } from "./learner";
+import { emailAuth } from "./email-auth";
 
 export function cleanupPortalAuth(env: Env) {
   const now = Date.now();
   const iso = new Date(now).toISOString();
   return env.DB.batch([
-    env.DB.prepare("DELETE FROM console_settings WHERE (id LIKE 'portal-auth:%' OR id LIKE 'voice-ticket:%') AND json_extract(body,'$.expires')<?").bind(now),
+    env.DB.prepare("DELETE FROM console_settings WHERE (id LIKE 'portal-auth:%' OR id LIKE 'voice-ticket:%' OR id LIKE 'portal-email:%') AND json_extract(body,'$.expires')<?").bind(now),
+    env.DB.prepare("DELETE FROM api_quota WHERE api LIKE 'portal-email:%' AND month<?").bind(iso.slice(0, 7)),
     env.DB.prepare(`DELETE FROM api_quota WHERE
       (api GLOB 'portal-ring:day:????-??-??' AND substr(api,-10)<?) OR
       (api GLOB 'portal-ring:*:????-??-??T??' AND substr(api,-13)<?) OR
@@ -37,6 +39,8 @@ export async function phoneAuthStatus(env: Env) {
 }
 
 export async function portalAuth(request: Request, env: Env, path: string): Promise<Response | null> {
+  const email = await emailAuth(request, env, path);
+  if (email) return email;
   if (!path.startsWith("/v1/portal/auth/")) return null;
   if (request.method !== "POST") throw new HttpError(405, "יש לשלוח את הפרטים מהטופס.");
   const b = new BusinessStore(env.DB);

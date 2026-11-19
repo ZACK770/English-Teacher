@@ -5,12 +5,13 @@ import { canPurchaseAutomatically, SCHOOL_FREE_POLICY } from "../../src/pricing"
 import { visiblePhone } from "./phone";
 
 export const CustomerSchema = z.object({
-  name: z.string().min(1).max(100),
-  phone: z.string().min(5).max(40),
+  name: z.string().max(100),
+  phone: z.union([z.string().min(5).max(40), z.literal("")]),
+  email: z.union([z.string().trim().toLowerCase().max(254).email(), z.literal("")]).optional(),
   source: z.string().max(80).default("organic"),
   preferred_bot: z.string().max(63).default(""),
   notes: z.string().max(2000).default(""),
-});
+}).refine(customer => customer.phone ? customer.name.length > 0 : !!customer.email, { message: "נדרשים שם וטלפון או כתובת מייל תקינה" });
 export const PackageSchema = z.object({
   name: z.string().min(1).max(100),
   product: z.enum(["school", "translator"]),
@@ -144,10 +145,14 @@ export class BusinessStore {
     const id = entityId || randomHex(10);
     const stmts: D1PreparedStatement[] = [];
     if (kind === "customers") {
-      body.phone = normalizedPhone(body.phone);
-      const other = await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(body.phone).first<{ customer_id: string }>();
-      if (other && other.customer_id !== id) throw new Error("מספר טלפון שכבר רשום");
-      stmts.push(this.db.prepare("INSERT INTO customer_phones(phone,customer_id) VALUES (?,?) ON CONFLICT(customer_id) DO UPDATE SET phone=excluded.phone").bind(body.phone, id));
+      if (body.phone === "" && z.string().email().safeParse(body.email).success) {
+        stmts.push(this.db.prepare("DELETE FROM customer_phones WHERE customer_id=?").bind(id));
+      } else {
+        body.phone = normalizedPhone(body.phone);
+        const other = await this.db.prepare("SELECT customer_id FROM customer_phones WHERE phone=?").bind(body.phone).first<{ customer_id: string }>();
+        if (other && other.customer_id !== id) throw new Error("מספר טלפון שכבר רשום");
+        stmts.push(this.db.prepare("INSERT INTO customer_phones(phone,customer_id) VALUES (?,?) ON CONFLICT(customer_id) DO UPDATE SET phone=excluded.phone").bind(body.phone, id));
+      }
     }
     if (kind === "courses" && body.active) {
       const teacher = await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(body.bot_id).first();
@@ -169,7 +174,7 @@ export class BusinessStore {
     if (kind === "customers") {
       stmts.push(this.db.prepare(`INSERT INTO customers(id,name,primary_phone,source,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET name=excluded.name,primary_phone=excluded.primary_phone,source=excluded.source,notes=excluded.notes,updated_at=excluded.updated_at`)
-        .bind(id, body.name ?? "", body.phone, body.source ?? "", body.notes ?? "", now, now));
+        .bind(id, body.name ?? "", body.phone || null, body.source ?? "", body.notes ?? "", now, now));
     }
     if (kind === "packages") {
       stmts.push(this.db.prepare(`INSERT INTO plans(id,name,product,billing,price_agorot,included_minutes,validity_days,active,created_at,updated_at)
