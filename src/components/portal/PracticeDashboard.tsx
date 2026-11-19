@@ -36,8 +36,9 @@ function Timeline({ sessions, days, goal, selected, onSelect, compact = false }:
       <div className="pd-axis" aria-hidden="true">{ticks.map((tick, i) => <span key={i}>{Math.round(tick / 60)}</span>)}</div>
       <div className="pd-columns" style={{ gridTemplateColumns: `repeat(${days}, minmax(0, 1fr))` }}>
         <div className="pd-goal-band" style={{ height: `${goal * 60 / scale * 100}%` }} aria-hidden="true" />
-        {data.map(day => {
-          const content = <><span className="pd-bar" style={{ height: day.seconds > 0 ? `max(3px, ${day.seconds / scale * 100}%)` : 0 }} />{day.seconds > 0 && <span className="pd-bar-value" style={{ bottom: `${day.seconds / scale * 100}%` }}>{minutesLabel(day.seconds)}</span>}<span className="pd-day-label">{day.date.toLocaleDateString("he-IL", { timeZone: "UTC", day: "numeric", month: "numeric" })}</span></>;
+        {data.map((day, index) => {
+          const showDate = days <= 14 || index % 5 === 0 || index === days - 1;
+          const content = <><span className="pd-bar" style={{ height: day.seconds > 0 ? `max(3px, ${day.seconds / scale * 100}%)` : 0 }} />{day.seconds > 0 && <span className="pd-bar-value" style={{ bottom: `${day.seconds / scale * 100}%` }}>{minutesLabel(day.seconds)}</span>}{showDate && <span className="pd-day-label">{day.date.toLocaleDateString("he-IL", { timeZone: "UTC", day: "numeric", month: "numeric" })}</span>}</>;
           const label = fullDate(day.date) + ": " + minutesLabel(day.seconds) + " דקות תרגול; יעד " + goal + " דקות";
           return onSelect ? <button key={day.key} className={"pd-column " + (selected === day.key ? "is-selected" : "")} aria-label={label} aria-pressed={selected === day.key} onClick={() => onSelect(day.key)}>{content}</button> : <div key={day.key} className="pd-column" role="img" aria-label={label}>{content}</div>;
         })}
