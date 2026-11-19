@@ -2,10 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-let Journey, CustomerCount, DeleteCustomer;
+let Journey, CustomerCount, DeleteCustomer, AdminIdentityContext;
 beforeAll(async () => {
   vi.stubGlobal("location", { pathname: "/dashboard/crm" });
   ({ Journey, CustomerCount, DeleteCustomer } = await import("../../src/components/dashboard/CrmPage"));
+  ({ AdminIdentityContext } = await import("../../src/components/dashboard/AdminAuthGate"));
 });
 afterAll(() => vi.unstubAllGlobals());
 const step = (id, kind, call_id) => ({ id, kind, call_id, at: "2026-11-19T10:00:00Z", label: id });
@@ -47,8 +48,12 @@ describe("CRM physical call grouping", () => {
 });
 
 describe("CRM customer reset confirmation", () => {
+  it.each(["staff", null])("hides delete controls for role %s", role => {
+    const html = renderToStaticMarkup(createElement(AdminIdentityContext.Provider, { value: role ? { username: "staff", role } : null }, createElement(DeleteCustomer, { person: { id: "person1", phone: "0501234567" } })));
+    expect(html).toBe("");
+  });
   it.each(["0501234567", ""])("explains destructive reset, provider billing and confirmation for phone %s", phone => {
-    const html = renderToStaticMarkup(createElement(DeleteCustomer, { person: { id: "person1", phone } }));
+    const html = renderToStaticMarkup(createElement(AdminIdentityContext.Provider, { value: { username: "owner", role: "owner" } }, createElement(DeleteCustomer, { person: { id: "person1", phone } })));
     expect(html).toContain("מחיקת לקוח");
     expect(html).toContain("איפוס למתקשר חדש");
     expect(html).toContain("המחיקה אינה מבטלת חיובים אצל ספק התשלום");

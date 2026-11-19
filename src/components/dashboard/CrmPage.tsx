@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useAdminIdentity } from './AdminAuthGate';
 import './crm.css';
 
 type Status = 'new' | 'trial' | 'callback_pending' | 'offer_no_buy' | 'dropped' | 'paying';
@@ -20,6 +21,7 @@ async function read<T,>(path: string, signal?: AbortSignal): Promise<T> {
 }
 function Badge({ person }: { person: Person }) { return <span className={'crm-badge crm-' + person.status}>{person.status_label}</span>; }
 export function DeleteCustomer({ person }: { person: Pick<Person, 'id' | 'phone'> }) {
+  const identity = useAdminIdentity();
   const dialog = useRef<HTMLDialogElement>(null);
   const [confirm, setConfirm] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const expected = person.phone || person.id;
@@ -33,6 +35,7 @@ export function DeleteCustomer({ person }: { person: Pick<Person, 'id' | 'phone'
     } catch { setError('מחיקת הלקוח נכשלה. בדקו את החיבור ונסו שוב.'); }
     finally { setBusy(false); }
   }
+  if (identity?.role !== 'owner') return null;
   return <><button className="crm-button crm-danger" onClick={() => { setConfirm(''); setError(''); dialog.current?.showModal(); }}>מחיקת לקוח</button><dialog className="crm-reset-dialog" ref={dialog} aria-labelledby="crm-reset-title" onCancel={e => { if (busy) e.preventDefault(); }}><form onSubmit={e => void remove(e)}><h2 id="crm-reset-title">איפוס למתקשר חדש</h2><p>פעולה זו מוחקת לצמיתות את כל היסטוריית הלקוח, ההעדפות והשיחות, כדי שהטלפון יתחיל כמתקשר חדש. לא ניתן לבטל את המחיקה.</p><p>המחיקה אינה מבטלת חיובים אצל ספק התשלום. הוראת קבע או חיוב מתחדש פעיל יש לבטל אצל הספק לפני המחיקה.</p><label htmlFor="crm-reset-confirm">לאישור, הקלידו את {person.phone ? 'מספר הטלפון' : 'מזהה הלקוח'}: <b dir="ltr">{expected}</b></label><input id="crm-reset-confirm" dir="ltr" autoComplete="off" value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy} autoFocus />{error && <p role="alert">{error}</p>}<div className="crm-between"><button className="crm-button" type="button" disabled={busy} onClick={() => dialog.current?.close()}>ביטול</button><button className="crm-button crm-danger" type="submit" disabled={busy || confirm !== expected}>{busy ? 'מוחקים…' : 'מחיקה לצמיתות'}</button></div></form></dialog></>;
 }
 function Kpis({ items }: { items: [string, string][] }) { return <div className="crm-kpis">{items.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>; }
