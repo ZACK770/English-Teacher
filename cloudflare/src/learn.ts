@@ -105,18 +105,20 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const controls = await applyLearnerControls(b, customerId, bot, await progress.loadControls(botId, defaults(s, botId)));
   const callId = "web-" + randomHex(12);
   const allowance = await b.reserveCall(customerId, botId, callId, 120, "text");
+  if (allowance.mode === "busy") throw new HttpError(409, "כבר יש לך שיחה פעילה. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.");
   if (!allowance.seconds) throw new HttpError(402, "אין יתרת שימוש זמינה. פנה לשירות לרכישת חבילה");
-  await b.registerWebCall(callId, customerId, botId);
-  const learning = new LearningStore(env.DB);
-  if (controls.lesson) await learning.begin(customerId, callId, controls.lesson);
-  let history = (await progress.lessonContext(customerId)) + (await b.lessonContext(customerId, botId));
-  await b.saveContext(callId, await b.loadContext("preferences:" + customerId));
-  history += "\n" + (await runtimeContext(b, callId));
-  const artifact = await compilePrompt({ ...controls, opening_message: text }, history, botId, s);
-  const startedAt = new Date();
+  let startedAt: Date | null = null;
   let result: LiveResult | null = null;
   let limited = false;
   try {
+    await b.registerWebCall(callId, customerId, botId);
+    const learning = new LearningStore(env.DB);
+    if (controls.lesson) await learning.begin(customerId, callId, controls.lesson);
+    let history = (await progress.lessonContext(customerId)) + (await b.lessonContext(customerId, botId));
+    await b.saveContext(callId, await b.loadContext("preferences:" + customerId));
+    history += "\n" + (await runtimeContext(b, callId));
+    const artifact = await compilePrompt({ ...controls, opening_message: text }, history, botId, s);
+    startedAt = new Date();
     if (controls.store_transcripts) {
       await progress.savePromptSnapshot(botId, callId, artifact);
       await progress.logTurn(botId, callId, "input", text);
@@ -130,11 +132,12 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     if (error instanceof GeminiBudgetError) { limited = true; throw error; }
+    if (!startedAt) throw error;
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });
     throw new HttpError(502, "המורה לא הצליח להשיב כרגע. נסה שוב");
   } finally {
     await b.settleCall(callId, result?.elapsedSeconds ?? 0);
-    if (!limited) {
+    if (startedAt && !limited) {
       const meter = result?.meter ?? new SessionMeter();
       meter.learnerTurns = 1;
       await progress.saveSession({

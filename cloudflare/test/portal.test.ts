@@ -20,6 +20,8 @@ import { PackageSchema } from "../src/business";
 import { PaymentStore } from "../src/payments";
 import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
+import { syncCrm } from "../src/crm";
+import { FRAME_BYTES, wav } from "../src/audio";
 import { cleanupCallbackQuota } from "../src/callbacks";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
@@ -407,6 +409,168 @@ describe("public callback quota", () => {
     await cleanupCallbackQuota(env);
     expect(db.sql.prepare("SELECT api FROM api_quota").all()).toEqual([]);
     expect((await submit(8, "192.0.2.1")).status).toBe(201);
+  });
+});
+
+describe("call minute reservations", () => {
+  async function buyMinute() {
+    const { id: packageId } = await b.save("packages", PackageSchema.parse({ name: "One minute", product: "school", minutes: 1, price_ils: 1, active: true }));
+    return b.receipt({ customer_id: "learner-a", package_id: packageId, reference: "test-minute", amount_ils: 1 });
+  }
+
+  const reserve = (callId: string, seconds = 60, customer = "learner-a") => b.reserveCall(customer, "student", callId, seconds);
+
+  it("allows only one concurrent paid call and preserves the unused balance", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    const callIds = ["phone", "browser", "another"];
+    const results = await Promise.all(callIds.map(id => reserve(id, 40)));
+    expect(results.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 0, 40]);
+    const winner = callIds[results.findIndex(row => row.seconds === 40)];
+    await b.settleCall(winner, 90);
+    await b.settleCall(winner, 0);
+    expect((await reserve(winner)).mode).toBe("blocked");
+    expect((await b.customerDetail("learner-a")).receipts[0].spent_seconds).toBe(40);
+    expect((await reserve("next")).seconds).toBe(20);
+  });
+
+  it("grants the last free-call slot only once", async () => {
+    await b.save("policies", { enabled: true, free_calls_month: 1 }, "student");
+    const callIds = ["one", "two"];
+    const calls = await Promise.all(callIds.map(id => reserve(id)));
+    expect(calls.map(row => row.mode).sort()).toEqual(["busy", "free"]);
+    await b.settleCall(callIds[calls.findIndex(row => row.mode === "free")], 60);
+    expect((await reserve("three")).mode).toBe("blocked");
+  });
+
+  it("blocks both monthly contenders during an opening lesson and admits only one after it ends", async () => {
+    await b.save("policies", SCHOOL_FREE_POLICY, "student");
+    expect(await b.reserveCall("learner-a", "student", "first-monthly", 120, "text")).toMatchObject({ mode: "free", seconds: 120 });
+    await b.settleCall("first-monthly", 120);
+    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 600 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
+
+    const whileOpening = await Promise.all([reserve("held-one", 600), reserve("held-two", 600)]);
+    expect(whileOpening.map(call => call.mode)).toEqual(["busy", "busy"]);
+    await b.settleCall("opening", 600);
+    const calls = await Promise.all([reserve("voice-one", 600), reserve("voice-two", 600)]);
+    expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 300]);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0 });
+  });
+
+  it("enforces basic daily slots and the shared monthly budget atomically", async () => {
+    await b.save("policies", { enabled: true, basic_enabled: true, basic_calls_day: 1, basic_month_seconds: 40, basic_call_seconds: 30 }, "student");
+    const sameCustomer = await Promise.all([reserve("one"), reserve("two")]);
+    expect(sameCustomer.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 30]);
+    const differentCustomer = await Promise.all([reserve("three", 60, "learner-b"), reserve("four", 60, "learner-c")]);
+    expect(differentCustomer.map(row => row.seconds).sort((a, b) => a - b)).toEqual([0, 10]);
+  });
+
+  it("blocks a second phone or web session for the same caller and admits another after release", async () => {
+    await b.save("policies", { enabled: false, blocked_extension: "/99/8" }, "student");
+    const frame = (callId: string, token = "test-channel") => JSON.stringify({
+      type: "start", token, format: "pcm16;rate=8000;ch=1", callId, caller: "0500000001",
+    });
+    const socket = () => ({ send: vi.fn(), close: vi.fn() });
+    let finish!: () => void;
+    let onConnect!: () => void;
+    const finished = new Promise<void>(resolve => { finish = resolve; });
+    const connected = new Promise<void>(resolve => { onConnect = resolve; });
+    const connect = vi.spyOn(GeminiLive.prototype, "connect").mockImplementationOnce(async () => {
+      onConnect();
+      await finished;
+      throw new Error("Test call ended");
+    }).mockRejectedValue(new Error("Test model unavailable"));
+    const first = new TutorSession(socket() as unknown as WebSocket, env, settings(env), "first-owner");
+    const active = first.run(frame("first-phone"), "student", false);
+    try {
+      await Promise.race([connected, active.then(() => { throw new Error("First call never connected"); })]);
+      const secondPhone = socket();
+      const notice = new Uint8Array(FRAME_BYTES).fill(3);
+      vi.mocked(env.ASSETS.fetch).mockResolvedValueOnce(new Response(wav(notice, 8000)));
+      await new TutorSession(secondPhone as unknown as WebSocket, env, settings(env), "second-owner")
+        .run(frame("second-phone"), "student", false);
+      expect(vi.mocked(env.ASSETS.fetch).mock.calls[0][0]).toMatchObject({ url: "https://assets.invalid/customer-busy.wav" });
+      expect(secondPhone.send).toHaveBeenNthCalledWith(1, notice);
+      expect(secondPhone.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "hangup" }));
+      const browser = socket();
+      await new TutorSession(browser as unknown as WebSocket, env, settings(env), "web-owner", null, { customerId: "learner-a", teacherId: "" })
+        .run(frame("browser", "portal"), "student", false);
+      expect(browser.send).toHaveBeenCalledWith(JSON.stringify({ type: "hangup", reason: "customer_busy" }));
+      const text = await request("/v1/bots/student/turn", tokenA, { text: "Hello" });
+      expect(text.status).toBe(409);
+      expect(await text.json()).toMatchObject({ detail: expect.stringContaining("שיחה פעילה") });
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect((await progress.report("learner-a")).sessions).toEqual([]);
+    } finally {
+      finish();
+      await active;
+    }
+    expect(await reserve("after-release")).toMatchObject({ mode: "unrestricted", seconds: 60 });
+  });
+
+  it("releases the paid hold when web-turn setup fails before Gemini starts", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    vi.spyOn(BusinessStore.prototype, "registerWebCall").mockRejectedValueOnce(new Error("Test setup failure"));
+    expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(500);
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 60 });
+  });
+
+  it("exports an unrestricted call's recorded duration instead of classifying the concurrency hold as free usage", async () => {
+    await b.save("policies", { enabled: false }, "student");
+    await b.registerWebCall("unrestricted-call", "learner-a", "student");
+    await reserve("unrestricted-call");
+    await b.settleCall("unrestricted-call", 42);
+    const now = new Date().toISOString().replace("Z", "+00:00");
+    db.sql.prepare(`INSERT INTO sessions
+      (call_id,student_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json)
+      VALUES ('unrestricted-call','learner-a',?,?,42,1,1,'[]')`).run(now, now);
+    const ingest = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", ingest);
+
+    await syncCrm({ ...env, CRM_EVENTS_URL: "https://crm.example/events", CRM_INGEST_SECRET: "test" });
+    const payload = JSON.parse(String(ingest.mock.calls[0][1].body));
+    expect(payload.events.find((event: { type: string }) => event.type === "call")).toMatchObject({
+      call_id: "unrestricted-call", product: "", mode: "", seconds: 42,
+    });
+  });
+
+  it("releases the paid hold when phone finalization fails before settlement", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValueOnce(new Error("Test model unavailable"));
+    const logLatency = ProgressStore.prototype.logLatency;
+    vi.spyOn(ProgressStore.prototype, "logLatency").mockImplementation(function (this: ProgressStore, ...args) {
+      if (args[2] === "ai_connection_closed") return Promise.reject(new Error("Test diagnostics failure"));
+      return logLatency.apply(this, args);
+    });
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner");
+    await expect(session.run(JSON.stringify({
+      type: "start", token: "test-channel", format: "pcm16;rate=8000;ch=1", callId: "phone-call", caller: "0500000001",
+    }), "student", false)).rejects.toThrow("Test diagnostics failure");
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 60 });
+  });
+
+  it("reaps stale holds via the existing cron without releasing active holds or billed usage", async () => {
+    await b.save("policies", { enabled: true }, "student");
+    await buyMinute();
+    expect((await reserve("billed", 10)).seconds).toBe(10);
+    await b.settleCall("billed", 10);
+    expect((await reserve("stale", 40)).seconds).toBe(40);
+    await b.save("policies", { enabled: true, free_calls_month: 1 }, "student");
+    expect((await reserve("active", 10, "learner-b")).seconds).toBe(10);
+    db.sql.prepare("UPDATE usage_allocations SET created_at=? WHERE call_id IN ('stale','billed')")
+      .run(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().replace("Z", "+00:00"));
+    db.sql.prepare("UPDATE usage_allocations SET created_at=? WHERE call_id='active'")
+      .run(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().replace("Z", "+00:00"));
+    const work: Promise<unknown>[] = [];
+    const ctx = { waitUntil(task: Promise<unknown>) { work.push(task); } };
+    await worker.scheduled({} as ScheduledController, env, ctx as ExecutionContext);
+    await Promise.all(work);
+    await b.settleCall("stale", 40);
+    expect((await reserve("active-retry", 10, "learner-b")).mode).toBe("busy");
+    expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 50 });
   });
 });
 

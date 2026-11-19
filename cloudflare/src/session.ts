@@ -1,5 +1,5 @@
 import { AsyncQueue, sleep } from "./async";
-import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k } from "./audio";
+import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
@@ -170,10 +170,15 @@ export class TutorSession {
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
-      reserved = allowance.seconds > 0 && allowance.mode !== "unrestricted";
+      reserved = allowance.seconds > 0;
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
+        if (allowance.mode === "busy") {
+          this.reason = "customer_busy";
+          if (!this.portal && !this.disconnected) await this.queueBusyNotice().catch(() => {});
+          return;
+        }
         this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
         this.reason = "access_blocked";
         return;
@@ -245,18 +250,25 @@ export class TutorSession {
       try {
         if (this.finalMessage && !this.disconnected) await this.speakFinalMessage(this.finalMessage);
         if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
-        if (releaseBudget && this.callId && this.customerId && this.controls) {
-          await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
-          await this.drainFinalAudio();
-          const billed = this.meteredAt === null ? 0 : Math.max(0, ((this.failureStarted ?? Date.now()) - this.meteredAt - this.failureGapMs) / 1000);
-          await this.b.settleCall(this.callId, billed);
-          await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
-          await this.latency("session_saved");
+        if (this.callId && this.customerId && this.controls) {
+          try {
+            await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
+            await this.drainFinalAudio();
+          } finally {
+            if (reserved && this.meteredAt !== null) {
+              const billed = Math.max(0, ((this.failureStarted ?? Date.now()) - this.meteredAt - this.failureGapMs) / 1000);
+              await this.b.settleCall(this.callId, billed);
+            }
+          }
+          if (reserved && releaseBudget) {
+            await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
+            await this.latency("session_saved");
+          }
         }
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
-          const target = this.finalMessage ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+          const target = this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
@@ -502,8 +514,13 @@ export class TutorSession {
     }
   }
 
+  private async queueBusyNotice() {
+    const notice = await this.env.ASSETS.fetch(new Request("https://assets.invalid/customer-busy.wav"));
+    if (notice.ok) this.enqueue(wavToPcm(new Uint8Array(await notice.arrayBuffer())));
+  }
+
   private async drainFinalAudio() {
-    if (this.disconnected || !this.reason.startsWith("model:")) return;
+    if (this.disconnected || !(this.reason.startsWith("model:") || (this.reason === "customer_busy" && !this.portal))) return;
     if (this.partial.length) {
       const padded = new Uint8Array(FRAME_BYTES);
       padded.set(this.partial);

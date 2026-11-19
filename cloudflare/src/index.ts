@@ -156,5 +156,6 @@ export default {
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
     ctx.waitUntil(new CheckoutStore(new BusinessStore(env.DB)).issueDueGrants().catch(() => 0));
+    ctx.waitUntil(new BusinessStore(env.DB).releaseStaleReservations());
   },
 };

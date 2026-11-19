@@ -5,6 +5,7 @@ import { apiPrefix, portalRequest } from "./portalApi";
 const callErrors: Record<string, string> = {
   call_failed: "השיחה לא התחברה. אפשר לנסות שוב או להתקשר לקו.",
   access_blocked: "שיחות הטעימה נוצלו ואין דקות בחבילה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3.",
+  customer_busy: "כבר יש לך שיחה פעילה. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.",
   system_busy: "כל קווי השיחה תפוסים כרגע. אפשר לנסות שוב בעוד רגע.",
   gemini_budget_reached: "מכסת השימוש היומית של המערכת הסתיימה. אפשר לחזור מחר.",
   gemini_guard_unavailable: "שירות השיחות אינו זמין כרגע. אפשר לנסות שוב בעוד רגע.",
