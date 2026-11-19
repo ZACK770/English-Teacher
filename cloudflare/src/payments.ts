@@ -117,7 +117,9 @@ export class PaymentStore {
             result = await this.refusal(event, mosad);
           } else {
             try {
-              result = await this.settle(event, mosad);
+              const settled = await this.settle(event, mosad);
+              if (settled.paid) await purchaseAttribution(env, settled.receipt_id).catch(error => console.error("Analytics purchase attribution failed", error));
+              result = settled;
             } catch (error) {
               await this.issueForData(event, "settlement_review", String(error));
               result = { review: true };
