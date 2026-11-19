@@ -4,7 +4,7 @@ import { submitLessonCallback } from "../join/callbackApi";
 
 export function LessonCallbackForm({ tel, privacy }: { tel: string; privacy: string }) {
   const [phone, setPhone] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "invalid" | "error" | "queued" | "duplicate">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "invalid" | "error" | "queued" | "shabbat" | "dialed" | "duplicate">("idle");
   const phoneInput = useRef<HTMLInputElement>(null);
   const submitting = useRef(false);
 
@@ -22,7 +22,7 @@ export function LessonCallbackForm({ tel, privacy }: { tel: string; privacy: str
     try {
       const result = await submitLessonCallback(clean);
       setPhone("");
-      setStatus(result.duplicate ? "duplicate" : "queued");
+      setStatus(result.duplicate ? "duplicate" : result.status === "dialed" ? "dialed" : result.reason === "shabbat" ? "shabbat" : "queued");
     } catch {
       setStatus("error");
     } finally {
@@ -41,12 +41,13 @@ export function LessonCallbackForm({ tel, privacy }: { tel: string; privacy: str
         {status === "sending" ? "שולחים בקשה…" : "שהמורה יחייג אליי"} <ArrowLeft aria-hidden="true" size={16} />
       </button>
     </div>
-    <p id="callback-hint">בלחיצה מאשרים שיחה לשיעור ממורה ה־AI. נחזור אליך בשעות הפעילות. <a href={privacy}>פרטיות</a></p>
+    <p id="callback-hint">בלחיצה מאשרים שיחה מיידית ממורה ה־AI. <a href={privacy}>פרטיות</a></p>
     <div id="callback-status" role="status" data-state={status}>
       {status === "invalid" && "יש להזין מספר נייד או מספר 07 תקין."}
       {status === "error" && <>לא הצלחנו לשלוח את הבקשה. אפשר לנסות שוב או <a href={tel}>לחייג אלינו</a>.</>}
       {status === "duplicate" && <>כבר קיבלנו בקשת חיוג למספר הזה ביממה האחרונה. אפשר גם <a href={tel}>לחייג אלינו</a>.</>}
-      {status === "queued" && <>בקשת החיוג התקבלה. המורה יחייג בשעות הפעילות. לא רוצה להמתין? <a href={tel}>אפשר לחייג אלינו</a>.</>}
+      {status === "dialed" && "המורה מתקשר אליך עכשיו — תענה לטלפון."}
+      {(status === "queued" || status === "shabbat") && <>{status === "shabbat" ? "בקשת החיוג התקבלה. המורה יתקשר במוצאי שבת." : "בקשת החיוג התקבלה. המורה יתקשר אליך בדקות הקרובות."} <a href={tel}>אפשר לחייג אלינו</a>.</>}
     </div>
   </form>;
 }
