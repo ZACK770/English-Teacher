@@ -92,6 +92,20 @@ describe("subscription promises against production SQL", () => {
     await store.recordRenewal(a.id, at, "unique");
     await expect(store.recordRenewal(c.id, at, "unique")).rejects.toThrow("another");
   });
+  it("rolls back a renewal and its billing statements if cancellation wins the race", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    const get = store.get.bind(store);
+    vi.spyOn(store, "get").mockImplementationOnce(async id => {
+      const before = await get(id);
+      await db.prepare("UPDATE subscriptions SET status='cancelled' WHERE id=?").bind(id).run();
+      return before;
+    });
+    await expect(store.recordRenewal(sub.id, at, "cancelled-charge", { amountAgorot: 5900, vatRate: 18, statements: [store.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES ('should-not-commit',?,?)").bind(sub.id, at)] })).rejects.toThrow();
+    expect((await store.get(sub.id)).status).toBe("cancelled");
+    expect(receipts()).toHaveLength(1);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM subscription_renewals").get()?.n).toBe(0);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM console_audit WHERE action='should-not-commit'").get()?.n).toBe(0);
+  });
   it("freezes only subscription receipts, resumes without lost minutes/days, caps actual pause days", async () => {
     const sub = await store.create("owner", "school-step", at);
     date("2026-01-15");
@@ -99,7 +113,7 @@ describe("subscription promises against production SQL", () => {
     await expect(store.pause(sub.id, 61)).rejects.toThrow();
     await store.pause(sub.id, 60);
     expect((await b.reserveCall("owner", "teacher", "frozen", 60)).mode).toBe("blocked");
-    await expect(store.recordRenewal(sub.id, at, "paused-charge")).rejects.toThrow();
+    await expect(store.grantPeriod(sub.id)).rejects.toThrow();
     date("2026-02-04");
     const resumed = await store.resume(sub.id);
     expect(resumed.pause_days_used).toBe(20);

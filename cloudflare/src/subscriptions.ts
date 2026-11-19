@@ -84,7 +84,7 @@ export class SubscriptionStore {
     if (sub.term_months && sub.period_number >= sub.term_months + sub.extension_months) throw new Error("Term has ended");
     try {
       const changes = await this.db.batch([
-        this.db.prepare("INSERT INTO subscription_renewals SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM subscriptions WHERE id=? AND status=? AND current_period_end=?)").bind(reference, id, start, iso(at), id, sub.status, sub.current_period_end),
+        this.db.prepare("INSERT INTO subscription_renewals(reference,subscription_id,period_start,created_at) VALUES (?,(SELECT id FROM subscriptions WHERE id=? AND status=? AND current_period_end=?),?,?)").bind(reference, id, sub.status, sub.current_period_end, start, iso(at)),
         this.db.prepare("UPDATE subscriptions SET current_period_start=?,current_period_end=?,period_number=period_number+1,status=CASE WHEN status='past_due' THEN 'active' ELSE status END,resume_status='active',updated_at=? WHERE id=? AND status=? AND current_period_end=? RETURNING id").bind(start, end, iso(at), id, sub.status, sub.current_period_end),
         this.grantStatement({ ...sub, current_period_start: start, current_period_end: end, charge_agorot: charge?.amountAgorot, vat_rate: charge?.vatRate }, iso(at)),
         ...(charge?.statements ?? []),

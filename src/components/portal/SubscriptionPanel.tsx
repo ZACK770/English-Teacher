@@ -100,10 +100,10 @@ function SubscriptionCard({ sub, admin, act }: { sub: SubscriptionSummary; admin
       <div className="subscription-actions">
         {active && <><label>ימי הקפאה (1–60)<input type="number" min="1" max={Math.min(60, Math.floor(sub.pause_days_remaining))} value={days} onChange={e => setDays(Number(e.target.value))} /></label><button type="button" disabled={!Number.isInteger(days) || days < 1 || days > Math.min(60, sub.pause_days_remaining)} onClick={() => void act(path + "/pause", { days })}>הקפאה</button></>}
         {sub.status === "paused" && <button type="button" onClick={() => void act(path + "/resume")}>המשך</button>}
-        {admin && ["active", "paused"].includes(sub.status) && <button type="button" className="subscription-danger" onClick={() => { if (confirm("לבטל את המנוי? דקות קיימות יישמרו עד תום התוקף.")) void act(path + "/cancel"); }}>ביטול</button>}
+        {admin && ["active", "paused", "past_due"].includes(sub.status) && <button type="button" className="subscription-danger" onClick={() => { if (confirm("לבטל את המנוי? דקות קיימות יישמרו עד תום התוקף.")) void act(path + "/cancel"); }}>ביטול</button>}
       </div>
       {admin && <>
-        <div className="subscription-actions"><label>אסמכתת חיוב<input value={reference} onChange={e => setReference(e.target.value)} maxLength={150} /></label><button type="button" disabled={!active || !reference.trim()} onClick={() => void act(path + "/renewal", { reference })}>רישום חיוב חודשי</button><button type="button" disabled={!active || sub.guarantee_status !== "pending"} onClick={() => void act(path + "/evaluate-guarantee")}>הערכת אחריות</button></div>
+        <div className="subscription-actions"><label>אסמכתת חיוב<input value={reference} onChange={e => setReference(e.target.value)} maxLength={150} /></label><button type="button" disabled={!["active", "paused", "past_due"].includes(sub.status) || !reference.trim()} onClick={() => void act(path + "/renewal", { reference })}>רישום חיוב חודשי</button><button type="button" disabled={!active || sub.guarantee_status !== "pending"} onClick={() => void act(path + "/evaluate-guarantee")}>הערכת אחריות</button></div>
         <h4>בני משפחה ({sub.members.length}/4)</h4>
         {!sub.members.length && <p>אין בני משפחה נוספים.</p>}
         {sub.members.map(m => <div className="subscription-member" key={m.customer_id}><span>{m.name} · <bdi>{m.phone}</bdi></span><button type="button" onClick={() => void act(path + "/members/" + m.customer_id, undefined, "DELETE")}>הסרת בן משפחה</button></div>)}

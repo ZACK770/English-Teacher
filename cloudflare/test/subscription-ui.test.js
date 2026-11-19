@@ -43,4 +43,11 @@ describe("subscription UI states", () => {
     expect(html).toContain("ל־12 חודשים");
     expect(html).not.toContain("מחיר חודשי נעול");
   });
+  it("keeps cancellation and manual renewal available to administrators for past-due subscriptions", () => {
+    const html = renderToStaticMarkup(createElement(SubscriptionPanel, { token: "local", customerId: "owner", subscriptions: [{ ...sub, status: "past_due" }] }));
+    expect(html).toContain("ממתין לתשלום");
+    expect(html).toContain(">ביטול</button>");
+    expect(html).toContain("רישום חיוב חודשי");
+    expect(html).not.toContain("ימי הקפאה (1–60)");
+  });
 });

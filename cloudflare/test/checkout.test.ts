@@ -106,11 +106,14 @@ describe("website checkout", () => {
     expect(o).toMatchObject({ amount_ils: 119, subscription: { state: "pending", monthly_ils: 119 } });
     expect(o.steps.map((s: any) => s.kind)).toEqual(["charge", "keva"]);
     const first = { MosadNumber: "7019554", TransactionId: "1", Confirmation: "5", Amount: "119", Currency: "1", Groupe: "dibura-" + o.id, KevaId: "" };
+    expect((await hook({ ...first, Amount: "29" })).status).toBe(400);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM subscriptions").get()?.n).toBe(0);
     expect((await hook(first)).status).toBe(200);
     expect((await hook(first)).status).toBe(200);
     const store = new SubscriptionStore(env.DB);
     expect(await store.get(o.id)).toMatchObject({ price_agorot: 11900, status: "active", period_number: 1 });
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(1);
+    expect(db.sql.prepare("SELECT amount_ils FROM sales_receipts").get()?.amount_ils).toBe(29);
     expect(db.sql.prepare("SELECT entitlement_id FROM standing_orders").get()?.entitlement_id).toBe(o.id);
     expect((await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any)).toMatchObject({ id: o.id, steps: [{ kind: "keva" }] });
     expect((await req("/v1/portal/subscriptions/" + o.subscription.id + "/cancel", {})).status).toBe(409);
@@ -130,6 +133,7 @@ describe("website checkout", () => {
     expect(await store.get(o.id)).toMatchObject({ period_number: 2 });
     expect((await store.summary("c1"))[0]).toMatchObject({ rollover_minutes: 200 });
     expect(db.sql.prepare("SELECT reference FROM subscription_renewals").get()?.reference).toBe("nedarim-keva:4242:2");
+    expect(db.sql.prepare("SELECT amount_ils FROM sales_receipts ORDER BY valid_from DESC LIMIT 1").get()?.amount_ils).toBe(119);
     expect(db.sql.prepare("SELECT next_date FROM standing_orders").get()?.next_date).toBe(standingOrderStart().StartFrom);
     const refusal = { MosadNumber: "7019554", Status: "Error", Source: "Keva", KevaId: "4242", Message: "סירוב" };
     await hook(refusal);
@@ -167,6 +171,10 @@ describe("website checkout", () => {
     expect(db.sql.prepare("SELECT valid_from FROM sales_receipts ORDER BY valid_from DESC LIMIT 1").get()?.valid_from).toBe("2026-02-08T00:00:00.000+00:00");
     expect((await store.summary("c1"))[0].rollover_minutes).toBe(60);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(2);
+    const member = db.sql.prepare("SELECT customer_id FROM subscription_members").get()?.customer_id as string;
+    await store.removeMember(o.id, member);
+    expect((await hook({ ...charge, Amount: "98" })).status).toBe(200);
+    expect((await hook({ ...charge, TransactionId: "12", Amount: "98" })).status).toBe(400);
     const request = new Request("https://speakcall.app/v1/admin/business/subscriptions/" + o.id + "/cancel", { method: "POST", headers: { Authorization: "Bearer a" }, body: "{}" });
     expect((await worker.fetch(request, env)).status).toBe(200);
     expect((await store.get(o.id)).status).toBe("cancelled");
@@ -187,6 +195,30 @@ describe("website checkout", () => {
     expect((await store.get(o.id)).status).toBe("past_due");
     expect((await hook({ MosadNumber: "7019554", TransactionId: "21", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" })).status).toBe(200);
     expect((await store.get(o.id)).status).toBe("active");
+  });
+
+  it("rolls back the subscription and first grant when a provider transaction belongs to another order", async () => {
+    const a = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    const c = await (await req("/v1/portal/checkout", { package_id: "school-pace" })).json() as any;
+    const payment = { MosadNumber: "7019554", TransactionId: "50", Confirmation: "5", Amount: "29", Currency: "1" };
+    expect((await hook({ ...payment, Groupe: "dibura-" + a.id })).status).toBe(200);
+    expect((await hook({ ...payment, Groupe: "dibura-" + c.id })).status).toBe(400);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM subscriptions").get()?.n).toBe(1);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(1);
+    expect(db.sql.prepare("SELECT state FROM payment_orders WHERE id=?").get(c.id)?.state).toBe("issued");
+    expect((await hook({ ...payment, TransactionId: "51", Groupe: "dibura-" + c.id })).status).toBe(200);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM subscriptions").get()?.n).toBe(2);
+  });
+
+  it("does not cancel either record when DeleteKeva fails", async () => {
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    await hook({ MosadNumber: "7019554", TransactionId: "60", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
+    await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("ERROR")));
+    expect((await req("/v1/portal/subscriptions/" + o.id + "/cancel", {})).status).toBe(502);
+    expect((await new SubscriptionStore(env.DB).get(o.id)).status).toBe("active");
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()?.state).toBe("active");
   });
 
   it("is closed without the iframe validation key and refuses other customers' orders", async () => {
