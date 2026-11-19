@@ -48,6 +48,7 @@ export class TutorSession {
   private summaryCallbackRequested = false;
   private summaryCallbackSpeech = "";
   private salesWindowOpen = false;
+  private practiceStarted: { at: number; failureGapMs: number } | null = null;
   private returnPath: string | null = null;
   private pbxBase: string | null = null;
 
@@ -515,6 +516,11 @@ export class TutorSession {
       this.summaryCallbackRequested = true;
       return true;
     }
+    if (call.name === "start_ad_practice") {
+      if (!this.controls?.sales || this.controls.intake_pending || !this.learnerSeen) return false;
+      this.practiceStarted ??= { at: Date.now(), failureGapMs: this.failureGapMs };
+      return true;
+    }
     if (call.name === "report_learning_batch") {
       if (!this.controls?.lesson) return false;
       try {
@@ -616,11 +622,7 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (!this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
-      if (this.controls?.sales && !this.salesWindowOpen && this.meteredAt !== null && this.meter.learnerTurns >= 2 &&
-        !this.reconnecting && !this.output.length && Date.now() - this.meteredAt - this.failureGapMs >= 90000) {
-        this.ai?.addContext("APPLICATION CLOCK: the 90-second practice milestone has passed. At a natural pause, offer tomorrow's lesson only if the learner shows interest in continuing.");
-        this.salesWindowOpen = true;
-      }
+      this.maybeOpenSalesWindow(Date.now());
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
@@ -633,6 +635,14 @@ export class TutorSession {
         this.finalSent = true;
       }
       await sleep(500, this.abort.signal);
+    }
+  }
+
+  private maybeOpenSalesWindow(now: number) {
+    if (this.practiceStarted && !this.salesWindowOpen && !this.reconnecting && !this.output.length &&
+      now - this.practiceStarted.at - (this.failureGapMs - this.practiceStarted.failureGapMs) >= 90000) {
+      this.ai?.addContext("APPLICATION CLOCK: the 90-second practice milestone has passed. At a natural pause, offer tomorrow's lesson only if the learner shows interest in continuing.");
+      this.salesWindowOpen = true;
     }
   }
 

@@ -74,6 +74,7 @@ export function adRuntimeContext(context: Record<string, any>): string {
       ? '- Intake: ask one thing at a time, briefly learn their first name if unknown and their level. Then ask: "ספר לי על הפעם האחרונה שהבנת שאתה חייב לדעת אנגלית. מה קרה?" Their story is the lesson, not a questionnaire. Ask intermediate and advanced learners to tell it in natural English; offer beginners a short English sentence from their own story. Call save_intake as soon as you know their goal and level, with learner_name only if given. Skip lesson length, topic, style and teacher gender.'
       : "- Returning caller: skip the introductory questionnaire. Continue the lesson; if no level was saved, calibrate briefly in conversation and save the goal and level once known.",
     "- First minute: start at the learner's stated level, on a topic that fits their goal. For a beginner, a short sentence to practise is fine. For an intermediate or advanced learner, start with an open-ended question in natural English, not a repeat-after-me drill.",
+    "- After the learner's first actual response in English practice, call start_ad_practice once. Greeting, level assessment questions and administrative intake do not count.",
     '- At a natural pause, describe the method in one sentence: "אצלנו לומדים לדבר דרך שיחה. השיטה מזהה אילו מילים ונושאים כדאי לך לחזק, ומתאימה את האימון למה שחשוב לך לדעת להגיד." Do not make proficiency guarantees.',
     '- Only after the application signals 90 seconds of practice and the learner has shown interest in continuing, ask "באיזו שעה נוח לך שנמשיך מחר?" Call schedule_next_lesson only if they explicitly agree and give a time or part of the day. If saved=true, say that the time was recorded, subject to available minutes, and invite them to complete registration at speakool.net so they can keep practising with their saved progress. Do not request an email for registration or claim you can register them in this conversation.',
     "- Closing: give a short Hebrew recap with one actual result from this call. Do not inflate counts, interrupt practice or hold someone on the line to sell.",
@@ -132,8 +133,13 @@ export const PAYMENT_LINK_TOOL = {
     required: ["plan_id", "channel"],
   },
 };
-export const SALES_TOOLS = [SCHEDULE_LESSON_TOOL, PREPARE_EMAIL_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_TOOL];
-export const SALES_TOOL_NAMES = new Set(SALES_TOOLS.map((t) => t.name));
+const salesActions = [SCHEDULE_LESSON_TOOL, PREPARE_EMAIL_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_TOOL];
+export const SALES_TOOL_NAMES = new Set(salesActions.map((t) => t.name));
+export const SALES_TOOLS = [...salesActions, {
+  name: "start_ad_practice",
+  description: "Start the practice timer only after the learner first responds in English practice, not during intake.",
+  parameters: { type: "object", properties: {} },
+}];
 
 const scheduleArgs = z.object({ day: z.string().max(40).default("other"), part_of_day: z.enum(["morning", "noon", "afternoon", "evening"]), time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(), note: z.string().max(200).optional() });
 const emailAddress = z.string().trim().toLowerCase().max(120).email();

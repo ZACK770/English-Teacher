@@ -1299,6 +1299,24 @@ describe("real learner portal", () => {
     expect(wordsEmail([], "", "יוסף").text[0]).toBe("שלום, זה יוסף המורה שלך מספיקול.");
     expect(wordsEmail([], "", "אסתי", "יצחק", true).text[0]).toBe("שלום יצחק, זו אסתי המורה שלך מספיקול.");
   });
+  it("starts the sales timer after intake and the first practice response, not at connection", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const session = new TutorSession({} as WebSocket, env, settings(env), "owner");
+    session["controls"] = { sales: true, intake_pending: true } as NonNullable<typeof session["controls"]>;
+    session["learnerSeen"] = true;
+    const start = Date.now();
+    expect(await session["recordTool"]({ name: "start_ad_practice" })).toBe(false);
+    vi.setSystemTime(start + 120000);
+    session["maybeOpenSalesWindow"](Date.now());
+    expect(session["salesWindowOpen"]).toBe(false);
+    session["controls"].intake_pending = false;
+    expect(await session["recordTool"]({ name: "start_ad_practice" })).toBe(true);
+    vi.setSystemTime(start + 209999);
+    session["maybeOpenSalesWindow"](Date.now());
+    expect(session["salesWindowOpen"]).toBe(false);
+    session["maybeOpenSalesWindow"](Date.now() + 1);
+    expect(session["salesWindowOpen"]).toBe(true);
+  });
   it("never retries a summary campaign after an ambiguous response or sends from another line", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(new Date("2026-01-04T10:00:00Z"));
     Object.assign(env, { TLIVR_SYSTEM_API_KEY: "mock", GOOGLE_TTS_SERVICE_ACCOUNT_JSON: "mock", TLIVR_SYSTEM_PHONE: "0765673575" });
