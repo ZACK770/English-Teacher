@@ -96,7 +96,7 @@
 .speakool .sk-name-form{display:grid;gap:14px;max-width:420px}
 .speakool .sk-name-form input{font-size:22px;min-height:60px;padding:0 18px;border-radius:var(--radius);border:1px solid var(--line);background:var(--card);color:var(--ink)}
 
-.speakool .line-teacher{--line-teacher-accent:#68f4c5;color:var(--ink)}
+.speakool .line-teacher{--line-teacher-accent:var(--accent);color:var(--ink)}
 .sk-conversation-breathe,.sk-conversation-halo{transform-box:fill-box;transform-origin:center}
 .sk-conversation-breathe{animation:teacher-breathe 4s ease-in-out infinite}
 .sk-conversation-second{animation-delay:-1s}
