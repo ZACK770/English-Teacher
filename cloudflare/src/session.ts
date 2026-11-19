@@ -10,7 +10,7 @@ import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
-import { applyLearnerControls, phoneTeacherFor, saveIntake } from "./learner";
+import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
 import { LearningStore } from "./learning";
 
 export class TutorSession {
@@ -348,13 +348,16 @@ export class TutorSession {
     }
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name === "save_intake") {
-      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), args);
+      const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
+      const goal = typeof args.goal === "string" ? goalFromLearnerSpeech(args.goal, heard) : args.goal;
+      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal });
+      await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) this.controls = { ...this.controls, intake_pending: false };
       if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
       return saved;
     }
     if (call.name === "end_session") {
-      if (this.controls?.intake_pending && !this.intakeReminded) {
+      if (this.controls?.intake_pending && !this.intakeReminded && args.reason !== "caller_requested" && args.reason !== "no_response" && !args.destination) {
         this.intakeReminded = true;
         await this.progress.logDiagnostic(this.profileId, this.callId, "intake_missing_at_end").catch(() => {});
         this.ai?.addContext("APPLICATION NOTE: the first-call intake was not saved. Do not hang up yet: call save_intake now with the goal and level the learner gave (omit unknown answers), then say goodbye and call end_session again.");

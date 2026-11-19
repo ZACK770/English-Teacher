@@ -7,7 +7,7 @@ import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
 import { ProgressStore } from "../src/progress";
-import { applyLearnerControls, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, teachersKind } from "../src/learner";
+import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, teachersKind } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -218,6 +218,22 @@ describe("learner settings to Gemini", () => {
       },
     });
     expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");
+  });
+  it("takes the intake goal from what the learner said when it names exactly one purpose", () => {
+    expect(goalFromLearnerSpeech("study", "דני. אני רוצה ללמוד אנגלית בשביל טיול לחו\"ל")).toBe("travel");
+    expect(goalFromLearnerSpeech("study", "אני רוצה ללמוד אנגלית לבגרות")).toBe("study");
+    expect(goalFromLearnerSpeech("study", "קוראים לי דני. המטרה שלי בלימוד אנגלית היא טיולים. אני מתחיל.")).toBe("travel");
+    expect(goalFromLearnerSpeech("work", "לעבודה וגם לטיולים")).toBe("work");
+    expect(goalFromLearnerSpeech("other", "סתם ככה")).toBe("other");
+    expect(goalFromLearnerSpeech("other", "לא לעבודה, סתם בשביל המשפחה")).toBe("other");
+    expect(goalFromLearnerSpeech("other", "not for work, just family")).toBe("other");
+    expect(goalFromLearnerSpeech("study", "For example, I need English for travel")).toBe("travel");
+  });
+  it("keeps saved minutes and topic when a phone intake gives only goal and level", async () => {
+    await b.savePreference("alice", { minutes: 20, topic: "business" });
+    expect(await saveIntake(b, "alice", null, { goal: "work", level: "intermediate" })).toBe(true);
+    const p = await b.loadContext("preferences:alice");
+    expect(p).toMatchObject({ minutes: 20, topic: "business", plan: { goal: "work", level: "intermediate", minutes: 20, topic: "business", difficulty: "speaking" } });
   });
   it("saves a partial phone intake with defaults and marks the first call as pending until then", async () => {
     const before = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));

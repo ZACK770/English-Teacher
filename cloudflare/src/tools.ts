@@ -79,7 +79,7 @@ export const INTAKE_TOOL = {
     "type": "object",
     "properties": {
       "learner_name": { "type": "string", "description": "The learner's first name as they said it" },
-      "goal": { "type": "string", "enum": ["work", "travel", "study", "other"] },
+      "goal": { "type": "string", "enum": ["work", "travel", "study", "other"], "description": "Why the learner wants English. travel: trips, vacations, flights abroad. study: school, university, exams. Wanting to learn English is not itself study; use the purpose they named." },
       "level": { "type": "string", "enum": ["beginner", "intermediate", "fluent"] },
       "difficulty": { "type": "string", "enum": ["speaking", "listening", "writing"] },
       "minutes": { "type": "integer", "description": "Lesson length in minutes. Choose 5, 10, or 20." },
