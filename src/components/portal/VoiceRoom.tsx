@@ -127,7 +127,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
         ws.onclose = () => {
           if (!disposed) {
             setConnected(false);
-            if (!receivedAudio && !serverError) setError("לא הצלחנו לפתוח שיעור. כדאי לבדוק את יתרת הדקות או לנסות שוב.");
+            if (!receivedAudio && !serverError) setError("החיבור לשיחה נסגר לפני שהמורה התחיל לדבר. אפשר לנסות שוב או להתקשר לקו.");
             else setState("עוד שיחה קטנה. עוד צעד קדימה.");
           }
           cleanup();
