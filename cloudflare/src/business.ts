@@ -2,6 +2,7 @@ import { z } from "zod";
 import { nowIso, randomHex, sha256Hex, tokenUrlsafe } from "./env";
 import { SCHOOL_CALL_FILTER, SCHOOL_SESSION_FILTER } from "./school-history";
 import { canPurchaseAutomatically, SCHOOL_FREE_POLICY } from "../../src/pricing";
+import { visiblePhone } from "./phone";
 
 export const CustomerSchema = z.object({
   name: z.string().min(1).max(100),
@@ -111,9 +112,8 @@ export const MODELS: Record<string, z.ZodTypeAny> = {
 };
 
 export function normalizedPhone(value: string): string {
-  let digits = [...String(value)].filter((c) => c >= "0" && c <= "9").join("");
-  if (digits.startsWith("972")) digits = "0" + digits.slice(3);
-  if (digits.length < 8 || digits.length > 15) throw new Error("נדרש מספר טלפון תקין");
+  const digits = visiblePhone(String(value));
+  if (!digits) throw new Error("נדרש מספר טלפון תקין");
   return digits;
 }
 

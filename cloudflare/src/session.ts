@@ -13,6 +13,7 @@ import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
 import { LearningStore } from "./learning";
+import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 
 export class TutorSession {
   readonly meter = new SessionMeter();
@@ -24,6 +25,10 @@ export class TutorSession {
   private abort = new AbortController();
   private ai: GeminiLive | null = null;
   private reconnecting: Promise<void> | null = null;
+  private reconnectAttempts = 0;
+  private failureStarted: number | null = null;
+  private failureGapMs = 0;
+  private finalMessage: string | null = null;
   private controls: TutorControls | null = null;
   private artifact: PromptArtifact | null = null;
   private lastInput = Date.now();
@@ -85,9 +90,9 @@ export class TutorSession {
   }
 
   stop(reason = "admin_requested", disconnected = false) {
+    this.disconnected ||= disconnected;
     if (this.settling) return;
     this.reason ||= reason;
-    this.disconnected ||= disconnected;
     this.abort.abort(new Error(this.reason));
     this.input.end();
     this.ai?.close();
@@ -111,6 +116,7 @@ export class TutorSession {
       }
       if (shared) {
         const start = parseStartFrame(raw, this.s.routerChannels);
+        if (this.rejectHiddenCaller(start.caller)) return;
         profileId = (await this.b.loadContext(start.callId)).selected_bot;
         if (!profileId) {
           const customerId = await this.b.identifyCall(start.caller || "private", start.callId, "ivr");
@@ -128,6 +134,7 @@ export class TutorSession {
       this.profileId = profileId;
       const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannels : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");
+      if (!this.portal && this.rejectHiddenCaller(start.caller)) return;
       this.leaseCallId = start.callId;
       if (this.s.radioStreams[profileId]) {
         throw new Error("This test endpoint currently supports teachers and translators only");
@@ -219,6 +226,10 @@ export class TutorSession {
         return;
       }
       if (!this.reason) this.reason = "call_failed";
+      if (this.ai && !this.abort.signal.aborted) {
+        this.failureStarted ??= Date.now();
+        this.finalMessage = CALL_FAILURE_MESSAGE;
+      }
       if (this.profileId && this.callId && !this.abort.signal.aborted) {
         const message = error instanceof Error ? error.message : "Unknown error";
         await this.progress.logDiagnostic(this.profileId, this.callId, "call_failed", { error_type: error instanceof Error ? error.name : "Error", message: message.split(this.s.geminiKey).join("[redacted]").slice(0, 250) });
@@ -232,11 +243,12 @@ export class TutorSession {
       this.ai?.close();
       const budgetRelease = releaseBudget?.();
       try {
+        if (this.finalMessage && !this.disconnected) await this.speakFinalMessage(this.finalMessage);
         if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
         if (releaseBudget && this.callId && this.customerId && this.controls) {
           await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
           await this.drainFinalAudio();
-          const billed = this.meteredAt === null ? 0 : (Date.now() - this.meteredAt) / 1000;
+          const billed = this.meteredAt === null ? 0 : Math.max(0, ((this.failureStarted ?? Date.now()) - this.meteredAt - this.failureGapMs) / 1000);
           await this.b.settleCall(this.callId, billed);
           await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
           await this.latency("session_saved");
@@ -244,7 +256,7 @@ export class TutorSession {
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
-          const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+          const target = this.finalMessage ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
@@ -264,6 +276,13 @@ export class TutorSession {
       this.input.end();
       await Promise.allSettled(tasks);
     }
+  }
+
+  private rejectHiddenCaller(caller: string): boolean {
+    if (visiblePhone(caller)) return false;
+    this.reason = "hidden_caller_rejected";
+    this.finalMessage = HIDDEN_CALLER_MESSAGE;
+    return true;
   }
 
   private async latency(event: string, details: Record<string, unknown> = {}) {
@@ -293,7 +312,9 @@ export class TutorSession {
       this.meter.inputAudioBytes += pcm.byteLength;
       batch = [];
       if (this.reconnecting) await this.reconnecting;
-      if (!this.abort.signal.aborted) this.ai!.sendAudio(pcm);
+      if (!this.abort.signal.aborted && !this.reason) {
+        try { this.ai!.sendAudio(pcm); } catch { this.ai?.close(); }
+      }
     }
   }
 
@@ -301,7 +322,13 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       const event = await this.ai!.next();
       if (this.abort.signal.aborted) return;
-      if (event.type === "closed") { this.reason ||= "gemini_disconnected"; return; }
+      if (event.type === "closed") {
+        this.reconnecting = this.reconnectGemini();
+        await this.reconnecting;
+        this.reconnecting = null;
+        if (this.reason || this.abort.signal.aborted) return;
+        continue;
+      }
       if (event.type === "audio") {
         if (!this.firstAudio) { this.firstAudio = true; await this.latency("first_gemini_audio", { tutor_turn: this.meter.tutorTurns + 1 }); }
         this.meter.outputAudioBytes += event.pcm24k.byteLength;
@@ -337,18 +364,59 @@ export class TutorSession {
           if (call.name === "end_session" && saved) return;
         }
       } else if (event.type === "go_away") {
-        const handle = this.ai!.resumeHandle;
-        if (!handle || !this.artifact) { this.reason = "gemini_go_away"; return; }
-        const setup = structuredClone(this.artifact.setup_message) as { setup: Record<string, unknown> };
-        setup.setup.sessionResumption = { handle };
-        this.ai!.close();
-        const replacement = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
-        this.ai = replacement;
-        this.reconnecting = replacement.connect();
+        this.reconnecting = this.reconnectGemini();
         await this.reconnecting;
         this.reconnecting = null;
-        await this.latency("gemini_session_resumed");
+        if (this.reason || this.abort.signal.aborted) return;
       }
+    }
+  }
+
+  private async reconnectGemini() {
+    this.failureStarted ??= Date.now();
+    const handle = this.ai?.resumeHandle;
+    this.ai?.close();
+    this.output = [];
+    this.partial = new Uint8Array();
+    this.carry = new Uint8Array();
+    while (!this.abort.signal.aborted && this.reconnectAttempts < 2 && this.artifact) {
+      const attempt = ++this.reconnectAttempts;
+      const setup = structuredClone(this.artifact.setup_message) as { setup: Record<string, unknown> };
+      setup.setup.sessionResumption = handle ? { handle } : {};
+      const replacement = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
+      this.ai = replacement;
+      try {
+        await replacement.connect(5000);
+        if (this.abort.signal.aborted) { replacement.close(); return; }
+        if (!handle) replacement.addContext("Continue the interrupted lesson without repeating the greeting. Recent conversation: " + JSON.stringify(this.meter.transcript.slice(-20)));
+        this.failureGapMs += Date.now() - this.failureStarted!;
+        this.failureStarted = null;
+        this.lastHuman = Date.now();
+        await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnected", { attempt, resumed: !!handle }).catch(() => {});
+        return;
+      } catch {
+        replacement.close();
+        await this.progress.logDiagnostic(this.profileId, this.callId, "gemini_reconnect_failed", { attempt }).catch(() => {});
+      }
+    }
+    if (this.abort.signal.aborted) return;
+    this.reason = "gemini_reconnect_exhausted";
+    this.finalMessage = CALL_FAILURE_MESSAGE;
+    await this.progress.logDiagnostic(this.profileId, this.callId, this.reason, { attempts: this.reconnectAttempts }).catch(() => {});
+  }
+
+  private async speakFinalMessage(text: string) {
+    try {
+      const pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+      for (let offset = 0; offset < pcm.length && !this.disconnected; offset += FRAME_BYTES) {
+        const frame = new Uint8Array(FRAME_BYTES);
+        frame.set(pcm.subarray(offset, offset + FRAME_BYTES));
+        this.pbx.send(frame);
+        await sleep(FRAME_MS);
+      }
+      if (!this.disconnected) await sleep(200);
+    } catch {
+      if (this.callId) await this.progress.logDiagnostic(this.profileId, this.callId, "failure_prompt_failed").catch(() => {});
     }
   }
 
@@ -416,7 +484,7 @@ export class TutorSession {
   private async watchdog() {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
-      if (Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
+      if (!this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {

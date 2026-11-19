@@ -105,6 +105,7 @@ export class GeminiLive {
   }
 
   private dispatch(event: Record<string, any>) {
+    if (event.error) { this.close(); return; }
     if (event.sessionResumptionUpdate) {
       const update = event.sessionResumptionUpdate;
       this.resumeHandle = update.resumable && update.newHandle ? String(update.newHandle) : null;

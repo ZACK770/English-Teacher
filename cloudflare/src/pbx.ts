@@ -5,6 +5,7 @@ import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, s
 import { PaymentStore, paymentResponse } from "./payments";
 import { ProgressStore } from "./progress";
 import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
+import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
@@ -248,6 +249,11 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   const path = "/" + (p.PBXextensionPath ?? "").replace(/^\/+|\/+$/g, "");
   if (!withinBase(system.base, path)) throw new HttpError(403, "Outside project extension");
   s = { ...s, systemPhone: system.phone, projectPath: system.base };
+  if (!visiblePhone(p.PBXphone ?? "")) {
+    return p.PBXcallStatus === "HANGUP" || p.hiddenCallerEnd
+      ? { type: "hangup" }
+      : { ...menu("hiddenCallerEnd", HIDDEN_CALLER_MESSAGE, "0"), times: 1, timeout: 1, errorReturn: "END" };
+  }
   const b = new BusinessStore(env.DB);
   const progress = new ProgressStore(env.DB);
   const customerId = await b.identifyCall(p.PBXphone ?? "private", callId, "ivr");
