@@ -105,3 +105,4 @@
 .speakool .sk-checkout [role="alert"] { color: #b42318; background: #fff4f2; border-radius: 12px; padding: 10px 14px; }
 .speakool .sk-checkout .sk-muted { display: flex; gap: 6px; align-items: center; }
 .speakool .sk-billing-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.sk-modal .sk-step-card{border:0;padding:0;min-height:0;background:transparent}.sk-modal .sk-step-card h2{font-size:25px}.sk-step-card .sk-name-form label{display:flex;flex-direction:column;gap:6px;font-size:13px;margin:12px 0}.sk-plan .sk-muted{font-size:12px;margin-top:10px}

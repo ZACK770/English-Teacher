@@ -454,7 +454,7 @@ export class TutorSession {
       const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal });
       await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) this.controls = { ...this.controls, intake_pending: false };
-      if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
+      if (saved) this.ai?.addContext("APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call adapt to the answers just given; the full saved plan applies from the next call. Start or continue the lesson now.");
       return saved;
     }
     if (call.name === "end_session") {
