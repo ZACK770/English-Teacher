@@ -38,6 +38,11 @@ class_name = "CallSession"
 name = "GEMINI_BUDGET"
 class_name = "GeminiBudget"
 
+[durable_objects.code_update_strategy]
+# Leave in-flight calls on their current version through the 120-minute call cap.
+mode = "deferred"
+max_delay = 7500
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CallSession"]

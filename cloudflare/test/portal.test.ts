@@ -213,6 +213,25 @@ describe("quick teacher direction", () => {
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "fluent", pace: "slow" });
   });
 
+  it("switches a phone call to advanced English immediately, without unlocking Pro curriculum", async () => {
+    const bot = { id: "student", role: "teacher" } as const;
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null) as any;
+    session.profileId = bot.id; session.customerId = "learner-a"; session.callId = "phone-level";
+    const defaults = controlsFromSettings(true);
+    session.controls = await applyLearnerControls(b, "learner-a", bot, defaults, undefined, "phone");
+    expect(session.controls).toMatchObject({ intake_pending: true, lesson: { level: "beginner" } });
+    expect(session.controls.custom_instructions).toContain("the configured level is provisional");
+    session.ai = { addContext: vi.fn() };
+    expect(await session.recordTool({ name: "save_intake", args: { goal: "work", level: "fluent", topic: "business" } })).toBe(true);
+    expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('topic="everyday", level="fluent"'));
+    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ plan: { level: "fluent", topic: "business" } });
+    const phone = await applyLearnerControls(b, "learner-a", bot, defaults, undefined, "phone");
+    const web = await applyLearnerControls(b, "learner-a", bot, defaults);
+    expect(phone).toMatchObject({ intake_pending: false, model: defaults.model, voice: "Puck", lesson: { level: "fluent", topic: "everyday", vocabulary: web.lesson?.vocabulary } });
+    expect(web.lesson?.level).toBe("intermediate");
+    expect(phone.custom_instructions).toContain("not elementary greetings or repeat-after-me drills");
+  });
+
   it.each([false, true])("saves a pace change for a browser teacher, with active phone teacher=%s", async hasPhoneTeacher => {
     const kind = teachersKind("learner-a");
     const web = await b.save(kind, TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "intermediate" }));
@@ -1206,19 +1225,23 @@ describe("real learner portal", () => {
     expect(runtime).toContain("59 ש\"ח לחודש");
     expect(runtime).toContain("1,490 ש\"ח");
     expect(runtime).toContain("Never offer a discounted first month");
+    expect(runtime).toContain("preserving leading zeroes");
+    expect(runtime).toContain("not a repeat-after-me drill");
+    expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בקצב שלך");
+    expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited free minutes");
     const customerId = (await b.customerForCall("ad-1"))!;
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" })).toBe(false);
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "not an email" })).toBe(false);
     const mail = { send: vi.fn(async () => ({ messageId: "m" })) } as unknown as SendEmail;
-    expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner@Example.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
-    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner@example.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
+    expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner001@Example42.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
+    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner001@example42.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
     expect(await recordSalesTool(b, customerId, "ad-1", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "trial-29", channel: "sms" })).toBe(false);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" }, mail)).toBe(true);
-    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ to: "learner@example.com", text: expect.stringContaining("https://speakool.net/learn?plan=school-pace&src=ad-radio-news") }));
+    expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ to: "learner001@example42.com", text: expect.stringContaining("https://speakool.net/learn?plan=school-pace&src=ad-radio-news") }));
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-step", channel: "sms" }, mail)).toBe(true);
     expect(mail.send).toHaveBeenCalledTimes(2);
-    expect(await b.loadContext("preferences:" + customerId)).toMatchObject({ email: "learner@example.com", next_lesson: { day: "tomorrow", part_of_day: "evening" }, ad_campaign: "radio-news" });
+    expect(await b.loadContext("preferences:" + customerId)).toMatchObject({ email: "learner001@example42.com", next_lesson: { day: "tomorrow", part_of_day: "evening" }, ad_campaign: "radio-news" });
     await b.savePreference(customerId, { intro_school_seen: true });
     await call("ad-2", "radio-news");
     await call("ad-2", "radio-news");
