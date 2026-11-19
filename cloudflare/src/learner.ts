@@ -297,7 +297,7 @@ const IntakeSchema = PlanSchema.extend({
   minutes: PlanSchema.shape.minutes.default(10),
   topic: PlanSchema.shape.topic.default(RECOMMENDED_TOPIC),
   learner_name: z.string().trim().max(40).optional(),
-  personality: z.enum(["warm", "focused", "playful"]).optional(),
+  personality: personality.optional(),
   teacher_gender: z.enum(["male", "female"]).default("male"),
   pace: pace.optional(),
   conversation_mode: learningChoices.conversation_mode.optional(),
@@ -328,15 +328,16 @@ export async function saveIntake(b: BusinessStore, customerId: string, botId: st
   const kept = (key: "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
   const parsed = IntakeSchema.safeParse({ ...given, minutes: kept("minutes"), topic: kept("topic"), difficulty: kept("difficulty") });
   if (!parsed.success) return false;
-  const { learner_name, personality, teacher_gender, pace, conversation_mode, ...plan } = parsed.data;
+  const { learner_name, personality: requestedStyle, teacher_gender, pace, conversation_mode, ...plan } = parsed.data;
   const direction = { level: plan.level, ...(given.topic ? { topic: plan.topic } : {}), ...(pace ? { pace } : {}), ...(conversation_mode ? { conversation_mode } : {}) };
-  await syncActiveTeacher(b, customerId, { ...direction, ...(personality ? { personality } : {}) });
-  await b.savePreference(customerId, { plan, ...direction, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
+  const style = requestedStyle ? { personality: requestedStyle } : {};
+  await syncActiveTeacher(b, customerId, { ...direction, ...style });
+  await b.savePreference(customerId, { plan, ...direction, ...style, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
   if (!botId || (await b.list(teachersKind(customerId))).length) return true;
   const fluent = plan.level === "fluent";
   const female = teacher_gender === "female";
   const mode = conversation_mode || (fluent ? "conversation" : "guided");
-  const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality: personality || "warm", voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: pace || (plan.level === "beginner" ? "slow" : "normal"), corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: mode, learning_load: "light", correction_policy: mode === "guided" ? "after_answer" : "after_activity", closing_activity: "roleplay" });
+  const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality: requestedStyle ?? personality.safeParse(prior.personality).data, voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: pace || (plan.level === "beginner" ? "slow" : "normal"), corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: mode, learning_load: "light", correction_policy: mode === "guided" ? "after_answer" : "after_activity", closing_activity: "roleplay" });
   const saved = await b.save(teachersKind(customerId), teacher);
   await b.savePreference(customerId, { active_teacher: saved.id, selected_bot: botId });
   return true;

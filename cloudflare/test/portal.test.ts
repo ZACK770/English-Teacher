@@ -5,7 +5,7 @@ import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
-import { applyLearnerControls, materialsKind, TeacherSchema, teachersKind } from "../src/learner";
+import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, quickOpening, runtimeContext, startSchool } from "../src/pbx";
 import { adCampaignReport, recordSalesTool } from "../src/ad-entry";
@@ -196,6 +196,12 @@ describe("quick teacher direction", () => {
     expect(c.custom_instructions).toContain("Personality: warm.");
     expect(c.intake_pending).toBe(false);
     expect(c.custom_instructions).not.toContain("First call: before practising");
+  });
+
+  it("preserves the trial style when a spoken pace change creates a teacher", async () => {
+    await b.savePreference("learner-a", { trial_setup: "selected", personality: "focused" });
+    expect(await saveIntake(b, "learner-a", "student", { goal: "other", level: "beginner", pace: "slow" })).toBe(true);
+    expect(await b.list(teachersKind("learner-a"))).toEqual([expect.objectContaining({ pace: "slow", personality: "focused" })]);
   });
 });
 
