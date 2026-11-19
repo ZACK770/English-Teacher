@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { track } from '../../analytics';
+import { ProChoices } from "./ProBadge";
 import { CreditCard, Lock } from "lucide-react";
 import { portalRequest, topics } from "./portalApi";
 
@@ -70,7 +71,7 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
     post({ Name: "FinishTransaction", Value: order.steps[0].id });
   };
 
-  if (!order) return <section className="sk-step-card"><h2>{packageId === "school-mastery" && !domain ? "תחום נוסף לשליטה מלאה" : "מכינים את התשלום…"}</h2>{packageId === "school-mastery" && !domain && <label>באיזה תחום נתרגל?<select value={domain} onChange={e => setDomain(e.target.value)}><option value="">בחירת תחום</option>{Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>}{error && <p role="alert">{error}</p>}</section>;
+  if (!order) return <section className="sk-step-card"><h2>{packageId === "school-mastery" && !domain ? "תחום נוסף לשליטה מלאה" : "מכינים את התשלום…"}</h2>{packageId === "school-mastery" && !domain && <ProChoices kind="domain" label="באיזה תחום נתרגל?" value={domain} onChange={setDomain} values={Object.fromEntries(Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)))} />}{error && <p role="alert">{error}</p>}</section>;
   const sub = order.subscription;
   return <section className="sk-step-card sk-checkout" dir="rtl">
     <h2>{done ? "ברוך הבא למסלול " + order.package_name + "." : "מסלול " + order.package_name}</h2>

@@ -387,10 +387,26 @@ export class BusinessStore {
     return { customer, receipts: receipts.results, calls: calls.results, access: await this.accessSummary(customerId, receipts.results) };
   }
 
+  async hasPaidAccess(customerId: string, at = nowIso()) {
+    const receipt = await this.db.prepare(`SELECT r.id FROM sales_receipts r
+      WHERE (r.customer_id=? OR r.subscription_id IN
+        (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+         WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+      AND r.product='school' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
+      LIMIT 1`).bind(customerId, customerId, at, at).first();
+    if (receipt) return true;
+    return !!await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active' AND p.product='school'
+      AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
+        (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
+      .bind(at, at, customerId, customerId).first();
+  }
+
   async accessSummary(customerId: string, receipts: Record<string, any>[]) {
+    const paid = await this.hasPaidAccess(customerId);
     const policies = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).filter((p) => p.product === "school");
     const policy = policies.find((p) => p.enabled) ?? (policies.length ? undefined : AccessPolicySchema.parse(SCHOOL_FREE_POLICY));
-    if (!policy) return { limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    if (!policy) return { paid, limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
     const used = await this.db
       .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)`)
       .bind(customerId, "school", month() + "%")
@@ -400,7 +416,7 @@ export class BusinessStore {
     const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
     const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60)").bind(customerId).first();
     return {
-      limited: true,
+      paid, limited: true,
       opening_minutes: !customerId.startsWith("anonymous-") && !opening ? policy.opening_seconds / 60 : 0,
       free_calls_left: customerId.startsWith("anonymous-") ? 0 : Math.max(0, policy.free_calls_month - (used?.n ?? 0)),
       free_call_minutes: Math.round(policy.free_call_seconds / 60),

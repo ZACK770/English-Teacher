@@ -8,6 +8,8 @@ import { LegalFooter } from "../legal/LegalFooter";
 import { legalBasePath } from "../../legalRoutes";
 import { LessonCallbackForm } from "./LessonCallbackForm";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
+import { ProBadge } from "./ProBadge";
+import { isProDomain } from "../../../cloudflare/src/pro-access";
 import "./portal.css";
 import "./landing.css";
 import { FREE_TIER_TEXT, MONTHLY_TERMS, MASTERY_GUARANTEE, PRICING_PACKAGES } from "../../pricing";
@@ -23,9 +25,9 @@ const faq = [
 ];
 
 const domains = [
-  { title: "נסיעות", mastered: 68, practicing: 20, terms: "Boarding pass · Reservation · Directions" },
-  { title: "עבודה", mastered: 54, practicing: 26, terms: "Deadline · Follow up · Proposal" },
-  { title: "יומיום", mastered: 82, practicing: 12, terms: "Actually · Makes sense · By the way" },
+  { title: "נסיעות", domain: "travel", mastered: 68, practicing: 20, terms: "Boarding pass · Reservation · Directions" },
+  { title: "עבודה", domain: "career", mastered: 54, practicing: 26, terms: "Deadline · Follow up · Proposal" },
+  { title: "יומיום", domain: "everyday", mastered: 82, practicing: 12, terms: "Actually · Makes sense · By the way" },
 ];
 
 export function SpeakoolLanding() {
@@ -120,7 +122,7 @@ export function SpeakoolLanding() {
           <p className="sk-land-kicker">מד שליטה לדוגמה</p>
           <h2>לא מנחשים אם מתקדמים.</h2>
           <div className="sk-land-domains" role="group" aria-label="בחירת תחום לדוגמה">
-            {domains.map((item, i) => <button type="button" key={item.title} aria-pressed={i === domain} onClick={() => setDomain(i)}>{item.title}</button>)}
+            {domains.map((item, i) => <button type="button" key={item.title} aria-pressed={i === domain} onClick={() => setDomain(i)}>{item.title}{isProDomain(item.domain) && <ProBadge />}</button>)}
           </div>
           <div aria-live="polite">
             <p className="sk-land-meter"><strong>{progress.mastered}%</strong> מהמילים נשלפות לבד</p>
@@ -135,6 +137,7 @@ export function SpeakoolLanding() {
         <h2>משלמים על דיבור. לא על חוברות.</h2>
         <article><h3>מתחילים בחינם</h3><p>{FREE_TIER_TEXT}. ללא כרטיס אשראי.</p><a className="sk-secondary" href={learn}>להתחיל עכשיו</a></article>
         <h3>מנויים חודשיים · הוראת קבע</h3>
+        <p>בחינם: יומיום ונדל״ן ברמת מתחילים ובינוניים. תחומים נוספים והרמה המתקדמת זמינים במנוי <ProBadge />.</p>
         <p>{MONTHLY_TERMS}</p>
         <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.billing === "monthly").map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>
           {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p className="sk-land-line">{p.tagline}</p>
