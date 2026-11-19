@@ -193,6 +193,23 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("lesson callback scheduling", () => {
+  it.each(["021234567", "+97231234567", "048123456", "081234567", "091234567"])("queues the actual caller's landline %s ahead of the account phone", async phone => {
+    expect(await recordSalesTool(b, "learner-a", "landline", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" }, undefined, phone)).toBe(true);
+    expect(db.sql.prepare("SELECT phone FROM callback_requests").get()?.phone).toBe(phone.startsWith("+972") ? "0" + phone.slice(4) : phone);
+  });
+  it("uses an email-only learner's verified linked phone without selecting another learner's phone", async () => {
+    await b.save("customers", { name: "Email learner", phone: "", email: "learner@example.com" }, "email-learner");
+    await b.save("learner-phone-links", { customer_id: "learner-b", phone: "0509999999" }, "other-link");
+    await b.save("learner-phone-links", { customer_id: "email-learner", phone: "021234567" }, "verified-link");
+    expect(await recordSalesTool(b, "email-learner", "web-lesson", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
+    expect(db.sql.prepare("SELECT phone FROM callback_requests").get()?.phone).toBe("021234567");
+  });
+  it("rejects invalid phones and unrelated links for an email-only learner", async () => {
+    await b.save("customers", { name: "Email learner", phone: "", email: "learner@example.com" }, "email-learner");
+    await b.save("learner-phone-links", { customer_id: "learner-b", phone: "0509999999" }, "other-link");
+    await expect(recordSalesTool(b, "email-learner", "invalid-phone", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" }, undefined, "123")).rejects.toMatchObject({ status: 422 });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([]);
+  });
   it("reschedules a correction in the same call without adding a second callback", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     await recordSalesTool(b, "learner-a", "correction", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" });

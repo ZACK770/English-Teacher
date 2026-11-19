@@ -85,9 +85,10 @@ export function followupLessonTime(day: string, part: string, now: Date): Date {
   return nextCallingSlot(fromLocal(local));
 }
 
-export async function enqueueLessonCallback(b: BusinessStore, customerId: string, followupId: string, at: Date, now: string) {
+export async function enqueueLessonCallback(b: BusinessStore, customerId: string, followupId: string, at: Date, now: string, callerPhone = "") {
   const customer = await b.record("customers", customerId);
-  const phone = normalizePhone(customer?.phone ?? "");
+  const linked = (await b.list("learner-phone-links")).filter(link => link.customer_id === customerId);
+  const phone = [callerPhone, customer?.phone ?? "", ...linked.map(link => String(link.phone ?? ""))].map(normalizePhone).find(Boolean);
   if (!phone) throw new HttpError(422, "A visible phone is required for a lesson callback");
   const result = await b.db.prepare(
     "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,'scheduled',?,?,?,'queued',0,?,?,?) ON CONFLICT(id) DO UPDATE SET preferred_time=excluded.preferred_time,next_attempt_at=excluded.next_attempt_at,updated_at=excluded.updated_at WHERE callback_requests.status='queued'",
@@ -147,7 +148,7 @@ export function normalizePhone(raw: string): string | null {
   let digits = raw.replace(/[^0-9+]/g, "");
   if (digits.startsWith("+972")) digits = "0" + digits.slice(4);
   else if (digits.startsWith("972")) digits = "0" + digits.slice(3);
-  return /^0(5[0-9]|7[0-9])[0-9]{7}$/.test(digits) ? digits : null;
+  return /^(?:0[57][0-9]{8}|0[23489][0-9]{7})$/.test(digits) ? digits : null;
 }
 
 type CallbackExtension = { id: string; name: string | null; path: string };

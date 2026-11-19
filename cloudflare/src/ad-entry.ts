@@ -135,7 +135,7 @@ export function wordsEmail(words: string[] = [], summary = ""): string[] {
   ];
 }
 
-export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail): Promise<boolean> {
+export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = ""): Promise<boolean> {
   if (customerId.startsWith("anonymous-")) return false;
   const context = await b.loadContext(callId);
   const campaign = campaignName(context.campaign);
@@ -147,7 +147,7 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     const existing = await b.record(SALES_FOLLOWUPS, id);
     const unchanged = existing && existing.day === parsed.data.day && existing.part_of_day === parsed.data.part_of_day;
     const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at) : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
-    if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at)) return false;
+    if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at, callerPhone)) return false;
     await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at, scheduled_at: at.toISOString(), callback_id: id } });
     await b.save(SALES_FOLLOWUPS, { ...base, at: existing?.at ?? base.at, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);
     return true;
