@@ -406,7 +406,11 @@ export class TutorSession {
       else if (event.type === "tool_call") {
         for (const call of event.calls) {
           const saved = await this.recordTool(call);
-          this.ai!.submitToolResult(call, saved);
+          this.ai!.submitToolResult(call, saved, call.name === "prepare_email" ? {
+            prepared: saved,
+            saved: false,
+            next_step: saved ? "Read back the email and wait. After the caller confirms, call save_email." : "Ask the caller to clarify the address.",
+          } : undefined);
           if (call.name === "end_session" && saved) return;
         }
       } else if (event.type === "go_away") {

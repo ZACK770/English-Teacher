@@ -1290,6 +1290,7 @@ describe("real learner portal", () => {
       } };
       await session.aiToOutput();
       expect(submitToolResult.mock.calls.map(call => call[1])).toEqual([false, true, !!confirmed, false]);
+      expect(submitToolResult.mock.calls[1]![2]).toMatchObject({ prepared: true, saved: false });
       expect(send).toHaveBeenCalledTimes(confirmed ? 1 : 0);
       if (confirmed) expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: "a012@example.com" }));
       expect((await b.loadContext("preferences:learner-a")).email).toBe(confirmed ? "a012@example.com" : undefined);
