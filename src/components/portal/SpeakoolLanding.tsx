@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Ear, Mic, RefreshCw } from "lucide-react";
 import { clearEntryChallenges, EntryDialog, type EntryChannel, type EntryMode } from "./QuickEntry";
 import { saveLearnerToken } from "./learnerToken";
@@ -37,6 +37,8 @@ export function SpeakoolLanding() {
   });
   const [channel, setChannel] = useState<EntryChannel>(() => new URLSearchParams(location.search).get("via") === "email" || location.hash === "#computer-call" ? "email" : "phone");
   const [legacyCallback, setLegacyCallback] = useState(location.hash === "#lesson-phone");
+  const heroButton = useRef<HTMLButtonElement>(null);
+  const entryOpener = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     let disposed = false;
     const resume = () => {
@@ -80,17 +82,21 @@ export function SpeakoolLanding() {
     setChannel(via);
     setEntry(mode);
   }
+  function openEntry(mode: EntryMode, button: HTMLButtonElement) {
+    entryOpener.current = button;
+    showEntry(mode);
+  }
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
-      <nav aria-label="ניווט ראשי"><a href="#how">השיטה</a><a href="#plans">מסלולים</a><button type="button" className="sk-land-login" onClick={() => showEntry("login")}>כניסה</button></nav>
+      <nav aria-label="ניווט ראשי"><a href="#how">השיטה</a><a href="#plans">מסלולים</a><button type="button" className="sk-land-login" onClick={e => openEntry("login", e.currentTarget)}>כניסה</button></nav>
     </header>
     <main>
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
         <div className="sk-land-hero-copy">
           <h1 id="landing-heading">פשוט לדבר <span>באנגלית.</span></h1>
           <p className="sk-land-lede">שיעור ראשון של 10 דקות עם מורה AI.<br />בלי כרטיס אשראי.</p>
-          <div className="sk-land-hero-actions"><button type="button" className="sk-primary" onClick={() => showEntry("trial")}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={19} /></button><a href={tel}>לחייג בעצמי</a></div>
+          <div className="sk-land-hero-actions"><button ref={heroButton} type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={19} /></button><a href={tel}>לחייג בעצמי</a></div>
         </div>
         <div className="sk-land-hero-art" aria-hidden="true">
           <svg className="sk-land-voice-art" viewBox="20 -10 280 280" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -108,7 +114,7 @@ export function SpeakoolLanding() {
             <p className="sk-land-kicker">שיעור ראשון בחינם</p>
             <h2 id="free-lesson-title">עשר דקות. בלי הרצאות.</h2>
             <p>בוחרים נושא ומדברים בקצב שלך. המורה עוזר כשנתקעים ובסוף מסכם מה כדאי לתרגל בפעם הבאה.</p>
-            <div className="sk-land-cta"><button type="button" className="sk-primary" onClick={() => showEntry("trial")}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={17} /></button></div>
+            <div className="sk-land-cta"><button type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={17} /></button></div>
             {legacyCallback && <LessonCallbackForm tel={tel} privacy={base + "/privacy"} />}
           </div>
           <div className="sk-land-clock" aria-hidden="true">
@@ -182,12 +188,16 @@ export function SpeakoolLanding() {
         <small>כל המחירים כוללים מע״מ. התשלום בכרטיס אשראי בדף המאובטח של נדרים פלוס.</small>
       </section>
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
-      <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><button type="button" className="sk-primary" onClick={() => showEntry("trial")}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={18} /></button></section>
+      <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><button type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={18} /></button></section>
     </main>
     <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
     <LegalFooter />
     {entry && <EntryDialog mode={entry} channel={channel} onChannel={via => showEntry(entry, via)}
-      privacy={base + "/privacy"} onClose={() => showEntry(null)}
+      privacy={base + "/privacy"} onClose={() => {
+        showEntry(null);
+        (entryOpener.current || heroButton.current)?.focus({ preventScroll: true });
+        entryOpener.current = null;
+      }}
       onToken={token => {
         saveLearnerToken(token);
         showEntry(null);

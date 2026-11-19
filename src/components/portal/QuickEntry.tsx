@@ -177,8 +177,12 @@ export function EntryDialog({ onClose, ...props }: Parameters<typeof QuickEntry>
     dialog?.showModal();
     return () => dialog?.close();
   }, []);
+  function close() {
+    ref.current?.close();
+    onClose();
+  }
   return <dialog ref={ref} className="sk-entry-dialog" aria-label={props.mode === "trial" ? "איך נתחבר?" : "כניסה לחשבון"}
-    onCancel={e => { e.preventDefault(); onClose(); }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <QuickEntry {...props} onClose={onClose} />
+    onCancel={e => { e.preventDefault(); close(); }} onClick={e => { if (e.target === e.currentTarget) close(); }}>
+    <QuickEntry {...props} onClose={close} />
   </dialog>;
 }

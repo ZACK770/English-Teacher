@@ -10,13 +10,13 @@
 }
 .sk-entry-page .sk-entry-panel { border: 1px solid #49604e; border-radius: 23px; }
 .sk-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
-.sk-entry-heading h1 { font: 800 27px/1.15 Heebo, system-ui, sans-serif; margin: 0; }
+.speakool .sk-entry-heading h1 { font: 800 27px/1.15 Heebo, system-ui, sans-serif; margin: 0; }
 .sk-entry-heading button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid #526759; border-radius: 50%; color: #c4d3c9; background: transparent; }
 .sk-entry-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: #111c17; border: 1px solid #405348; padding: 4px; border-radius: 11px; margin-bottom: 18px; }
 .sk-entry-tabs button { min-height: 38px; border-radius: 7px; color: #c4d3c9; border: 1px solid transparent; font-weight: 700; }
 .sk-entry-tabs button[aria-pressed=true] { background: #33482d; color: #e3f8d0; border-color: #648254; }
 .sk-entry-fields form, .sk-entry-personal form { display: grid; gap: 7px; }
-.sk-entry-fields label, .sk-entry-personal label { font-size: 16px; font-weight: 700; }
+.speakool .sk-entry-fields label, .speakool .sk-entry-personal label { margin: 0; font-size: 16px; font-weight: 700; }
 .sk-entry-fields input, .sk-entry-personal input {
   display: block; width: 100%; min-width: 0; min-height: 45px; padding: 8px 11px;
   border: 1px solid #718578; border-radius: 9px; background: #12201a; color: #f0f5ef; font: inherit;
@@ -43,16 +43,16 @@
 .sk-entry-personal form { margin-top: 8px; }
 .sk-entry-panel :is(button,input,a,summary):focus-visible, .sk-quick-direction :is(button,input):focus-visible { outline: 2px solid #ecffd5; outline-offset: 3px; }
 .sk-quick-direction { width: min(100%, 420px); margin: 32px auto 56px; }
-.sk-quick-direction h1 { font: 850 clamp(29px, 7vw, 38px)/1.15 Heebo, system-ui, sans-serif; margin: 0 0 21px; }
+.speakool .sk-quick-direction h1 { font: 850 clamp(29px, 7vw, 38px)/1.15 Heebo, system-ui, sans-serif; margin: 0 0 21px; }
 .sk-quick-direction form { display: grid; gap: 14px; }
 .sk-quick-direction fieldset { min-width: 0; border: 0; padding: 0; }
 .sk-quick-direction legend { font-weight: 750; margin-bottom: 6px; }
-.sk-quick-direction label {
-  display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 6px 11px; margin-bottom: 5px;
+.speakool .sk-quick-direction label {
+  display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 6px 11px; margin: 0 0 5px;
   background: #192820; border: 1px solid #526d59; border-radius: 8px; cursor: pointer;
 }
 .sk-quick-direction label:has(:checked) { border-color: #a5d373; background: #304628; }
-.sk-quick-direction input { accent-color: #c0f67d; }
+.speakool .sk-quick-direction input[type=radio] { accent-color: #c0f67d; width: 17px; height: 17px; flex: none; padding: 0; margin: 0; }
 .sk-quick-direction .sk-primary { justify-content: center; }
 .sk-quick-direction .sk-link { justify-self: center; }
 .sk-profile-next { border: 1px solid #48624d; border-radius: 13px; background: #1c2b23; padding: 14px; margin-bottom: 20px; }
