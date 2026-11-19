@@ -9,7 +9,7 @@ export const grammarNames: Record<string, string> = { present: "זמן הווה"
 
 export function LessonSettingsFields({ value, onChange, compact = false }: { value: LessonSettings; onChange: (v: LessonSettings) => void; compact?: boolean }) {
   const fields = [
-    ["level", "רמת האנגלית", levelNames, "beginner"],
+    ...compact ? [] : [["level", "רמת האנגלית", levelNames, "beginner"]],
     ...compact ? [] : [["conversation_mode", "מצב השיחה", modeNames, "guided"]],
     ["learning_load", "עומס לימודי — נפרד ממהירות הדיבור", loadNames, "light"],
     ...compact ? [] : [["correction_policy", "מתי לתקן?", value.conversation_mode === "roleplay" ? { on_request: correctionPolicies.on_request, after_activity: correctionPolicies.after_activity } : correctionPolicies, value.conversation_mode === "guided" || !value.conversation_mode ? "after_answer" : "after_activity"]],
