@@ -246,11 +246,21 @@ export class SubscriptionStore {
       await this.db.prepare("UPDATE standing_orders SET previous_monthly_agorot=monthly_agorot,monthly_agorot=?,updated_at=? WHERE id=?").bind(amount, iso(new Date()), standing.id).run();
     } catch {
       await this.db.batch([
-        previous ? this.db.prepare("UPDATE subscription_members SET added_at=?,removed_at=? WHERE subscription_id=? AND customer_id=?").bind(previous.added_at, previous.removed_at, id, customerId)
+        previous ? this.db.prepare(`UPDATE subscription_members SET added_at=?,removed_at=? WHERE subscription_id=? AND customer_id=?
+          AND (? IS NOT NULL OR NOT EXISTS (SELECT 1 FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+            WHERE m.customer_id=? AND m.subscription_id<>? AND m.removed_at IS NULL AND s.status IN ('active','paused')))`)
+          .bind(previous.added_at, previous.removed_at, id, customerId, previous.removed_at, customerId, id)
           : this.db.prepare("DELETE FROM subscription_members WHERE subscription_id=? AND customer_id=?").bind(id, customerId),
         this.db.prepare("UPDATE standing_orders SET monthly_agorot=?,previous_monthly_agorot=? WHERE id=?").bind(standing.monthly_agorot, standing.previous_monthly_agorot, standing.id),
       ]);
-      try { await updateKevaAmount(this.env!, standing.keva_id, standing.monthly_agorot); }
+      const restored = previous ? await this.db.prepare("SELECT removed_at FROM subscription_members WHERE subscription_id=? AND customer_id=?").bind(id, customerId).first<Subscription>() : null;
+      const conflict = previous && restored?.removed_at !== previous.removed_at;
+      if (conflict) await this.billingIssue(id, "keva_family_membership_conflict", customerId);
+      try {
+        const amount = conflict ? await this.renewalAmount(id) : standing.monthly_agorot;
+        await updateKevaAmount(this.env!, standing.keva_id, amount);
+        if (conflict) await this.db.prepare("UPDATE standing_orders SET monthly_agorot=? WHERE id=?").bind(amount, standing.id).run();
+      }
       catch { await this.billingIssue(id, "keva_family_recovery", iso(new Date())); }
       throw new HttpError(502, "עדכון החיוב בנדרים פלוס נכשל. השינוי בבני המשפחה בוטל, נסו שוב או פנו לשירות.");
     }

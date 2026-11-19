@@ -71,6 +71,25 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
+  it("does not restore a failed removal into two active family memberships", async () => {
+    const { o, store } = await monthly();
+    const member = await store.addMember(o.id, "0502223333", "Child");
+    await b.save("customers", { name: "Other owner", phone: "0503334444" }, "c2");
+    const other = await store.create("c2", "school-step");
+    let raced = false;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (!raced) {
+        raced = true;
+        await store.addMember(other.id, "0502223333", "Child");
+        return Response.json({ Result: "Error" });
+      }
+      return Response.json({ Result: "OK" });
+    }));
+    await expect(store.removeMember(o.id, member.customer_id)).rejects.toMatchObject({ status: 502 });
+    expect(db.sql.prepare("SELECT subscription_id FROM subscription_members WHERE customer_id=? AND removed_at IS NULL").all(member.customer_id)).toEqual([{ subscription_id: other.id }]);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_family_membership_conflict'").get()?.n).toBe(1);
+    expect(db.sql.prepare("SELECT monthly_agorot FROM standing_orders").get()?.monthly_agorot).toBe(5900);
+  });
   it("accepts a signed late charge after repeated family edits and flags only the collection difference", async () => {
     const { o, store } = await monthly();
     await store.addMember(o.id, "0502223333", "One");
