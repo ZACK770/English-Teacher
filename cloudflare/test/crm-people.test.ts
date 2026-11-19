@@ -63,8 +63,8 @@ describe("CRM customer reset", () => {
     if (source === "session") {
       session(); sql.prepare("UPDATE sessions SET ended_at=?").run(at);
     } else if (source === "call_customers" || source === "menu") {
-      insert("call_customers", { call_id: "menu-call", customer_id: "person1", profile_id: "ivr", channel: "phone", created_at: source === "call_customers" ? at : now });
-      if (source === "menu") insert("console_settings", { id: "ivr:menu-call", body: "{}", updated_at: at });
+      insert("call_customers", { call_id: "menu-call", customer_id: "person1", bot_id: "ivr", channel: "phone", created_at: source === "call_customers" ? at : now });
+      if (source === "menu") event("ivr-events", { call_id: "menu-call", route: "main", at });
     } else event(source, { at });
     expect((await reset()).status).toBe(minutes < 10 ? 409 : 200);
     expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: minutes < 10 ? 0 : 1 });
