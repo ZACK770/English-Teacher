@@ -40,6 +40,9 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   const phone = normalizePhone(body.phone);
   if (!phone) throw new HttpError(422, "Invalid phone");
   const time = Date.now();
+  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? LIMIT 1")
+    .bind(phone, new Date(time - 86400000).toISOString()).first<{ id: string }>();
+  if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
   const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "unknown");
   const key = CALLBACK_IP_PREFIX + callbackHour(time) + ":" + ipHash;
   if (!await new BusinessStore(env.DB).consumeMonthlyQuota(key, CALLBACK_IP_LIMIT)) {
@@ -48,9 +51,6 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
       headers: { "Retry-After": String(Math.ceil((HOUR_MS - time % HOUR_MS) / 1000)), "Cache-Control": "no-store" },
     });
   }
-  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? LIMIT 1")
-    .bind(phone, new Date(Date.now() - 86400000).toISOString()).first<{ id: string }>();
-  if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
   const id = randomHex(16);
   const now = nowIso();
   await env.DB.prepare(

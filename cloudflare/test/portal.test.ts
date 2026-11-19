@@ -195,6 +195,24 @@ describe("approved pricing catalog", () => {
 });
 
 describe("public callback quota", () => {
+  it("does not spend the quota on repeat submissions for an existing callback", async () => {
+    const submit = (number: number) => request("/v1/public/callback", tokenA, {
+      name: "Callback test", phone: "050000000" + number, timing: "now", for_whom: "self", consent: true,
+    });
+    const initial = await submit(1);
+    expect(initial.status).toBe(201);
+    const { id } = await initial.json() as { id: string };
+    for (let retry = 0; retry < 4; retry++) {
+      const repeat = await submit(1);
+      expect(repeat.status).toBe(200);
+      expect(await repeat.json()).toEqual({ ok: true, id, duplicate: true });
+    }
+    expect((await submit(2)).status).toBe(201);
+    expect((await submit(3)).status).toBe(201);
+    expect((await submit(4)).status).toBe(429);
+    expect((await submit(1)).status).toBe(200);
+  });
+
   it("atomically limits valid submissions per connecting IP across hostnames", async () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-12-12T10:15:30Z"));
     const submit = (i: number, ip: string, isValid = true) => worker.fetch(new Request(
