@@ -61,17 +61,9 @@ export function nextCallingSlot(date: Date): Date {
 export function parsePreferredTime(text: string, now: Date): Date | null {
   const local = localDate(now);
   let hasDay = false;
-  const normalizedText = text.replace(/\b(\d{1,2})\.(\d{2})\b/g, (token, hour: string, minute: string, offset: number) => {
-    const markedTime = /(?:בשעה|ב[-־]?)\s*$/.test(text.slice(0, offset));
-    const remaining = text.slice(0, offset) + " " + text.slice(offset + token.length);
-    const otherExplicitTime = /בשעה\s*\d{1,2}|\b\d{1,2}:\d{2}\b/.test(remaining);
-    const validDate = +hour >= 1 && +hour <= 31 && +minute >= 1 && +minute <= 12;
-    if (validDate && otherExplicitTime) return token;
-    return +hour <= 23 && +minute <= 59 && (markedTime || +minute === 0 || +minute > 12) ? `${hour}:${minute}` : token;
-  });
-  const dateToken = /\b(\d{1,2})[/.](\d{1,2})\b/g;
-  const date = new RegExp(dateToken).exec(normalizedText);
-  const timeText = normalizedText.replace(dateToken, " ");
+  const dateToken = /\b(\d{1,2})\/(\d{1,2})\b/g;
+  const date = new RegExp(dateToken).exec(text);
+  const timeText = text.replace(dateToken, " ");
   const weekdays = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
   const weekday = weekdays.findIndex(day => text.includes(day));
   if (date) {
@@ -87,19 +79,17 @@ export function parsePreferredTime(text: string, now: Date): Date | null {
     local.setUTCDate(local.getUTCDate() + (weekday - local.getUTCDay() + 7) % 7);
     hasDay = true;
   }
-  const clock = timeText.match(/(\d{1,2}):(\d{2})/);
-  const hourOnly = timeText.match(/בשעה\s*(\d{1,2})(?!\d)/)
-    ?? timeText.match(/ב[-־]?\s*(\d{1,2})(?!\d)/)
-    ?? timeText.match(/(\d{1,2})\s*(?:בערב|בבוקר|בצהריים|אחה["״']צ|אחר הצהריים)/);
+  const explicitTime = timeText.match(/(?:בשעה\s*|ב[-־]?\s*)(\d{1,2})(?:[:.](\d{2}))?(?![\d:.])|\b(\d{1,2})[:.](\d{2})(?!\d)/);
+  const hourOnly = timeText.match(/(\d{1,2})\s*(?:בערב|בבוקר|בצהריים|אחה["״']צ|אחר הצהריים)/);
   const afternoon = /אחה["״']צ|אחר הצהריים/.test(text);
   const evening = text.includes("ערב");
   const noon = text.includes("צהריים");
   const morning = text.includes("בוקר");
-  let hour = clock ? +clock[1] : hourOnly ? +hourOnly[1] : afternoon ? 16 : evening ? 19 : noon ? 13 : morning ? 10 : 8;
-  const minute = clock ? +clock[2] : 0;
-  if ((evening || afternoon || noon) && (clock || hourOnly) && hour < 12) hour += 12;
+  let hour = explicitTime ? +(explicitTime[1] ?? explicitTime[3]) : hourOnly ? +hourOnly[1] : afternoon ? 16 : evening ? 19 : noon ? 13 : morning ? 10 : 8;
+  const minute = explicitTime ? +(explicitTime[2] ?? explicitTime[4] ?? 0) : 0;
+  if ((evening || afternoon || noon) && (explicitTime || hourOnly) && hour < 12) hour += 12;
   if (hour > 23 || minute > 59) return null;
-  if (!hasDay && !clock && !hourOnly && !afternoon && !evening && !noon && !morning) return null;
+  if (!hasDay && !explicitTime && !hourOnly && !afternoon && !evening && !noon && !morning) return null;
   local.setUTCHours(hour, minute, 0, 0);
   let result = fromLocal(local);
   if (!hasDay && result < now) {
