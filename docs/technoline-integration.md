@@ -49,6 +49,12 @@ it writes query credentials. Once no live extensions use the old key, remove
 `TLIVR_CALLBACK_SECRET` to invalidate it. This does not change the WebSocket
 channel or its token.
 
+To rotate a body credential, set `TLIVR_CALLBACK_BODY_NEXT_SECRET` to a new
+value, then update and read back every affected provider extension without
+printing its settings. Once live calls confirm the affected routes, replace
+`TLIVR_CALLBACK_BODY_SECRET` with the new value and remove the temporary binding.
+Confirm the retired credential is rejected and the new one works.
+
 Pre-change backups are outside Git in the current chat work/pbx-backups.
 Server reconciliation saves redacted per-extension snapshots before writes.
 

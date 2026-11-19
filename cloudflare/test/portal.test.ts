@@ -491,6 +491,21 @@ describe("real learner portal", () => {
     expect(log).not.toContain("body-secret");
     expect(log).not.toContain("legacy");
   });
+  it("rotates a PBX body credential without accepting it in the URL", async () => {
+    const primary = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_BODY_SECRET: "current" };
+    const overlap = { ...primary, TLIVR_CALLBACK_BODY_NEXT_SECRET: "replacement" };
+    const promoted = { ...primary, TLIVR_CALLBACK_BODY_SECRET: "replacement" };
+    const call = (liveEnv: Env, credential: string, query = "") => handleCallback(new Request("https://x/v1/technoline/ivr/main" + query, {
+      method: "POST",
+      body: new URLSearchParams({ PBXcallId: "rotation-test", PBXnum: "0765673575", PBXextensionPath: "/99", isaacMain: "1", callback_key: credential }),
+    }), liveEnv, settings(liveEnv), "main");
+    await expect(call(primary, "replacement")).rejects.toMatchObject({ status: 401 });
+    expect((await call(overlap, "current")).goTo).toBe("/99/7");
+    expect((await call(overlap, "replacement")).goTo).toBe("/99/7");
+    await expect(call(overlap, "replacement", "?callback_key=replacement")).rejects.toMatchObject({ status: 401 });
+    await expect(call(promoted, "current")).rejects.toMatchObject({ status: 401 });
+    expect((await call(promoted, "replacement")).goTo).toBe("/99/7");
+  });
   it("offers named learner teachers plus a default on the phone and gives the tutor both names", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" } as Env;
     const teacher = await b.save(teachersKind("learner-a"), { ...config, name: "Dana" });

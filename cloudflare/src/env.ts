@@ -23,6 +23,7 @@ export interface Env {
   TLIVR_SYSTEM_API_KEY?: string;
   TLIVR_CALLBACK_SECRET?: string;
   TLIVR_CALLBACK_BODY_SECRET?: string;
+  TLIVR_CALLBACK_BODY_NEXT_SECRET?: string;
   TLIVR_SYSTEM_PHONE?: string;
   TLIVR_PROJECT_PATH?: string;
   TLIVR_PROJECT_ENABLED?: string;
