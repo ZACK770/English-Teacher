@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, ChevronDown, Clock3, History, LogOut, Mic, MoreHorizontal, Phone, Plus, Settings2, Sprout, Trash2, Trophy, Upload, Users, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, ChevronDown, Clock3, History, LogOut, Mic, MoreHorizontal, Phone, Plus, Settings2, Sprout, Trash2, Trophy, Users, X } from "lucide-react";
 import { Billing, Checkout } from "./Checkout";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { EntryForm, QuickEntry, type EntryChannel } from "./QuickEntry";
 import { legalBasePath } from "../../legalRoutes";
 import { clearLearnerToken, saveLearnerToken } from "./learnerToken";
-import { LearningProgress } from "./LearningProgress";
 import { HomeDashboard, PracticeDashboard } from "./PracticeDashboard";
+import { VocabularyPage } from "./VocabularyPage";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { ConversationArt } from "./ConversationArt";
 import { SubscriptionPanel } from "./SubscriptionPanel";
@@ -148,7 +148,7 @@ export const LearnerPortal: React.FC = () => {
   const headings: Record<Page, [string, string]> = {
     home: ["עוד שיחה. קצת יותר ביטחון.", "כיף שחזרת."],
     teachers: ["עם מי בא לך לדבר?", "המורים שלי"],
-    materials: ["המילים שלך. השיחה שלנו.", "אוצר מילים"],
+    materials: ["אוצר מילים", "אוצר מילים"],
     history: ["תראה כמה כבר דיברת.", "השיחות שלי"],
     achievements: ["האנגלית כבר זזה.", "ההתקדמות שלי"],
     settings: ["בקצב שלך. בדרך שלך.", "העדפות"],
@@ -193,7 +193,7 @@ export const LearnerPortal: React.FC = () => {
               {(defaultWeb ? [defaultWeb] : []).map((bot, index) => <article className={"sk-teacher-card sk-base-teacher " + (!active && botId === bot.id ? "is-current" : "")} key={bot.id}><span className="sk-tag">{!active && botId === bot.id ? "בטלפון שלך" : "מצוות ספיקול"}</span><div className="sk-teacher-art"><TeacherMark index={index} /></div><h2>{DEFAULT_NAME}</h2><p>נקודת פתיחה טובה. פשוט להתחיל.</p><button className="sk-primary" onClick={() => talk(undefined, { ...bot, label: DEFAULT_NAME })}><Mic size={16} />שוחח עכשיו</button>{bot.phone_enabled && (active || botId !== bot.id) && <button className="sk-link" onClick={() => void run(() => save({ selected_bot: bot.id, active_teacher: "", mode: "free" }), "המורה שלך בטלפון עודכן.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
             </div>{!webTeachers.length && <Empty icon={<Users />} title="המורים עוד לא כאן." text="אין כרגע מורה זמין. אפשר לנסות שוב מאוחר יותר." />}
           </>}
-          {page === "materials" && <Materials account={account} onSave={async (name, words) => await run(async () => { const r = await portalRequest<Material>("/v1/portal/materials", token, { name, words }); await save({ material_id: r.id }); setNote(r.target_count === 0 ? "נשמר כחומר לשיחה בלבד; טרם הוכנו יעדי אנגלית למדידה." : "המילים נשמרו. יעדי האנגלית מוכנים לשיחה הבאה."); })} onActivate={id => void run(() => save({ material_id: id }), id ? account.materials.find(m => m.id === id)?.target_count === 0 ? "נבחר חומר לשיחה בלבד, ללא ציוני מילים." : "הרשימה מחכה לשיחה הבאה." : "הרשימה האישית הוסרה מהשיחה הבאה.")} onDelete={id => void run(async () => { await portalRequest("/v1/portal/materials/" + id, token, undefined, "DELETE"); }, "הרשימה נמחקה.")} />}
+          {page === "materials" && <VocabularyPage account={account} token={token} onSave={async (name, words) => await run(async () => { const r = await portalRequest<Material>("/v1/portal/materials", token, { name, words }); await save({ material_id: r.id }); setNote(r.target_count === 0 ? "נשמר כחומר לשיחה בלבד; טרם הוכנו יעדי אנגלית למדידה." : "המילים נשמרו. יעדי האנגלית מוכנים לשיחה הבאה."); })} onActivate={id => void run(() => save({ material_id: id }), id ? account.materials.find(m => m.id === id)?.target_count === 0 ? "נבחר חומר לשיחה בלבד, ללא ציוני מילים." : "הרשימה מחכה לשיחה הבאה." : "הרשימה האישית הוסרה מהשיחה הבאה.")} onDelete={id => void run(async () => { await portalRequest("/v1/portal/materials/" + id, token, undefined, "DELETE"); }, "הרשימה נמחקה.")} />}
           {page === "history" && <div className="sk-history">{account.progress.sessions.length === 0 ? <Empty icon={<History />} title="הסיפור שלנו עוד מתחיל." text="אחרי השיחה הראשונה יחכו לך כאן סיכום קטן וצעד הבא." action={() => setPhoneOpen(true)} actionLabel="בוא נדבר" /> : account.progress.sessions.map((lesson, index) => <article className="sk-history-item" key={lesson.call_id || index}><button className="sk-history-row" aria-expanded={expanded === lesson.call_id} onClick={() => { setExpanded(expanded === lesson.call_id ? null : lesson.call_id); setTranscript(undefined); }}><span className={"sk-history-dot " + (lesson.success_he ? "has-success" : "")} /><time dateTime={lesson.started_at}>{lessonDate(lesson.started_at)}</time><span>{lesson.summary_he || "עוד שיחה קטנה באנגלית"}</span><small>{Math.max(1, Math.round(lesson.duration_seconds / 60))} דקות</small><ChevronDown size={16} /></button>{expanded === lesson.call_id && <div className="sk-history-detail"><dl><dt>מה הצליח</dt><dd>{lesson.success_he || "כל שיחה היא עוד תרגול."}</dd><dt>כדאי לחזק</dt><dd>{lesson.observations.find(o => o.correction)?.correction || "עדיין אין הערה לשיחה הזאת."}</dd><dt>הצעד הבא</dt><dd>{lesson.next_step_he || "ממשיכים לדבר."}</dd></dl>{lesson.observations.length > 0 && <div className="sk-tags">{lesson.observations.slice(0, 6).map((o, i) => <span className="sk-tag" key={i}>{o.skill}</span>)}</div>}<button className="sk-quiet-link" onClick={() => void run(async () => { const r = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(lesson.call_id) + "/transcript", token); setTranscript(r.transcript); })}>הצג את השיחה</button>{transcript === null && <p className="sk-muted">לא נשמר תמליל לשיחה הזאת. אפשר לבחור שמירת שיחות בהעדפות.</p>}{transcript && <div className="sk-transcript">{transcript.map((t, i) => <p key={i}><strong>{t.role === "learner" ? "אני" : "המורה"}: </strong><span dir="auto">{t.text}</span></p>)}</div>}</div>}</article>)}</div>}
           {page === "checkout" && <Checkout token={token} packageId={checkoutPlan} onDone={() => { history.replaceState(null, "", location.pathname); void refresh(); navigate("home"); }} />}
           {page === "achievements" && <Achievements account={account} token={token} onGoal={() => navigate("intake")} onStart={() => setPhoneOpen(true)} />}
@@ -304,24 +304,8 @@ function Direction({ initial, purpose, askTeacher = false, editing = false, mate
   </section>;
 }
 
-function Materials({ account, onSave, onActivate, onDelete }: { account: Account; onSave: (n: string, w: string[]) => Promise<boolean>; onActivate: (id: string) => void; onDelete: (id: string) => void }) {
-  const [adding, setAdding] = useState(account.materials.length === 0);
-  const [name, setName] = useState("");
-  const [text, setText] = useState("");
-  const [error, setError] = useState("");
-  const words = [...new Set(text.split(/[\n,;]+/).map(w => w.trim()).filter(Boolean))];
-  const file = async (file?: File) => {
-    if (!file) return;
-    if (!/\.(txt|csv)$/i.test(file.name) || file.size > 200000) { setError("אפשר קובץ TXT או CSV עד 200KB. לכל רשימה עד מאה מילים או ביטויים."); return; }
-    const content = await file.text(); setText(content.replace(/^\uFEFF/, "")); if (!name) setName(file.name.replace(/\.[^.]+$/, "").slice(0, 80)); setError("");
-  };
-  const chosenTeacher = account.teachers.find(t => t.id === account.preferences.active_teacher);
-  const activeId = chosenTeacher?.material_id || account.preferences.material_id || "";
-  return <><div className="sk-section-intro"><p>מילים שהבאת מהחיים. המורה ישלב אותן בשיחה.</p><button className="sk-secondary" onClick={() => setAdding(!adding)}><Plus size={16} />רשימה חדשה</button></div>{adding && <form className="sk-material-form" onSubmit={e => { e.preventDefault(); if (!words.length || words.length > 100 || words.some(w => w.length > 120)) { setError("עד מאה מילים או ביטויים, עד 120 תווים בכל שורה."); return; } void onSave(name.trim(), words).then(saved => { if (saved) { setText(""); setName(""); setError(""); } }); }}><label htmlFor="word-name">שם קטן לרשימה</label><input id="word-name" maxLength={80} required value={name} onChange={e => setName(e.target.value)} placeholder="למשל: השיחה הבאה בעבודה" /><label htmlFor="word-text">אילו מילים נכנסות לשיחה?</label><textarea id="word-text" required dir="auto" maxLength={12500} value={text} onChange={e => setText(e.target.value)} placeholder={"appointment — פגישה\nopportunity — הזדמנות\nLet's give it a try"} rows={6} /><div className="sk-material-bottom"><label className="sk-file-button"><Upload size={16} />או קובץ משלך<input type="file" accept=".txt,.csv,text/plain,text/csv" onChange={e => { void file(e.target.files?.[0]); e.target.value = ""; }} /><small>TXT / CSV · עד מאה מילים</small></label><span className="sk-muted">{words.length} / 100</span></div>{error && <p className="sk-error" role="alert">{error}</p>}<button className="sk-primary" disabled={!name.trim() || !words.length}>שומרים לשיחה הבאה<ArrowLeft size={16} /></button></form>}
-    <div className="sk-material-list">{account.materials.map(m => <article key={m.id} className="sk-material-card"><div className="sk-card-top"><BookOpen strokeWidth={1.3} /><IconButton label={"מחיקת " + m.name} onClick={() => { if (confirm("למחוק את הרשימה " + m.name + "?")) onDelete(m.id); }}><Trash2 size={16} /></IconButton></div><h2>{m.name}</h2><p>{m.words.length} מילים וביטויים · {m.target_count ?? "—"} יעדי אנגלית ייחודיים למדידה</p>{m.target_count === 0 && <p role="status">הרשימה נשמרה כחומר לשיחה בלבד. טרם הוכנו לה יעדי אנגלית, ולכן לא יהיו עליה ציוני מילים.</p>}<div className="sk-tags">{m.words.slice(0, 5).map(w => <span className="sk-tag" dir="auto" key={w}>{w}</span>)}{m.words.length > 5 && <span className="sk-tag">ועוד {m.words.length - 5}</span>}</div><button className={activeId === m.id ? "sk-quiet-link sk-accent" : "sk-link"} onClick={() => onActivate(activeId === m.id ? "" : m.id)}>{activeId === m.id ? <><Check size={15} />ברשימת השיחה הבאה</> : "לקחת לשיחה הבאה"}<ArrowLeft size={14} /></button></article>)}</div></>;
-}
 function Achievements({ account, token, onGoal, onStart }: { account: Account; token: string; onGoal: () => void; onStart: () => void }) {
-  return <section className="sk-achievements"><PracticeDashboard account={account} token={token} onGoal={onGoal} onStart={onStart} /><details className="pd-word-details"><summary>גם המילים שלך מתקדמות</summary><LearningProgress token={token} account={account} /></details></section>;
+  return <section className="sk-achievements"><PracticeDashboard account={account} token={token} onGoal={onGoal} onStart={onStart} /></section>;
 }
 const hasPhone = (account: Account) => !!(account.customer.phone || account.phones.length);
 
