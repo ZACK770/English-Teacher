@@ -6,7 +6,7 @@ import { LearningStore, grammarCatalog, materialTargets, validateLearningBatch, 
 import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
-import { applyLearnerControls, LearnerPreferencesSchema, saveIntake } from "../src/learner";
+import { applyLearnerControls, LearnerPreferencesSchema, saveIntake, teachersKind } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -225,6 +225,12 @@ describe("learner settings to Gemini", () => {
     const after = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
     expect(after.intake_pending).toBe(false);
     expect((await b.loadContext("preferences:alice")).plan).toEqual({ goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" });
+  });
+  it("saves a web-only intake plan without making a web-only bot the phone teacher", async () => {
+    expect(await saveIntake(b, "bob", "web-only", { goal: "travel", level: "beginner" }, false)).toBe(true);
+    expect((await b.loadContext("preferences:bob")).plan).toMatchObject({ goal: "travel" });
+    expect(await b.list(teachersKind("bob"))).toEqual([]);
+    expect((await b.loadContext("preferences:bob")).active_teacher).toBeUndefined();
   });
   it("does not add grammar to recommended practice and only sends its targets when explicitly selected", async () => {
     await b.savePreference("alice", { topic: "business", track: "recommended" });

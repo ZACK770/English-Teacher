@@ -348,7 +348,7 @@ export class TutorSession {
     }
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name === "save_intake") {
-      const saved = await saveIntake(this.b, this.customerId, this.profileId, args);
+      const saved = await saveIntake(this.b, this.customerId, this.profileId, args, !!(await this.progress.getBot(this.profileId))?.phone_enabled);
       if (saved && this.controls) this.controls = { ...this.controls, intake_pending: false };
       if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
       return saved;
