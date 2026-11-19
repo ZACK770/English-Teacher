@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { BusinessStore } from "./business";
-import { type Env, nowIso, randomHex, type Settings } from "./env";
+import { type Env, nowIso, randomHex, sha256Hex, type Settings } from "./env";
+import { enqueueLessonCallback, followupLessonTime } from "./callbacks";
 import { ProgressStore } from "./progress";
 import { startSchool, type IVRResponse } from "./pbx";
 
@@ -70,8 +71,8 @@ export const SCHEDULE_LESSON_TOOL = {
   parameters: {
     type: "object",
     properties: {
-      day: { type: "string", enum: ["today", "tomorrow", "this_week", "other"] },
-      part_of_day: { type: "string", enum: ["morning", "afternoon", "evening"] },
+      day: { type: "string", enum: ["today", "tomorrow", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "this_week", "other"] },
+      part_of_day: { type: "string", enum: ["morning", "noon", "afternoon", "evening"] },
       note: { type: "string", description: "The learner's words in Hebrew, short" },
     },
     required: ["day", "part_of_day"],
@@ -105,7 +106,7 @@ export const PAYMENT_LINK_TOOL = {
 export const SALES_TOOLS = [SCHEDULE_LESSON_TOOL, SAVE_EMAIL_TOOL, PAYMENT_LINK_TOOL];
 export const SALES_TOOL_NAMES = new Set(SALES_TOOLS.map((t) => t.name));
 
-const scheduleArgs = z.object({ day: z.enum(["today", "tomorrow", "this_week", "other"]), part_of_day: z.enum(["morning", "afternoon", "evening"]), note: z.string().max(200).optional() });
+const scheduleArgs = z.object({ day: z.string().max(40).default("other"), part_of_day: z.enum(["morning", "noon", "afternoon", "evening"]), note: z.string().max(200).optional() });
 const emailArgs = z.object({ email: z.string().trim().toLowerCase().max(120).email(), words: z.array(z.string().trim().min(1).max(60)).max(12).optional(), summary: z.string().trim().max(300).optional() });
 const linkArgs = z.object({ plan_id: z.enum(PLAN_IDS), channel: z.enum(["sms", "email"]) });
 
@@ -134,7 +135,7 @@ export function wordsEmail(words: string[] = [], summary = ""): string[] {
   ];
 }
 
-export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail): Promise<boolean> {
+export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = ""): Promise<boolean> {
   if (customerId.startsWith("anonymous-")) return false;
   const context = await b.loadContext(callId);
   const campaign = campaignName(context.campaign);
@@ -142,8 +143,13 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
   if (name === "schedule_next_lesson") {
     const parsed = scheduleArgs.safeParse(args);
     if (!parsed.success) return false;
-    await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at } });
-    await b.save(SALES_FOLLOWUPS, { ...base, type: "lesson", ...parsed.data });
+    const id = (await sha256Hex("lesson:" + customerId + ":" + callId)).slice(0, 32);
+    const existing = await b.record(SALES_FOLLOWUPS, id);
+    const unchanged = existing && existing.day === parsed.data.day && existing.part_of_day === parsed.data.part_of_day;
+    const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at) : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
+    if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at, callerPhone)) return false;
+    await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at, scheduled_at: at.toISOString(), callback_id: id } });
+    await b.save(SALES_FOLLOWUPS, { ...base, at: existing?.at ?? base.at, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);
     return true;
   }
   if (name === "save_email") {

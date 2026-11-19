@@ -23,7 +23,7 @@ const RequestSchema = z.object({
   preferred_time: z.string().trim().max(80).default(""),
   preferred_at: z.string().datetime({ offset: true }).optional(),
   consent: z.literal(true),
-  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).default(""),
+  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).refine(source => source !== "lesson_followup").default(""),
   website: z.string().max(0).default(""),
 });
 
@@ -47,7 +47,7 @@ function fromLocal(local: Date): Date {
   return result;
 }
 
-export function nextCallingSlot(date: Date): Date {
+export function nextImmediateSlot(date: Date): Date {
   const local = localDate(date);
   const day = local.getUTCDay();
   const hour = local.getUTCHours();
@@ -55,6 +55,45 @@ export function nextCallingSlot(date: Date): Date {
   if (day === 5) local.setUTCDate(local.getUTCDate() + 1);
   local.setUTCHours(20, 0, 0, 0);
   return fromLocal(local);
+}
+
+export function nextCallingSlot(date: Date): Date {
+  let result = nextImmediateSlot(date);
+  for (;;) {
+    const local = localDate(result);
+    const hour = local.getUTCHours();
+    if (hour >= 8 && hour < 22) return result;
+    if (hour >= 22) local.setUTCDate(local.getUTCDate() + 1);
+    local.setUTCHours(8, 0, 0, 0);
+    result = nextImmediateSlot(fromLocal(local));
+  }
+}
+
+export function followupLessonTime(day: string, part: string, now: Date): Date {
+  const local = localDate(now);
+  const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const namedDay = weekdays.indexOf(day);
+  const fallback = !["today", "tomorrow", ...weekdays].includes(day);
+  if (day === "tomorrow") local.setUTCDate(local.getUTCDate() + 1);
+  else if (namedDay >= 0) local.setUTCDate(local.getUTCDate() + (namedDay - local.getUTCDay() + 7) % 7);
+  const hour = fallback ? 17 : ({ morning: 10, noon: 16, afternoon: 16, evening: 19 }[part] ?? 17);
+  local.setUTCHours(hour, 0, 0, 0);
+  if (fromLocal(local) <= now) local.setUTCDate(local.getUTCDate() + (namedDay >= 0 ? 7 : 1));
+  if (fallback) {
+    while ([5, 6].includes(local.getUTCDay())) local.setUTCDate(local.getUTCDate() + 1);
+  }
+  return nextCallingSlot(fromLocal(local));
+}
+
+export async function enqueueLessonCallback(b: BusinessStore, customerId: string, followupId: string, at: Date, now: string, callerPhone = "") {
+  const customer = await b.record("customers", customerId);
+  const linked = (await b.list("learner-phone-links")).filter(link => link.customer_id === customerId);
+  const phone = [callerPhone, customer?.phone ?? "", ...linked.map(link => String(link.phone ?? ""))].map(normalizePhone).find(Boolean);
+  if (!phone) throw new HttpError(422, "A visible phone is required for a lesson callback");
+  const result = await b.db.prepare(
+    "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,'scheduled',?,?,?,'queued',0,?,?,?) ON CONFLICT(id) DO UPDATE SET preferred_time=excluded.preferred_time,next_attempt_at=excluded.next_attempt_at,updated_at=excluded.updated_at WHERE callback_requests.status='queued'",
+  ).bind(followupId, phone, customer?.name || "", "self", "שיעור המשך", at.toISOString(), "lesson_followup", now, now, now, at.toISOString()).run();
+  return result.meta.changes === 1;
 }
 
 export function parsePreferredTime(text: string, now: Date): Date | null {
@@ -109,7 +148,7 @@ export function normalizePhone(raw: string): string | null {
   let digits = raw.replace(/[^0-9+]/g, "");
   if (digits.startsWith("+972")) digits = "0" + digits.slice(4);
   else if (digits.startsWith("972")) digits = "0" + digits.slice(3);
-  return /^0(5[0-9]|7[0-9])[0-9]{7}$/.test(digits) ? digits : null;
+  return /^(?:0[57][0-9]{8}|0[23489][0-9]{7})$/.test(digits) ? digits : null;
 }
 
 type CallbackExtension = { id: string; name: string | null; path: string };
@@ -198,8 +237,8 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   const preferred = body.preferred_at ? new Date(body.preferred_at) : null;
   if (preferred && (preferred.getTime() < Date.parse(now) || preferred.getTime() > Date.parse(now) + 30 * 86400000)) throw new HttpError(422, "Invalid preferred_at");
   const scheduled = body.timing === "now" ? new Date(now) : preferred ?? parsePreferredTime(body.preferred_time, new Date(now)) ?? new Date(now);
-  const nextAttempt = nextCallingSlot(scheduled).toISOString();
-  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? LIMIT 1")
+  const nextAttempt = (body.timing === "now" ? nextImmediateSlot(scheduled) : nextCallingSlot(scheduled)).toISOString();
+  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND NOT (source='lesson_followup' AND timing='scheduled') LIMIT 1")
     .bind(phone, new Date(time - 86400000).toISOString()).first<{ id: string }>();
   if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
   const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "unknown");
@@ -214,9 +253,9 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   await env.DB.prepare(
     "INSERT INTO callback_requests (id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,?,?,?,?,?,?,?,?,'queued',0,?,?,?)",
   ).bind(id, phone, body.name, body.for_whom, body.goal, body.timing, body.preferred_time || null, body.source || "landing", now, now, now, nextAttempt).run();
-  const shabbat = nextAttempt !== scheduled.toISOString();
+  const shabbat = nextImmediateSlot(scheduled).getTime() !== scheduled.getTime();
   const status = body.timing === "now" && !shabbat && dialerConfigured(env)
-    ? await dialCallbackRow(env, { id, phone, attempts: 0 }, new Date(now))
+    ? await dialCallbackRow(env, { id, phone, attempts: 0, timing: body.timing, source: body.source || "landing" }, new Date(now), true)
     : "queued";
   return Response.json({ ok: true, id, status, ...(status === "queued" && shabbat ? { reason: "shabbat" } : {}) }, { status: 201 });
 }
@@ -232,7 +271,13 @@ function dialerConfigured(env: Env): boolean {
   return !!(env.CALLBACK_RELAY_URL && env.CALLBACK_RELAY_SECRET) || !!env.TLIVR_SYSTEM_API_KEY;
 }
 
-async function dialCallbackRow(env: Env, item: { id: string; phone: string; attempts: number }, now: Date): Promise<"dialing" | "dialed" | "queued" | "failed"> {
+async function dialCallbackRow(env: Env, item: { id: string; phone: string; attempts: number; timing: string; source: string }, now: Date, immediateForm = false): Promise<"dialing" | "dialed" | "queued" | "failed"> {
+  const slot = immediateForm && item.timing === "now" && item.attempts === 0 ? nextImmediateSlot(now) : nextCallingSlot(now);
+  if (slot.getTime() !== now.getTime()) {
+    await env.DB.prepare("UPDATE callback_requests SET next_attempt_at=?,updated_at=? WHERE id=? AND status='queued'")
+      .bind(slot.toISOString(), nowIso(), item.id).run();
+    return "queued";
+  }
   const useRelay = !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET;
   const provider = useRelay ? "relay" : "technoline";
   const claimed = await env.DB.prepare("UPDATE callback_requests SET status='dialing',attempts=attempts+1,updated_at=? WHERE id=? AND status='queued' AND next_attempt_at<=? AND attempts=?")
@@ -276,13 +321,18 @@ export async function dispatchCallbacks(env: Env): Promise<Record<string, unknow
   const now = new Date();
   await env.DB.prepare("UPDATE callback_requests SET status='queued',next_attempt_at=?,updated_at=? WHERE status='dialing' AND updated_at<?")
     .bind(now.toISOString(), now.toISOString(), new Date(now.getTime() - 15 * 60000).toISOString()).run();
-  if (nextCallingSlot(now).getTime() !== now.getTime()) return { skipped: "outside calling hours" };
+  const slot = nextCallingSlot(now);
+  if (slot.getTime() !== now.getTime()) {
+    await env.DB.prepare("UPDATE callback_requests SET next_attempt_at=?,updated_at=? WHERE status='queued' AND next_attempt_at<=?")
+      .bind(slot.toISOString(), now.toISOString(), now.toISOString()).run();
+    return { skipped: "outside calling hours" };
+  }
   const { results } = await env.DB.prepare(
-    "SELECT id,phone,attempts FROM callback_requests WHERE status='queued' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 20",
-  ).bind(now.toISOString()).all<{ id: string; phone: string; attempts: number }>();
+    "SELECT id,phone,attempts,timing,source FROM callback_requests WHERE status='queued' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 20",
+  ).bind(now.toISOString()).all<{ id: string; phone: string; attempts: number; timing: string; source: string }>();
   let sent = 0;
   for (const item of results) {
-    if (await dialCallbackRow(env, item, now) === "dialed") sent++;
+    if (await dialCallbackRow(env, item, new Date()) === "dialed") sent++;
   }
   return { sent, queued: results.length };
 }

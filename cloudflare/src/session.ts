@@ -53,6 +53,7 @@ export class TutorSession {
   }
   private callId = "";
   private customerId = "";
+  private callerPhone = "";
   private leaseCallId = "";
   private profileId = "";
   private firstPbx = false;
@@ -136,6 +137,7 @@ export class TutorSession {
       const channel = this.portal ? "portal" : testChannel ? this.env.TEST_TEACHER_CHANNEL_ID : shared ? this.s.routerChannels : bot.channel_id;
       const start = parseStartFrame(raw, channel ?? "");
       if (!this.portal && this.rejectHiddenCaller(start.caller)) return;
+      this.callerPhone = this.portal ? "" : start.caller;
       this.leaseCallId = start.callId;
       if (this.s.radioStreams[profileId]) {
         throw new Error("This test endpoint currently supports teachers and translators only");
@@ -453,7 +455,7 @@ export class TutorSession {
     if (this.controls?.lesson && call.name === "record_learning_observation") return false;
     if (call.name && SALES_TOOL_NAMES.has(call.name)) {
       if (!this.controls?.sales || !this.customerId) return false;
-      const saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL).catch(() => false);
+      const saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone).catch(() => false);
       await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, saved }).catch(() => {});
       return saved;
     }

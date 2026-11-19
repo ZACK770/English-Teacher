@@ -19,7 +19,7 @@ export const IVRCopySchema = z.object({
   sales: text("לחבילות ותשלום הקישו 1. לשירות לקוחות הקישו 4. לחזרה הקישו 0."),
   service: text("השאירו הודעה לאחר הצליל. לסיום הקישו סולמית."),
   thanks: text("ההודעה נשמרה, תודה. לחזרה הקישו 0. לסיום הקישו 1."),
-  quota: text("הדקות לשיחות כבר נוצלו. לא נורא, ממשיכים: לבחירת מסלול הקישו 1. לתפריט הראשי הקישו 0."),
+  quota: text("הדקות לשיחות כבר נוצלו. לא נורא, ממשיכים: לבחירת מסלול הקישו 1. ללמידה הקישו 2. לתפריט הראשי הקישו 0."),
   school_mode: text("להמשך הקורס הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0."),
   options: text("לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0."),
 });
@@ -42,7 +42,7 @@ export function ivrResponse(route: string, p: Record<string, string>, copy: IVRC
     translator: ["isaacTranslation", copy.translator, "0,1,2,9", { "0": "", "1": "/2/1", "2": "/1", "9": "/2/9", START: "/2/1" }],
     languages: ["isaacLanguage", copy.languages, "0,1,2,3,4,5,6,7", { "0": "/9", ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((i) => [String(i), "/2/1"])) }],
     sales: ["isaacSales", copy.sales, "0,1", { "0": "", "1": "/4" }],
-    quota: ["isaacQuota", copy.quota, "0,1", { "0": "", "1": "/3" }],
+    quota: ["isaacQuota", copy.quota, "0,1,2", { "0": "", "1": "/3", "2": "/1" }],
     mode: ["isaacMode", copy.school_mode, "0,1,2", { "0": "/2", "1": "/1", "2": "/1" }],
     basic: ["isaacBasicMode", copy.school_mode, "0,1,2", { "0": "/1", "1": "/1/1/1", "2": "/1/1/1" }],
     advanced: ["isaacAdvancedMode", copy.school_mode, "0,1,2", { "0": "/1", "1": "/1/2/1", "2": "/1/2/1" }],
