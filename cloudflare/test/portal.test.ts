@@ -137,9 +137,9 @@ it("releases the shared Gemini slot before transferring to a PBX menu", async ()
   vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue(undefined);
   vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
   vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
-  vi.spyOn(GeminiLive.prototype, "next").mockResolvedValue({ type: "closed" });
   const socket = { send: vi.fn(() => order.push("transfer")), close: vi.fn() };
   const tutor = new TutorSession(socket as unknown as WebSocket, env, { ...settings(env), returnExtension: "/99" }, crypto.randomUUID());
+  vi.spyOn(tutor as any, "aiToOutput").mockResolvedValue(undefined);
   await tutor.run(JSON.stringify({
     type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "phone-transfer", caller: "0500000002",
   }), "student", false);
@@ -497,7 +497,7 @@ describe("real learner portal", () => {
     const promoted = { ...primary, TLIVR_CALLBACK_BODY_SECRET: "replacement" };
     const call = (liveEnv: Env, credential: string, query = "") => handleCallback(new Request("https://x/v1/technoline/ivr/main" + query, {
       method: "POST",
-      body: new URLSearchParams({ PBXcallId: "rotation-test", PBXnum: "0765673575", PBXextensionPath: "/99", isaacMain: "1", callback_key: credential }),
+      body: new URLSearchParams({ PBXcallId: "rotation-test", PBXnum: "0765673575", PBXextensionPath: "/99", PBXphone: "0500000001", isaacMain: "1", callback_key: credential }),
     }), liveEnv, settings(liveEnv), "main");
     await expect(call(primary, "replacement")).rejects.toMatchObject({ status: 401 });
     expect((await call(overlap, "current")).goTo).toBe("/99/7");
