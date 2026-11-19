@@ -79,7 +79,7 @@ export function parsePreferredTime(text: string, now: Date): Date | null {
     local.setUTCDate(local.getUTCDate() + (weekday - local.getUTCDay() + 7) % 7);
     hasDay = true;
   }
-  const explicitTime = timeText.match(/(?:בשעה\s*|ב[-־]?\s*)(\d{1,2})(?:[:.](\d{2}))?(?![\d:.])|\b(\d{1,2})[:.](\d{2})(?!\d)/);
+  const explicitTime = timeText.match(/(?:בשעה\s*|ב[-־]?\s*)(\d{1,2})(?:[:.](\d{2})\b)?(?!\d|:|\.\d)|\b(\d{1,2})[:.](\d{2})\b/);
   const hourOnly = timeText.match(/(\d{1,2})\s*(?:בערב|בבוקר|בצהריים|אחה["״']צ|אחר הצהריים)/);
   const afternoon = /אחה["״']צ|אחר הצהריים/.test(text);
   const evening = text.includes("ערב");
