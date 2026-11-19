@@ -235,7 +235,7 @@ export class BusinessStore {
     return result.meta.changes === 1;
   }
 
-  async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number): Promise<Allowance> {
+  async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number, channel: "voice" | "text" = "voice"): Promise<Allowance> {
     const policyRow = await this.record("policies", botId);
     const teacher = !policyRow && await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(botId).first();
     const policy = AccessPolicySchema.parse(policyRow ?? (teacher ? SCHOOL_FREE_POLICY : {}));
@@ -259,12 +259,12 @@ export class BusinessStore {
       }
     }
     const anonymous = customerId.startsWith("anonymous-");
-    if (!anonymous && policy.opening_seconds) {
+    if (!anonymous && channel === "voice" && policy.opening_seconds) {
       const openingProduct = policy.product + "-opening";
       const seconds = Math.min(maxSeconds, policy.opening_seconds);
       const opening = await this.db.prepare(`INSERT OR IGNORE INTO usage_allocations
         SELECT ?,?,?,NULL,?,NULL,? WHERE NOT EXISTS
-        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND (billed_seconds IS NULL OR billed_seconds>0))`)
+        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND (billed_seconds IS NULL OR billed_seconds>=60))`)
         .bind(callId, customerId, openingProduct, seconds, now, customerId, openingProduct).run();
       if (opening.meta.changes) {
         return { seconds, mode: "free" };
@@ -337,7 +337,7 @@ export class BusinessStore {
     const now = nowIso();
     const live = receipts.find((r) => r.product === "school" && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
     const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
-    const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>0)").bind(customerId).first();
+    const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60)").bind(customerId).first();
     return {
       limited: true,
       opening_minutes: !customerId.startsWith("anonymous-") && !opening ? policy.opening_seconds / 60 : 0,

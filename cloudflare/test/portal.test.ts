@@ -151,6 +151,31 @@ describe("approved pricing catalog", () => {
     expect(PackageSchema.safeParse({ ...PRICING_PACKAGES[0], billing: "invalid" }).success).toBe(false);
     expect(PackageSchema.safeParse({}).success).toBe(false);
   });
+
+  it.each([0, 1, 59])("restores the opening lesson after only %s billed seconds", async seconds => {
+    await b.reserveCall("learner-a", "student", "short-opening", 1800);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
+    await b.settleCall("short-opening", seconds);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect(await b.reserveCall("learner-a", "student", "retry-opening", 1800)).toMatchObject({ seconds: 600 });
+  });
+
+  it("redeems the opening lesson at sixty billed seconds", async () => {
+    await b.reserveCall("learner-a", "student", "opening-boundary", 1800);
+    await b.settleCall("opening-boundary", 60);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(0);
+    expect(await b.reserveCall("learner-a", "student", "after-opening", 1800)).toMatchObject({ seconds: 300 });
+  });
+
+  it("keeps the opening lesson available after text allowances are used", async () => {
+    for (const id of ["text-a", "text-b"]) {
+      expect(await b.reserveCall("learner-a", "student", id, 120, "text")).toMatchObject({ seconds: 120 });
+      await b.settleCall(id, 120);
+    }
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
+    expect(await b.reserveCall("learner-a", "student", "text-c", 120, "text")).toMatchObject({ seconds: 0 });
+    expect(await b.reserveCall("learner-a", "student", "voice-opening", 1800)).toMatchObject({ seconds: 600 });
+  });
 });
 
 describe("real learner portal", () => {
@@ -400,6 +425,8 @@ describe("real learner portal", () => {
     const text = "A private sentence from the learner";
     const result = await request("/v1/bots/student/turn", tokenA, { text });
     expect(result.status).toBe(502);
+    expect(db.sql.prepare("SELECT product FROM usage_allocations").all()).toEqual([{ product: "school" }]);
+    expect((await b.accessSummary("learner-a", [])).opening_minutes).toBe(10);
     const snapshots = db.sql.prepare("SELECT opening_message,setup_json FROM prompt_snapshots").all();
     expect(snapshots.length).toBe(enabled ? 1 : 0);
     expect(JSON.stringify(snapshots).includes(text)).toBe(enabled);
