@@ -302,6 +302,23 @@ describe("subscription promises against production SQL", () => {
     await store.tick("2026-11-01");
     expect(receipts()).toHaveLength(9);
   });
+  it("keeps receipts, renewals and members linked when widening the term constraint", () => {
+    const legacy = new DatabaseSync(":memory:");
+    try {
+      for (const name of readdirSync(new FileURL("../migrations/", import.meta.url)).filter(n => n.endsWith(".sql") && n < "0020").sort()) legacy.exec(readFileSync(new FileURL("../migrations/" + name, import.meta.url), "utf8"));
+      legacy.exec("PRAGMA foreign_keys=ON");
+      legacy.prepare("INSERT INTO customers(id,created_at,updated_at) VALUES ('c',?,?)").run(at, at);
+      legacy.prepare("INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at) VALUES ('s','c','school-step','active',5900,?,?,?)").run(at, at, at);
+      legacy.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id) VALUES ('r','c','school-step','school','x',59,0.18,60,?,?,'s')").run(at, at);
+      legacy.prepare("INSERT INTO subscription_renewals(subscription_id,reference,period_start,created_at) VALUES ('s','ref',?,?)").run(at, at);
+      legacy.exec("BEGIN");
+      legacy.exec(readFileSync(new FileURL("../migrations/0020_phone_plans.sql", import.meta.url), "utf8"));
+      legacy.exec("COMMIT");
+      expect(legacy.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(legacy.prepare("SELECT status,price_agorot FROM subscriptions WHERE id='s'").get()).toMatchObject({ status: "active", price_agorot: 5900 });
+      legacy.prepare("UPDATE subscriptions SET term_months=4 WHERE id='s'").run();
+    } finally { legacy.close(); }
+  });
   it("preserves existing subscriptions and invoice references when migrating the status constraint", () => {
     const legacy = new DatabaseSync(":memory:");
     try {

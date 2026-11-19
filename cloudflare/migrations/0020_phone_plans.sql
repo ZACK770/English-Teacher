@@ -36,7 +36,10 @@ CREATE TABLE subscriptions_new (
   period_number INTEGER NOT NULL DEFAULT 1,
   term_end TEXT
 );
-INSERT INTO subscriptions_new(id,customer_id,plan_id,status,price_agorot,started_at,current_period_end,cancelled_at,notes,created_at,updated_at,family_addon_agorot,term_months,current_period_start,paused_at,pause_until,resume_status,pause_days_used,pause_year_start,guarantee_status,guarantee_evaluated_at,extension_months,domains_json,monthly_minutes,period_number,term_end) SELECT id,customer_id,plan_id,status,price_agorot,started_at,current_period_end,cancelled_at,notes,created_at,updated_at,family_addon_agorot,term_months,current_period_start,paused_at,pause_until,resume_status,pause_days_used,pause_year_start,guarantee_status,guarantee_evaluated_at,extension_months,domains_json,monthly_minutes,period_number,term_end FROM subscriptions;
+-- Rows are re-inserted after the rename so deferred foreign keys of receipts, renewals and members resolve again.
+CREATE TABLE subscriptions_copy AS SELECT * FROM subscriptions;
 DROP TABLE subscriptions;
 ALTER TABLE subscriptions_new RENAME TO subscriptions;
+INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,current_period_end,cancelled_at,notes,created_at,updated_at,family_addon_agorot,term_months,current_period_start,paused_at,pause_until,resume_status,pause_days_used,pause_year_start,guarantee_status,guarantee_evaluated_at,extension_months,domains_json,monthly_minutes,period_number,term_end) SELECT id,customer_id,plan_id,status,price_agorot,started_at,current_period_end,cancelled_at,notes,created_at,updated_at,family_addon_agorot,term_months,current_period_start,paused_at,pause_until,resume_status,pause_days_used,pause_year_start,guarantee_status,guarantee_evaluated_at,extension_months,domains_json,monthly_minutes,period_number,term_end FROM subscriptions_copy;
+DROP TABLE subscriptions_copy;
 CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id,created_at DESC);
