@@ -264,16 +264,7 @@ export class BusinessStore {
       `).bind(callId, customerId, UNMETERED_SESSION_PRODUCT, now, customerId, cutoff).first();
       return allocation ? { seconds: maxSeconds, mode: "unrestricted" } : busy;
     }
-    const { results: receipts } = await this.db
-      .prepare(`SELECT r.*, COALESCE(SUM(COALESCE(u.billed_seconds, u.reserved_seconds)),0) AS spent
-        FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
-        WHERE (r.customer_id=? OR r.subscription_id IN
-          (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
-           WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-        AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
-        AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?) GROUP BY r.id ORDER BY r.expires_at`)
-      .bind(customerId, customerId, policy.product, now, now)
-      .all<Record<string, any>>();
+    const receipts = await this.usableReceipts(customerId, policy.product, now);
     for (const receipt of receipts) {
       const pkg = PackageSchema.safeParse(await this.record("packages", receipt.package_id));
       const cap = pkg.success ? Math.min(maxSeconds, pkg.data.max_call_minutes * 60) : maxSeconds;
@@ -400,6 +391,27 @@ export class BusinessStore {
       AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
         (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
       .bind(at, at, customerId, customerId).first();
+  }
+
+  private async usableReceipts(customerId: string, product: string, now = nowIso()) {
+    const { results } = await this.db.prepare(`SELECT r.id,r.package_id
+      FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
+      WHERE (r.customer_id=? OR r.subscription_id IN
+        (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+         WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+      AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
+      GROUP BY r.id HAVING r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) >= 1
+      ORDER BY r.expires_at`)
+      .bind(customerId, customerId, product, now, now).all<{ id: string; package_id: string }>();
+    return results;
+  }
+
+  async hasSchoolCallbackMinutes(customerId: string) {
+    if (!await this.record("customers", customerId)) return false;
+    const access = await this.accessSummary(customerId, []);
+    return !access.limited || access.opening_minutes > 0 || access.free_calls_left > 0 ||
+      (await this.usableReceipts(customerId, "school")).length > 0;
   }
 
   async accessSummary(customerId: string, receipts: Record<string, any>[]) {

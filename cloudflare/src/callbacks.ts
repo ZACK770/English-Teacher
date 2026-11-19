@@ -347,11 +347,7 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
   if (item.source === "lesson_followup") {
     const b = new BusinessStore(env.DB);
     const followup = await b.record("sales-followups", item.id);
-    const access = followup ? await b.customerDetail(followup.customer_id).then(detail => detail.access).catch(error => {
-      if (error instanceof HttpError && error.status === 404) return null;
-      throw error;
-    }) : null;
-    if (!access || (access.limited && !access.paid && !access.opening_minutes && !access.free_calls_left)) {
+    if (!followup || !await b.hasSchoolCallbackMinutes(followup.customer_id)) {
       await env.DB.prepare("UPDATE callback_requests SET status='failed',last_error='No school minutes available',next_attempt_at=NULL,updated_at=? WHERE id=? AND status='queued'")
         .bind(nowIso(), item.id).run();
       return "failed";

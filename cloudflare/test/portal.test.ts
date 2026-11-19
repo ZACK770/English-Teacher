@@ -434,7 +434,7 @@ describe("lesson callback scheduling", () => {
     expect(await dispatchCallbacks(env)).toEqual({ sent: 0, queued: 0 });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
-  it("records the learner's exact time and skips the callback when the free allowance is exhausted", async () => {
+  it.each([false, true])("skips an exact-time callback when all minutes are exhausted (has receipt: %s)", async paid => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     const args = { day: "tomorrow", part_of_day: "evening", time: "19:35" };
     expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", { ...args, time: "23:10" })).toBe(false);
@@ -442,6 +442,12 @@ describe("lesson callback scheduling", () => {
     expect(db.sql.prepare("SELECT next_attempt_at FROM callback_requests").get()?.next_attempt_at).toBe("2026-01-05T17:35:00.000Z");
     for (const [id, product] of [["intro", "school-opening"], ["free-1", "school"], ["free-2", "school"]]) {
       db.sql.prepare("INSERT INTO usage_allocations VALUES (?,'learner-a',?,NULL,300,300,'2026-01-04T08:00:00Z')").run(id, product);
+    }
+    if (paid) {
+      const receipt = await b.receipt({ customer_id: "learner-a", package_id: "school-topup", reference: "test-paid", amount_ils: 39 });
+      expect(await b.hasSchoolCallbackMinutes("learner-a")).toBe(true);
+      db.sql.prepare("INSERT INTO usage_allocations VALUES ('spent','learner-a','school',?,3600,3600,'2026-01-04T08:00:00Z')").run(receipt.id);
+      expect(await b.hasPaidAccess("learner-a")).toBe(true);
     }
     env.TLIVR_SYSTEM_API_KEY = "mock";
     const fetcher = vi.fn();
