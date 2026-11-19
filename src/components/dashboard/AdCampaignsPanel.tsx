@@ -4,14 +4,18 @@ import { useApp } from '../../store/AppContext';
 import { portalRequest } from '../portal/portalApi';
 
 type CampaignRow = { campaign: string; calls: number; new_callers: number; returning_callers: number; lessons_booked: number; emails: number; payment_links: number };
-type Followup = { id: string; type: string; campaign: string; customer_id: string; phone?: string; at: string; plan_id?: string; channel?: string; email?: string; link?: string; day?: string; part_of_day?: string };
+type Followup = { id: string; type: string; campaign: string; customer_id: string; phone?: string; at: string; scheduled_at?: string; plan_id?: string; channel?: string; email?: string; link?: string; day?: string; part_of_day?: string };
 type Report = { campaigns: CampaignRow[]; followups: Followup[] };
 
-const days: Record<string, string> = { today: 'היום', tomorrow: 'מחר', this_week: 'השבוע', other: 'מועד אחר' };
-const parts: Record<string, string> = { morning: 'בבוקר', afternoon: 'בצהריים', evening: 'בערב' };
+const days: Record<string, string> = { today: 'היום', tomorrow: 'מחר', this_week: 'השבוע', other: 'מועד אחר', sunday: 'יום ראשון', monday: 'יום שני', tuesday: 'יום שלישי', wednesday: 'יום רביעי', thursday: 'יום חמישי', friday: 'יום שישי', saturday: 'שבת' };
+const parts: Record<string, string> = { morning: 'בבוקר', noon: 'בצהריים', afternoon: 'אחר הצהריים', evening: 'בערב' };
 
-function followupText(f: Followup) {
-  if (f.type === 'lesson') return `שיעור הבא: ${days[f.day ?? ''] ?? ''} ${parts[f.part_of_day ?? ''] ?? ''}`;
+export function followupText(f: Followup) {
+  if (f.type === 'lesson') {
+    const scheduled = f.scheduled_at ? new Date(f.scheduled_at) : null;
+    const time = scheduled && Number.isFinite(scheduled.getTime()) ? ` · מועד החיוג (שעון ישראל): ${scheduled.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}` : '';
+    return `שיעור הבא: ${days[f.day ?? ''] ?? 'מועד אחר'} ${parts[f.part_of_day ?? ''] ?? ''}${time}`;
+  }
   if (f.type === 'email') return `מייל לשליחת המילים: ${f.email}`;
   return `לשלוח קישור תשלום (${f.channel === 'sms' ? 'SMS' : 'מייל'}) למסלול ${f.plan_id}: ${f.link}`;
 }
