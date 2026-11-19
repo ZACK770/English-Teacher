@@ -61,7 +61,9 @@ export function nextCallingSlot(date: Date): Date {
 export function parsePreferredTime(text: string, now: Date): Date | null {
   const local = localDate(now);
   let hasDay = false;
-  const date = text.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+  const dateToken = /\b(\d{1,2})[/.](\d{1,2})\b/g;
+  const date = new RegExp(dateToken).exec(text);
+  const timeText = text.replace(dateToken, " ");
   const weekdays = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
   const weekday = weekdays.findIndex(day => text.includes(day));
   if (date) {
@@ -77,8 +79,10 @@ export function parsePreferredTime(text: string, now: Date): Date | null {
     local.setUTCDate(local.getUTCDate() + (weekday - local.getUTCDay() + 7) % 7);
     hasDay = true;
   }
-  const clock = text.match(/(\d{1,2}):(\d{2})/);
-  const hourOnly = text.match(/(?:בשעה\s*|ב[-־]?\s*)(\d{1,2})(?!\d)/) ?? text.match(/(\d{1,2})\s*(?:בערב|בבוקר|בצהריים|אחה["״']צ|אחר הצהריים)/);
+  const clock = timeText.match(/(\d{1,2}):(\d{2})/);
+  const hourOnly = timeText.match(/בשעה\s*(\d{1,2})(?!\d)/)
+    ?? timeText.match(/ב[-־]?\s*(\d{1,2})(?!\d)/)
+    ?? timeText.match(/(\d{1,2})\s*(?:בערב|בבוקר|בצהריים|אחה["״']צ|אחר הצהריים)/);
   const afternoon = /אחה["״']צ|אחר הצהריים/.test(text);
   const evening = text.includes("ערב");
   const noon = text.includes("צהריים");
