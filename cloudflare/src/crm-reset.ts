@@ -10,7 +10,7 @@ export async function resetCustomer(request: Request, env: Env, person: Row, act
   if (body?.confirm !== (person.phone || person.id)) throw new HttpError(400, "האישור אינו תואם. יש להקליד את הטלפון או את מזהה הלקוח כפי שמוצג בכרטיס.");
   const id = person.id;
   const rows = async (query: string, ...args: unknown[]) => (await env.DB.prepare(query).bind(...args).all<Row>()).results;
-  if ((await rows("SELECT 1 FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id WHERE m.customer_id=? AND s.customer_id<>? LIMIT 1", id, id)).length) throw new HttpError(409, "יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
+  if ((await rows("SELECT 1 FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id WHERE m.customer_id=? AND m.removed_at IS NULL AND s.customer_id<>? LIMIT 1", id, id)).length) throw new HttpError(409, "יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
   if ((await rows("SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם תשלום הממתין לסליקה. יש להמתין להשלמת התשלום או לביטולו.");
   const callRows = await rows(`SELECT call_id FROM call_customers WHERE customer_id=? UNION SELECT call_id FROM sessions WHERE student_id=?
     UNION SELECT call_id FROM usage_allocations WHERE customer_id=? UNION SELECT call_id FROM payment_orders WHERE customer_id=?
