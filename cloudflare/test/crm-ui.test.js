@@ -2,10 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-let Journey, CustomerCount;
+let Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint;
 beforeAll(async () => {
   vi.stubGlobal("location", { pathname: "/dashboard/crm" });
-  ({ Journey, CustomerCount } = await import("../../src/components/dashboard/CrmPage"));
+  ({ Journey, CustomerCount, DeleteCustomer, resetErrorMessage, ResetConfirmationHint } = await import("../../src/components/dashboard/CrmPage"));
+  ({ AdminIdentityContext } = await import("../../src/components/dashboard/AdminAuthGate"));
 });
 afterAll(() => vi.unstubAllGlobals());
 const step = (id, kind, call_id) => ({ id, kind, call_id, at: "2026-11-19T10:00:00Z", label: id });
@@ -43,6 +44,35 @@ describe("CRM physical call grouping", () => {
     ]);
     expect(html.match(/<h3>/g)).toHaveLength(3);
     expect(renderJourney([])).not.toContain("<h3>");
+  });
+});
+
+describe("CRM customer reset confirmation", () => {
+  it.each(["detail", "message", "error"])("shows the server Hebrew %s message", field => {
+    expect(resetErrorMessage({ [field]: "מחיקת הלקוח נכשלה עקב שגיאת שרת" })).toBe("מחיקת הלקוח נכשלה עקב שגיאת שרת");
+  });
+  it.each([null, {}, { detail: "Request failed" }, { detail: 500 }])("uses a Hebrew fallback for unavailable server detail %j", body => {
+    expect(resetErrorMessage(body)).toBe("מחיקת הלקוח נכשלה. נסו שוב או פנו לתמיכה.");
+  });
+  it.each(["", "wrong", "0501234567"])("shows a Hebrew confirmation hint unless %s matches", confirm => {
+    const html = renderToStaticMarkup(createElement(ResetConfirmationHint, { confirm, expected: "0501234567" }));
+    if (confirm === "0501234567") expect(html).toBe("");
+    else expect(html).toContain("האישור אינו תואם");
+  });
+  it.each(["staff", null])("hides delete controls for role %s", role => {
+    const html = renderToStaticMarkup(createElement(AdminIdentityContext.Provider, { value: role ? { username: "staff", role } : null }, createElement(DeleteCustomer, { person: { id: "person1", phone: "0501234567" } })));
+    expect(html).toBe("");
+  });
+  it.each(["0501234567", ""])("explains destructive reset, provider billing and confirmation for phone %s", phone => {
+    const html = renderToStaticMarkup(createElement(AdminIdentityContext.Provider, { value: { username: "owner", role: "owner" } }, createElement(DeleteCustomer, { person: { id: "person1", phone } })));
+    expect(html).toContain("מחיקת לקוח");
+    expect(html).toContain("איפוס למתקשר חדש");
+    expect(html).toContain("המחיקה אינה מבטלת חיובים אצל ספק התשלום");
+    expect(html).toContain("לא ניתן לבטל את המחיקה");
+    expect(html).toContain(phone || "person1");
+    expect(html).toMatch(/type="submit"[^>]*disabled=""/);
+    expect(html).toContain('aria-describedby="crm-reset-hint"');
+    expect(html).toContain("האישור אינו תואם");
   });
 });
 
