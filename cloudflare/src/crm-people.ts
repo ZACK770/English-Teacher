@@ -61,7 +61,7 @@ async function load(env: Env) {
   for (const p of people.values()) if (p.phone) aliases.set(phoneKey(p.phone), p.id);
   for (const c of callbacks) c.customer_id = aliases.get(phoneKey(c.phone));
   const group = (rows: Row[], key: string) => { const map = new Map<string, Row[]>(); for (const row of rows) { const id = row[key]; if (id) { if (!map.has(id)) map.set(id, []); map.get(id)!.push(row); } } return map; };
-  return { people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id") };
+  return { people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id") };
 }
 type Data = Awaited<ReturnType<typeof load>>;
 function person(data: Data, p: Row) {
@@ -78,7 +78,13 @@ function person(data: Data, p: Row) {
   const trackId = p.preferred_bot || last?.bot_id;
   const track = (trackId && (data.bots.get(trackId) || trackId)) || subscriptions.at(-1)?.plan_id || "לא ידוע";
   const calls = sessions.map(s => costCall(data, s));
-  const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback: callbacks.some(c => ["pending", "scheduled", "queued", "dispatching"].includes(c.status)) || events.some(e => e.kind === "sales-followups" && e.type === "lesson" && e.status === "pending"), offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
+  const pendingCallback = (c: Row) => ["pending", "scheduled", "queued", "dispatching", "dialing"].includes(c.status);
+  const callback = callbacks.some(pendingCallback) || events.some(e => {
+    if (e.kind !== "sales-followups" || e.type !== "lesson" || e.status !== "pending") return false;
+    const request = data.callbacksById.get(e.callback_id || e.id);
+    return request ? pendingCallback(request) : true;
+  });
+  const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback, offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
   return { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status] };
 }
 function costCall(data: Data, s: Row) {

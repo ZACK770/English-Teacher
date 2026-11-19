@@ -95,6 +95,14 @@ describe("CRM read-only endpoints", () => {
     sql.prepare("INSERT INTO sales_receipts VALUES ('r1','person1','p1','school','test',59,0.18,100,?,?,NULL,NULL)").run(now, now);
     expect((await (await request("people")).json() as any).items[0]).toMatchObject({ status: "paying", revenue_ils: 59 });
   });
+  it.each(["queued", "dialing", "done", "dialed", "failed"])("uses the matching callback's %s state instead of a stale lesson followup", async (status) => {
+    customer();
+    event("sales-followups", { type: "lesson", status: "pending", callback_id: "lesson-cb" });
+    sql.prepare("INSERT INTO callback_requests(id,phone,name,for_whom,goal,timing,source,consent_at,status,created_at,updated_at) VALUES ('lesson-cb','+972501234567','בדיקה','self','תרגול','now','אתר',?,?,?,?)").run(now, status, now, now);
+    const expected = ["queued", "dialing"].includes(status) ? "callback_pending" : "offer_no_buy";
+    expect((await (await request("people")).json() as any).items[0].status).toBe(expected);
+    expect((await (await request("people/person1")).json() as any).status).toBe(expected);
+  });
   it("returns chronological journey/calls, lazy transcript, null recording and empty transcript", async () => {
     customer(); session(); session("empty", null);
     event("ivr-events", { call_id: "call1", route: "main", input: { isaacMain: "2" }, output: { goTo: "/99/2" } });
