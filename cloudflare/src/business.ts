@@ -120,7 +120,7 @@ export function normalizedPhone(value: string): string {
 const month = () => new Date().toISOString().slice(0, 7);
 const RESERVATION_TTL_MS = 3 * 60 * 60 * 1000;
 const reservationCutoff = () => new Date(Date.now() - RESERVATION_TTL_MS).toISOString().replace("Z", "+00:00");
-const UNMETERED_SESSION_PRODUCT = "unrestricted";
+export const UNMETERED_SESSION_PRODUCT = "unrestricted";
 
 export interface Allowance { seconds: number; mode: string; extension?: string; intro?: string }
 

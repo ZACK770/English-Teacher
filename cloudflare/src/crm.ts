@@ -1,4 +1,4 @@
-import { BusinessStore } from "./business";
+import { BusinessStore, UNMETERED_SESSION_PRODUCT } from "./business";
 import type { Env } from "./env";
 
 const OVERLAP_MS = 3 * 3600 * 1000;
@@ -11,9 +11,10 @@ export async function syncCrm(env: Env): Promise<Record<string, unknown>> {
   const since = new Date(Date.parse(state.last_success ?? new Date(Date.now() - 86400000).toISOString()) - OVERLAP_MS).toISOString();
   const { results: calls } = await env.DB.prepare(
     `SELECT s.call_id, s.student_id, s.started_at, s.duration_seconds, s.estimated_cost_usd, c.bot_id, u.product, u.receipt_id, u.billed_seconds
-     FROM sessions s JOIN call_customers c ON c.call_id=s.call_id LEFT JOIN usage_allocations u ON u.call_id=s.call_id
+     FROM sessions s JOIN call_customers c ON c.call_id=s.call_id
+     LEFT JOIN usage_allocations u ON u.call_id=s.call_id AND u.product<>?
      WHERE s.ended_at>=? AND s.student_id NOT LIKE 'system:%' AND s.student_id NOT LIKE 'anonymous-%' ORDER BY s.ended_at LIMIT 1000`,
-  ).bind(since).all<Record<string, any>>();
+  ).bind(UNMETERED_SESSION_PRODUCT, since).all<Record<string, any>>();
   const { results: receipts } = await env.DB.prepare("SELECT * FROM sales_receipts WHERE created_at>=? ORDER BY created_at LIMIT 1000").bind(since).all<Record<string, any>>();
   const packages = Object.fromEntries((await b.list("packages")).map((p) => [p.id, p]));
   const customerIds = [...new Set([...calls.map((c) => c.student_id), ...receipts.map((r) => r.customer_id)])];

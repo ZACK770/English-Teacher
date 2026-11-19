@@ -20,6 +20,7 @@ import { PackageSchema } from "../src/business";
 import { PaymentStore } from "../src/payments";
 import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
+import { syncCrm } from "../src/crm";
 import { cleanupCallbackQuota } from "../src/callbacks";
 
 // Execute production SQL, including JSON operations and atomic challenge consumption.
@@ -508,6 +509,25 @@ describe("call minute reservations", () => {
     vi.spyOn(BusinessStore.prototype, "registerWebCall").mockRejectedValueOnce(new Error("Test setup failure"));
     expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(500);
     expect(await reserve("retry")).toMatchObject({ mode: "paid", seconds: 60 });
+  });
+
+  it("exports an unrestricted call's recorded duration instead of classifying the concurrency hold as free usage", async () => {
+    await b.save("policies", { enabled: false }, "student");
+    await b.registerWebCall("unrestricted-call", "learner-a", "student");
+    await reserve("unrestricted-call");
+    await b.settleCall("unrestricted-call", 42);
+    const now = new Date().toISOString().replace("Z", "+00:00");
+    db.sql.prepare(`INSERT INTO sessions
+      (call_id,student_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json)
+      VALUES ('unrestricted-call','learner-a',?,?,42,1,1,'[]')`).run(now, now);
+    const ingest = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", ingest);
+
+    await syncCrm({ ...env, CRM_EVENTS_URL: "https://crm.example/events", CRM_INGEST_SECRET: "test" });
+    const payload = JSON.parse(String(ingest.mock.calls[0][1].body));
+    expect(payload.events.find((event: { type: string }) => event.type === "call")).toMatchObject({
+      call_id: "unrestricted-call", product: "", mode: "", seconds: 42,
+    });
   });
 
   it("releases the paid hold when phone finalization fails before settlement", async () => {
