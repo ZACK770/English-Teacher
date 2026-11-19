@@ -5,6 +5,7 @@ import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material,
 import { VoiceRoom } from "./VoiceRoom";
 import { EmailLogin } from "./EmailLogin";
 import { DirectVoice } from "./DirectVoice";
+import { clearLearnerToken, saveLearnerToken } from "./learnerToken";
 import { LearningProgress } from "./LearningProgress";
 import { SpeakCallLogo } from "../brand/SpeakCallLogo";
 import { SubscriptionPanel } from "./SubscriptionPanel";
@@ -107,12 +108,12 @@ export const LearnerPortal: React.FC = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null | undefined>();
   const mainRef = useRef<HTMLElement>(null);
-  const login = (value: string) => { sessionStorage.setItem("learnerToken", value); setToken(value); setError(""); setDirectToken(value); };
-  const logout = () => { sessionStorage.removeItem("learnerToken"); setAccount(null); setToken(""); setPage("home"); };
+  const login = (value: string) => { saveLearnerToken(value); setToken(value); setError(""); setDirectToken(value); };
+  const logout = () => { clearLearnerToken(); setAccount(null); setToken(""); setPage("home"); };
   const refresh = useCallback(async () => {
     if (!token) { setLoading(false); return; }
     try { const data = await portalRequest<Account>("/v1/portal/me", token); setAccount(data); }
-    catch (e) { if (e instanceof PortalError && e.status === 401) { sessionStorage.removeItem("learnerToken"); setToken(""); setAccount(null); } setError(e instanceof Error ? e.message : "לא הצלחנו לטעון את החשבון."); }
+    catch (e) { if (e instanceof PortalError && e.status === 401) { setToken(""); setAccount(null); } setError(e instanceof Error ? e.message : "לא הצלחנו לטעון את החשבון."); }
     finally { setLoading(false); }
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
