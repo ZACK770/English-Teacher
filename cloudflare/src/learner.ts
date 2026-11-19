@@ -82,9 +82,9 @@ export async function learnerBody<T extends z.ZodTypeAny>(request: Request, sche
   return parsed.data;
 }
 
-async function availableTeacher(progress: ProgressStore, id: string) {
+async function availableTeacher(progress: ProgressStore, id: string, phone = true) {
   const bot = await progress.getBot(id);
-  if (!bot?.enabled || !bot.web_enabled || !bot.phone_enabled || bot.role !== "teacher") throw new HttpError(404, "המורה הזה לא זמין כרגע.");
+  if (!bot?.enabled || !bot.web_enabled || (phone && !bot.phone_enabled) || bot.role !== "teacher") throw new HttpError(404, "המורה הזה לא זמין כרגע.");
   return bot;
 }
 
@@ -246,7 +246,7 @@ export async function learnerRoutes(request: Request, env: Env, path: string, cu
   }
   if (path === "/v1/portal/voice-ticket" && request.method === "POST") {
     const input = await learnerBody(request, z.object({ bot_id: z.string().max(63), teacher_id: z.string().max(40).optional() }));
-    await availableTeacher(progress, input.bot_id);
+    await availableTeacher(progress, input.bot_id, false);
     if (input.teacher_id) {
       const t = await b.record(teachersKind(customerId), input.teacher_id);
       if (!t || t.base_bot !== input.bot_id) throw new HttpError(404, "המורה לא נמצא.");
@@ -265,7 +265,7 @@ export async function learnerVoice(request: Request, env: Env): Promise<Response
   const row = await env.DB.prepare("DELETE FROM console_settings WHERE id=? RETURNING body").bind("voice-ticket:" + ticket).first<{ body: string }>();
   const claim = row ? JSON.parse(row.body) : null;
   if (!claim || claim.expires < Date.now()) throw new HttpError(401, "הקישור לשיחה פג. אפשר לנסות שוב.");
-  await availableTeacher(new ProgressStore(env.DB), claim.botId);
+  await availableTeacher(new ProgressStore(env.DB), claim.botId, false);
   const headers = new Headers({ Upgrade: "websocket", "X-Portal-Customer": claim.customerId, "X-Profile": claim.botId, "X-Portal-Teacher": claim.teacherId });
   const url = new URL(request.url);
   url.pathname = "/v1/portal/voice";
@@ -300,12 +300,19 @@ export function goalFromLearnerSpeech(goal: string, learnerText: string) {
   return heard.length === 1 && heard[0] !== goal ? heard[0] : goal;
 }
 
-export async function saveIntake(b: BusinessStore, customerId: string, botId: string, args: unknown) {
+export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
+  const bots = (await progress.listBots()).filter(bot => bot.enabled && bot.phone_enabled && bot.role === "teacher");
+  if (bots.some(bot => bot.id === botId)) return botId;
+  const both = bots.filter(bot => bot.web_enabled);
+  return both.find(bot => bot.id === "isaac-basic")?.id || both[0]?.id || null;
+}
+
+export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
   const parsed = IntakeSchema.safeParse(args);
   if (!parsed.success) return false;
   const { learner_name, personality, teacher_gender, ...plan } = parsed.data;
   await b.savePreference(customerId, { plan, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
-  if ((await b.list(teachersKind(customerId))).length) return true;
+  if (!botId || (await b.list(teachersKind(customerId))).length) return true;
   const fluent = plan.level === "fluent";
   const female = teacher_gender === "female";
   const teacher = TeacherSchema.parse({ name: female ? FEMALE_TEACHER_NAME : DEFAULT_TEACHER_NAME, base_bot: botId, personality, voice: female ? "Aoede" : DEFAULT_TEACHER_VOICE, explanation: "hebrew", pace: plan.level === "beginner" ? "slow" : "normal", corrections: "gentle", topic: plan.topic, level: plan.level, conversation_mode: fluent ? "conversation" : "guided", learning_load: "light", correction_policy: fluent ? "after_activity" : "after_answer", closing_activity: "roleplay" });

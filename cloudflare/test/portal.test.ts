@@ -451,6 +451,28 @@ describe("real learner portal", () => {
     expect(session).toBeTruthy();
     expect(String(session!.transcript_json).includes(text)).toBe(enabled);
   });
+  it.each([false, true, undefined].flatMap(enabled => ["conversation", "empty", "error"].map(outcome => ({ enabled, outcome }))))("honors voice transcript opt-in=$enabled for $outcome", async ({ enabled, outcome }) => {
+    if (enabled !== undefined) await request("/v1/portal/preferences", tokenA, { store_transcripts: enabled });
+    await progress.saveControls("student", controlsFromSettings(true));
+    const connect = vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue(undefined);
+    if (outcome === "error") connect.mockRejectedValue(new Error("Test model unavailable"));
+    vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "close").mockImplementation(() => {});
+    const next = vi.spyOn(GeminiLive.prototype, "next").mockResolvedValue({ type: "closed" });
+    if (outcome === "conversation") next
+      .mockResolvedValueOnce({ type: "transcript", role: "learner", text: "My private answer" })
+      .mockResolvedValueOnce({ type: "transcript", role: "tutor", text: "A private reply" });
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner", null, { customerId: "learner-a", teacherId: "" });
+    await session.run(JSON.stringify({ type: "start", token: "portal", callId: "private-voice", format: "pcm16;rate=8000;ch=1" }), "student", false);
+    expect(session.meter.transcript).toHaveLength(outcome === "conversation" ? 2 : 0);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM prompt_snapshots").get()?.n).toBe(enabled ? 1 : 0);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM conversation_turns").get()?.n).toBe(enabled && outcome === "conversation" ? 2 : 0);
+    const saved = db.sql.prepare("SELECT transcript_json,summary_he FROM sessions WHERE student_id='learner-a'").get();
+    expect(saved).toBeTruthy();
+    expect(saved!.transcript_json).toBe(enabled ? JSON.stringify(session.meter.transcript) : null);
+    expect(saved!.summary_he).toBeTruthy();
+  });
   it.each(["", "/english"])("consumes a %s browser voice ticket atomically and forwards only its verified customer", async (prefix) => {
     const created = await (await request("/v1/portal/voice-ticket", tokenA, { bot_id: "student" })).json() as any;
     const forward = vi.fn(async (r: Request) => Response.json({ customer: r.headers.get("X-Portal-Customer"), bot: r.headers.get("X-Profile"), path: new URL(r.url).pathname, search: new URL(r.url).search }));
@@ -460,6 +482,17 @@ describe("real learner portal", () => {
     expect(await (await connect()).json()).toEqual({ customer: "learner-a", bot: "student", path: "/v1/portal/voice", search: "" });
     expect((await connect()).status).toBe(401);
     expect(forward).toHaveBeenCalledOnce();
+  });
+  it("lets web-only teachers take browser calls but not the phone teacher slot", async () => {
+    await progress.createBot({ id: "web-only", label: "Web", role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: false, web_enabled: true, enabled: true }, controlsFromSettings(false));
+    const created = await (await request("/v1/portal/voice-ticket", tokenA, { bot_id: "web-only" })).json() as any;
+    const forward = vi.fn(async (r: Request) => Response.json({ bot: r.headers.get("X-Profile") }));
+    env.CALLS = { newUniqueId: () => "test-object", get: () => ({ fetch: forward }) } as unknown as DurableObjectNamespace;
+    const res = await worker.fetch(new Request("https://school.example/v1/portal/voice?ticket=" + created.ticket, { headers: { Upgrade: "websocket" } }), env);
+    expect(await res.json()).toEqual({ bot: "web-only" });
+    expect((await request("/v1/portal/teachers", tokenA, { name: "Web", base_bot: "web-only" })).status).toBe(404);
+    await progress.createBot({ id: "phone-only", label: "Phone", role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: true, web_enabled: false, enabled: true }, controlsFromSettings(false));
+    expect((await request("/v1/portal/voice-ticket", tokenA, { bot_id: "phone-only" })).status).toBe(404);
   });
   it.each(["speakcall.app", "www.speakcall.app"])("serves the SpeakCall landing page on %s", async (host) => {
     const index = readFileSync(new FileURL("../../index.html", import.meta.url), "utf8");

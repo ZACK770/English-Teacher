@@ -165,11 +165,12 @@ class TutorSession:
                     async with asyncio.timeout(allowed_seconds):
                         await self._run_basic(allowance.get("intro") or "")
                     return
-            await self.progress.save_prompt_snapshot(
-                profile_id=self.settings.student_id,
-                call_id=self.start.call_id,
-                artifact=artifact,
-            )
+            if self.settings.store_transcripts:
+                await self.progress.save_prompt_snapshot(
+                    profile_id=self.settings.student_id,
+                    call_id=self.start.call_id,
+                    artifact=artifact,
+                )
             await self._latency(
                 "prompt_compiled",
                 {"fingerprint": artifact.fingerprint, "history_chars": len(history)},
@@ -477,16 +478,17 @@ class TutorSession:
                 if not transcript:
                     continue
                 self.transcript.append({"role": role, "text": transcript})
-                await self.progress.log_conversation_turn(
-                    profile_id=self.settings.student_id,
-                    call_id=self.start.call_id,
-                    direction="input" if role == "learner" else "output",
-                    text=transcript,
-                    metadata={
-                        "learner_turn": self.learner_turns + (1 if role == "learner" else 0),
-                        "tutor_turn": self.tutor_turns + (1 if role == "tutor" else 0),
-                    },
-                )
+                if self.settings.store_transcripts:
+                    await self.progress.log_conversation_turn(
+                        profile_id=self.settings.student_id,
+                        call_id=self.start.call_id,
+                        direction="input" if role == "learner" else "output",
+                        text=transcript,
+                        metadata={
+                            "learner_turn": self.learner_turns + (1 if role == "learner" else 0),
+                            "tutor_turn": self.tutor_turns + (1 if role == "tutor" else 0),
+                        },
+                    )
                 if role == "learner" and not self._learner_seen_this_turn:
                     self.learner_turns += 1
                     self._learner_seen_this_turn = True

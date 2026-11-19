@@ -10,7 +10,7 @@ import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
-import { applyLearnerControls, goalFromLearnerSpeech, saveIntake } from "./learner";
+import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
 import { LearningStore } from "./learning";
 
 export class TutorSession {
@@ -174,7 +174,7 @@ export class TutorSession {
         if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
         this.stop("hard_time_limit");
       }, (allowance.seconds + 20) * 1000);
-      await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
+      if (this.controls.store_transcripts) await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
       if (allowance.mode === "basic") {
         this.controls = { ...this.controls, model: this.s.basicTranslatorModel };
         this.meteredAt = Date.now();
@@ -350,7 +350,7 @@ export class TutorSession {
     if (call.name === "save_intake") {
       const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
       const goal = typeof args.goal === "string" ? goalFromLearnerSpeech(args.goal, heard) : args.goal;
-      const saved = await saveIntake(this.b, this.customerId, this.profileId, { ...args, goal });
+      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal });
       await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) this.controls = { ...this.controls, intake_pending: false };
       if (saved) this.ai?.addContext("APPLICATION NOTE: intake saved. For the rest of this call adapt to the answers just given (level and topic); the full saved plan applies from the next call. Start the lesson now.");
