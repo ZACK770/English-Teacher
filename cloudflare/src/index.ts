@@ -7,6 +7,7 @@ import { syncCrm } from "./crm";
 import { dispatchCallbacks, submitCallback } from "./callbacks";
 import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
+import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 export { CallSession } from "./call";
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -84,14 +85,22 @@ async function handle(request: Request, env: Env): Promise<Response> {
       });
     }
 
-    const exactResp = await env.ASSETS.fetch(request);
-    if (exactResp.status < 400) return exactResp;
+    const legalPage = request.method === "GET" ? legalPageForPath(rawPath) : undefined;
+    if (!legalPage) {
+      const exactResp = await env.ASSETS.fetch(request);
+      if (exactResp.status < 400) return exactResp;
+    }
 
     if (request.method === "GET" && !path.startsWith("/v1/")) {
       const indexResp = await env.ASSETS.fetch(new Request(new URL("/index.html", request.url)));
       if (indexResp.ok) {
-        const html = await indexResp.text();
-        return new Response(/^\/english(?:\/|$)/.test(rawPath) ? html.replaceAll('"/assets/', '"/english/assets/') : html, {
+        let html = await indexResp.text();
+        if (legalPage) {
+          html = html.replace('<link rel="canonical" href="https://speakcall.app/"', `<link rel="canonical" href="https://speakcall.app/${legalPage}"`)
+            .replace('<meta property="og:url" content="https://speakcall.app/"', `<meta property="og:url" content="https://speakcall.app/${legalPage}"`);
+        }
+        if (legalBasePath(rawPath)) html = html.replaceAll('"/assets/', '"/english/assets/');
+        return new Response(html, {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-cache, no-store, must-revalidate",
