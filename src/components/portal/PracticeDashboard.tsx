@@ -7,7 +7,7 @@ import "./practice-dashboard.css";
 const fullDate = (date: Date | string) => new Date(date).toLocaleDateString("he-IL", { timeZone: "Asia/Jerusalem", weekday: "long", day: "numeric", month: "long" });
 const goalMinutes = (account: Account) => account.preferences.minutes || account.preferences.plan?.minutes || 10;
 
-function usePractice(token: string) {
+function usePractice(token: string, progress: Account["progress"]) {
   const [report, setReport] = useState<PracticeReport | null>(null);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -17,7 +17,7 @@ function usePractice(token: string) {
     void portalRequest<PracticeReport>("/v1/portal/practice", token, undefined, undefined, controller.signal)
       .then(setReport).catch(() => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
-  }, [token, retry]);
+  }, [token, progress, retry]);
   return { report, error, retry: () => setRetry(n => n + 1) };
 }
 
@@ -64,7 +64,7 @@ function SessionDetails({ session, token }: { session: PracticeSession; token: s
 }
 
 export function PracticeDashboard({ account, token, onGoal, onStart }: { account: Account; token: string; onGoal: () => void; onStart: () => void }) {
-  const { report, error, retry } = usePractice(token);
+  const { report, error, retry } = usePractice(token, account.progress);
   const [range, setRange] = useState(14);
   const [selected, setSelected] = useState<string | null>(null);
   const goal = goalMinutes(account);
@@ -85,7 +85,7 @@ export function PracticeDashboard({ account, token, onGoal, onStart }: { account
 }
 
 export function HomeDashboard({ account, token, teacherName, children, onProgress, onGoal }: { account: Account; token: string; teacherName: string; children: React.ReactNode; onProgress: () => void; onGoal: () => void }) {
-  const { report, error, retry } = usePractice(token);
+  const { report, error, retry } = usePractice(token, account.progress);
   const days = practiceDays(report?.sessions || [], 7);
   const seconds = days.reduce((sum, d) => sum + d.seconds, 0);
   const activeDays = days.filter(d => d.seconds > 0).length;
