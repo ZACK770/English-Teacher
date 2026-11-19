@@ -439,6 +439,18 @@ describe("call minute reservations", () => {
     expect((await Promise.all([reserve("one"), reserve("two")])).map(row => row.mode).sort()).toEqual(["blocked", "free"]);
   });
 
+  it("grants the last monthly voice slot only once while the opening lesson is held", async () => {
+    await b.save("policies", SCHOOL_FREE_POLICY, "student");
+    expect(await reserve("opening", 600)).toMatchObject({ mode: "free", seconds: 600 });
+    expect(await b.reserveCall("learner-a", "student", "first-monthly", 120, "text")).toMatchObject({ mode: "free", seconds: 120 });
+    await b.settleCall("first-monthly", 120);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
+
+    const calls = await Promise.all([reserve("voice-one", 600), reserve("voice-two", 600)]);
+    expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 300]);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0 });
+  });
+
   it("enforces basic daily slots and the shared monthly budget atomically", async () => {
     await b.save("policies", { enabled: true, basic_enabled: true, basic_calls_day: 1, basic_month_seconds: 40, basic_call_seconds: 30 }, "student");
     const sameCustomer = await Promise.all([reserve("one"), reserve("two")]);
