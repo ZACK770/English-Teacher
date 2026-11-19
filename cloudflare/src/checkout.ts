@@ -202,6 +202,11 @@ export class CheckoutStore {
       sub.entitlement_id = entitlement.id;
     }
     const reference = `nedarim-keva:${kevaId}:${transactionId}`;
+    const legacy = await this.db.prepare("SELECT id,amount_ils,customer_id,subscription_id FROM sales_receipts WHERE reference=?").bind(`nedarim:${mosadId}:${transactionId}`).first<{ id: string; amount_ils: number; customer_id: string; subscription_id: string | null }>();
+    if (legacy) {
+      if (legacy.customer_id !== sub.customer_id || legacy.subscription_id !== sub.entitlement_id || agorot(data.Amount) !== agorot(legacy.amount_ils)) throw new Error("Payment amount mismatch");
+      return { paid: true, receipt_id: legacy.id, duplicate: true };
+    }
     const existing = await this.db.prepare("SELECT r.id,r.amount_ils FROM subscription_renewals n JOIN sales_receipts r ON r.subscription_id=n.subscription_id AND r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=? AND n.subscription_id=?").bind(reference, sub.entitlement_id).first<{ id: string; amount_ils: number }>();
     if (existing) {
       if (agorot(data.Amount) !== agorot(existing.amount_ils)) throw new Error("Payment amount mismatch");

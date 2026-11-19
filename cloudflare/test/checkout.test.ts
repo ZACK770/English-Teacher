@@ -68,6 +68,27 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
 describe("website checkout", () => {
+  it("does not credit a retried legacy recurring charge under the new reference format", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
+    await hook({ MosadNumber: "7019554", TransactionId: "60", Confirmation: "5", Amount: "29", Currency: "1", Groupe: "dibura-" + o.id });
+    db.sql.exec("UPDATE standing_orders SET entitlement_id=NULL,state='active',keva_id='4242'; UPDATE payment_orders SET entitlement_id=NULL; UPDATE sales_receipts SET subscription_id=NULL,valid_from=NULL; DELETE FROM subscriptions;");
+    const date = "2026-02-01T00:00:00.000+00:00";
+    db.sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('old-renewal','c1','school-step','school','nedarim:7019554:61',59,0.18,60,?,?)").run(addMonths(date, 2), date);
+    db.sql.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES ('payment:keva_charge',?,?)").run(o.subscription.id, date);
+    vi.setSystemTime(new Date(date));
+    const charge = { MosadNumber: "7019554", TransactionId: "61", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" };
+    expect((await hook(charge)).status).toBe(200);
+    expect((await hook(charge)).status).toBe(200);
+    expect((await hook({ ...charge, Amount: "1" })).status).toBe(400);
+    expect((await new SubscriptionStore(env.DB).get(o.id)).period_number).toBe(2);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(2);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM subscription_renewals").get()?.n).toBe(0);
+    expect((await hook({ ...charge, TransactionId: "62" })).status).toBe(200);
+    expect((await hook({ ...charge, TransactionId: "62" })).status).toBe(200);
+    expect((await new SubscriptionStore(env.DB).get(o.id)).period_number).toBe(3);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts").get()?.n).toBe(3);
+  });
   it("continues the calendar of an adopted standing order after previous paid renewals", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-31T00:00:00Z"));
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
