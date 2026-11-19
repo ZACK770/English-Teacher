@@ -10,6 +10,7 @@ import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
+import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -52,7 +53,12 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
   if (narration && request.method === "GET") return publicNarration(env, decodeURIComponent(narration[1]), narration[2]);
   if (path === "/v1/payments/nedarim/webhook" && request.method === "POST") return Response.json(await handleWebhook(request, env));
   if (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/")) {
-    if (!secureEqual(bearer(request.headers.get("Authorization")), env.ADMIN_BEARER_SECRET)) throw new HttpError(401, "Unauthorized");
+    if (path.startsWith("/v1/admin/auth/")) return adminAuth(request, env, path);
+    const identity = await adminIdentity(request, env);
+    if (!identity) throw new HttpError(401, "Unauthorized");
+    if (!identity.bearer && request.method !== "GET") requireOrigin(request);
+    const ownerResponse = await adminOwners(request, env, path, identity);
+    if (ownerResponse) return ownerResponse;
     if (path === "/v1/admin/gemini-budget" && request.method === "GET") return geminiBudgetStatus(env);
     if (path === "/v1/admin/portal-login/status" && request.method === "GET") return Response.json(await phoneAuthStatus(env));
     const response = await handleAdmin(request, env, s, path);
@@ -122,11 +128,23 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
-    try { return await handle(request, env, ctx); }
-    catch (error) {
-      if (error instanceof HttpError) return Response.json({ detail: error.detail }, { status: error.status });
-      return Response.json({ detail: "Request failed" }, { status: 500 });
+    const path = new URL(request.url).pathname.replace(/^\/english(\/|$)/, "/");
+    const log = request.method !== "GET" && (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/"));
+    let actor = "anonymous";
+    if (log) {
+      if (path === "/v1/admin/auth/login") {
+        try { const data = await request.clone().json() as { username?: unknown }; actor = typeof data.username === "string" ? data.username.trim().toLowerCase().slice(0, 64) : "anonymous"; } catch { /* invalid login */ }
+      } else {
+        try { actor = (await adminIdentity(request, env))?.username || actor; } catch { /* authentication will fail closed */ }
+      }
     }
+    let response: Response;
+    try { response = await handle(request, env, ctx); }
+    catch (error) {
+      response = error instanceof HttpError ? Response.json({ detail: error.detail }, { status: error.status }) : Response.json({ detail: "Request failed" }, { status: 500 });
+    }
+    if (log) await audit(env, request, path, actor, response.status).catch(() => undefined);
+    return response;
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(syncCrm(env).catch(() => undefined));

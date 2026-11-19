@@ -269,7 +269,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved ? JSON.parse(saved) : INITIAL_GAME_SCORES;
   });
 
-  const [adminToken, setAdminToken] = useState<string>(() => sessionStorage.getItem('adminToken') || 'admin123');
+  const [adminToken, setAdminToken] = useState<string>('');
   const [activeLearnerId, setActiveLearnerId] = useState<string>('cust_01');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 

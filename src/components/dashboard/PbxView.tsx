@@ -56,7 +56,7 @@ export const PbxView: React.FC = () => {
         received_at: new Date().toISOString(),
         request: {
           method: "POST",
-          caller: "0527698420",
+          caller: "0500000000",
           extension: "/99/1",
           did: "0765673575"
         },
@@ -81,7 +81,7 @@ export const PbxView: React.FC = () => {
           token: "chan_shochi_00",
           format: "pcm16;rate=8000;ch=1",
           callId: `CALL_TL_${Date.now()}`,
-          caller: "0527698420"
+          caller: "0500000000"
         },
         audio_spec: {
           sample_rate: 8000,

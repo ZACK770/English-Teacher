@@ -9,6 +9,7 @@ import { LegacyConsole } from './components/legacy/LegacyConsole';
 import { LegalPage } from './components/legal/LegalPage';
 import { LegalFooter } from './components/legal/LegalFooter';
 import { legalPageForPath } from './legalRoutes';
+import { AdminAuthGate } from './components/dashboard/AdminAuthGate';
 
 export const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<'dashboard' | 'learn' | 'join' | 'legacy' | 'home'>(() => !location.hash && !/\/(learn|join|dashboard)/.test(location.pathname) ? 'home' : 'learn');
@@ -64,7 +65,7 @@ export const AppContent: React.FC = () => {
     window.location.hash = tab;
   };
 
-  return (
+  const content = (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
       {currentView !== 'learn' && currentView !== 'home' && <Navbar currentView={currentView} onNavigate={navigateTo} />}
 
@@ -84,6 +85,7 @@ export const AppContent: React.FC = () => {
       </div>
     </div>
   );
+  return currentView === 'dashboard' || currentView === 'legacy' ? <AdminAuthGate>{content}</AdminAuthGate> : content;
 };
 
 export const App: React.FC = () => {
