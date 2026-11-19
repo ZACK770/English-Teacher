@@ -44,12 +44,13 @@ export async function googleToken(serviceAccountJson: string | undefined, projec
   return { token: cached.token, project: cached.project };
 }
 
-export async function postJson(url: string, body: unknown, headers: Record<string, string>, timeoutMs: number): Promise<any> {
+export async function postJson(url: string, body: unknown, headers: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<any> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
   });
   if (!response.ok) {
     const error = new Error(`HTTP ${response.status}`) as Error & { status: number };

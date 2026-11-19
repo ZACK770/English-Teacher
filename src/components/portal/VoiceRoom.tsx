@@ -2,6 +2,14 @@ import React, { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
 import { apiPrefix, portalRequest } from "./portalApi";
 
+const callErrors: Record<string, string> = {
+  call_failed: "השיחה לא התחברה. אפשר לנסות שוב או להתקשר לקו.",
+  access_blocked: "שיחות הטעימה נוצלו ואין דקות בחבילה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3.",
+  system_busy: "כל קווי השיחה תפוסים כרגע. אפשר לנסות שוב בעוד רגע.",
+  gemini_budget_reached: "מכסת השימוש היומית של המערכת הסתיימה. אפשר לחזור מחר.",
+  gemini_guard_unavailable: "שירות השיחות אינו זמין כרגע. אפשר לנסות שוב בעוד רגע.",
+};
+
 const processorCode = `
 class SpeakoolMic extends AudioWorkletProcessor {
   constructor() { super(); this.samples=[]; this.position=0; }
@@ -79,8 +87,8 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
             try {
               const message = JSON.parse(event.data);
               if (message.type === "ready") { setConnected(true); setState("אפשר לדבר. אנחנו מקשיבים."); }
-              if (message.type === "hangup" && ["call_failed", "access_blocked"].includes(message.reason)) {
-                serverError = message.reason === "access_blocked" ? "שיחות הטעימה נוצלו ואין דקות בחבילה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3." : "השיחה לא התחברה. אפשר לנסות שוב או להתקשר לקו.";
+              if (message.type === "hangup" && Object.hasOwn(callErrors, message.reason)) {
+                serverError = callErrors[message.reason];
                 setError(serverError);
               }
             } catch { /* Optional status frames do not affect audio. */ }

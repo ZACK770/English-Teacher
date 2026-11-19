@@ -20,9 +20,21 @@ migrations_dir = "migrations"
 name = "CALLS"
 class_name = "CallSession"
 
+[[durable_objects.bindings]]
+name = "GEMINI_BUDGET"
+class_name = "GeminiBudget"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CallSession"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["GeminiBudget"]
+
+[[send_email]]
+name = "GEMINI_BUDGET_EMAIL"
+allowed_sender_addresses = ["alerts@speakcall.app"]
 
 [triggers]
 crons = ["*/10 * * * *"]
@@ -45,6 +57,10 @@ migrations_dir = "migrations"
 [[env.staging.durable_objects.bindings]]
 name = "CALLS"
 class_name = "CallSession"
+
+[[env.staging.durable_objects.bindings]]
+name = "GEMINI_BUDGET"
+class_name = "GeminiBudget"
 
 [env.staging.triggers]
 crons = []

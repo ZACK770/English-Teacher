@@ -8,7 +8,9 @@ import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callb
 import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
+import { geminiBudgetStatus } from "./gemini-budget";
 export { CallSession } from "./call";
+export { GeminiBudget } from "./gemini-budget";
 
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -50,6 +52,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (path === "/v1/payments/nedarim/webhook" && request.method === "POST") return Response.json(await handleWebhook(request, env));
   if (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/")) {
     if (!secureEqual(bearer(request.headers.get("Authorization")), env.ADMIN_BEARER_SECRET)) throw new HttpError(401, "Unauthorized");
+    if (path === "/v1/admin/gemini-budget" && request.method === "GET") return geminiBudgetStatus(env);
     if (path === "/v1/admin/portal-login/status" && request.method === "GET") return Response.json(await phoneAuthStatus(env));
     const response = await handleAdmin(request, env, s, path);
     if (response) return response;
@@ -129,5 +132,6 @@ export default {
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
+    ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
   },
 };

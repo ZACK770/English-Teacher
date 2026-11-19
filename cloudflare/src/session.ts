@@ -5,6 +5,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
+import { acquireGeminiBudget, GeminiBudgetError } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
@@ -29,6 +30,7 @@ export class TutorSession {
   private lastHuman = Date.now();
   private clockPrevious = this.startedAt.getTime();
   private meteredAt: number | null = null;
+  private basicGeminiCost = 0;
   private disconnected = false;
   private reason = "";
   private intakeReminded = false;
@@ -93,6 +95,8 @@ export class TutorSession {
 
   async run(raw: string, requestedProfile: string | null, shared: boolean) {
     let claimed = false;
+    let reserved = false;
+    let releaseBudget: (() => Promise<void>) | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let hardLimit: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -157,13 +161,19 @@ export class TutorSession {
       if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
+      if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      reserved = allowance.seconds > 0 && allowance.mode !== "unrestricted";
+      if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
       if (!allowance.seconds) {
         this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
         this.reason = "access_blocked";
         return;
       }
+      if (this.abort.signal.aborted) return;
+      releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason));
+      if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
         await this.latency("learning_plan_ready", { vocabulary_targets: this.controls.lesson.vocabulary.length, grammar_targets: this.controls.lesson.grammar.length, material_rows: this.controls.lesson.material_status?.rows ?? null, material_targets: this.controls.lesson.material_status?.target_count ?? null });
@@ -175,6 +185,7 @@ export class TutorSession {
         this.stop("hard_time_limit");
       }, (allowance.seconds + 20) * 1000);
       if (this.controls.store_transcripts) await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
+      if (this.abort.signal.aborted) return;
       if (allowance.mode === "basic") {
         this.controls = { ...this.controls, model: this.s.basicTranslatorModel };
         this.meteredAt = Date.now();
@@ -203,6 +214,10 @@ export class TutorSession {
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);
       }
     } catch (error) {
+      if (error instanceof GeminiBudgetError) {
+        this.reason ||= error.reason;
+        return;
+      }
       if (!this.reason) this.reason = "call_failed";
       if (this.profileId && this.callId && !this.abort.signal.aborted) {
         const message = error instanceof Error ? error.message : "Unknown error";
@@ -215,8 +230,10 @@ export class TutorSession {
       this.abort.abort(new Error("session_finished"));
       this.input.end();
       this.ai?.close();
+      const budgetRelease = releaseBudget?.();
       try {
-        if (this.callId && this.customerId && this.controls) {
+        if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
+        if (releaseBudget && this.callId && this.customerId && this.controls) {
           await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
           await this.drainFinalAudio();
           const billed = this.meteredAt === null ? 0 : (Date.now() - this.meteredAt) / 1000;
@@ -224,12 +241,14 @@ export class TutorSession {
           await this.progress.saveSession({ student_id: this.customerId, call_id: this.callId, started_at: this.startedAt, learner_turns: this.meter.learnerTurns, tutor_turns: this.meter.tutorTurns, observations: this.meter.observations, transcript: this.controls.store_transcripts ? this.meter.transcript : null, summary: this.meter.summary(), usage: this.meter.usage(this.s), model: this.controls.model });
           await this.latency("session_saved");
         }
+        await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (!this.disconnected) {
           const target = this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
       } finally {
+        await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
         this.output = [];
         try { this.pbx.close(1000, "session ended"); } catch { /* peer already closed */ }
@@ -456,7 +475,8 @@ export class TutorSession {
       this.meter.learnerTurns++;
       this.meter.inputAudioBytes += utterance.length * 2;
       try {
-        const result = await translator.translate(utterance);
+        const result = await translator.translate(utterance, this.abort.signal);
+        this.basicGeminiCost += (result.input_tokens * 0.5 + result.output_tokens * 1.5) / 1_000_000;
         if (this.abort.signal.aborted) return;
         if (result.text) {
           this.meter.transcript.push({ role: "learner", text: result.heard }, { role: "tutor", text: result.text });
