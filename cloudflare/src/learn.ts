@@ -5,6 +5,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
 import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
+import { geminiKeyForCall } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
@@ -113,6 +114,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   let limited = false;
   try {
     await b.registerWebCall(callId, customerId, botId);
+    s = { ...s, geminiKey: await geminiKeyForCall(env, callId) };
     const learning = new LearningStore(env.DB);
     if (controls.lesson) await learning.begin(customerId, callId, controls.lesson);
     let history = (await progress.lessonContext(customerId)) + (await b.lessonContext(customerId, botId));

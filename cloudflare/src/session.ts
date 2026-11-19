@@ -6,6 +6,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, randomHex, secureEqual, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
+import { geminiKeyForCall } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
@@ -215,6 +216,7 @@ export class TutorSession {
       } else {
         await this.latency("gemini_connect_started");
         if (this.abort.signal.aborted) return;
+        this.s = { ...this.s, geminiKey: await geminiKeyForCall(this.env, this.callId, adCall) };
         const ai = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, this.artifact.setup_message);
         this.ai = ai;
         await ai.connect();

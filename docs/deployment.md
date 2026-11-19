@@ -2,6 +2,15 @@
 
 ## מגבלות Gemini ב־SpeakCall (Cloudflare)
 
+Worker secrets: `GEMINI_API_KEY` is the default Gemini key. Optionally set
+`GEMINI_PAID_TEACHER_API_KEY` with `wrangler secret put GEMINI_PAID_TEACHER_API_KEY`
+from `cloudflare/` (use `--env sandbox` for the isolated sandbox).
+Phone/browser voice and web text turns use it only when their active minutes
+allocation references a receipt with `amount_ils > 0`. Zero-cost grants, free/basic
+quotas, unmetered previews/narration, and advertisement-entry calls use the default
+key. If the paid secret is absent or empty, paid calls also use the default key.
+Reconnects retain the selected key. Models and shared Gemini budget limits are unchanged.
+
 ה־Worker `english-engine` נפרס מהענף `cloudflare-engine`; פריסת Wrangler רושמת את
 המיגרציה `v2` של ה־Durable Object. אין צורך במיגרציית D1 לשינוי זה. את ההגדרות
 אפשר להגדיר כמשתני Worker; לשינוי קבוע יש לעדכן גם את תצורות Wrangler:

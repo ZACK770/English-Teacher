@@ -7,6 +7,7 @@ export interface Env {
   AI?: Ai;
   VOICEMAIL_AUDIO?: R2Bucket;
   GEMINI_API_KEY: string;
+  GEMINI_PAID_TEACHER_API_KEY?: string;
   GEMINI_BUDGET: DurableObjectNamespace;
   GEMINI_MAX_CONCURRENT?: string;
   GEMINI_DAILY_BUDGET_USD?: string;
