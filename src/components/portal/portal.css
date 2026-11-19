@@ -96,7 +96,12 @@
 .speakool .sk-name-form{display:grid;gap:14px;max-width:420px}
 .speakool .sk-name-form input{font-size:22px;min-height:60px;padding:0 18px;border-radius:var(--radius);border:1px solid var(--line);background:var(--card);color:var(--ink)}
 
-.speakool .sk-avatar-mark{width:96px;height:96px;display:block;filter:drop-shadow(0 10px 24px #0006)}
+.speakool .line-teacher{--line-teacher-accent:#68f4c5;color:var(--ink)}
+.sk-conversation-breathe,.sk-conversation-halo{transform-box:fill-box;transform-origin:center}
+.sk-conversation-breathe{animation:teacher-breathe 4s ease-in-out infinite}
+.sk-conversation-second{animation-delay:-1s}
+.sk-conversation-halo{animation:teacher-halo 4s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){.sk-conversation-breathe,.sk-conversation-halo{animation:none}}
 .speakool .sk-teacher-art{display:flex;justify-content:center;padding:6px 0}
 
 .speakool .sk-access{margin:18px 0 0;padding:14px 18px;border:1px solid var(--line);border-radius:6px;background:var(--card);font-size:15px}.speakool .sk-access strong{font-weight:600}.speakool .sk-access a{color:var(--accent);font-weight:600}.speakool .sk-access.is-empty{border-color:var(--accent);background:#fbefe9}

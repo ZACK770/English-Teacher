@@ -1,0 +1,9 @@
+.line-teacher { --teacher-accent: var(--line-teacher-accent, #148f95); width: 96px; height: 96px; display: block; flex-shrink: 0; overflow: visible; }
+.line-teacher-accent, .line-teacher-halo { stroke: var(--teacher-accent); }
+.line-teacher-halo { stroke-width: 1; animation: teacher-halo 4s ease-in-out infinite; }
+.line-teacher-portrait, .line-teacher-halo { transform-box: fill-box; transform-origin: center; }
+.line-teacher-portrait { animation: teacher-breathe 4s ease-in-out infinite; }
+.line-teacher-badge { width: 42px; height: 42px; }
+@keyframes teacher-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.25px) scale(1.025); } }
+@keyframes teacher-halo { 0%,100% { transform: scale(.98); opacity: .3; } 50% { transform: scale(1.025); opacity: .65; } }
+@media (prefers-reduced-motion: reduce) { .line-teacher-portrait, .line-teacher-halo { animation: none; } }

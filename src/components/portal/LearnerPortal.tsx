@@ -6,6 +6,8 @@ import { VoiceRoom } from "./VoiceRoom";
 import { LearningProgress } from "./LearningProgress";
 import { SubscriptionPanel } from "./SubscriptionPanel";
 import { LessonSettingsFields, levelNames, loadNames, modeNames, correctionPolicies, grammarNames } from "./LessonSettingsFields";
+import { TeacherMark } from "./LineTeacher";
+export { TeacherMark } from "./LineTeacher";
 import "./portal.css";
 
 type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan" | "checkout";
@@ -13,7 +15,6 @@ const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "
 const personalities: Record<string, string> = { warm: "חם ומעודד", focused: "ישר לעניין", playful: "עם חיוך" };
 const DEFAULT_NAME = "דוד";
 const FEMALE_NAME = "אסתי";
-const isFemale = (voice?: string) => ["Aoede", "Kore", "Leda", "Zephyr", "Callirrhoe", "Autonoe", "Despina", "Erinome", "Laomedeia", "Achernar", "Gacrux", "Pulcherrima", "Vindemiatrix", "Sulafat"].includes(voice || "");
 const voices = [{ value: "Aoede", label: "רך ובהיר" }, { value: "Puck", label: "קליל וחם" }, { value: "Charon", label: "עמוק ורגוע" }];
 const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day: "numeric", month: "long", timeZone: "Asia/Jerusalem" });
 
@@ -25,42 +26,22 @@ function Brand({ onClick }: { onClick: () => void }) {
 }
 function ConversationArt({ seed = 0, small = false }: { seed?: number; small?: boolean }) {
   return <svg className={"sk-art " + (small ? "sk-art-small" : "")} viewBox="0 0 360 360" aria-hidden="true">
-    <circle className="sk-art-halo" cx="180" cy="180" r="135" />
+    <circle className="sk-art-halo sk-conversation-halo" cx="180" cy="180" r="135" />
     <g className="sk-orbit" style={{ transformOrigin: "180px 180px", animationDelay: `${seed % 5 * -.8}s` }}>
       <ellipse cx="180" cy="180" rx="142" ry="63" transform="rotate(-37 180 180)" fill="none" stroke="currentColor" strokeWidth=".75" />
       <circle cx="292" cy="95" r="7" className="sk-art-accent" />
     </g>
-    <g className="sk-float-one">
+    <g className="sk-conversation-breathe">
       <path d="M78 97Q78 80 95 80H211Q228 80 228 97V174Q228 191 211 191H132L104 217V191H95Q78 191 78 174Z" className="sk-art-paper" />
       <text x="153" y="151" textAnchor="middle" direction="ltr" fontSize="43" fontFamily="Georgia,serif" fill="currentColor">hello.</text>
     </g>
-    <g className="sk-float-two">
+    <g className="sk-conversation-breathe sk-conversation-second">
       <path d="M145 184Q145 170 159 170H268Q282 170 282 184V246Q282 260 268 260H247V283L218 260H159Q145 260 145 246Z" className="sk-art-accent" />
       {[0, 1, 2, 3, 4, 5, 6].map(n => <rect key={n} className="sk-sound-bar" x={180 + n * 11} y={203 - (n % 3) * 5} width="3" height={24 + (n % 3) * 10} rx="2" fill="#fffef9" style={{ animationDelay: `${n * -.18}s` }} />)}
     </g>
     <path d="M82 265v22m-11-11h22M284 58v17m-8-8h16" stroke="currentColor" strokeWidth="1" />
     <circle cx="82" cy="232" r="3" fill="currentColor" /><circle cx="277" cy="301" r="3" fill="currentColor" />
       </svg>;
-}
-const markBg = ["#d4ff3f", "#7cc7ff", "#ffb86b", "#c9a7ff", "#5be3b5"];
-const markShirt = ["#1f3a5f", "#3b2f63", "#0f4c45", "#5a2a35", "#2d3b1f"];
-const markScarf = ["#e2557a", "#3c7dd9", "#8a5cf6", "#f0a030", "#16a37f"];
-export function TeacherMark({ teacher, index = 0 }: { teacher?: Teacher; index?: number }) {
-  const seed = teacher ? [...teacher.name].reduce((n, c) => n + c.charCodeAt(0), 0) : index;
-  const female = isFemale(teacher?.voice);
-  const pick = (list: string[]) => list[seed % list.length];
-  return <svg className="sk-avatar-mark" viewBox="0 0 100 100" aria-hidden="true">
-    <circle cx="50" cy="50" r="48" fill={pick(markBg)} />
-    <path d="M17 97c3-20 16-30 33-30s30 10 33 30z" fill={pick(markShirt)} />
-    <path d="M43 60h14v10a7 7 0 0 1-14 0z" fill="#e2b48e" />
-    {female && <path d="M28 50c0-18 9-29 22-29s22 11 22 29c0 7-2 12-5 15-1-15-7-26-17-26s-16 11-17 26c-3-3-5-8-5-15z" fill={pick(markScarf)} />}
-    <ellipse cx="50" cy="46" rx="16" ry="19" fill="#f2c9a5" />
-    {female ? <><path d="M33 40c2-11 9-16 17-16s15 5 17 16c-5-5-10-7-17-7s-12 2-17 7z" fill={pick(markScarf)} /><circle cx="70" cy="60" r="5" fill={pick(markScarf)} /></>
-      : <><path d="M34 42c0-13 7-19 16-19s16 6 16 19c-3-6-8-9-16-9s-13 3-16 9z" fill="#2b2118" /><path d="M34 49c1 12 8 18 16 18s15-6 16-18c-3 4-9 6-16 6s-13-2-16-6z" fill="#3a2c20" /><path d="M41 25a9 5 0 0 1 18 0z" fill="#14161a" /></>}
-    <circle cx="44" cy="45" r="1.9" fill="#1d1d1f" /><circle cx="56" cy="45" r="1.9" fill="#1d1d1f" />
-    {seed % 2 === 1 && <g fill="none" stroke="#14161a" strokeWidth="1.6"><circle cx="44" cy="45" r="5" /><circle cx="56" cy="45" r="5" /><path d="M49 45h2" /></g>}
-    <path d="M45 54q5 3.5 10 0" stroke={female ? "#b5485a" : "#f2c9a5"} strokeWidth="2" fill="none" strokeLinecap="round" />
-  </svg>;
 }
 function Modal({ title, children, onClose, error, busy }: { title: string; children: React.ReactNode; onClose: () => void; error?: string; busy?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -269,7 +250,7 @@ function TeacherBuilder({ defaultBot, materials, onSave, onPreview }: { defaultB
   const update = (key: string, value: string) => setTeacher(t => ({ ...t, [key]: value, ...(key === "conversation_mode" && value === "roleplay" && t.correction_policy === "after_answer" ? { correction_policy: "after_activity" } : {}) }));
   const steps = [{ title: "איזה אופי יעשה לך טוב?", key: "personality", values: personalities }, { title: "איך זה נשמע לך?", key: "voice", values: Object.fromEntries(voices.map(v => [v.value, v.label])) }, { title: "איך נלמד יחד?", key: "conversation_mode", values: modeNames }, { title: "באיזה קצב נדבר?", key: "pace", values: paceNames }, { title: "מתי נתקן טעויות?", key: "correction_policy", values: teacher.conversation_mode === "roleplay" ? { on_request: correctionPolicies.on_request, after_activity: correctionPolicies.after_activity } : correctionPolicies }];
   const current = steps[step];
-  return <div className="sk-builder"><p className="sk-eyebrow">צעד {step + 1} מתוך 7</p><div className="sk-builder-mark"><TeacherMark teacher={{ ...teacher, id: "" }} /></div><h3>{current?.title || (step === 5 ? "על מה נדבר?" : "איך נקרא למורה שלך?")}</h3>
+  return <div className="sk-builder"><p className="sk-eyebrow">צעד {step + 1} מתוך 7</p><div className="sk-builder-mark"><TeacherMark teacher={teacher} /></div><h3>{current?.title || (step === 5 ? "על מה נדבר?" : "איך נקרא למורה שלך?")}</h3>
     {current ? <Options values={current.values as Record<string, string>} value={teacher[current.key as keyof typeof teacher]} onChange={v => update(current.key, v)} /> : step === 5 ? <TopicPicker value={teacher.topic} onChange={v => update("topic", v)} /> : <>
       <LessonSettingsFields value={teacher} compact onChange={next => setTeacher(t => ({ ...t, ...next }))} />
       <label htmlFor="teacher-name">שם למורה</label><input id="teacher-name" maxLength={40} value={teacher.name} onChange={e => update("name", e.target.value)} placeholder="שם שכיף לך לשמוע" autoFocus />
