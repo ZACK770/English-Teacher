@@ -13,7 +13,7 @@ async function adminApi(path: string, method = 'GET', body?: unknown) {
   const data = await response.json();
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event('admin-session-expired'));
-    throw new Error(response.status === 429 ? 'יותר מדי ניסיונות. נסו שוב בעוד 15 דקות.' : response.status === 401 ? 'שם המשתמש או הסיסמה שגויים, או שהכניסה פגה.' : 'הפעולה נכשלה. בדקו את הנתונים ונסו שוב.');
+    throw Object.assign(new Error(response.status === 429 ? 'יותר מדי ניסיונות. נסו שוב בעוד 15 דקות.' : response.status === 401 ? 'שם המשתמש או הסיסמה שגויים, או שהכניסה פגה.' : 'הפעולה נכשלה. בדקו את הנתונים ונסו שוב.'), { status: response.status });
   }
   return data;
 }
@@ -35,13 +35,13 @@ function AdminUsers() {
     setBusy(true); setError('');
     try { await operation(); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
-  return <section dir="rtl" className="p-6 space-y-5">
+  return <section dir="rtl" className="p-6 space-y-5 text-slate-100">
     <h1 className="text-2xl">משתמשים ויומן פעולות</h1>
     {error && <p role="alert">{error}</p>}
     <form className="flex flex-wrap gap-3" onSubmit={e => { e.preventDefault(); void act(async () => { await adminApi('users', 'POST', { username, password, role }); setUsername(''); setPassword(''); }); }}>
-      <label>שם משתמש <input className="bg-slate-800 p-2" value={username} onChange={e => setUsername(e.target.value)} required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{1,63}" autoComplete="off" /></label>
-      <label>סיסמה <input className="bg-slate-800 p-2" type="password" value={password} onChange={e => setPassword(e.target.value)} minLength={10} maxLength={1024} autoComplete="new-password" required /></label>
-      <label>תפקיד <select className="bg-slate-800 p-2" value={role} onChange={e => setRole(e.target.value)}><option value="staff">צוות</option><option value="owner">מנהל</option></select></label>
+      <label>שם משתמש <input className="bg-slate-800 text-slate-100 p-2" value={username} onChange={e => setUsername(e.target.value)} required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{1,63}" autoComplete="off" /></label>
+      <label>סיסמה <input className="bg-slate-800 text-slate-100 p-2" type="password" value={password} onChange={e => setPassword(e.target.value)} minLength={10} maxLength={1024} autoComplete="new-password" required /></label>
+      <label>תפקיד <select className="bg-slate-800 text-slate-100 p-2" value={role} onChange={e => setRole(e.target.value)}><option value="staff">צוות</option><option value="owner">מנהל</option></select></label>
       <button disabled={busy} type="submit">יצירת משתמש</button>
     </form>
     <h2>משתמשים</h2>
@@ -66,9 +66,9 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   const [panel, setPanel] = useState(false);
   useEffect(() => {
     let active = true;
-    const expired = () => { setIdentity(null); setPanel(false); };
+    const expired = () => { setIdentity(null); setPanel(false); setError(''); };
     window.addEventListener('admin-session-expired', expired);
-    adminApi('auth/me').then(data => { if (active) setIdentity(data); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); });
+    adminApi('auth/me').then(data => { if (active) setIdentity(data); }).catch(e => { if (active && e.status !== 401) setError(e.message); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; window.removeEventListener('admin-session-expired', expired); };
   }, []);
   if (loading) return <div dir="rtl" role="status" className="p-8">בודקים את הכניסה…</div>;
@@ -85,7 +85,7 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   return <><header dir="rtl" className="bg-slate-900 text-white p-3 flex flex-wrap gap-5 items-center">
     <span>{identity.username}</span>
     {identity.role === 'owner' && <button onClick={() => setPanel(!panel)}>{panel ? 'חזרה ללוח הניהול' : 'משתמשים ויומן פעולות'}</button>}
-    <button onClick={async () => { try { await adminApi('auth/logout', 'POST'); setIdentity(null); setPanel(false); } catch (e) { setError((e as Error).message); } }}>יציאה</button>
+    <button onClick={async () => { try { await adminApi('auth/logout', 'POST'); setIdentity(null); setPanel(false); setError(''); } catch (e) { setError((e as Error).message); } }}>יציאה</button>
     {error && <span role="alert">{error}</span>}
   </header>{panel ? <AdminUsers /> : children}</>;
 }
