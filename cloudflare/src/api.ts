@@ -228,7 +228,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
 
   if (seg[2] === "business") {
     const kind = seg[3];
-    if (kind === "subscriptions") return subscriptionApi(request, new SubscriptionStore(env.DB), seg.slice(4), undefined, env);
+    if (kind === "subscriptions") return subscriptionApi(request, new SubscriptionStore(env.DB, env), seg.slice(4), undefined, env);
     if (kind === "performance" && seg[4]) return ok(await b.performance(seg[4]));
     if (kind === "customers" && seg[4] && seg[5] === "invite" && method === "POST") {
       try { return ok(await b.portalInvite(seg[4])); } catch { throw new HttpError(404, "Customer not found"); }
@@ -357,7 +357,7 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
   if (path === "/v1/portal/subscriptions" || path.startsWith("/v1/portal/subscriptions/")) {
     const standingId = path.match(/^\/v1\/portal\/subscriptions\/([a-f0-9]{32})\/cancel$/)?.[1];
     if (standingId && await env.DB.prepare("SELECT id FROM standing_orders WHERE id=?").bind(standingId).first()) return (await checkoutRoutes(request, env, path, customerId))!;
-    return subscriptionApi(request, new SubscriptionStore(env.DB), path.split("/").slice(4), customerId, env);
+    return subscriptionApi(request, new SubscriptionStore(env.DB, env), path.split("/").slice(4), customerId, env);
   }
   if (path === "/v1/portal/voice-preview" && request.method === "POST") return renderVoicePreview(request, env, settings(env), customerId);
   if (path === "/v1/portal/me" && request.method === "GET") {

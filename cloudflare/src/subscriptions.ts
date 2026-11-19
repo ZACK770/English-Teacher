@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { BusinessStore, normalizedPhone } from "./business";
-import { randomHex } from "./env";
+import { type Env, HttpError, randomHex, sha256Hex } from "./env";
 import { LearningStore, vocabularyCatalog } from "./learning";
+import { disableKeva, enableKeva, updateKevaAmount } from "./nedarim";
 
 export const DomainSchema = z.object({ domain: z.string(), levels: z.array(z.enum(["beginner", "intermediate", "fluent"])).optional() });
 type Domain = z.infer<typeof DomainSchema>;
@@ -24,7 +25,26 @@ function yearStart(start: string, at: string) {
 }
 
 export class SubscriptionStore {
-  constructor(public db: D1Database) {}
+  constructor(public db: D1Database, private env?: Env) {}
+  private async withBillingLock<T>(id: string, action: (standing: Subscription | null) => Promise<T>) {
+    const token = randomHex(16), now = iso(new Date());
+    const lock = await this.db.prepare(`INSERT INTO subscription_billing_locks(subscription_id,token,created_at) VALUES (?,?,?)
+      ON CONFLICT(subscription_id) DO UPDATE SET token=excluded.token,created_at=excluded.created_at WHERE subscription_billing_locks.created_at<?`)
+      .bind(id, token, now, shift(now, -5 * 60000)).run();
+    if (!lock.meta.changes) throw new HttpError(409, "עדכון אחר במנוי מתבצע כעת. נסו שוב בעוד רגע.");
+    try {
+      const standing = await this.db.prepare("SELECT * FROM standing_orders WHERE entitlement_id=? AND state<>'cancelled'").bind(id).first<Subscription>();
+      if (standing && (!standing.keva_id || !this.env)) throw new HttpError(409, "יש להשלים את הקמת הוראת הקבע לפני עדכון המנוי.");
+      return await action(standing);
+    } finally {
+      await this.db.prepare("DELETE FROM subscription_billing_locks WHERE subscription_id=? AND token=?").bind(id, token).run();
+    }
+  }
+  private async billingIssue(id: string, kind: string, reference: string) {
+    const standing = await this.db.prepare("SELECT first_order_id FROM standing_orders WHERE entitlement_id=?").bind(id).first<{ first_order_id: string }>();
+    if (standing) await this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)")
+      .bind((await sha256Hex(kind + ":" + id + ":" + reference)).slice(0, 32), standing.first_order_id, kind, "עדכון הוראת הקבע לא הושלם. יש לבדוק את מצב החיוב בנדרים פלוס ואת מצב המנוי.", iso(new Date())).run();
+  }
   async get(id: string): Promise<Subscription> {
     const sub = await this.db.prepare("SELECT * FROM subscriptions WHERE id=?").bind(id).first<Subscription>();
     if (!sub) throw new Error("Subscription not found");
@@ -97,21 +117,56 @@ export class SubscriptionStore {
     return this.get(id);
   }
   async pause(id: string, days: number, at = new Date().toISOString()) {
-    at = iso(at);
-    const sub = await this.get(id), year = yearStart(sub.started_at, at);
-    const used = sub.pause_year_start === year ? sub.pause_days_used : 0;
-    const yearEnd = addMonths(sub.started_at, (new Date(year).getUTCFullYear() - new Date(sub.started_at).getUTCFullYear() + 1) * 12);
-    const daysThisYear = Math.min(days, (Date.parse(yearEnd) - Date.parse(at)) / DAY);
-    if (sub.status !== "active" || !Number.isInteger(days) || days < 1 || days > 60 || used + daysThisYear > 60) throw new Error("Pause limit exceeded or subscription not active");
-    const changed = await this.db.prepare("UPDATE subscriptions SET status='paused',resume_status='active',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
-    if (!changed.meta.changes) throw new Error("Subscription status changed");
-    return this.get(id);
+    return this.withBillingLock(id, async standing => {
+      at = iso(at);
+      const sub = await this.get(id), year = yearStart(sub.started_at, at);
+      const used = sub.pause_year_start === year ? sub.pause_days_used : 0;
+      const yearEnd = addMonths(sub.started_at, (new Date(year).getUTCFullYear() - new Date(sub.started_at).getUTCFullYear() + 1) * 12);
+      const daysThisYear = Math.min(days, (Date.parse(yearEnd) - Date.parse(at)) / DAY);
+      if (sub.status !== "active" || !Number.isInteger(days) || days < 1 || days > 60 || used + daysThisYear > 60) throw new Error("Pause limit exceeded or subscription not active");
+      if (standing) await disableKeva(this.env!, standing.keva_id);
+      try {
+        const changed = await this.db.prepare("UPDATE subscriptions SET status='paused',resume_status='active',paused_at=?,pause_until=?,pause_year_start=?,pause_days_used=?,updated_at=? WHERE id=? AND status='active'").bind(at, shift(at, days * DAY), year, used, at, id).run();
+        if (!changed.meta.changes) throw new Error("Subscription status changed");
+      } catch (error) {
+        if (standing) {
+          try {
+            const nextDate = await enableKeva(this.env!, standing.keva_id);
+            await this.db.prepare("UPDATE standing_orders SET next_date=? WHERE id=?").bind(nextDate, standing.id).run();
+          } catch { await this.billingIssue(id, "keva_pause_recovery", at); }
+        }
+        throw error;
+      }
+      return this.get(id);
+    });
   }
   async resume(id: string, at = new Date().toISOString()) {
+    return this.withBillingLock(id, async standing => {
+      at = iso(at);
+      const sub = await this.get(id);
+      if (sub.status !== "paused") throw new Error("Subscription is not paused");
+      if (at < sub.paused_at) throw new Error("Resume precedes pause");
+      if (standing) {
+        const nextDate = await enableKeva(this.env!, standing.keva_id);
+        try {
+          await this.db.prepare("UPDATE standing_orders SET next_date=?,updated_at=? WHERE id=?").bind(nextDate, iso(at), standing.id).run();
+          return await this.resumeEntitlement(id, at, true, sub);
+        } catch (error) {
+          try {
+            await disableKeva(this.env!, standing.keva_id);
+            await this.db.prepare("UPDATE standing_orders SET next_date=? WHERE id=?").bind(standing.next_date, standing.id).run();
+          } catch { await this.billingIssue(id, "keva_resume_recovery", at); }
+          throw error;
+        }
+      }
+      return this.resumeEntitlement(id, at, false, sub);
+    });
+  }
+  private async resumeEntitlement(id: string, at: string, billingPaused = false, snapshot?: Subscription) {
     at = iso(at);
-    const sub = await this.get(id);
+    const sub = snapshot ?? await this.get(id);
     if (sub.status !== "paused") throw new Error("Subscription is not paused");
-    const until = at < sub.pause_until ? at : sub.pause_until;
+    const until = billingPaused || at < sub.pause_until ? at : sub.pause_until;
     const elapsed = Date.parse(until) - Date.parse(sub.paused_at);
     if (elapsed < 0) throw new Error("Resume precedes pause");
     const year = yearStart(sub.started_at, until);
@@ -127,7 +182,7 @@ export class SubscriptionStore {
   async cancel(id: string, at = new Date().toISOString()) {
     let sub = await this.get(id);
     if (sub.status === "cancelled") return sub;
-    if (sub.status === "paused") sub = await this.resume(id, at);
+    if (sub.status === "paused") sub = await this.resumeEntitlement(id, at);
     const changed = await this.db.prepare("UPDATE subscriptions SET status='cancelled',cancelled_at=?,updated_at=? WHERE id=? AND status=?").bind(iso(at), iso(at), id, sub.status).run();
     if (!changed.meta.changes) throw new Error("Subscription status changed");
     return this.get(id);
@@ -150,6 +205,15 @@ export class SubscriptionStore {
     return this.get(id);
   }
   async addMember(id: string, phone: string, name: string) {
+    return this.withBillingLock(id, async standing => {
+      const customerId = await new BusinessStore(this.db).customerForPhone(normalizedPhone(phone));
+      const previous = customerId ? await this.db.prepare("SELECT * FROM subscription_members WHERE subscription_id=? AND customer_id=?").bind(id, customerId).first<Subscription>() : null;
+      const result = await this.addMemberEntitlement(id, phone, name);
+      await this.syncFamilyAmount(id, result.customer_id, previous, standing);
+      return result;
+    });
+  }
+  private async addMemberEntitlement(id: string, phone: string, name: string) {
     const sub = await this.get(id), b = new BusinessStore(this.db);
     if (sub.status !== "active" || !name.trim()) throw new Error("Active subscription and member name required");
     phone = normalizedPhone(phone);
@@ -165,8 +229,30 @@ export class SubscriptionStore {
     return { customer_id: customerId };
   }
   async removeMember(id: string, customerId: string) {
-    await this.get(id);
-    await this.db.prepare("UPDATE subscription_members SET removed_at=? WHERE subscription_id=? AND customer_id=? AND removed_at IS NULL").bind(new Date().toISOString(), id, customerId).run();
+    return this.withBillingLock(id, async standing => {
+      await this.get(id);
+      const previous = await this.db.prepare("SELECT * FROM subscription_members WHERE subscription_id=? AND customer_id=? AND removed_at IS NULL").bind(id, customerId).first<Subscription>();
+      if (!previous) return;
+      await this.db.prepare("UPDATE subscription_members SET removed_at=? WHERE subscription_id=? AND customer_id=? AND removed_at IS NULL").bind(new Date().toISOString(), id, customerId).run();
+      await this.syncFamilyAmount(id, customerId, previous, standing);
+    });
+  }
+  private async syncFamilyAmount(id: string, customerId: string, previous: Subscription | null, standing: Subscription | null) {
+    if (!standing) return;
+    try {
+      const amount = await this.renewalAmount(id);
+      await updateKevaAmount(this.env!, standing.keva_id, amount);
+      await this.db.prepare("UPDATE standing_orders SET previous_monthly_agorot=monthly_agorot,monthly_agorot=?,updated_at=? WHERE id=?").bind(amount, iso(new Date()), standing.id).run();
+    } catch {
+      await this.db.batch([
+        previous ? this.db.prepare("UPDATE subscription_members SET added_at=?,removed_at=? WHERE subscription_id=? AND customer_id=?").bind(previous.added_at, previous.removed_at, id, customerId)
+          : this.db.prepare("DELETE FROM subscription_members WHERE subscription_id=? AND customer_id=?").bind(id, customerId),
+        this.db.prepare("UPDATE standing_orders SET monthly_agorot=?,previous_monthly_agorot=? WHERE id=?").bind(standing.monthly_agorot, standing.previous_monthly_agorot, standing.id),
+      ]);
+      try { await updateKevaAmount(this.env!, standing.keva_id, standing.monthly_agorot); }
+      catch { await this.billingIssue(id, "keva_family_recovery", iso(new Date())); }
+      throw new HttpError(502, "עדכון החיוב בנדרים פלוס נכשל. השינוי בבני המשפחה בוטל, נסו שוב או פנו לשירות.");
+    }
   }
   async summary(customerId: string, at = new Date().toISOString()) {
     return Promise.all((await this.list(customerId)).map(async sub => {
@@ -184,7 +270,13 @@ export class SubscriptionStore {
     at = iso(at);
     for (let sub of await this.list()) {
       try {
-        if (sub.status === "paused" && sub.pause_until <= at) sub = await this.resume(sub.id, at);
+        if (sub.status === "paused" && sub.pause_until <= at) {
+          try { sub = await this.resume(sub.id, at); }
+          catch {
+            await this.billingIssue(sub.id, "keva_auto_resume", sub.paused_at);
+            continue;
+          }
+        }
         if (sub.status !== "active" || !sub.term_months) continue;
         if (sub.guarantee_status === "pending" && sub.term_end <= at) sub = await this.evaluateGuarantee(sub.id, at);
         while (sub.current_period_end <= at && sub.period_number < sub.term_months + sub.extension_months) {
