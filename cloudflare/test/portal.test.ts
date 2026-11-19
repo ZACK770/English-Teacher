@@ -208,9 +208,24 @@ describe("quick teacher direction", () => {
     await b.savePreference("learner-a", { trial_setup: "selected", level: "fluent" });
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.lesson?.level).toBe("intermediate");
-    expect(c.custom_instructions).toContain('goal="other", level="fluent"');
-    expect(await saveIntake(b, "learner-a", "student", { goal: "other", level: "fluent", pace: "slow" })).toBe(true);
+    expect(c.custom_instructions).toContain("Omit level unless the learner explicitly asks to change it.");
+    expect(await saveIntake(b, "learner-a", "student", { goal: "other", pace: "slow" })).toBe(true);
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "fluent", pace: "slow" });
+  });
+
+  it("does not copy the preview teacher's level to the active teacher on a pace change", async () => {
+    const active = await b.save(teachersKind("learner-a"), TeacherSchema.parse({ name: "דוד", base_bot: "student", level: "beginner" }));
+    const preview = await b.save(teachersKind("learner-a"), TeacherSchema.parse({ name: "יוסף", base_bot: "student", level: "fluent" }));
+    await b.savePreference("learner-a", { active_teacher: active.id, level: "intermediate" });
+    const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false), preview.id);
+    expect(c.custom_instructions).toContain("Omit level unless the learner explicitly asks to change it.");
+    expect(await saveIntake(b, "learner-a", "student", { goal: "other", pace: "slow" })).toBe(true);
+    expect(await b.record(teachersKind("learner-a"), active.id)).toMatchObject({ level: "beginner", pace: "slow" });
+    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "intermediate", plan: { level: "intermediate" } });
+  });
+
+  it("still requires a level on first-call intake", async () => {
+    expect(await saveIntake(b, "learner-a", "student", { goal: "work" })).toBe(false);
   });
 });
 

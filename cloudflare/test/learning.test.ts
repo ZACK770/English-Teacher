@@ -375,7 +375,7 @@ describe("learner settings to Gemini", () => {
     expect(intake).toMatchObject({
       parameters: {
         properties: { minutes: { type: "integer", description: expect.stringContaining("5, 10, or 20") } },
-        required: ["goal", "level"],
+        required: ["goal"],
       },
     });
     expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");

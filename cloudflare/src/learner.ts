@@ -127,8 +127,7 @@ export async function applyLearnerControls(
   const material = materialId ? await b.record(materialsKind(customerId), materialId) : null;
   const words = MaterialSchema.safeParse(material);
   const choices = resolveLessonChoices(p, bot.id, teacher);
-  const savedLevel = choices.level;
-  const effective = resolveFreeSelection(requestedTopic, savedLevel, paid);
+  const effective = resolveFreeSelection(requestedTopic, choices.level, paid);
   const chosenTopic = effective.domain === "core" ? "everyday" : effective.domain;
   choices.level = effective.level;
   const limit = { light: 3, normal: 5, intensive: 8 }[choices.learning_load];
@@ -156,7 +155,7 @@ export async function applyLearnerControls(
       ? "First call: before practising, run a short Hebrew intake, one question at a time: the learner's name if unknown, goal (work, travel or study; wanting to learn English (ללמוד אנגלית) is not itself study, use the purpose they name), level, what is hardest (speaking, listening or writing), minutes per lesson (5, 10 or 20), topic (or recommended if they have no preference), and preferred teacher style (warm, focused or playful) and whether they prefer a male or female teacher. Keep it under two minutes. Call save_intake once as soon as you know the goal and level (leave out answers the learner did not give), then start the lesson at that level. Never end the call before save_intake."
       : "",
     plan.success || teacher || trialSetup
-      ? `Changing direction: if the learner asks to change their goal, level, what is hardest, lesson length, topic, speaking pace, conversation mode or teacher personality, confirm only what changes in one short Hebrew question, then call save_intake with goal and level (saved values for the tool, not the active lesson: goal=${JSON.stringify(plan.success ? plan.data.goal : "other")}, level=${JSON.stringify(savedLevel)}) plus only the changed fields. It updates the same settings as the website's "לשנות כיוון", so tell the learner it is saved there too.`
+      ? `Changing direction: if the learner asks to change their goal, level, what is hardest, lesson length, topic, speaking pace, conversation mode or teacher personality, confirm only what changes in one short Hebrew question, then call save_intake with the goal (current value: ${JSON.stringify(plan.success ? plan.data.goal : "other")}) plus only the changed fields. Omit level unless the learner explicitly asks to change it. It updates the same settings as the website's "לשנות כיוון", so tell the learner it is saved there too.`
       : "",
     learnerName ? `The learner's name is ${JSON.stringify(learnerName)} (quoted data); greet them by it and use it naturally now and then.` : "The learner's name is unknown; you may ask it once, briefly.",
     "Encourage actual speaking, one short question at a time. Be natural, kind, and concise. Use the selected conversation, spelling or grammar practice.",
@@ -332,11 +331,18 @@ export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
 export async function saveIntake(b: BusinessStore, customerId: string, botId: string | null, args: unknown) {
   const given = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const prior = await b.loadContext("preferences:" + customerId);
-  const kept = (key: "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
-  const parsed = IntakeSchema.safeParse({ ...given, minutes: kept("minutes"), topic: kept("topic"), difficulty: kept("difficulty") });
+  const kept = (key: "level" | "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
+  let level = given.level;
+  if (level === undefined) {
+    const active = prior.active_teacher ? await b.record(teachersKind(customerId), prior.active_teacher) : null;
+    if (active || prior.trial_setup || PlanSchema.safeParse(prior.plan).success) {
+      level = kept("level") ?? PlanSchema.shape.level.safeParse(active?.level).data ?? (botId === "isaac-advanced" ? "fluent" : "beginner");
+    }
+  }
+  const parsed = IntakeSchema.safeParse({ ...given, level, minutes: kept("minutes"), topic: kept("topic"), difficulty: kept("difficulty") });
   if (!parsed.success) return false;
   const { learner_name, personality: requestedStyle, teacher_gender, pace, conversation_mode, ...plan } = parsed.data;
-  const direction = { level: plan.level, ...(given.topic ? { topic: plan.topic } : {}), ...(pace ? { pace } : {}), ...(conversation_mode ? { conversation_mode } : {}) };
+  const direction = { ...(given.level !== undefined ? { level: plan.level } : {}), ...(given.topic ? { topic: plan.topic } : {}), ...(pace ? { pace } : {}), ...(conversation_mode ? { conversation_mode } : {}) };
   const style = requestedStyle ? { personality: requestedStyle } : {};
   await syncActiveTeacher(b, customerId, { ...direction, ...style });
   await b.savePreference(customerId, { plan, ...direction, ...style, minutes: plan.minutes, topic: plan.topic, ...(learner_name ? { learner_name } : {}) });
