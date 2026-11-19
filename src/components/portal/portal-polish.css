@@ -1,4 +1,8 @@
 .speakool { color-scheme: dark; }
+.sk-conversation-art { height: auto; animation: teacher-breathe 4s ease-in-out infinite; }
+.speakool .sk-hero-art { display: block; }
+@media (max-width: 960px) { .speakool .sk-hero-art .sk-art { max-width: 200px; } }
+@media (prefers-reduced-motion: reduce) { .sk-conversation-art { animation: none; } }
 .speakool input:focus, .speakool textarea:focus, .speakool select:focus { box-shadow: 0 0 0 2px #c0f67d22; }
 .speakool .sk-access.is-empty { background: var(--sage); color: var(--ink); }
 .speakool .sk-card-frame { background: var(--paper); color: var(--ink); border: 1px solid var(--line); box-shadow: none; }

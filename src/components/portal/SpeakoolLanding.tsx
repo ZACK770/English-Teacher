@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Phone, Monitor, Ear, Mic, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Phone, Monitor } from "lucide-react";
 import { EmailLogin } from "./EmailLogin";
 import { DirectVoice } from "./DirectVoice";
+import { resumeLearnerSession } from "./portalApi";
 import { PHONE_LINE } from "./LearnerPortal";
 import { LegalFooter } from "../legal/LegalFooter";
 import { legalBasePath } from "../../legalRoutes";
@@ -31,6 +32,20 @@ export function SpeakoolLanding() {
   const [voiceToken, setVoiceToken] = useState("");
   const base = legalBasePath(location.pathname);
   const learn = base + "/learn";
+  useEffect(() => {
+    let disposed = false;
+    const resume = () => {
+      if (location.pathname === learn) return;
+      void resumeLearnerSession().then(valid => {
+        if (!valid || disposed) return;
+        history.replaceState(null, "", learn);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+    };
+    resume();
+    window.addEventListener("popstate", resume);
+    return () => { disposed = true; window.removeEventListener("popstate", resume); };
+  }, [learn]);
   const tel = "tel:" + PHONE_LINE.replace(/-/g, "");
   const [domain, setDomain] = useState(0);
   const progress = domains[domain];
@@ -42,7 +57,7 @@ export function SpeakoolLanding() {
   return <div className="speakool sk-land" dir="rtl">
     <header className="sk-shell sk-land-head">
       <a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a>
-      <nav aria-label="ניווט ראשי"><a href="#free-lesson">שיעור ראשון</a><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
+      <nav aria-label="ניווט ראשי"><a href="#free-lesson">שיעור ראשון</a><a href="#how">השיטה</a><a href="#plans">מסלולים</a><a className="sk-land-blog" href={base + "/blog"}>מאמרים</a><a className="sk-land-login" href={learn}>כניסה</a></nav>
     </header>
     <main>
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
@@ -60,14 +75,7 @@ export function SpeakoolLanding() {
         </div>
         <figure className="sk-land-call">
           <div className="sk-land-caller"><strong>מורה ה־AI של ספיקול</strong><span>דוגמה משיעור</span></div>
-          <svg className="sk-land-voice-art" viewBox="0 0 320 270" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <g className="sk-land-rings"><circle cx="160" cy="130" r="105" /><circle cx="160" cy="130" r="121" /></g>
-            <g className="sk-land-signal"><path d="M74 98q-19 32 0 64M246 98q19 32 0 64M63 89q-26 41 0 82M257 89q26 41 0 82" /></g>
-            <g className="sk-land-symbol-breathe"><g className="sk-land-draw">
-              <path pathLength="1" d="M194 96c-10-12-21-18-36-18-29 0-47 21-47 51s18 51 47 51c12 0 23-4 31-11l20 22v-35l-18-13c-6 13-17 21-33 21-19 0-29-15-29-35s10-35 29-35c12 0 22 6 29 17Z" />
-              <path className="sk-land-tail" pathLength="1" d="m189 169 20 22v-25" />
-            </g></g>
-          </svg>
+          <img className="sk-land-voice-art" src="/brand/teachers/voice-hero.png" width="320" height="270" alt="" />
           <div className="sk-land-quote" dir="ltr" lang="en">“Ready? Let’s talk.”</div>
           <figcaption>
             נתקעת באנגלית? אפשר לשאול בעברית.
@@ -85,7 +93,6 @@ export function SpeakoolLanding() {
             <small>בלי כרטיס אשראי. בלי צורך להתכונן.</small>
           </div>
           <div className="sk-land-clock" aria-hidden="true">
-            <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" /><circle cx="50" cy="50" r="45" pathLength="100" /></svg>
             <strong>10</strong><span>דקות · חינם</span>
           </div>
         </div>
@@ -94,9 +101,9 @@ export function SpeakoolLanding() {
         <p className="sk-land-kicker">שיטת ספיקול</p>
         <h2>השיחה חופשית. התרגול לא מקרי.</h2>
         <ol>
-          <li><Ear className="sk-land-step-icon" aria-hidden="true" /><b>01</b><h3>שומעים בהקשר</h3><p>בוחרים נושא שחשוב לך. פוגשים מילים בתוך שיחה, לא בתוך רשימה.</p></li>
-          <li><Mic className="sk-land-step-icon" aria-hidden="true" /><b>02</b><h3>מנסים בקול</h3><p>המורה נותן רמז כשנתקעים ומשאיר לך את התור לדבר.</p></li>
-          <li><RefreshCw className="sk-land-step-icon" aria-hidden="true" /><b>03</b><h3>חוזרים בשיחה אחרת</h3><p>בודקים מה כבר נשלף לבד ומה כדאי לחזק. לא מסמנים שליטה רק כי חזרת אחרי המורה.</p></li>
+          <li><img className="sk-land-step-icon" src="/brand/teachers/listen.png" width="30" height="30" alt="" /><b>01</b><h3>שומעים בהקשר</h3><p>בוחרים נושא שחשוב לך. פוגשים מילים בתוך שיחה, לא בתוך רשימה.</p></li>
+          <li><img className="sk-land-step-icon" src="/brand/teachers/speak.png" width="30" height="30" alt="" /><b>02</b><h3>מנסים בקול</h3><p>המורה נותן רמז כשנתקעים ומשאיר לך את התור לדבר.</p></li>
+          <li><img className="sk-land-step-icon" src="/brand/teachers/repeat.png" width="30" height="30" alt="" /><b>03</b><h3>חוזרים בשיחה אחרת</h3><p>בודקים מה כבר נשלף לבד ומה כדאי לחזק. לא מסמנים שליטה רק כי חזרת אחרי המורה.</p></li>
         </ol>
       </section>
       <section className="sk-shell sk-land-example">
@@ -157,7 +164,7 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-faq"><h2>שאלות שכולם שואלים</h2>{faq.map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</section>
       <section className="sk-shell sk-land-final"><h2>פחות לתרגם. יותר לדבר.</h2><a className="sk-primary" href="#free-lesson">לשיעור ראשון בחינם <ArrowLeft aria-hidden="true" size={18} /></a></section>
     </main>
-    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
+    <footer className="sk-shell sk-land-foot"><a className="sk-land-brand" href={base + "/"} aria-label="SpeakCall — עמוד הבית"><SpeakCallLogo /></a><a href={base + "/blog"}>מאמרים</a><a href="mailto:support@speakcall.app">תמיכה: <bdi>support@speakcall.app</bdi></a><a href={tel}>{PHONE_LINE}</a></footer>
     <LegalFooter />
   </div>;
 }

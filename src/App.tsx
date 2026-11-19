@@ -7,6 +7,8 @@ import { JoinLanding } from './components/join/JoinLanding';
 import { SpeakoolLanding } from './components/portal/SpeakoolLanding';
 import { LegacyConsole } from './components/legacy/LegacyConsole';
 import { LegalPage } from './components/legal/LegalPage';
+import { BlogPage } from './blog/BlogPage';
+import { isBlogPath } from './blog/routes';
 import { LegalFooter } from './components/legal/LegalFooter';
 import { legalBasePath, legalPageForPath } from './legalRoutes';
 import { AdminAuthGate } from './components/dashboard/AdminAuthGate';
@@ -63,7 +65,11 @@ export const AppContent: React.FC = () => {
 
     handleHash();
     window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    window.addEventListener('popstate', handleHash);
+    return () => {
+      window.removeEventListener('hashchange', handleHash);
+      window.removeEventListener('popstate', handleHash);
+    };
   }, []);
 
   const navigateTo = (view: View) => {
@@ -104,6 +110,7 @@ export const AppContent: React.FC = () => {
 };
 
 export const App: React.FC = () => {
+  if (isBlogPath(window.location.pathname)) return <BlogPage />;
   const legalPage = legalPageForPath(window.location.pathname);
   if (legalPage) {
     return <LegalPage page={legalPage} />;

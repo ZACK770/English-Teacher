@@ -1,5 +1,6 @@
 import type { SubscriptionSummary } from "./SubscriptionPanel";
 import { attribution, track } from '../../analytics';
+import { clearLearnerToken, readLearnerToken, saveLearnerToken } from "./learnerToken";
 export type Plan = { goal: string; level: string; difficulty: string; minutes: number; topic: string };
 export type LessonSettings = { level?: string; conversation_mode?: string; learning_load?: string; correction_policy?: string; closing_activity?: string };
 export type Teacher = LessonSettings & { id: string; name: string; base_bot: string; personality: string; voice: string; explanation: string; pace: string; corrections: string; topic: string; material_id: string };
@@ -29,20 +30,33 @@ export async function portalRequest<T>(path: string, token: string, body?: unkno
     ...(body === undefined ? {} : { body: JSON.stringify(typeof body === 'object' && body !== null && (path.endsWith('/verify') || path === '/v1/portal/checkout') ? { ...body, attribution: attribution() } : body) }),
   });
   const json = await response.json().catch(() => null);
-  if (!response.ok || !json) throw new PortalError(json?.detail || "לא הצלחנו להתחבר. ננסה שוב?", response.status);
+  if (!response.ok || !json) {
+    if (response.status === 401 && path.startsWith("/v1/portal/") && !path.startsWith("/v1/portal/auth/") && token && token === readLearnerToken()) clearLearnerToken();
+    throw new PortalError(json?.detail || "לא הצלחנו להתחבר. ננסה שוב?", response.status);
+  }
   if (json.new_account) track('sign_up', { method: path.includes('/email/') ? 'email' : 'phone' });
   if (path === '/v1/portal/checkout' && json.id) track('begin_checkout', { reference: json.id, value: json.amount_ils, currency: 'ILS' }, json.id);
   return json as T;
 }
 export function initialToken() {
   let hash = "";
-  try { hash = decodeURIComponent(location.hash.slice(1)); } catch { return sessionStorage.getItem("learnerToken") || ""; }
+  try { hash = decodeURIComponent(location.hash.slice(1)); } catch { return readLearnerToken(); }
   if (/^[A-Za-z0-9_-]{30,128}$/.test(hash)) {
-    sessionStorage.setItem("learnerToken", hash);
+    saveLearnerToken(hash);
     history.replaceState(null, "", location.pathname);
     return hash;
   }
-  return sessionStorage.getItem("learnerToken") || "";
+  return readLearnerToken();
+}
+export async function resumeLearnerSession(): Promise<boolean> {
+  const token = initialToken();
+  if (!token) return false;
+  try {
+    await portalRequest<Account>("/v1/portal/me", token);
+    return readLearnerToken() === token;
+  } catch {
+    return false;
+  }
 }
 export function remainingMinutes(account: Account) {
   return Math.max(0, Math.floor(account.receipts.filter(r => r.product === "school" && new Date(r.expires_at).getTime() > Date.now() && (!r.valid_from || new Date(r.valid_from).getTime() <= Date.now())).reduce((n, r) => n + Math.max(0, r.minutes * 60 - r.spent_seconds), 0) / 60));
