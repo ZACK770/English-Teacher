@@ -3,6 +3,7 @@ import { ingestEvent } from "./analytics";
 import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
+import { listKevas, syncKevas } from "./keva-sync";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
@@ -72,6 +73,8 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     const ownerResponse = await adminOwners(request, env, path, identity);
     if (ownerResponse) return ownerResponse;
     if (path === "/v1/admin/gemini-budget" && request.method === "GET") return geminiBudgetStatus(env);
+    if (path === "/v1/admin/nedarim/kevas" && request.method === "GET") return listKevas(env);
+    if (path === "/v1/admin/nedarim/kevas/sync" && request.method === "POST") return Response.json({ synced: await syncKevas(env, true) });
     if (path === "/v1/admin/portal-login/status" && request.method === "GET") return Response.json(await phoneAuthStatus(env));
     const response = await handleAdmin(request, env, s, path);
     if (response) return response;
@@ -184,6 +187,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(new SubscriptionStore(env.DB, env).tick().catch(() => undefined));
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
+    ctx.waitUntil(syncKevas(env).catch(error => console.error("Keva sync failed", error)));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupCallbackQuota(env));
