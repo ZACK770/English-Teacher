@@ -316,7 +316,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   if (route === "options" && result.type === "simpleMenu") {
     const others = (await progress.listBots()).some((bot) => bot.enabled && bot.phone_enabled && !["teacher", "translator"].includes(bot.role));
     result.enabledKeys = "0,1,2,3,4" + (others ? ",6" : "");
-    if (others) result.files.push({ text: "לשירותים נוספים הקישו 6." });
+    if (others) result.files[0] = { text: result.files[0].text + " לשירותים נוספים הקישו 6." };
   }
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
   if (slot && result.files?.length) {

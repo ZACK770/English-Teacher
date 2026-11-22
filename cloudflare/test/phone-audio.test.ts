@@ -12,3 +12,11 @@ describe("recorded phone audio", () => {
     expect(withRecordedAudio({ files: [{ text: HIDDEN_CALLER_MESSAGE }] }).files[0]).toEqual({ text: HIDDEN_CALLER_MESSAGE });
   });
 });
+
+describe("options menu prompt", () => {
+  it("plays one recorded file with a cache name, including the extra services key", () => {
+    const text = "לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0. לשירותים נוספים הקישו 6.";
+    const result = withRecordedAudio({ type: "simpleMenu", files: [{ text }] }, "https://example.test/");
+    expect(result.files).toEqual([{ fileLink: "https://example.test/brand/phone/options_all-975042e435c2.wav", fileName: "options_all-975042e435c2" }]);
+  });
+});

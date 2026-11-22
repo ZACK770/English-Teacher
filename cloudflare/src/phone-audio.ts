@@ -2,7 +2,7 @@ import type { IVRResponse } from "./pbx";
 
 const recordings = new Map<string, string>([
   ["לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0.", "options-bae4d806ce46.wav"],
-  ["לשירותים נוספים הקישו 6.", "options_more-27c65bfa2b27.wav"],
+  ["לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0. לשירותים נוספים הקישו 6.", "options_all-975042e435c2.wav"],
   ["להמשך הקורס הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0.", "school_mode-49941f446a4d.wav"],
   ["אין מורה זמין כרגע. לאפשרויות נוספות הקישו 9. לחזרה הקישו 0.", "school-c5a68023e149.wav"],
   ["לחבילות ותשלום הקישו 1. לשירות לקוחות הקישו 4. לחזרה הקישו 0.", "sales-7014ef55b643.wav"],
@@ -19,7 +19,7 @@ export function withRecordedAudio(result: IVRResponse, publicBaseUrl?: string): 
   const base = publicBaseUrl.replace(/\/$/, "");
   result.files = result.files.map((file: { text?: string }) => {
     const name = file.text && recordings.get(file.text.trim());
-    return name ? { fileLink: `${base}/brand/phone/${name}` } : file;
+    return name ? { fileLink: `${base}/brand/phone/${name}`, fileName: name.replace(/\.wav$/, "") } : file;
   });
   return result;
 }
