@@ -31,7 +31,7 @@ describe("subscription UI states", () => {
   it("shows locked price and owner pause controls without exposing carry-over minutes", () => {
     const html = render([sub]);
     expect(html).toContain("המחיר נעול כל עוד המנוי פעיל");
-    expect(html).not.toContain("12 דקות מועברות");
+    expect(html).not.toContain("דקות");
     expect(html).toContain("תוקף עד");
     expect(html).toContain("ימי הקפאה (1–60)");
     expect(html).toContain("53");

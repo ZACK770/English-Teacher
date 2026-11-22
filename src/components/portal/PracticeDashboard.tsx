@@ -1,11 +1,16 @@
-import { useEffect, useId, useState } from "react";
-import { ArrowLeft, Check, ChevronDown, Clock3, MessageCircle, Sparkles, Target } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Check, ChevronDown, MessageCircle, Phone, RefreshCw, Sparkles } from "lucide-react";
 import { Account, portalRequest } from "./portalApi";
-import { dayKey, minutesLabel, practiceDays, type PracticeReport, type PracticeSession } from "./practiceStats";
+import { dayKey, type PracticeReport, type PracticeSession } from "./practiceStats";
+import { PracticeCalendar, PracticeJourney } from "./PracticeJourney";
+import { practiceDateLabel, shiftDay } from "./practiceCalendar";
 import "./practice-dashboard.css";
 
-const fullDate = (date: Date | string) => new Date(date).toLocaleDateString("he-IL", { timeZone: "Asia/Jerusalem", weekday: "long", day: "numeric", month: "long" });
-const goalMinutes = (account: Account) => account.preferences.minutes || account.preferences.plan?.minutes || 10;
+const accountLevel = (account: Account) => {
+  const active = account.teachers.find(t => t.id === account.preferences.active_teacher);
+  const bot = active?.base_bot || account.preferences.selected_bot || account.customer.preferred_bot;
+  return active?.level || account.preferences.level || account.preferences.plan?.level || (bot === "isaac-advanced" ? "fluent" : "beginner");
+};
 
 function usePractice(token: string, progress: Account["progress"]) {
   const [report, setReport] = useState<PracticeReport | null>(null);
@@ -13,38 +18,24 @@ function usePractice(token: string, progress: Account["progress"]) {
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    setReport(null); setError(false);
+    setError(false);
     void portalRequest<PracticeReport>("/v1/portal/practice", token, undefined, undefined, controller.signal)
-      .then(setReport).catch(() => { if (!controller.signal.aborted) setError(true); });
+      .then(result => { if (!controller.signal.aborted) setReport(result); })
+      .catch(() => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
   }, [token, progress, retry]);
   return { report, error, retry: () => setRetry(n => n + 1) };
 }
 
 function LoadState({ error, retry }: { error: boolean; retry: () => void }) {
-  return <div className="pd-load" role="status">{error ? <>הנתונים שמורים, הטעינה התעכבה. <button className="sk-link" onClick={retry}>לנסות שוב</button></> : "טוענים את רגעי התרגול…"}</div>;
+  return <div className="pd-load" role="status">{error ? <>טעינת הנתונים התעכבה. <button className="sk-link" onClick={retry}>לנסות שוב</button></> : "טוענים את רגעי התרגול שלך…"}</div>;
 }
 
-function Timeline({ sessions, days, goal, selected, onSelect, compact = false }: { sessions: PracticeSession[]; days: number; goal: number; selected?: string; onSelect?: (key: string) => void; compact?: boolean }) {
-  const data = practiceDays(sessions, days);
-  const scale = Math.max(goal * 60, ...data.map(d => d.seconds)) * 1.15;
-  const captionId = useId();
-  const ticks = [scale, scale / 2, 0];
-  return <figure className={"pd-timeline " + (compact ? "is-compact" : "")} aria-labelledby={captionId}>
-    <figcaption id={captionId} className="pd-chart-caption"><span>דקות תרגול ביום</span><div className="pd-legend"><span><i className="pd-key-goal" />יעד יומי · {goal} דקות</span><span><i />תרגול בפועל</span></div></figcaption>
-    <div className="pd-chart-scroll"><div className="pd-chart" style={{ minWidth: days > 14 ? 720 : days > 7 ? 450 : undefined }}>
-      <div className="pd-axis" aria-hidden="true">{ticks.map((tick, i) => <span key={i}>{Math.round(tick / 60)}</span>)}</div>
-      <div className="pd-columns" style={{ gridTemplateColumns: `repeat(${days}, minmax(0, 1fr))` }}>
-        <div className="pd-goal-band" style={{ height: `${goal * 60 / scale * 100}%` }} aria-hidden="true" />
-        {data.map((day, index) => {
-          const showDate = days <= 14 || index % 5 === 0 || index === days - 1;
-          const content = <><span className="pd-bar" style={{ height: day.seconds > 0 ? `max(3px, ${day.seconds / scale * 100}%)` : 0 }} />{day.seconds > 0 && <span className="pd-bar-value" style={{ bottom: `${day.seconds / scale * 100}%` }}>{minutesLabel(day.seconds)}</span>}{showDate && <span className="pd-day-label">{day.date.toLocaleDateString("he-IL", { timeZone: "UTC", day: "numeric", month: "numeric" })}</span>}</>;
-          const label = fullDate(day.date) + ": " + minutesLabel(day.seconds) + " דקות תרגול; יעד " + goal + " דקות";
-          return onSelect ? <button key={day.key} className={"pd-column " + (selected === day.key ? "is-selected" : "")} aria-label={label} aria-pressed={selected === day.key} onClick={() => onSelect(day.key)}>{content}</button> : <div key={day.key} className="pd-column" role="img" aria-label={label}>{content}</div>;
-        })}
-      </div>
-    </div></div>
-  </figure>;
+function Journey({ account, onStart }: { account: Account; onStart?: () => void }) {
+  const data = account.daily_practice;
+  // Missing data is not a zero-day streak. This also handles rolling deploys.
+  if (!data) return <div className="pd-card pd-load" role="status">נתוני ההתמדה עדיין לא זמינים. אפשר לרענן את החשבון בעוד רגע.</div>;
+  return <PracticeJourney streak={data.current_streak} best={data.best_streak} practicedToday={data.today.practiced} weeklyDone={data.week.done} weeklyGoal={data.package && data.week.target > 0 ? data.week.target : null} packageName={data.package?.name || null} level={accountLevel(account)} onStart={onStart} />;
 }
 
 function SessionDetails({ session, token }: { session: PracticeSession; token: string }) {
@@ -56,57 +47,42 @@ function SessionDetails({ session, token }: { session: PracticeSession; token: s
     try { const result = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(session.call_id) + "/transcript", token); setTranscript(result.transcript); }
     catch { setError(true); } finally { setBusy(false); }
   };
-  return <details className="pd-session"><summary><span className="pd-session-icon"><MessageCircle size={20} /></span><span><strong>{session.summary_he || "עוד צעד באנגלית"}</strong><small>{new Date(session.started_at).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit" })} · {minutesLabel(session.duration_seconds)} דקות</small></span><ChevronDown size={19} /></summary>
-    <div className="pd-session-body"><div className="pd-session-notes"><div><span>מה לקחת מהשיחה</span><p>{session.success_he || "פינית זמן לדבר באנגלית. זה הבסיס להתקדמות."}</p></div><div><span>לשיחה הבאה</span><p>{session.next_step_he || "עוד שיחה קצרה, בקצב נוח."}</p></div></div>
-      {transcript === undefined ? <button className="sk-secondary" disabled={busy} onClick={() => void load()}>{busy ? "טוענים את התמלול…" : error ? "לנסות שוב לטעון תמלול" : "לפתוח את תמלול האימון"}<ArrowLeft size={16} /></button> : transcript?.length ? <div className="sk-transcript">{transcript.map((line, i) => <p key={i}><strong>{line.role === "learner" ? "אני" : "המורה"}</strong><span dir="auto">{line.text}</span></p>)}</div> : <p className="pd-muted">לא נשמר תמלול לאימון הזה. לשמירת האימונים הבאים אפשר להפעיל שמירת שיחות בהעדפות.</p>}
+  return <details className="pd-session"><summary><span className="pd-session-icon"><MessageCircle size={20} aria-hidden="true" /></span><span><strong>{session.summary_he || "עוד צעד באנגלית שלך"}</strong><small>{new Date(session.started_at).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit" })}</small></span><ChevronDown size={19} aria-hidden="true" /></summary>
+    <div className="pd-session-body"><div className="pd-session-notes"><div><span>מה הצליח בשיחה</span><p>{session.success_he || "כל שיחה באנגלית היא צעד בדרך."}</p></div><div><span>לשיחה הבאה</span><p>{session.next_step_he || "עוד שיחה קצרה, בקצב שלך."}</p></div></div>
+      {transcript === undefined ? <button className="sk-secondary" disabled={busy} onClick={() => void load()}>{busy ? "טוענים את התמלול…" : error ? "לנסות שוב לטעון תמלול" : "לפתוח את תמלול השיחה"}<ArrowLeft size={16} /></button> : transcript?.length ? <div className="sk-transcript">{transcript.map((line, i) => <p key={i}><strong>{line.role === "learner" ? "אני" : "המורה"}</strong><span dir="auto">{line.text}</span></p>)}</div> : <p className="pd-muted">לא נשמר תמלול לשיחה הזאת. לשמירת השיחות הבאות אפשר להפעיל שמירת שיחות בהעדפות.</p>}
       {error && <p role="alert">התמלול לא נטען כרגע. אפשר לנסות שוב.</p>}
     </div>
   </details>;
 }
 
-export function PracticeDashboard({ account, token, onGoal, onStart }: { account: Account; token: string; onGoal: () => void; onStart: () => void }) {
+export function PracticeDashboard({ account, token, onGoal, onStart, onRefresh }: { account: Account; token: string; onGoal: () => void; onStart: () => void; onRefresh: () => Promise<void> }) {
   const { report, error, retry } = usePractice(token, account.progress);
-  const [range, setRange] = useState(14);
   const [selected, setSelected] = useState<string | null>(null);
-  const goal = goalMinutes(account);
-  const days = practiceDays(report?.sessions || [], range);
-  const sessions = days.flatMap(d => d.sessions);
-  const seconds = days.reduce((sum, d) => sum + d.seconds, 0);
-  const activeDays = days.filter(d => d.seconds > 0).length;
-  const selectedKey = selected && days.some(d => d.key === selected) ? selected : [...days].reverse().find(d => d.sessions.length)?.key || dayKey(new Date());
-  const chosen = days.find(d => d.key === selectedKey)!;
+  const [refreshing, setRefreshing] = useState(false);
+  const data = account.daily_practice;
+  const today = data?.today.day;
+  const selectedDay = selected || today;
+  const chosen = report?.sessions.filter(s => dayKey(new Date(s.started_at)) === selectedDay) || [];
+  const practiced = selectedDay ? data?.dates.includes(selectedDay) : false;
+  const refresh = async () => { setRefreshing(true); try { await onRefresh(); } finally { setRefreshing(false); } };
   return <section className="pd-dashboard">
-    <div className="pd-stats"><div><Clock3 /><strong>{report ? minutesLabel(seconds) : "—"}</strong><span>דקות של אנגלית</span></div><div><MessageCircle /><strong>{report ? sessions.length : "—"}</strong><span>אימונים בתקופה</span></div><div><Sparkles /><strong>{report ? activeDays : "—"}</strong><span>ימים עם תרגול</span></div></div>
-    <section className="pd-card"><div className="pd-section-heading"><div><span className="pd-kicker">כל שיחה מצטברת</span><h2>התרגול, על ציר הזמן.</h2></div><div className="pd-ranges" role="group" aria-label="טווח ציר הזמן">{[7, 14, 30].map(n => <button key={n} aria-pressed={range === n} className={range === n ? "is-active" : ""} onClick={() => { setRange(n); setSelected(null); }}>{n} ימים</button>)}</div></div>
-      {report ? <Timeline sessions={report.sessions} days={range} goal={goal} selected={selectedKey} onSelect={setSelected} /> : <LoadState error={error} retry={retry} />}
-      <div className="pd-chart-foot"><span><Target size={16} />השטח המוצל הוא יעד יומי לפי משך האימון המוגדר, לא אימונים שנקבעו.</span><button className="sk-link" onClick={onGoal}>לשנות יעד<ArrowLeft size={14} /></button></div>
-    </section>
-    {report && <section className="pd-card pd-day-detail" aria-label="אימוני היום הנבחר"><div className="pd-section-heading"><div><span className="pd-kicker">לחיצה על יום מציגה את האימונים שלו</span><h2>{fullDate(chosen.date)}</h2></div><span className="pd-pill">{minutesLabel(chosen.seconds)} דקות תרגול</span></div>{chosen.sessions.length ? chosen.sessions.map(session => <SessionDetails key={session.call_id} session={session} token={token} />) : <div className="pd-empty"><Sparkles /><h3>יש מקום לשיחה הבאה שלך.</h3><p>גם כמה דקות של אנגלית הן צעד קדימה.</p><button className="sk-secondary" onClick={onStart}>מתחילים לדבר<ArrowLeft size={16} /></button></div>}</section>}
+    <div className="pj-toolbar"><span><Phone size={15} aria-hidden="true" />התרגול בטלפון ובאתר נפגש כאן</span><button className="sk-link" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" />{refreshing ? "מתעדכן…" : "לרענן נתונים"}</button></div>
+    <Journey account={account} onStart={onStart} />
+    {data && today && selectedDay && <PracticeCalendar today={today} dates={data.dates} since={shiftDay(today, -119)} selected={selectedDay} onSelect={setSelected} />}
+    {selectedDay && <section className="pd-card pd-day-detail" aria-label="השיחות ביום הנבחר"><div className="pd-section-heading"><div><span className="pd-kicker">הסיפור מאחורי היום בלוח</span><h2>{practiceDateLabel(selectedDay)}</h2></div>{practiced && <span className="pd-pill"><Check size={14} aria-hidden="true" /> יום תרגול הושלם</span>}</div>
+      {error ? <LoadState error retry={retry} /> : !report ? <LoadState error={false} retry={retry} /> : chosen.length ? <>{!practiced && <p className="pj-caption">השיחות כבר כאן. עוד קצת תרגול, והיום ייספר גם ברצף וביעד השבועי.</p>}{chosen.map(session => <SessionDetails key={session.call_id} session={session} token={token} />)}</> : <div className="pd-empty"><Sparkles aria-hidden="true" /><h3>{practiced ? "יום תרגול נוסף בדרך שלך." : "יש מקום לשיחה הבאה שלך."}</h3><p>{practiced ? "יום התרגול שמור. פרטי השיחה יופיעו כשהסיכום יהיה מוכן." : "גם שיחה קטנה יכולה לפתוח דרך חדשה."}</p>{selectedDay === today && <button className="sk-secondary" onClick={onStart}>מתחילים לדבר<ArrowLeft size={16} /></button>}</div>}
+    </section>}
+    <div className="pj-footnote"><p>כל יום נספר פעם אחת, גם אם היו כמה שיחות. הרצף מתעדכן אחרי סיום השיחה.</p><button className="sk-link" onClick={onGoal}>לשנות את כיוון הלמידה<ArrowLeft size={14} /></button></div>
   </section>;
 }
 
-export function HomeDashboard({ account, token, teacherName, children, onProgress, onGoal }: { account: Account; token: string; teacherName: string; children: React.ReactNode; onProgress: () => void; onGoal: () => void }) {
-  const { report, error, retry } = usePractice(token, account.progress);
-  const days = practiceDays(report?.sessions || [], 7);
-  const seconds = days.reduce((sum, d) => sum + d.seconds, 0);
-  const activeDays = days.filter(d => d.seconds > 0).length;
-  const goal = goalMinutes(account);
-  const todaySeconds = days.at(-1)!.seconds;
-  const goalMet = todaySeconds >= goal * 60;
+export function HomeDashboard({ account, children, onProgress, onGoal }: { account: Account; token: string; teacherName: string; children: React.ReactNode; onProgress: () => void; onGoal: () => void }) {
   const lastLesson = account.progress.sessions[0];
   return <div className="pd-home">
-    <section className="pd-home-hero">
-      <div className="pd-home-copy"><span className="pd-kicker"><span className="sk-status-dot" />המקום לדבר אנגלית</span><h2>משיחה לשיחה,<br /><em>הביטחון גדל.</em></h2><p>{teacherName} מחכה לשיחה הבאה.<br />כמה דקות, בקצב נוח. מכאן ממשיכים.</p>{children}</div>
-      <div className="pd-daily">
-        <div className="pd-ring" role="img" aria-label={report ? `${minutesLabel(todaySeconds)} דקות מתוך יעד של ${goal} דקות היום` : "טוענים את התרגול היומי"} style={{ background: `conic-gradient(var(--accent) ${report ? Math.min(100, todaySeconds / (goal * 60) * 100) : 0}%, #34453a 0)` }}>
-          <div><span>{goalMet ? <Check size={22} /> : <Target size={22} />}</span><strong>{report ? minutesLabel(todaySeconds) : "—"}</strong><span>דקות היום</span></div>
-        </div>
-        <strong>{goalMet ? "היעד הושג. כל הכבוד!" : "עוד קצת אנגלית היום"}</strong><button className="sk-link" onClick={onGoal}>יעד התרגול היומי: {goal} דקות<ArrowLeft size={14} /></button>
-      </div>
-    </section>
-    <div className="pd-stats pd-home-stats"><div><Clock3 /><strong>{account.progress.total_minutes.toLocaleString("he-IL")}</strong><span>דקות תרגול עד היום</span></div><div><MessageCircle /><strong>{account.progress.session_count.toLocaleString("he-IL")}</strong><span>שיחות תרגול</span></div></div>
-    <div className="pd-home-bottom"><section className="pd-card"><div className="pd-section-heading"><div><span className="pd-kicker">שבעת הימים האחרונים</span><h2>זמן לאנגלית.</h2></div><button className="pd-round-link" aria-label="לכל ההתקדמות" onClick={onProgress}><ArrowLeft /></button></div>{report ? <><div className="pd-week-total"><strong>{minutesLabel(seconds)}</strong><span>דקות תרגול<br />ב־{activeDays} ימים</span></div><Timeline sessions={report.sessions} days={7} goal={goal} compact onSelect={onProgress} /></> : <LoadState error={error} retry={retry} />}</section>
-      <section className="pd-card pd-next"><span className="pd-kicker">לוקחים איתנו הלאה</span><span className="pd-next-symbol"><Sparkles size={30} /></span><h2>{lastLesson ? "כבר יש על מה לבנות." : "כאן מתחילים."}</h2><p>{lastLesson?.success_he || "לא צריך אנגלית מושלמת כדי להתחיל. רק משפט אחד, ומורה שמקשיב."}</p>{lastLesson?.next_step_he && <div className="pd-next-step"><span>הצעד הבא שלך</span><p>{lastLesson.next_step_he}</p></div>}<button className="sk-link" onClick={onProgress}>לדרך שכבר עשית<ArrowLeft size={16} /></button></section>
+    <section className="pd-home-welcome"><span className="pd-kicker"><span className="sk-status-dot" />המקום שלך לדבר אנגלית</span><h2>משיחה לשיחה, <em>הביטחון גדל.</em></h2><p>כל תרגול מצטבר. מכאן ממשיכים, בקצב שלך.</p>{children}</section>
+    <Journey account={account} />
+    <div className="pd-home-bottom"><section className="pd-card pd-next"><span className="pd-kicker">הדרך שכבר עשית</span><h2>{account.progress.session_count.toLocaleString("he-IL")} שיחות באנגלית</h2><p>הרצף, ימי התרגול והיעד השבועי — הכול במקום אחד, גם אחרי שיחה בטלפון.</p><button className="sk-link" onClick={onProgress}>לכל ההתקדמות שלי<ArrowLeft size={16} /></button></section>
+      <section className="pd-card pd-next"><span className="pd-kicker">לוקחים איתנו הלאה</span><span className="pd-next-symbol"><Sparkles size={30} aria-hidden="true" /></span><h2>{lastLesson ? "כבר יש על מה לבנות." : "ההתחלה שלך כאן."}</h2><p>{lastLesson?.success_he || "לא צריך אנגלית מושלמת כדי להתחיל. רק משפט אחד, ושיחה בגובה העיניים."}</p>{lastLesson?.next_step_he && <div className="pd-next-step"><span>הצעד הבא שלך</span><p>{lastLesson.next_step_he}</p></div>}<button className="sk-link" onClick={onGoal}>לכיוון הלמידה שלי<ArrowLeft size={16} /></button></section>
     </div>
   </div>;
 }

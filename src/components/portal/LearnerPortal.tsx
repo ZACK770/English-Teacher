@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, ChevronDown, Clock3, History, LogOut, Mic, MoreHorizontal, Phone, Plus, Settings2, Sprout, Trash2, Trophy, Users, X } from "lucide-react";
 import { Billing, Checkout } from "./Checkout";
 import { PAYMENT_FAILED_MESSAGE } from "../../paymentCopy";
-import { Account, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
+import { Account, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { RecordingNotice } from "./RecordingNotice";
 import { clearEntryChallenges, EntryForm, QuickEntry, type EntryChannel } from "./QuickEntry";
@@ -105,6 +105,16 @@ export const LearnerPortal: React.FC = () => {
     finally { setLoading(false); }
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!token) return;
+    // A phone lesson may finish while the portal stays open. Refresh only while
+    // visible, and immediately on return, without interrupting the current page.
+    const visibleRefresh = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", visibleRefresh);
+    window.addEventListener("focus", visibleRefresh);
+    const timer = window.setInterval(visibleRefresh, 60_000);
+    return () => { document.removeEventListener("visibilitychange", visibleRefresh); window.removeEventListener("focus", visibleRefresh); window.clearInterval(timer); };
+  }, [token, refresh]);
   useEffect(() => { if (note) { const t = setTimeout(() => setNote(""), 4500); return () => clearTimeout(t); } }, [note]);
   const navigate = (next: Page) => { setPage(next); setError(""); setExpanded(null); setTranscript(undefined); window.scrollTo({ top: 0, behavior: "instant" }); requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true })); };
   const run = async (action: () => Promise<void>, success = "") => {
@@ -167,7 +177,6 @@ export const LearnerPortal: React.FC = () => {
   const nav: [Page, string, React.ReactNode][] = [["home", "בית", <Sprout key="i" />], ["teachers", "המורים שלי", <Users key="i" />], ["materials", "אוצר מילים", <BookOpen key="i" />], ["achievements", "ההתקדמות", <Trophy key="i" />], ["history", "השיחות שלי", <History key="i" />], ["settings", "העדפות", <Settings2 key="i" />]];
   const renderHome = () => account && <>
     <HomeDashboard account={account} token={token} teacherName={teacherName} onProgress={() => navigate("achievements")} onGoal={() => navigate("intake")}>
-        <p className="pd-muted">{p.minutes || p.plan?.minutes || 10} דקות לאימון · {levelNames[(p.level || p.plan?.level || "beginner") as keyof typeof levelNames]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /></p>
         {p.track !== "grammar" && activeMaterial?.target_count === 0 && <p role="status" className="sk-notice">לרשימה ״{activeMaterial.name}״ עוד אין יעדי אנגלית, אז מדברים בלי ציוני מילים. <button className="sk-link" onClick={() => navigate("materials")}>לרשימות</button></p>}
         <RecordingNotice /><div className="sk-actions">{webBotId && <button className="sk-primary" onClick={() => talk()}><Mic size={18} />להתחיל שיחה</button>}<button className={webBotId ? "sk-link" : "sk-primary"} onClick={() => setPhoneOpen(true)}>לדבר בטלפון</button></div>
     </HomeDashboard>
@@ -194,7 +203,7 @@ export const LearnerPortal: React.FC = () => {
               await save({ active_teacher: created.id });
             }
           }, account.teachers.length ? "הכיוון נשמר. ככה " + teacherName + (isFemale(active?.voice) ? " תלמד" : " ילמד") + " גם בטלפון." : (d.teacher_gender === "female" ? "הכירו את " + FEMALE_NAME + ". היא כבר מחכה בטלפון." : "הכירו את " + DEFAULT_NAME + ". הוא כבר מחכה בטלפון."))) navigate("plan"); }} />}
-          {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "recommended"]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /><span className="sk-accent">, פשוט לדבר.</span></h2><p>{teacherName} · {p.minutes || p.plan?.minutes || 10} דקות בכל פעם</p><p>{directionSummary(p, active)}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><RecordingNotice /><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />להתחיל בטלפון</button>{webBotId && <button className="sk-link" onClick={() => talk()}>להתחיל כאן <ArrowUpLeft size={15} /></button>}</div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button><p className="sk-muted">אותו כיוון גם בטלפון: אפשר פשוט לבקש מהמורה בשיחה לשנות אותו.</p></div><ConversationArt /></div>}
+          {page === "plan" && <div className="sk-plan"><div><h2>{topics[p.topic || p.plan?.topic || "recommended"]}<SelectionBadge domain={active?.topic || p.topic || p.plan?.topic} level={active?.level || p.level || p.plan?.level} /><span className="sk-accent">, פשוט לדבר.</span></h2><p>{teacherName}</p><p>{directionSummary(p, active)}</p><p>{loadNames[(p.learning_load || "light") as keyof typeof loadNames]} · {p.track === "grammar" ? "תרגול דקדוק נפרד" : "ללא תרגול דקדוק ייעודי"}</p><RecordingNotice /><div className="sk-actions"><button className="sk-primary" onClick={() => setPhoneOpen(true)}><Phone size={17} />להתחיל בטלפון</button>{webBotId && <button className="sk-link" onClick={() => talk()}>להתחיל כאן <ArrowUpLeft size={15} /></button>}</div><button className="sk-quiet-link" onClick={() => navigate("intake")}>נשנה קצת את הכיוון?</button><p className="sk-muted">אותו כיוון גם בטלפון: אפשר פשוט לבקש מהמורה בשיחה לשנות אותו.</p></div><ConversationArt /></div>}
           {page === "teachers" && <>
             <div className="sk-section-intro"><p>כל מורה, שילוב אחר. רק אחד מקבל את השיחה הבאה.</p><button className="sk-secondary" onClick={() => setBuilder(true)} disabled={!baseTeachers.length}><Plus size={16} />מורה חדש</button></div>
             <div className="sk-teacher-grid">{account.teachers.map((teacher, index) => <article key={teacher.id} className={"sk-teacher-card " + (active?.id === teacher.id ? "is-current" : "")}><div className="sk-card-top"><span className="sk-tag">{active?.id === teacher.id ? <><span className="sk-status-dot" />בטלפון</> : personalities[teacher.personality]}</span><IconButton label={"מחיקת " + teacher.name} onClick={() => { if (confirm("למחוק את המורה " + teacher.name + "?")) void run(async () => { await portalRequest("/v1/portal/teachers/" + teacher.id, token, undefined, "DELETE"); }); }}><Trash2 size={15} /></IconButton></div><div className="sk-teacher-art"><TeacherMark teacher={teacher} index={index} /></div><h2>{teacher.name}<SelectionBadge domain={teacher.topic} level={teacher.level || p.level || p.plan?.level} /></h2><p>{paceNames[teacher.pace]} · {topics[teacher.topic] || teacher.topic}</p>{canTalkOnWeb(teacher.base_bot) && <><RecordingNotice /><button className="sk-primary" onClick={() => talk(teacher)}><Mic size={16} />לשיחה עכשיו</button></>}{active?.id !== teacher.id && <button className="sk-link" onClick={() => void run(() => save({ active_teacher: teacher.id }), "זה המורה שיהיה זמין בטלפון.")}>לבחור לטלפון <ArrowLeft size={14} /></button>}</article>)}
@@ -202,9 +211,9 @@ export const LearnerPortal: React.FC = () => {
             </div>{!webTeachers.length && <Empty icon={<Users />} title="המורים עוד לא כאן." text="אין כרגע מורה זמין. אפשר לנסות שוב מאוחר יותר." />}
           </>}
           {page === "materials" && <VocabularyPage account={account} token={token} onSave={async (name, words) => await run(async () => { const r = await portalRequest<Material>("/v1/portal/materials", token, { name, words }); await save({ material_id: r.id }); setNote(r.target_count === 0 ? "נשמר כחומר לשיחה בלבד; טרם הוכנו יעדי אנגלית למדידה." : "המילים נשמרו. יעדי האנגלית מוכנים לשיחה הבאה."); })} onActivate={id => void run(() => save({ material_id: id }), id ? account.materials.find(m => m.id === id)?.target_count === 0 ? "נבחר חומר לשיחה בלבד, ללא ציוני מילים." : "הרשימה מחכה לשיחה הבאה." : "הרשימה האישית הוסרה מהשיחה הבאה.")} onDelete={id => void run(async () => { await portalRequest("/v1/portal/materials/" + id, token, undefined, "DELETE"); }, "הרשימה נמחקה.")} />}
-          {page === "history" && <div className="sk-history">{account.progress.sessions.length === 0 ? <Empty icon={<History />} title="הסיפור שלנו עוד מתחיל." text="אחרי השיחה הראשונה יופיעו כאן סיכום קטן וצעד הבא." action={() => setPhoneOpen(true)} actionLabel="פשוט לדבר" /> : account.progress.sessions.map((lesson, index) => <article className="sk-history-item" key={lesson.call_id || index}><button className="sk-history-row" aria-expanded={expanded === lesson.call_id} onClick={() => { setExpanded(expanded === lesson.call_id ? null : lesson.call_id); setTranscript(undefined); }}><span className={"sk-history-dot " + (lesson.success_he ? "has-success" : "")} /><time dateTime={lesson.started_at}>{lessonDate(lesson.started_at)}</time><span>{lesson.summary_he || "עוד שיחה קטנה באנגלית"}</span><small>{Math.max(1, Math.round(lesson.duration_seconds / 60))} דקות</small><ChevronDown size={16} /></button>{expanded === lesson.call_id && <div className="sk-history-detail"><dl><dt>מה הצליח</dt><dd>{lesson.success_he || "כל שיחה היא עוד תרגול."}</dd><dt>כדאי לחזק</dt><dd>{lesson.observations.find(o => o.correction)?.correction || "עדיין אין הערה לשיחה הזאת."}</dd><dt>הצעד הבא</dt><dd>{lesson.next_step_he || "ממשיכים לדבר."}</dd></dl>{lesson.observations.length > 0 && <div className="sk-tags">{lesson.observations.slice(0, 6).map((o, i) => <span className="sk-tag" key={i}>{o.skill}</span>)}</div>}<button className="sk-quiet-link" onClick={() => void run(async () => { const r = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(lesson.call_id) + "/transcript", token); setTranscript(r.transcript); })}>להצגת השיחה</button>{transcript === null && <p className="sk-muted">לא נשמר תמליל לשיחה הזאת. אפשר לבחור שמירת שיחות בהעדפות.</p>}{transcript && <div className="sk-transcript">{transcript.map((t, i) => <p key={i}><strong>{t.role === "learner" ? "אני" : "המורה"}: </strong><span dir="auto">{t.text}</span></p>)}</div>}</div>}</article>)}</div>}
+          {page === "history" && <div className="sk-history">{account.progress.sessions.length === 0 ? <Empty icon={<History />} title="הסיפור שלנו עוד מתחיל." text="אחרי השיחה הראשונה יופיעו כאן סיכום קטן וצעד הבא." action={() => setPhoneOpen(true)} actionLabel="פשוט לדבר" /> : account.progress.sessions.map((lesson, index) => <article className="sk-history-item" key={lesson.call_id || index}><button className="sk-history-row" aria-expanded={expanded === lesson.call_id} onClick={() => { setExpanded(expanded === lesson.call_id ? null : lesson.call_id); setTranscript(undefined); }}><span className={"sk-history-dot " + (lesson.success_he ? "has-success" : "")} /><time dateTime={lesson.started_at}>{lessonDate(lesson.started_at)}</time><span>{lesson.summary_he || "עוד שיחה קטנה באנגלית"}</span><ChevronDown size={16} /></button>{expanded === lesson.call_id && <div className="sk-history-detail"><dl><dt>מה הצליח</dt><dd>{lesson.success_he || "כל שיחה היא עוד תרגול."}</dd><dt>כדאי לחזק</dt><dd>{lesson.observations.find(o => o.correction)?.correction || "עדיין אין הערה לשיחה הזאת."}</dd><dt>הצעד הבא</dt><dd>{lesson.next_step_he || "ממשיכים לדבר."}</dd></dl>{lesson.observations.length > 0 && <div className="sk-tags">{lesson.observations.slice(0, 6).map((o, i) => <span className="sk-tag" key={i}>{o.skill}</span>)}</div>}<button className="sk-quiet-link" onClick={() => void run(async () => { const r = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(lesson.call_id) + "/transcript", token); setTranscript(r.transcript); })}>להצגת השיחה</button>{transcript === null && <p className="sk-muted">לא נשמר תמליל לשיחה הזאת. אפשר לבחור שמירת שיחות בהעדפות.</p>}{transcript && <div className="sk-transcript">{transcript.map((t, i) => <p key={i}><strong>{t.role === "learner" ? "אני" : "המורה"}: </strong><span dir="auto">{t.text}</span></p>)}</div>}</div>}</article>)}</div>}
           {page === "checkout" && <Checkout token={token} packageId={checkoutPlan} onDone={() => { history.replaceState(null, "", location.pathname); void refresh(); navigate("home"); }} />}
-          {page === "achievements" && <Achievements account={account} token={token} onGoal={() => navigate("intake")} onStart={() => setPhoneOpen(true)} />}
+          {page === "achievements" && <Achievements account={account} token={token} onGoal={() => navigate("intake")} onStart={() => setPhoneOpen(true)} onRefresh={refresh} />}
           {page === "settings" && <>
             <ProfileNext account={account} hasDirection={hasDirection} onDirection={() => navigate("intake")} onLink={setLinkChannel} />
             <PreferencesForm key={JSON.stringify(p)} preferences={p} account={account} onDirection={hasDirection ? () => navigate("intake") : undefined} onSave={input => void run(() => save(input), "סגור. ההעדפות עודכנו לשיחה הבאה.")} onTeachers={() => navigate("teachers")} onMaterials={() => navigate("materials")} onLogout={logout} phonesPanel={hasPhone(account) && <PhoneLinks account={account} token={token} onRefresh={refresh} />} subscriptionPanel={<SubscriptionPanel token={token} subscriptions={account.subscriptions} onRefresh={refresh} />} />
@@ -244,7 +253,6 @@ export const directionSummary = (p: Preferences, teacher?: Teacher) => [
   levelNames[(teacher?.level || p.level || p.plan?.level || "beginner") as keyof typeof levelNames],
   modeNames[(teacher?.conversation_mode || p.conversation_mode || "guided") as keyof typeof modeNames],
   paceNames[teacher?.pace || p.pace || "normal"],
-  (p.minutes || p.plan?.minutes || 10) + " דקות",
   topics[teacher?.topic || p.topic || p.plan?.topic || "recommended"],
 ].join(" · ");
 function directionDraft(p: Preferences, teacher?: Teacher): DirectionDraft {
@@ -269,11 +277,10 @@ function directionSteps(d: DirectionDraft, purpose: "plan" | "teacher", askTeach
     personality: { key: "personality", title: "איזה סגנון הוראה מתאים?", sub: "אפשר לשנות בכל שלב.", values: personalities },
     teacher_gender: { key: "teacher_gender", title: "איזה קול עדיף לשיחה?", sub: "נתאים את הקול והשם.", values: { male: "עם מורה", female: "עם מורָה" } },
     voice: { key: "voice", title: "איך הקול נשמע?", sub: "אפשר לשמוע לפני שבוחרים.", values: Object.fromEntries(voices.map(v => [v.value, v.label])) },
-    minutes: { key: "minutes", title: "מה משך האימון המועדף?", sub: "גם חמש דקות הן התחלה של משהו.", values: { "5": "חמש דקות", "10": "עשר דקות", "20": "עשרים דקות" } },
   };
   const keys = purpose === "teacher"
     ? ["personality", "voice", "level", "conversation_mode", "pace", "correction_policy"]
-    : ["goal", "level", "difficulty", "conversation_mode", "pace", "correction_policy", ...(askTeacher ? ["personality", "teacher_gender"] : []), "minutes"];
+    : ["goal", "level", "difficulty", "conversation_mode", "pace", "correction_policy", ...(askTeacher ? ["personality", "teacher_gender"] : [])];
   return keys.map(k => all[k]);
 }
 function Direction({ initial, purpose, askTeacher = false, editing = false, materials = [], saving, onFinish, onPreview }: { initial: DirectionDraft; purpose: "plan" | "teacher"; askTeacher?: boolean; editing?: boolean; materials?: Material[]; saving: boolean; onFinish: (d: DirectionDraft) => Promise<void>; onPreview?: (voice: string) => void }) {
@@ -312,8 +319,8 @@ function Direction({ initial, purpose, askTeacher = false, editing = false, mate
   </section>;
 }
 
-function Achievements({ account, token, onGoal, onStart }: { account: Account; token: string; onGoal: () => void; onStart: () => void }) {
-  return <section className="sk-achievements"><PracticeDashboard account={account} token={token} onGoal={onGoal} onStart={onStart} /></section>;
+function Achievements({ account, token, onGoal, onStart, onRefresh }: { account: Account; token: string; onGoal: () => void; onStart: () => void; onRefresh: () => Promise<void> }) {
+  return <section className="sk-achievements"><PracticeDashboard account={account} token={token} onGoal={onGoal} onStart={onStart} onRefresh={onRefresh} /></section>;
 }
 const hasPhone = (account: Account) => !!(account.customer.phone || account.phones.length);
 
@@ -377,7 +384,7 @@ function AccessNotice({ account }: { account: Account }) {
   const a = account.access;
   if (!a?.limited) return null;
   const minutes = remainingMinutes(account);
-  if (minutes > 0) return <p role="status" className="sk-access"><strong>מסלול {a.plan_name || "פעיל"}</strong>. בסוף כל שיחה המורה מסכם ושומר הכול.</p>;
+  if (minutes > 0) return <p role="status" className="sk-access"><strong>{account.daily_practice?.package?.name || "חבילת תרגול פעילה"}</strong>. בסוף כל שיחה המורה מסכם ושומר הכול.</p>;
   if (a.opening_minutes) return <p role="status" className="sk-access"><strong>שיעור פתיחה קולי ללא עלות</strong> · בטלפון או במיקרופון.</p>;
   if (a.free_calls_left > 0) return <p role="status" className="sk-access"><strong>מסלול טעימה</strong> · אפשר להתחיל שיחת היכרות. להמשך במסלול בתשלום: <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE}, מקש 3</a></p>;
   return <p role="alert" className="sk-access is-empty"><strong>שיחות ההיכרות הסתיימו.</strong> ההתקדמות נשמרה. כדי להמשיך עכשיו: <a href={"tel:" + PHONE_LINE.replace(/-/g, "")}>חייגו {PHONE_LINE} והקישו 3</a> לבחירת מסלול.</p>;
