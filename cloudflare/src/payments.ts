@@ -22,7 +22,7 @@ export const TERMS_TEXT = `תקנון המנוי, בקצרה.
 לשאלות, לעזרה או לביטול, צוות השירות שלנו תמיד כאן בשבילכם.
 `;
 
-export const SALES_SINGLE_TEXT = "מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לחזרה הקישו 0.";
+export const SALES_SINGLE_TEXT = "מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לביטול מנוי הקישו 8. לחזרה הקישו 0.";
 export const SINGLE_TERMS_STEP_TEXT = "לאישור התקנון ולהמשך לתשלום הקישו 1. לשמיעת התקנון הקישו 2. לביטול הקישו 0.";
 export const SINGLE_TERMS_TEXT = "מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.";
 
@@ -434,6 +434,10 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   let choice = params.isaacPackage ?? "";
   if (single && !choice && params.isaacSinglePackage !== "9") {
     const singleChoice = params.isaacSinglePackage ?? "";
+    const cancelSubscriptionRequested = singleChoice === "8";
+    if (cancelSubscriptionRequested) {
+      return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
+    }
     if (["0", "ERROR"].includes(singleChoice)) choice = singleChoice;
     else {
       const start = await store.business.record("packages", "school-step");
@@ -444,7 +448,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
         choice = String(packageIds.indexOf("school-step") + 1);
       } else if (available) {
         return {
-          ...selectionMenu("isaacSinglePackage", SALES_SINGLE_TEXT, "0,1,9"),
+          ...selectionMenu("isaacSinglePackage", SALES_SINGLE_TEXT, "0,1,8,9"),
           files: env.SALES_SINGLE_AUDIO_URL && env.SALES_SINGLE_AUDIO_VERSION
             ? [{ fileLink: env.SALES_SINGLE_AUDIO_URL, fileName: "sales-single-" + env.SALES_SINGLE_AUDIO_VERSION }]
             : [{ text: SALES_SINGLE_TEXT }],

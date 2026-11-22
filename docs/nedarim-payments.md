@@ -37,11 +37,13 @@ Do not enable it until Isaac approves the following caller-facing drafts.
 
 First menu (`isaacSinglePackage`):
 
-> מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לחזרה הקישו 0.
+> מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לביטול מנוי הקישו 8. לחזרה הקישו 0.
 
 Key 1 uses the existing `school-step` purchase path. Key 9 opens the unchanged
 five-package menu, including its existing `SALES_MENU_AUDIO_*` recording. Key 9
 in that full menu still opens service at `/4`, relative to the project base.
+Key 8 in the first menu requests subscription cancellation and currently
+hands off to the same service destination; it does not cancel automatically.
 Key 0 returns to the main menu. If Start's price/cadence/availability no longer
 matches the draft, entry falls back to the full catalog and the Start shortcut
 does not create an order. No catalog values are changed by this switch.

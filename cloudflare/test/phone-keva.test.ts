@@ -597,6 +597,7 @@ describe("five-package phone sales", () => {
     env.SALES_SINGLE_AUDIO_URL = "https://example.test/single.mp3";
     env.SALES_SINGLE_AUDIO_VERSION = "draft1";
     expect(await respond()).toEqual(menu);
+    expect(await respond({ isaacSinglePackage: "8" })).toEqual(menu);
     expect(await respond({ isaacPackage: "9" })).toMatchObject({ goTo: "/4" });
     expect((await respond({ isaacPackage: "1" })).files).toEqual([{ text: TERMS_STEP_TEXT }]);
     expect((await respond({ isaacPayConfirm: "2" })).files).toEqual([{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }]);
@@ -604,7 +605,7 @@ describe("five-package phone sales", () => {
 
   it("offers only Start in single mode and uses its existing purchase path by package id", async () => {
     env.SALES_MENU_MODE = "single";
-    expect(await respond()).toMatchObject({ name: "isaacSinglePackage", enabledKeys: "0,1,9", files: [{ text: SALES_SINGLE_TEXT }] });
+    expect(await respond()).toMatchObject({ name: "isaacSinglePackage", enabledKeys: "0,1,8,9", files: [{ text: SALES_SINGLE_TEXT }] });
     expect(JSON.stringify(await respond())).not.toContain("דקות");
     expect((await paymentResponse(store, env, "/", { PBXcallId: "phone-hk", isaacSinglePackage: "1" }, "c1", [...ids].reverse())).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
     expect(await store.orderForCall("phone-hk")).toMatchObject({ package_id: "school-step", amount_agorot: 5900, state: "selected" });
@@ -620,6 +621,15 @@ describe("five-package phone sales", () => {
     expect(await respond({ isaacSinglePackage: "9" })).toEqual(full);
     expect((await respond({ isaacSinglePackage: "9", isaacPackage: choice })).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
     expect((await store.orderForCall("phone-hk"))?.package_id).toBe(ids[Number(choice) - 1]);
+  });
+
+  it.each(["/", "/99"])("hands single-menu cancellation to service under base %s without creating an order", async base => {
+    env.SALES_MENU_MODE = "single";
+    expect(await paymentResponse(store, env, base, { PBXcallId: "phone-hk", isaacSinglePackage: "8" }, "c1", ids)).toEqual({
+      type: "goTo", goTo: base === "/" ? "/4" : "/99/4", removeParams: ["isaacPackage", "isaacSales", "isaacSinglePackage"],
+    });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("keeps service reachable through full-menu 9 under the configured base", async () => {
