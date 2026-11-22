@@ -143,17 +143,29 @@ describe("CRM free trial reset", () => {
     expect((await request("people/person1/reset-trial")).status).toBe(405);
     expect(await (await trial()).json()).toMatchObject({ deleted_rows: 0, freed_seconds: 0, allowance: { limited: true } });
   });
-  it.each(["active", "pending", "settlement", "recent-session", "recent-menu"])("refuses %s activity without changing usage or auditing", async state => {
+  it.each(["active", "pending", "settlement"])("refuses %s activity without changing usage or auditing", async state => {
     customer(); usage("free", "school", null);
     if (state === "active") insert("active_calls", { call_id: "free", profile_id: "teacher", owner_id: "do", acquired_at: 0, lease_expires_at: Date.now() / 1000 + 60 });
     if (state === "pending") usage("pending", "school-opening", null, null);
     if (state === "settlement") insert("payment_orders", { id: "order", call_id: "payment", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state: "awaiting_settlement", created_at: now, updated_at: now });
-    if (state === "recent-session") session();
-    if (state === "recent-menu") event("ivr-events", { call_id: "menu", route: "main" });
     const response = await trial(); expect(response.status).toBe(409);
     expect((await response.json() as any).detail).toMatch(/[\u0590-\u05ff]/);
     expect(sql.prepare("SELECT call_id FROM usage_allocations WHERE call_id='free'").get()).toBeTruthy();
     expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
+  });
+  it.each(["session", "call-customer", "ivr-events", "ad-entries"])("allows immediate repeated trial resets after recent %s activity but keeps the full-reset wait", async source => {
+    customer(); usage("free", "school", null);
+    const at = new Date().toISOString();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse(at));
+    if (source === "session") { session(); sql.prepare("DELETE FROM call_customers").run(); }
+    else if (source === "call-customer") insert("call_customers", { call_id: "free", customer_id: "person1", bot_id: "teacher", channel: "phone", created_at: at });
+    else event(source, { call_id: "free", route: "main", at });
+    insert("active_calls", { call_id: "free", profile_id: "teacher", owner_id: "do", acquired_at: 0, lease_expires_at: Date.now() / 1000 - 1 });
+    expect(await (await trial()).json()).toMatchObject({ deleted_rows: 1, freed_seconds: 60 });
+    expect(await (await trial()).json()).toMatchObject({ deleted_rows: 0, freed_seconds: 0 });
+    const response = await reset(); expect(response.status).toBe(409);
+    expect((await response.json() as any).detail).toBe("לא ניתן למחוק לקוח שהייתה לו פעילות בעשר הדקות האחרונות. יש להמתין ולנסות שוב.");
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 1 });
   });
 });
 
@@ -381,7 +393,8 @@ describe("CRM customer reset", () => {
     customer();
     insert("payment_orders", { id: "order", call_id: "payment-call", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state, created_at: now, updated_at: now });
     const blocked = ["issued", "awaiting_settlement"].includes(state);
-    expect((await reset()).status).toBe(blocked ? 409 : 200);
+    const response = await reset(); expect(response.status).toBe(blocked ? 409 : 200);
+    if (blocked) expect((await response.json() as any).detail).toBe("לא ניתן למחוק לקוח עם תשלום הממתין לסליקה. יש להמתין להשלמת התשלום או לביטולו.");
     expect(sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()).toMatchObject({ n: blocked ? 1 : 0 });
   });
   it("requires admin, owner role, exact confirmation, and returns 404 after reset", async () => {
@@ -398,7 +411,8 @@ describe("CRM customer reset", () => {
     customer(); session();
     if (source === "sessions") sql.prepare("DELETE FROM call_customers").run();
     insert("active_calls", { call_id: "call1", profile_id: "teacher1", owner_id: "do", acquired_at: 0, lease_expires_at: Date.now() / 1000 + 60 });
-    expect((await reset()).status).toBe(409);
+    const response = await reset(); expect(response.status).toBe(409);
+    expect((await response.json() as any).detail).toBe("לא ניתן למחוק לקוח במהלך שיחה פעילה. יש לסיים את השיחה ולנסות שוב.");
     expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 1 });
   });
   it.each(["active", "past_due", "pending", "failed"])("blocks a provider-backed %s standing order", async (state) => {

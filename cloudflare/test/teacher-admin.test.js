@@ -74,6 +74,16 @@ describe("teacher admin D1 backend and SQL builders", () => {
     expect(bodies.find(b => b.batch).batch).toHaveLength(2);
     expect(await run(["reset-trial", "customer", "--apply"], backend)).toMatchObject({ deleted_rows: 0, freed_seconds: 0 });
   });
+  it("allows D1 dry-run and apply immediately after recent activity", async () => {
+    const recent = new Date().toISOString();
+    sql.prepare("INSERT INTO customers(id,name,created_at,updated_at) VALUES ('customer','שם',?,?)").run(recent, recent);
+    sql.prepare("INSERT INTO usage_allocations VALUES ('call','customer','school',NULL,120,60,?)").run(recent);
+    sql.prepare("INSERT INTO call_customers VALUES ('call','customer','teacher','phone',?)").run(recent);
+    sql.prepare("INSERT INTO sessions(student_id,call_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json) VALUES ('customer','call',?,?,60,1,1,'[]')").run(recent, recent);
+    for (const kind of ["ivr-events", "ad-entries"]) sql.prepare("INSERT INTO console_records VALUES (?,?,?,?,?)").run(kind, kind, JSON.stringify({ customer_id: "customer", call_id: "call", at: recent }), recent, recent);
+    expect(await run(["reset-trial", "customer"], backend)).toMatchObject({ dry_run: true, deleted_rows: 1, freed_seconds: 60 });
+    expect(await run(["reset-trial", "customer", "--apply"], backend)).toMatchObject({ deleted_rows: 1, freed_seconds: 60 });
+  });
   it.each(["active", "pending", "settlement"])("refuses %s trial resets before any D1 mutation", async mode => {
     sql.prepare("INSERT INTO customers(id,name,created_at,updated_at) VALUES ('customer','שם',?,?)").run(at, at);
     sql.prepare("INSERT INTO usage_allocations VALUES ('call','customer','school',NULL,120,?,?)").run(mode === "pending" ? null : 60, at);
