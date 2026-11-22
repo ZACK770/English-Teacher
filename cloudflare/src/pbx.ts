@@ -12,6 +12,7 @@ import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 import { enqueueVoicemail, processVoicemail } from "./voicemails";
 import { withRecordedAudio } from "./phone-audio";
 import { pingPirsumfonCaller, pirsumfonWelcome } from "./pirsumfon";
+import { enterSalesOffer, salesOfferResponse } from "./sales-offer";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
@@ -289,6 +290,8 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     await b.savePreference(customerId, values);
   }
   const copy = await getCopy(b);
+  if (["main", "school"].includes(route) && p.PBXcallStatus !== "HANGUP") await enterSalesOffer(b, env, callId, customerId);
+  const offerEntry = route === "main" && !p.isaacMain && (await b.loadContext(callId)).offer_call;
   let result: IVRResponse;
   if (route === "sales") {
     const context = await b.loadContext("payments:" + callId);
@@ -300,7 +303,8 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
         : available.filter(p => p.product === "school").sort((a, b) => a.price_ils - b.price_ils).slice(0, 8).map(pkg => pkg.id);
       await b.saveContext("payments:" + callId, { package_ids: ids });
     }
-    result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
+    result = await salesOfferResponse(b, env, s.projectPath, p, customerId)
+      ?? await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
   } else if (p.PBXcallStatus === "HANGUP") result = { type: "hangup" };
   else if (route === "ad" && system.phone === SPEAKCALL_PHONE && path === "/50") {
     await registerPirsumfonEntry(b, callId, customerId, p.campaign);
@@ -310,7 +314,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   else if (route === "quota" && !p.isaacQuota && await b.schoolPaymentBlocked(customerId)) result = menu("isaacQuota", PAYMENT_FAILED_MESSAGE + ". לתמיכה הקישו 4. לתפריט הראשי הקישו 0.", "0,4");
   else if (route === "ad" && p.isaacTeacher !== undefined) result = ivrResponse("school", p, copy, s.projectPath);
   else if (route === "ad") result = await startAdEntry(b, progress, s, callId, customerId, p.campaign);
-  else if ((route === "main" && p.isaacMain === "1") || (route === "school" && [undefined, "1"].includes(p.isaacTeacher)) || (route === "mode" && ["1", "2"].includes(p.isaacMode))) {
+  else if (offerEntry || (route === "main" && p.isaacMain === "1") || (route === "school" && [undefined, "1"].includes(p.isaacTeacher)) || (route === "mode" && ["1", "2"].includes(p.isaacMode))) {
     result = await startSchool(b, progress, s, callId, customerId);
   } else if ((route === "translator" && [undefined, "1", "START"].includes(p.isaacTranslation)) || route === "start-translation" || (route === "languages" && Object.hasOwn(languages, p.isaacLanguage))) {
     result = await startTranslation(b, progress, s, callId, customerId);

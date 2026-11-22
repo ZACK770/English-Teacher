@@ -1,4 +1,7 @@
 export interface Env {
+  SALES_OFFER_MODE?: "off" | "allowlist" | "on";
+  SALES_OFFER_ALLOWLIST?: string;
+  SALES_OFFER_PRACTICE_MINUTES?: string;
   GA_MEASUREMENT_ID?: string;
   CF_BEACON_TOKEN?: string;
   DB: D1Database;

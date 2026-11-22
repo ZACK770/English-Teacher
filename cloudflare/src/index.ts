@@ -9,6 +9,7 @@ import { PaymentStore } from "./payments";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
+import { selectSalesOffers } from "./sales-offer";
 import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
@@ -213,7 +214,7 @@ export default {
       await syncKevas(env).catch(error => console.error("Keva sync failed", error));
       if (env.NEDARIM_API_KEY) await new PaymentStore(new BusinessStore(env.DB)).reconcile(env);
     })().catch(() => console.error("Nedarim reconciliation failed")));
-    ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
+    ctx.waitUntil(selectSalesOffers(env).then(() => dispatchCallbacks(env)).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupRecordings(env).catch(() => console.warn("Recording retention failed")));
     ctx.waitUntil(cleanupCallbackQuota(env));
