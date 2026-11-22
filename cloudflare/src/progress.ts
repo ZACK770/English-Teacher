@@ -2,6 +2,7 @@ import { type TutorControls, TutorControlsSchema } from "./controls";
 import { nowIso } from "./env";
 import type { PromptArtifact } from "./prompt";
 import { SCHOOL_SESSION_FILTER } from "./school-history";
+import { recordPractice } from "./practice";
 
 export interface Observation { skill: string; result: string; correction: string; score: number }
 export interface LessonSummary { summary_he: string; success_he: string; next_step_he: string; points: number }
@@ -215,7 +216,7 @@ export class ProgressStore {
   }) {
     const ended = new Date();
     const duration = Math.max(0, Math.floor((ended.getTime() - v.started_at.getTime()) / 1000));
-    await this.db
+    const inserted = await this.db
       .prepare(`INSERT OR IGNORE INTO sessions (student_id, call_id, started_at, ended_at, duration_seconds, learner_turns, tutor_turns, observations_json, transcript_json,
         summary_he, success_he, next_step_he, points, input_text_tokens, input_audio_tokens, output_text_tokens, output_audio_tokens, thoughts_tokens, estimated_cost_usd, cost_basis, model)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -227,6 +228,17 @@ export class ProgressStore {
         v.usage.thoughts_tokens, v.usage.estimated_cost_usd, v.usage.cost_basis, v.model,
       )
       .run();
+    if (inserted.meta.changes && !v.student_id.startsWith("anonymous-")) {
+      const school = await this.db.prepare(`SELECT 1 FROM call_customers c JOIN bots b ON b.id=c.bot_id
+        WHERE c.call_id=? AND b.role='teacher'`).bind(v.call_id).first();
+      if (school) {
+        await recordPractice(this.db, v.student_id, duration, v.started_at);
+        await this.db.prepare(`UPDATE practice_reminder_events SET responded_call_id=?,responded_at=?
+          WHERE customer_id=? AND status='sent' AND responded_at IS NULL
+          AND julianday(sent_at)<=julianday(?) AND julianday(sent_at)>=julianday(?)-3.0/24`)
+          .bind(v.call_id, v.started_at.toISOString(), v.student_id, v.started_at.toISOString(), v.started_at.toISOString()).run();
+      }
+    }
     return duration;
   }
 

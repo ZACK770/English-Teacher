@@ -222,7 +222,7 @@ describe("subscription promises against production SQL", () => {
     expect(created.status).toBe(201);
     const sub = await created.json() as Record<string, any>;
     const filtered = await req(path + "?customer_id=owner", "admin");
-    expect((await filtered.json() as any).items[0]).toMatchObject({ id: sub.id, plan_name: "צעד", owner: true });
+    expect((await filtered.json() as any).items[0]).toMatchObject({ id: sub.id, plan_name: "סטארט", owner: true });
     expect(await (await req(path + "?customer_id=nobody", "admin")).json()).toEqual({ items: [] });
     expect((await req(path + "/" + sub.id, "admin")).status).toBe(200);
     const { token } = await b.portalInvite("owner");
@@ -288,7 +288,7 @@ describe("subscription promises against production SQL", () => {
     await store.addMember(sub.id, "0503333333", "Family learner");
     await store.pause(sub.id, 7, "2026-02-02");
     const summary = (await store.summary("owner", "2026-02-05"))[0];
-    expect(summary).toMatchObject({ plan_name: "צעד", pause_days_remaining: 57, rollover_minutes: 60 });
+    expect(summary).toMatchObject({ plan_name: "סטארט", pause_days_remaining: 57, rollover_minutes: 60 });
     expect(summary.rollover).toEqual([{ expires_at: addMonths(at, 2), minutes: 60 }]);
     expect(summary.members).toHaveLength(1);
   });

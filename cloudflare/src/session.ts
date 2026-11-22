@@ -14,6 +14,9 @@ import { SessionMeter } from "./meter";
 import { CallRecorder } from "./recordings";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
+import { practiceSummary } from "./practice";
+import { reminderGuidance, savePracticeReminder } from "./practice-reminders";
+import { masteryDomainGuidance, saveMasteryDomain } from "./mastery-domain";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
@@ -60,6 +63,9 @@ export class TutorSession {
   private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
   private summaryCallbackRequested = false;
   private summaryCallbackSpeech = "";
+  private practiceReminders = false;
+  private masteryDomain = false;
+  private reminderSpeech = "";
   private salesWindowOpen = false;
   private practiceStarted: { at: number; failureGapMs: number } | null = null;
   private returnPath: string | null = null;
@@ -212,6 +218,16 @@ export class TutorSession {
         this.controls = { ...this.controls, summary_callback: true, custom_instructions: this.controls.custom_instructions + "\n" + SUMMARY_CALLBACK_GUIDANCE };
       }
       if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson && !adCall ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
+      if (bot?.role === "teacher" && !this.customerId.startsWith("anonymous-")) {
+        const practice = await practiceSummary(this.env.DB, this.customerId);
+        this.practiceReminders = !!practice.package && !!this.controls.lesson;
+        if (this.practiceReminders) this.controls.custom_instructions += "\n" + reminderGuidance(!!practice.reminder?.active);
+        const domainGuidance = this.controls.lesson ? await masteryDomainGuidance(this.env.DB, this.customerId) : null;
+        this.masteryDomain = !!domainGuidance;
+        if (domainGuidance) this.controls.custom_instructions += "\n" + domainGuidance;
+        const streak = practice.current_streak + (practice.today.practiced ? 0 : 1);
+        if (practice.package && streak >= 2 && practice.current_streak > 0) this.controls.opening_message += ` Open briefly in natural Hebrew with "יום ${streak} ברצף!", then continue normally; use gender-neutral language.`;
+      }
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
@@ -230,7 +246,7 @@ export class TutorSession {
       }
       if (this.abort.signal.aborted) return;
       const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
-      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, freeTuning: !paid && allowance.mode !== "basic" });
+      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders, masteryDomain: this.masteryDomain, freeTuning: !paid && allowance.mode !== "basic" });
       releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
@@ -419,6 +435,7 @@ export class TutorSession {
       } else if (event.type === "interrupted") {
         this.pendingEmail = null;
         this.summaryCallbackSpeech = "";
+        this.reminderSpeech = "";
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
@@ -434,6 +451,7 @@ export class TutorSession {
         this.meter.transcript.push({ role: event.role, text: event.text });
         if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
         if (event.role === "learner") {
+          if (this.practiceReminders) this.reminderSpeech = (this.reminderSpeech + " " + (event.rawText ?? event.text)).trim().slice(-512);
           if (this.controls?.summary_callback) {
             this.summaryCallbackSpeech = (this.summaryCallbackSpeech + (event.rawText ?? event.text)).slice(0, 512);
             if (revokesSummaryCall(this.summaryCallbackSpeech)) this.summaryCallbackRequested = false;
@@ -444,6 +462,7 @@ export class TutorSession {
         }
       } else if (event.type === "turn_complete") {
         this.summaryCallbackSpeech = "";
+        this.reminderSpeech = "";
         const pending = this.pendingEmail;
         // Gemini can finish a tool-only turn before speaking the read-back.
         if (pending?.phase !== "readback" || pending.audio || pending.text) {
@@ -479,6 +498,7 @@ export class TutorSession {
   private async reconnectGemini(preservePlayback = false) {
     this.pendingEmail = null;
     this.summaryCallbackSpeech = "";
+    this.reminderSpeech = "";
     this.failureStarted ??= Date.now();
     const handle = this.ai?.resumeHandle;
     this.ai?.close();
@@ -533,6 +553,24 @@ export class TutorSession {
 
   private async recordTool(call: ToolCall): Promise<boolean> {
     const args = call.args ?? {};
+    if (call.name === "save_mastery_domain") {
+      if (!this.masteryDomain || !this.controls?.lesson) return false;
+      const saved = await saveMasteryDomain(this.env.DB, this.customerId, args.domain).catch(() => false);
+      if (saved) {
+        this.masteryDomain = false;
+        this.ai?.addContext("APPLICATION NOTE: the chosen Master vocabulary domain is saved. Continue the lesson; do not ask again.");
+      }
+      return saved;
+    }
+    if (call.name === "save_practice_reminder") {
+      if (!this.practiceReminders || !this.controls?.lesson) return false;
+      const saved = await savePracticeReminder(this.env.DB, this.customerId, this.reminderSpeech).catch(() => false);
+      if (saved) {
+        this.reminderSpeech = "";
+        this.ai?.addContext("APPLICATION NOTE: reminder preference saved from the learner's answer. Do not ask about reminders again in this call unless the learner requests a change.");
+      }
+      return saved;
+    }
     if (call.name === "request_summary_callback") {
       if (!this.controls?.summary_callback || !hasEligibleSummaryCallResponse(this.summaryCallbackSpeech) ||
         !canCallWithLessonSummary(this.env, this.callerPhone)) return false;

@@ -21,6 +21,23 @@ School and translator entitlements remain separate in the existing wallet.
 
 ## Flow
 
+The five school phone sales keys are fixed: 1 Start, 2 Small Talk, 3 Pro,
+4 Max (six months), 5 Master (twelve months); 0 returns and 9 opens service.
+`SALES_MENU_AUDIO_URL` and `SALES_MENU_AUDIO_VERSION` select one combined
+Technoline `fileLink` with the cache key `sales-menu-<version>`. Set both to
+use the recording; otherwise the approved menu text is spoken with TTS.
+Terms key 1 reads the terms and returns to the terms menu; key 2 authorizes
+continuing to the provider's card collection, and 0 cancels.
+
+For fixed-term packages the provider receives `paymentsMode: "regular"` and
+`payments: 6` (Max) or `payments: 12` (Master). The official
+[creditCard documentation](https://pbx.tlivr.com/apiModuleDocs.html#creditCard)
+defines `payments` as “מקסימום תשלומים. 1 = לא ישאל. >1 = ישאל בין 1 ל-X”,
+and `regular` as “חיוב רגיל (תפיסת מסגרת אשראי)”. Monthly packages retain
+`paymentsMode: "kevaMonthly"`. Verified settlements of fixed-term phone
+purchases create the same subscription entitlements as web purchases.
+No provider routing changes are made by this flow.
+
 1. The authenticated PBX callback identifies the customer from the caller number.
 2. Menu positions are snapshotted for the call. Selecting a package freezes its
    price, product, minutes, validity and VAT rate in a persistent payment order.
