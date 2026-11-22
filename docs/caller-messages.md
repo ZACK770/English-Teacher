@@ -1,6 +1,6 @@
 # הודעה אישית חד־פעמית בספיקול
 
-1. לפני פריסה, החילו על D1 את המיגרציה `0026_caller_messages.sql`. אין הודעות פעילות כברירת מחדל.
+1. לפני פריסה, החילו על D1 את המיגרציה `0027_caller_messages.sql`. אין הודעות פעילות כברירת מחדל.
 2. הקצו במערכת ספיקול שלוחת API ייעודית לקמפיין יוצא בלבד, עם `paramsMode=chain`, ‏POST ומפתח ה־callback בגוף הבקשה, אל `/v1/technoline/ivr/caller-message`. אין לשנות את השלוחה הקיימת של השיעור. השתמשו במזהה השלוחה המספרי של טכנוליין (לא בנתיב) בהפעלת הקמפיין. ודאו בשיחת הבדיקה שהשלוחה מחזירה את מספר הנמען ב־`PBXphone`, את `PBXcallType=out` ואת אירוע סיום ההשמעה.
 3. צרו קריינות בעברית (`he-IL`, מאושרת, `placement: other`) דרך ספריית הקריינות או `POST /v1/admin/business/narrations`. צרו את קובץ השמע פעם אחת עם `POST /v1/admin/narrations/<id>/audio`; אין לפרסם אותו למשבצת IVR ציבורית. אפשר להשתמש באותה קריינות לבדיקה וללקוח. אין לערוך או לייצר מחדש את השמע לאחר קישורו להודעה.
 4. עם הרשאת בעלים, השתמשו ב־`POST /v1/admin/caller-messages/<phone>` עם `{"narration_id":"<id>","inbound_enabled":false}`. לשיחת הבדיקה: `POST /v1/admin/caller-messages/<test-phone>/dial` עם `{"extension_id":"<PBX extension ID>","inbound_fallback":false}`. יש להקיש 1 כדי לשמוע את ההודעה, כך שתא קולי לא ישמע מידע אישי ולא יצרוך את ההודעה.

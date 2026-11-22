@@ -1,6 +1,6 @@
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { PAYMENT_FAILED_MESSAGE } from "../../src/paymentCopy";
-import { adOpening, adRuntimeContext, PHONE_TUTOR_PITCH, startAdEntry } from "./ad-entry";
+import { adOpening, adRuntimeContext, PHONE_TUTOR_PITCH, registerPirsumfonEntry, startAdEntry } from "./ad-entry";
 import { z } from "zod";
 import { BusinessStore } from "./business";
 import { canCallWithLessonSummary, normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
@@ -11,6 +11,7 @@ import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 import { enqueueVoicemail, processVoicemail } from "./voicemails";
 import { withRecordedAudio } from "./phone-audio";
+import { pingPirsumfonCaller, pirsumfonWelcome } from "./pirsumfon";
 import { callerMessagePlayback } from "./caller-messages";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
@@ -85,7 +86,9 @@ export async function startSchool(b: BusinessStore, progress: ProgressStore, s: 
   if (!["course", "free"].includes(mode)) mode = enrolled ? "course" : "free";
   const candidates = [selected, mode === "course" ? enrolled : null, customer.preferred_bot, saved.teacher_bot, saved.selected_bot, "isaac-basic", ...bots.map((bot) => bot.id)];
   const botId = candidates.find((candidate) => bots.some((bot) => bot.id === candidate));
-  await b.saveContext(callId, { selected_bot: botId, mode, quick_entry: "school" });
+  const pirsumfon = saved.pirsumfon_campaign && !saved.plan && !saved.intro_school_seen && (await b.loadContext(callId)).entry !== "ad"
+    ? { entry: "ad", campaign: saved.pirsumfon_campaign, ad_new_caller: true, pirsumfon_sales: true } : {};
+  await b.saveContext(callId, { ...pirsumfon, selected_bot: botId, mode, quick_entry: "school" });
   if (selected) await b.savePreference(customerId, { selected_bot: selected });
   return streamTarget(s.projectPath);
 }
@@ -295,6 +298,11 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     }
     result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
   } else if (p.PBXcallStatus === "HANGUP") result = { type: "hangup" };
+  else if (route === "ad" && system.phone === SPEAKCALL_PHONE && path === "/50") {
+    await registerPirsumfonEntry(b, callId, customerId, p.campaign);
+    ctx?.waitUntil(pingPirsumfonCaller(env, callId, p.PBXphone).catch(() => console.warn("Pirsumfon ping failed")));
+    result = pirsumfonWelcome(s.publicBaseUrl || new URL(request.url).origin);
+  }
   else if (route === "quota" && !p.isaacQuota && await b.schoolPaymentBlocked(customerId)) result = menu("isaacQuota", PAYMENT_FAILED_MESSAGE + ". לתמיכה הקישו 4. לתפריט הראשי הקישו 0.", "0,4");
   else if (route === "ad" && p.isaacTeacher !== undefined) result = ivrResponse("school", p, copy, s.projectPath);
   else if (route === "ad") result = await startAdEntry(b, progress, s, callId, customerId, p.campaign);
