@@ -654,6 +654,7 @@ it.each([240, 10.788])("keeps the hard cut at a %s-second allowance if Gemini ne
 });
 
 it.each(["/", "/99"])("routes a quota-closing model goodbye to the purchase menu under %s", async projectPath => {
+  vi.useFakeTimers();
   const controls = { ...controlsFromSettings(false), store_transcripts: false };
   await progress.createBot({ id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general", channel_id: "isaac-channel", phone_enabled: true, web_enabled: true, enabled: true }, controls);
   vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ seconds: 240, mode: "free" });
