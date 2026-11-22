@@ -19,6 +19,8 @@ export function parseReminderAnswer(answer: string): { active: boolean; time_loc
   if (/(?:^|\s)לא(?:\s|$)/.test(text)) return null;
   const numeric = text.match(/(?:^|\s)(?:ב|בשעה\s*)?(\d{1,2})(?::(\d{2}))?(?=\s|$)/);
   const hours: Record<string, number> = { אחת: 1, שתיים: 2, שתים: 2, שלוש: 3, ארבע: 4, חמש: 5, שש: 6, שבע: 7, שמונה: 8, תשע: 9, עשר: 10, "אחת עשרה": 11, "שתים עשרה": 12, "שתיים עשרה": 12 };
+  for (const [word, value] of Object.entries(hours)) if (value >= 3 && value <= 9) hours[word + " עשרה"] = value + 10;
+  Object.assign(hours, { עשרים: 20, "עשרים ואחת": 21, "עשרים ושתיים": 22, "עשרים ושתים": 22, "עשרים ושלוש": 23 });
   let hour = numeric ? Number(numeric[1]) : undefined;
   if (hour === undefined) {
     for (const [word, value] of Object.entries(hours).sort((a, b) => b[0].length - a[0].length)) {
@@ -28,8 +30,13 @@ export function parseReminderAnswer(answer: string): { active: boolean; time_loc
   if (hour === undefined || hour > 23) return null;
   const minute = numeric?.[2] ? Number(numeric[2]) : /וחצי/.test(text) ? 30 : /ורבע/.test(text) ? 15 : 0;
   if (minute > 59 || /רבע ל/.test(text)) return null;
-  if (/בערב|אחר הצהריים|אחרי הצהריים/.test(text) && hour < 12) hour += 12;
-  if (/בבוקר|בלילה/.test(text) && hour === 12) hour = 0;
+  const afternoon = /בערב|אחר הצהריים|אחרי הצהריים|בצהריים/.test(text);
+  const morning = /בבוקר/.test(text);
+  const night = /בלילה/.test(text);
+  if (afternoon && hour < 12) hour += 12;
+  else if (night && hour >= 6 && hour < 12) hour += 12;
+  else if ((morning || night) && hour === 12) hour = 0;
+  else if (!morning && !night && !afternoon && hour >= 1 && hour <= 6) hour += 12;
   return { active: true, time_local: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
 
