@@ -20,7 +20,11 @@ export interface PromptArtifact {
   controls: TutorControls;
 }
 
-export function buildSetupPayload(c: TutorControls, systemInstruction: string, profileId: string, s: Settings) {
+export interface PromptCallContext {
+  customerId?: string;
+}
+
+export function buildSetupPayload(c: TutorControls, systemInstruction: string, profileId: string, s: Settings, call: PromptCallContext = {}) {
   const generationConfig: Record<string, unknown> = {
     responseModalities: ["AUDIO"],
     speechConfig: {
@@ -32,8 +36,11 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
   const inputTranscription: Record<string, unknown> = { mode: c.transcription_mode };
   if (c.transcription_language_codes.length) inputTranscription.languageCodes = c.transcription_language_codes;
   if (c.custom_vocabulary.length) inputTranscription.customVocabulary = c.custom_vocabulary;
+  // Anonymous customers cannot persist sales actions; keep the in-call practice timer.
+  const salesTools = c.sales ? SALES_TOOLS.filter(t => !call.customerId?.startsWith("anonymous-") || t.name === "start_ad_practice") : [];
+  // Intake also handles direction changes later in the same connection.
   const tools: Record<string, unknown>[] = c.lesson
-    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL, ...(c.sales ? SALES_TOOLS : []), ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : [])]
+    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : [])]
     : [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL, TRANSLATION_LANGUAGE_TOOL];
   return {
     setup: {
@@ -76,9 +83,10 @@ export async function compilePrompt(
   history: string,
   profileId: string,
   s: Settings,
+  call: PromptCallContext = {},
 ): Promise<PromptArtifact> {
   const system = buildSystemInstruction(controls, history);
-  const setup = buildSetupPayload(controls, system, profileId, s);
+  const setup = buildSetupPayload(controls, system, profileId, s, call);
   const fingerprint = await sha256Hex(
     canonical({ profile_id: profileId, setup, opening_message: controls.opening_message, history_context: history }),
   );

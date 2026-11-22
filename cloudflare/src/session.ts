@@ -212,7 +212,7 @@ export class TutorSession {
       }
       if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson && !adCall ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
-      this.artifact = await compilePrompt(this.controls, history, profileId, this.s);
+      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId });
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
       reserved = allowance.seconds > 0;
