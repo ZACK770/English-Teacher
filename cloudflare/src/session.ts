@@ -695,7 +695,7 @@ export class TutorSession {
       }
       if (this.ai && this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
         this.finalSent = true;
-        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now: give a brief summary and a warm invitation to call again, in one or two short Hebrew sentences. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer or delay the goodbye for other tools.");
+        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now: give a brief summary and a warm invitation to call again, in one or two short Hebrew sentences. If the lesson summary is not saved yet, call record_lesson_summary silently in the same turn. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
       }
       await sleep(500, this.abort.signal);
     }
