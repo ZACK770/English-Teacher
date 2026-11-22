@@ -90,7 +90,7 @@ describe("CRM filtered customer KPI", () => {
 });
 
 describe("CRM call review tab", () => {
-  it.each(["owner", "staff"])("shows the report link and page only for the owner, not %s by default", role => {
+  it.each(["owner", "staff"])("uses the %s role to decide whether to show the report", role => {
     const previous = location.search;
     location.search = "?view=call-reviews";
     try {
@@ -113,7 +113,10 @@ describe("CRM call review tab", () => {
         { source: "ivr", status: "rules_only", logs: 1, review_cost_usd: 0 },
       ],
       findings: [{ code: "menu_error:options", logs: 1 }, { code: "wrong_language", logs: 1 }],
-      prompt_candidates: [],
+      prompt_candidates: [{
+        profile_id: "teacher", profile_label: "המורה שוחי", bot_version: 4, code: "wrong_language", affected: 3, reviewed: 4, learners: 2,
+        evidence_call_ids: ["review-1"], proposed_instruction: "Use the configured support language.",
+      }],
       recent: [{ source: "ai", status: "reviewed", call_id: "review-1", ended_at: "2026-11-22T12:00:00Z", findings: [{ code: "wrong_language" }] }],
     };
     const request = vi.fn();
@@ -122,6 +125,9 @@ describe("CRM call review tab", () => {
     expect(html).toContain("שפה לא מתאימה");
     expect(html).toContain("0.0002");
     expect(html).toContain("פירוט עלות");
+    expect(html).toContain("המורה שוחי");
+    expect(html).toContain("גרסה 4");
+    expect(html).toContain("review-1");
     expect(request).not.toHaveBeenCalled();
   });
 

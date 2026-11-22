@@ -4,10 +4,14 @@ type Request = <T,>(path: string, init?: RequestInit) => Promise<T>;
 type Source = 'ai' | 'ivr';
 type Status = 'reviewed' | 'rules_only' | 'no_transcript' | 'pending' | 'failed';
 type Review = { source: Source; status: Status; call_id: string; ended_at: string; findings: { code: string }[] };
+type Candidate = {
+  profile_id: string; profile_label: string; bot_version: number; code: string; affected: number; reviewed: number; learners: number;
+  evidence_call_ids: string[]; proposed_instruction: string;
+};
 type Report = {
   coverage: { source: Source; status: Status; logs: number; review_cost_usd: number }[];
   findings: { code: string; logs: number }[];
-  prompt_candidates: { profile_id: string; bot_version: number; code: string; affected: number; reviewed: number; learners: number }[];
+  prompt_candidates: Candidate[];
   recent: Review[];
 };
 type Cost = { ai_estimated_usd: number | null; review_estimated_usd: number | null; phone: { navigation_seconds: number; estimated_ils: number | null } | null };
@@ -95,7 +99,12 @@ export function CallReviewsReport({ report, request }: { report: Report; request
     <section className="crm-review-section">
       <h2>מועמדים לכוונון המורה</h2>
       {report.prompt_candidates.length ? <ul>{report.prompt_candidates.map(r => <li key={JSON.stringify([r.profile_id, r.bot_version, r.code])}>
-        {finding(r.code)}: {r.affected} מתוך {r.reviewed} סקירות, אצל {r.learners} תלמידים. נדרשת בדיקה לפני שינוי.
+        <strong><bdi>{r.profile_label || r.profile_id}</bdi> · גרסה {r.bot_version} · {finding(r.code)}</strong>
+        <p>{r.affected} מתוך {r.reviewed} סקירות, אצל {r.learners} תלמידים. נדרשת בדיקה לפני שינוי.</p>
+        <details><summary>הצעת הנחיה ושיחות תומכות</summary>
+          <p lang="en" dir="ltr">{r.proposed_instruction}</p>
+          <ul>{r.evidence_call_ids.map(id => <li key={id}><bdi>{id}</bdi></li>)}</ul>
+        </details>
       </li>)}</ul> : <p className="crm-muted">עדיין אין דפוס שעובר את הסף להצעת שינוי.</p>}
     </section>
     <section className="crm-review-section">

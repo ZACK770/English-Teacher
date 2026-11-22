@@ -81,7 +81,10 @@ describe("finished-call review", () => {
     expect(report.coverage).toContainEqual(expect.objectContaining({ status: "no_transcript", logs: 1 }));
     expect(report.findings).toContainEqual({ code: "menu_error:options", logs: 1 });
     expect(report.findings).toContainEqual({ code: "gemini_budget_reached", logs: 1 });
-    expect(report.prompt_candidates).toEqual([expect.objectContaining({ code: "no_practice", affected: 3, learners: 2, status: "requires_validation" })]);
+    expect(report.prompt_candidates).toEqual([expect.objectContaining({
+      profile_label: "Coach", bot_version: 1, code: "no_practice", affected: 3, learners: 2, status: "requires_validation",
+      evidence_call_ids: expect.arrayContaining(["a", "b", "c"]),
+    })]);
     expect(sql.prepare("SELECT active_version FROM bots WHERE id='coach'").get()?.active_version).toBe(1);
   });
 

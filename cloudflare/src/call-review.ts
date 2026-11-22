@@ -220,7 +220,7 @@ export async function callReviewReport(env: Env, now = Date.now()) {
       SELECT profile_id,bot_version,COUNT(*) AS reviewed FROM call_reviews
       WHERE ended_at>=?1 AND status='reviewed' GROUP BY profile_id,bot_version
     )
-    SELECT r.profile_id,r.bot_version,json_extract(f.value,'$.code') AS code,COUNT(*) AS affected,g.reviewed,
+    SELECT r.profile_id,b.label AS profile_label,r.bot_version,json_extract(f.value,'$.code') AS code,COUNT(*) AS affected,g.reviewed,
       COUNT(DISTINCT s.student_id) AS learners,
       json_group_array(r.call_id) AS evidence_call_ids
     FROM call_reviews r
