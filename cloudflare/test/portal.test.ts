@@ -1607,6 +1607,15 @@ describe("real learner portal", () => {
     expect((await applyLearnerControls(b, "learner-a", bot, defaults, teacher.id)).voice).toBe("Puck");
     expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe(teacher.id);
   });
+  it("lets a learner save and select an explicit female voice from site teacher settings", async () => {
+    const created = await request("/v1/portal/teachers", tokenA, { ...config, voice: "Aoede" });
+    expect(created.status).toBe(201);
+    const teacher = await created.json() as { id: string; voice: string };
+    expect(teacher.voice).toBe("Aoede");
+    expect((await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id })).status).toBe(200);
+    const bot = { id: "student", role: "teacher" } as const;
+    expect((await applyLearnerControls(b, "learner-a", bot, controlsFromSettings(false))).voice).toBe("Aoede");
+  });
   it("updates the active template when preferences or the active word list change", async () => {
     const teacher = await b.save(teachersKind("learner-a"), config);
     await request("/v1/portal/preferences", tokenA, { active_teacher: teacher.id });

@@ -404,7 +404,7 @@ describe("learner settings to Gemini", () => {
     expect(after.intake_pending).toBe(false);
     expect((await b.loadContext("preferences:alice")).plan).toEqual({ goal: "travel", level: "beginner", difficulty: "speaking", minutes: 10, topic: "recommended" });
   });
-  it("bases a web-only intake teacher on a phone teacher and keeps the chosen voice", async () => {
+  it("bases a web-only intake teacher on a phone teacher without letting intake change the voice", async () => {
     const progress = new ProgressStore(db as unknown as D1Database);
     const make = (id: string, phone: boolean, web = true) => progress.createBot({ id, label: id, role: "teacher", description: "", audience: "general", channel_id: null, phone_enabled: phone, web_enabled: web, enabled: true }, controlsFromSettings(false));
     await make("web-only", false);
@@ -417,7 +417,7 @@ describe("learner settings to Gemini", () => {
     expect(await phoneTeacherFor(progress, "web-only")).toBe("phone");
     expect(await saveIntake(b, "carol", await phoneTeacherFor(progress, "web-only"), { goal: "travel", level: "beginner", teacher_gender: "female", personality: "playful" })).toBe(true);
     const [teacher] = await b.list(teachersKind("carol"));
-    expect(teacher).toMatchObject({ base_bot: "phone", voice: "Aoede", personality: "playful" });
+    expect(teacher).toMatchObject({ base_bot: "phone", voice: "Puck", personality: "playful" });
     expect((await b.loadContext("preferences:carol")).active_teacher).toBe(teacher.id);
   });
   it("applies a phone direction change to the active teacher the website shows", async () => {

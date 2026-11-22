@@ -6,6 +6,7 @@ import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
 import { BasicTranslator } from "../src/basic";
 import { HAREDI_CONTENT_RULE } from "../src/content-rules";
+import * as google from "../src/google";
 import { settings, type Env } from "../src/env";
 import { handleCallback } from "../src/pbx";
 
@@ -45,6 +46,19 @@ it("uses a system instruction for basic translation and returns the spoken refus
   expect(body.systemInstruction.parts[1].text).toContain("selected English");
   expect(body.contents).toEqual([{ role: "user", parts: [{ inline_data: { mime_type: "audio/wav", data: expect.any(String) } }] }]);
   expect(result).toMatchObject({ heard: "", text: refusal, language: "he-IL" });
+});
+
+it("requests a male TTS voice for the basic translator and keeps male selection on fallback", async () => {
+  vi.spyOn(google, "googleToken").mockResolvedValue({ token: "test" });
+  const post = vi.spyOn(google, "postJson").mockResolvedValue({ audioContent: "" });
+  const env = {} as Env;
+  const translator = new BasicTranslator(env, settings(env));
+  await translator.speak("Hello", "en");
+  expect(post.mock.calls[0][1]).toMatchObject({ voice: { languageCode: "en-US", ssmlGender: "MALE" } });
+  post.mockRejectedValueOnce({ status: 400 });
+  await translator.speak("שלום", "he", "Standard-B");
+  expect(post.mock.calls[1][1]).toMatchObject({ voice: { languageCode: "he-IL", name: "he-IL-Standard-B" } });
+  expect(post.mock.calls[2][1]).toMatchObject({ voice: { languageCode: "he-IL", ssmlGender: "MALE" } });
 });
 
 function session() {

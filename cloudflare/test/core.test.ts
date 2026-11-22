@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { concat, downsample24kTo8k, upsample8kTo16k, wav, wavToPcm } from "../src/audio";
 import { parseStartFrame, transferCommand } from "../src/technoline";
-import { controlsFromSettings, TutorControlsSchema } from "../src/controls";
+import { adultControls, controlsFromSettings, TutorControlsSchema } from "../src/controls";
 import { buildSystemInstruction } from "../src/controls";
 import { buildSetupPayload, compilePrompt } from "../src/prompt";
 import { HAREDI_CONTENT_RULE } from "../src/content-rules";
@@ -16,6 +16,12 @@ import { INITIAL_CONTROLS } from "../../src/store/initialData";
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
 const start = { type: "start", callId: "test-call", caller: "private", token: "test-channel", format: "pcm16;rate=8000;ch=1" };
+
+it("uses male defaults for Worker bot settings and frontend persona seeds", () => {
+  expect(controlsFromSettings(false).voice).toBe("Puck");
+  expect(adultControls(false).voice).toBe("Puck");
+  expect(Object.values(INITIAL_CONTROLS).map(c => c.voice)).toEqual(["Puck", "Puck", "Puck", "Charon"]);
+});
 
 it("introduces the seeded Shochi teacher as SpeakCall", () => {
   const shochi = INITIAL_CONTROLS["shochi-robot"];
