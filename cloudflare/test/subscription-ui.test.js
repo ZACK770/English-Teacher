@@ -28,10 +28,10 @@ describe("subscription UI states", () => {
     expect(html).toContain("עדיין אין מנוי בחשבון");
     expect(html).not.toContain("ימי הקפאה (1–60)");
   });
-  it("shows locked price, carry-over expiry and owner pause controls", () => {
+  it("shows locked price and owner pause controls without exposing carry-over minutes", () => {
     const html = render([sub]);
     expect(html).toContain("המחיר נעול כל עוד המנוי פעיל");
-    expect(html).toContain("12 דקות מועברות");
+    expect(html).not.toContain("12 דקות מועברות");
     expect(html).toContain("תוקף עד");
     expect(html).toContain("ימי הקפאה (1–60)");
     expect(html).toContain("53");
@@ -39,7 +39,7 @@ describe("subscription UI states", () => {
   it("shows resume for paused owners and no management controls for family learners", () => {
     expect(render([{ ...sub, status: "paused", pause_until: "2026-01-15" }])).toContain(">המשך</button>");
     const html = render([{ ...sub, owner: false }]);
-    expect(html).toContain("אתם חלק ממנוי משפחתי");
+    expect(html).toContain("הגישה משויכת למנוי משפחתי");
     expect(html).not.toContain("<button");
   });
   it("allows administrators to manage a subscription when viewing a family member", () => {
@@ -47,7 +47,8 @@ describe("subscription UI states", () => {
     expect(html).toContain("רישום חיוב חודשי");
     expect(html).toContain("הוספת בן משפחה");
     expect(html).toContain("הערכת אחריות");
-    expect(html).not.toContain("ניהול המנוי אצל בעל החשבון");
+    expect(html).not.toContain("ניהול המנוי דרך החשבון הראשי");
+    expect(html).toContain("12 דקות מועברות");
   });
   it("shows access management only in the CRM and explains that billing is unchanged", () => {
     const crm = subscriptions => renderToStaticMarkup(createElement(SubscriptionPanel, { token: "", customerId: "owner", manageAccess: true, subscriptions }));

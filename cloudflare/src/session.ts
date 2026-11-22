@@ -1,4 +1,4 @@
-import { isEmailConfirmation, isSummaryCallConsent, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
+import { hasEligibleSummaryCallResponse, isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, revokesSummaryCall, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
@@ -24,7 +24,7 @@ import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./pho
 
 export const SILENCE_NUDGE_MS = 7000;
 export const MAX_SILENCE_NUDGES = 2;
-export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"שומע אותי? אפשר לענות גם בעברית\"), then ask your last question again more simply; if it had options, name them briefly.";
+export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"יש קליטה? גם עברית זה מצוין.\"), then ask your last question again more simply; if it had options, name them briefly.";
 
 export function silenceNudgeDue(now: number, lastHuman: number, lastTutorAudio: number, nudges: number): boolean {
   return nudges < MAX_SILENCE_NUDGES && now - Math.max(lastHuman, lastTutorAudio) >= SILENCE_NUDGE_MS;
@@ -449,7 +449,7 @@ export class TutorSession {
           if (this.practiceReminders) this.reminderSpeech = (this.reminderSpeech + " " + (event.rawText ?? event.text)).trim().slice(-512);
           if (this.controls?.summary_callback) {
             this.summaryCallbackSpeech = (this.summaryCallbackSpeech + (event.rawText ?? event.text)).slice(0, 512);
-            if (/(?:אל תתקשר|אל תשלח|לא רוצה שיחת סיכום|בלי שיחת סיכום|בטל את שיחת הסיכום)/.test(this.summaryCallbackSpeech)) this.summaryCallbackRequested = false;
+            if (revokesSummaryCall(this.summaryCallbackSpeech)) this.summaryCallbackRequested = false;
           }
           this.lastHuman = Date.now();
           if (!this.learnerSeen) this.meter.learnerTurns++;
@@ -558,7 +558,7 @@ export class TutorSession {
       return saved;
     }
     if (call.name === "request_summary_callback") {
-      if (!this.controls?.summary_callback || !isSummaryCallConsent(this.summaryCallbackSpeech) ||
+      if (!this.controls?.summary_callback || !hasEligibleSummaryCallResponse(this.summaryCallbackSpeech) ||
         !canCallWithLessonSummary(this.env, this.callerPhone)) return false;
       this.summaryCallbackRequested = true;
       return true;

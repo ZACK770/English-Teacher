@@ -204,7 +204,7 @@ describe("phone monthly enrollment", () => {
     db.sql.prepare(`INSERT INTO standing_orders(id,customer_id,package_id,snapshot,monthly_agorot,first_order_id,state,created_at,updated_at)
       VALUES ('existing','c1','school-step','{}',5900,'first',?,'2026-11-22','2026-11-22')`).run(state);
     expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit", enabledKeys: "0,9",
-      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+      files: [{ text: "כבר קיים מנוי פעיל בחשבון. לחזרה הקישו 0. לשירות הקישו 9." }] });
     expect(await store.orderForCall("phone-hk")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
     expect(await respond({ isaacPayExit: "0" })).toMatchObject({ type: "goTo", goTo: "/" });
@@ -215,7 +215,7 @@ describe("phone monthly enrollment", () => {
     db.sql.prepare(`INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at)
       VALUES ('existing','c1','school-step',?,5900,'2026-11-22','2026-11-22','2026-11-22')`).run(status);
     expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit",
-      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+      files: [{ text: "כבר קיים מנוי פעיל בחשבון. לחזרה הקישו 0. לשירות הקישו 9." }] });
     expect(await store.orderForCall("phone-hk")).toBeNull();
   });
 
@@ -223,7 +223,7 @@ describe("phone monthly enrollment", () => {
     await store.create("another-call", "c1", "school-step");
     db.sql.prepare("UPDATE payment_orders SET state=? WHERE call_id='another-call'").run(state);
     expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit",
-      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+      files: [{ text: "כבר קיים מנוי פעיל בחשבון. לחזרה הקישו 0. לשירות הקישו 9." }] });
     expect(await store.orderForCall("phone-hk")).toBeNull();
   });
 
@@ -234,7 +234,7 @@ describe("phone monthly enrollment", () => {
       return batch(statements);
     });
     expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit",
-      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+      files: [{ text: "כבר קיים מנוי פעיל בחשבון. לחזרה הקישו 0. לשירות הקישו 9." }] });
     expect(await store.orderForCall("phone-hk")).toBeNull();
     expect((await store.orderForCall("winning-call"))!.state).toBe("selected");
   });

@@ -121,7 +121,7 @@ export const SentenceBuilderGame: React.FC = () => {
       });
       setFeedback({
         status: 'correct',
-        message: 'כל הכבוד! סיימת את כל אתגרי בניית המשפטים!'
+        message: 'כל הכבוד! כל אתגרי בניית המשפטים הושלמו!'
       });
     }
   };

@@ -163,7 +163,7 @@ export function QuickEntry({ mode, channel, onChannel, privacy, onToken, onClose
       }}>
         <label htmlFor={heading + "-link"}>הקישור האישי</label><input id={heading + "-link"} ref={personal} required dir="ltr" type="text" />
         <button className="sk-secondary">כניסה עם הקישור</button>
-        {personalError && <p className="sk-entry-error" role="alert">יש להדביק את הקישור האישי המלא שקיבלת.</p>}
+        {personalError && <p className="sk-entry-error" role="alert">יש להדביק את הקישור האישי המלא.</p>}
       </form>
     </details>}
     <a className="sk-entry-privacy" href={privacy}>פרטיות</a>

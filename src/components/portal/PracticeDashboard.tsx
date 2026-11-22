@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
-import { ArrowLeft, Check, ChevronDown, Clock3, MessageCircle, Sparkles, Target, Trophy } from "lucide-react";
-import { Account, portalRequest, remainingMinutes } from "./portalApi";
+import { ArrowLeft, Check, ChevronDown, Clock3, MessageCircle, Sparkles, Target } from "lucide-react";
+import { Account, portalRequest } from "./portalApi";
 import { dayKey, minutesLabel, practiceDays, type PracticeReport, type PracticeSession } from "./practiceStats";
 import "./practice-dashboard.css";
 
@@ -22,7 +22,7 @@ function usePractice(token: string, progress: Account["progress"]) {
 }
 
 function LoadState({ error, retry }: { error: boolean; retry: () => void }) {
-  return <div className="pd-load" role="status">{error ? <>הנתונים שמורים, הטעינה התעכבה. <button className="sk-link" onClick={retry}>לנסות שוב</button></> : "טוענים את רגעי התרגול שלך…"}</div>;
+  return <div className="pd-load" role="status">{error ? <>הנתונים שמורים, הטעינה התעכבה. <button className="sk-link" onClick={retry}>לנסות שוב</button></> : "טוענים את רגעי התרגול…"}</div>;
 }
 
 function Timeline({ sessions, days, goal, selected, onSelect, compact = false }: { sessions: PracticeSession[]; days: number; goal: number; selected?: string; onSelect?: (key: string) => void; compact?: boolean }) {
@@ -56,8 +56,8 @@ function SessionDetails({ session, token }: { session: PracticeSession; token: s
     try { const result = await portalRequest<{ transcript: { role: string; text: string }[] | null }>("/v1/portal/sessions/" + encodeURIComponent(session.call_id) + "/transcript", token); setTranscript(result.transcript); }
     catch { setError(true); } finally { setBusy(false); }
   };
-  return <details className="pd-session"><summary><span className="pd-session-icon"><MessageCircle size={20} /></span><span><strong>{session.summary_he || "עוד צעד באנגלית שלך"}</strong><small>{new Date(session.started_at).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit" })} · {minutesLabel(session.duration_seconds)} דקות</small></span><ChevronDown size={19} /></summary>
-    <div className="pd-session-body"><div className="pd-session-notes"><div><span>מה לקחת מהשיחה</span><p>{session.success_he || "פינית זמן לדבר באנגלית. זה הבסיס להתקדמות."}</p></div><div><span>לשיחה הבאה</span><p>{session.next_step_he || "עוד שיחה קצרה, בקצב שלך."}</p></div></div>
+  return <details className="pd-session"><summary><span className="pd-session-icon"><MessageCircle size={20} /></span><span><strong>{session.summary_he || "עוד צעד באנגלית"}</strong><small>{new Date(session.started_at).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit" })} · {minutesLabel(session.duration_seconds)} דקות</small></span><ChevronDown size={19} /></summary>
+    <div className="pd-session-body"><div className="pd-session-notes"><div><span>מה לקחת מהשיחה</span><p>{session.success_he || "פינית זמן לדבר באנגלית. זה הבסיס להתקדמות."}</p></div><div><span>לשיחה הבאה</span><p>{session.next_step_he || "עוד שיחה קצרה, בקצב נוח."}</p></div></div>
       {transcript === undefined ? <button className="sk-secondary" disabled={busy} onClick={() => void load()}>{busy ? "טוענים את התמלול…" : error ? "לנסות שוב לטעון תמלול" : "לפתוח את תמלול האימון"}<ArrowLeft size={16} /></button> : transcript?.length ? <div className="sk-transcript">{transcript.map((line, i) => <p key={i}><strong>{line.role === "learner" ? "אני" : "המורה"}</strong><span dir="auto">{line.text}</span></p>)}</div> : <p className="pd-muted">לא נשמר תמלול לאימון הזה. לשמירת האימונים הבאים אפשר להפעיל שמירת שיחות בהעדפות.</p>}
       {error && <p role="alert">התמלול לא נטען כרגע. אפשר לנסות שוב.</p>}
     </div>
@@ -77,9 +77,9 @@ export function PracticeDashboard({ account, token, onGoal, onStart }: { account
   const chosen = days.find(d => d.key === selectedKey)!;
   return <section className="pd-dashboard">
     <div className="pd-stats"><div><Clock3 /><strong>{report ? minutesLabel(seconds) : "—"}</strong><span>דקות של אנגלית</span></div><div><MessageCircle /><strong>{report ? sessions.length : "—"}</strong><span>אימונים בתקופה</span></div><div><Sparkles /><strong>{report ? activeDays : "—"}</strong><span>ימים עם תרגול</span></div></div>
-    <section className="pd-card"><div className="pd-section-heading"><div><span className="pd-kicker">כל שיחה מצטברת</span><h2>הקצב שלך, על ציר הזמן.</h2></div><div className="pd-ranges" role="group" aria-label="טווח ציר הזמן">{[7, 14, 30].map(n => <button key={n} aria-pressed={range === n} className={range === n ? "is-active" : ""} onClick={() => { setRange(n); setSelected(null); }}>{n} ימים</button>)}</div></div>
+    <section className="pd-card"><div className="pd-section-heading"><div><span className="pd-kicker">כל שיחה מצטברת</span><h2>התרגול, על ציר הזמן.</h2></div><div className="pd-ranges" role="group" aria-label="טווח ציר הזמן">{[7, 14, 30].map(n => <button key={n} aria-pressed={range === n} className={range === n ? "is-active" : ""} onClick={() => { setRange(n); setSelected(null); }}>{n} ימים</button>)}</div></div>
       {report ? <Timeline sessions={report.sessions} days={range} goal={goal} selected={selectedKey} onSelect={setSelected} /> : <LoadState error={error} retry={retry} />}
-      <div className="pd-chart-foot"><span><Target size={16} />השטח המוצל הוא יעד יומי לפי משך האימון שבחרת, לא אימונים שנקבעו.</span><button className="sk-link" onClick={onGoal}>לשנות יעד<ArrowLeft size={14} /></button></div>
+      <div className="pd-chart-foot"><span><Target size={16} />השטח המוצל הוא יעד יומי לפי משך האימון המוגדר, לא אימונים שנקבעו.</span><button className="sk-link" onClick={onGoal}>לשנות יעד<ArrowLeft size={14} /></button></div>
     </section>
     {report && <section className="pd-card pd-day-detail" aria-label="אימוני היום הנבחר"><div className="pd-section-heading"><div><span className="pd-kicker">לחיצה על יום מציגה את האימונים שלו</span><h2>{fullDate(chosen.date)}</h2></div><span className="pd-pill">{minutesLabel(chosen.seconds)} דקות תרגול</span></div>{chosen.sessions.length ? chosen.sessions.map(session => <SessionDetails key={session.call_id} session={session} token={token} />) : <div className="pd-empty"><Sparkles /><h3>יש מקום לשיחה הבאה שלך.</h3><p>גם כמה דקות של אנגלית הן צעד קדימה.</p><button className="sk-secondary" onClick={onStart}>מתחילים לדבר<ArrowLeft size={16} /></button></div>}</section>}
   </section>;
@@ -96,17 +96,17 @@ export function HomeDashboard({ account, token, teacherName, children, onProgres
   const lastLesson = account.progress.sessions[0];
   return <div className="pd-home">
     <section className="pd-home-hero">
-      <div className="pd-home-copy"><span className="pd-kicker"><span className="sk-status-dot" />המקום שלך לדבר אנגלית</span><h2>משיחה לשיחה,<br /><em>הביטחון גדל.</em></h2><p>{teacherName} מחכה לשיחה הבאה שלך.<br />כמה דקות, בקצב שלך. מכאן ממשיכים.</p>{children}</div>
+      <div className="pd-home-copy"><span className="pd-kicker"><span className="sk-status-dot" />המקום לדבר אנגלית</span><h2>משיחה לשיחה,<br /><em>הביטחון גדל.</em></h2><p>{teacherName} מחכה לשיחה הבאה.<br />כמה דקות, בקצב נוח. מכאן ממשיכים.</p>{children}</div>
       <div className="pd-daily">
         <div className="pd-ring" role="img" aria-label={report ? `${minutesLabel(todaySeconds)} דקות מתוך יעד של ${goal} דקות היום` : "טוענים את התרגול היומי"} style={{ background: `conic-gradient(var(--accent) ${report ? Math.min(100, todaySeconds / (goal * 60) * 100) : 0}%, #34453a 0)` }}>
           <div><span>{goalMet ? <Check size={22} /> : <Target size={22} />}</span><strong>{report ? minutesLabel(todaySeconds) : "—"}</strong><span>דקות היום</span></div>
         </div>
-        <strong>{goalMet ? "הגעת ליעד. כל הכבוד!" : "עוד קצת אנגלית ביום שלך"}</strong><button className="sk-link" onClick={onGoal}>היעד היומי שלך: {goal} דקות<ArrowLeft size={14} /></button>
+        <strong>{goalMet ? "היעד הושג. כל הכבוד!" : "עוד קצת אנגלית היום"}</strong><button className="sk-link" onClick={onGoal}>יעד התרגול היומי: {goal} דקות<ArrowLeft size={14} /></button>
       </div>
     </section>
-    <div className="pd-stats pd-home-stats"><div><Clock3 /><strong>{account.progress.total_minutes.toLocaleString("he-IL")}</strong><span>דקות שדיברת עד היום</span></div><div><MessageCircle /><strong>{account.progress.session_count.toLocaleString("he-IL")}</strong><span>שיחות שמקדמות אותך</span></div><div><Trophy /><strong>{remainingMinutes(account).toLocaleString("he-IL")}</strong><span>דקות זמינות בחבילה</span></div></div>
-    <div className="pd-home-bottom"><section className="pd-card"><div className="pd-section-heading"><div><span className="pd-kicker">שבעת הימים האחרונים</span><h2>זמן לאנגלית שלך.</h2></div><button className="pd-round-link" aria-label="לכל ההתקדמות" onClick={onProgress}><ArrowLeft /></button></div>{report ? <><div className="pd-week-total"><strong>{minutesLabel(seconds)}</strong><span>דקות תרגול<br />ב־{activeDays} ימים</span></div><Timeline sessions={report.sessions} days={7} goal={goal} compact onSelect={onProgress} /></> : <LoadState error={error} retry={retry} />}</section>
-      <section className="pd-card pd-next"><span className="pd-kicker">לוקחים איתנו הלאה</span><span className="pd-next-symbol"><Sparkles size={30} /></span><h2>{lastLesson ? "כבר יש על מה לבנות." : "ההתחלה שלך כאן."}</h2><p>{lastLesson?.success_he || "לא צריך אנגלית מושלמת כדי להתחיל. רק משפט אחד, ומורה שמקשיב."}</p>{lastLesson?.next_step_he && <div className="pd-next-step"><span>הצעד הבא שלך</span><p>{lastLesson.next_step_he}</p></div>}<button className="sk-link" onClick={onProgress}>לדרך שכבר עשית<ArrowLeft size={16} /></button></section>
+    <div className="pd-stats pd-home-stats"><div><Clock3 /><strong>{account.progress.total_minutes.toLocaleString("he-IL")}</strong><span>דקות תרגול עד היום</span></div><div><MessageCircle /><strong>{account.progress.session_count.toLocaleString("he-IL")}</strong><span>שיחות תרגול</span></div></div>
+    <div className="pd-home-bottom"><section className="pd-card"><div className="pd-section-heading"><div><span className="pd-kicker">שבעת הימים האחרונים</span><h2>זמן לאנגלית.</h2></div><button className="pd-round-link" aria-label="לכל ההתקדמות" onClick={onProgress}><ArrowLeft /></button></div>{report ? <><div className="pd-week-total"><strong>{minutesLabel(seconds)}</strong><span>דקות תרגול<br />ב־{activeDays} ימים</span></div><Timeline sessions={report.sessions} days={7} goal={goal} compact onSelect={onProgress} /></> : <LoadState error={error} retry={retry} />}</section>
+      <section className="pd-card pd-next"><span className="pd-kicker">לוקחים איתנו הלאה</span><span className="pd-next-symbol"><Sparkles size={30} /></span><h2>{lastLesson ? "כבר יש על מה לבנות." : "כאן מתחילים."}</h2><p>{lastLesson?.success_he || "לא צריך אנגלית מושלמת כדי להתחיל. רק משפט אחד, ומורה שמקשיב."}</p>{lastLesson?.next_step_he && <div className="pd-next-step"><span>הצעד הבא שלך</span><p>{lastLesson.next_step_he}</p></div>}<button className="sk-link" onClick={onProgress}>לדרך שכבר עשית<ArrowLeft size={16} /></button></section>
     </div>
   </div>;
 }

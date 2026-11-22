@@ -140,7 +140,7 @@ export const ListeningQuizGame: React.FC = () => {
           <div className="w-16 h-16 bg-[#e9f5f0] text-[#137c69] rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Award className="w-8 h-8" />
           </div>
-          <h3 className="text-2xl font-extrabold text-[#172b35] mb-2">כל הכבוד! סיימת את אתגר ההאזנה</h3>
+          <h3 className="text-2xl font-extrabold text-[#172b35] mb-2">כל הכבוד! אתגר ההאזנה הושלם</h3>
           <p className="text-sm text-[#718087] mb-6">
             ענית נכון על {score} מתוך {questions.length} שאלות ({Math.round((score / questions.length) * 100)}% דיוק).
           </p>
@@ -148,7 +148,7 @@ export const ListeningQuizGame: React.FC = () => {
             onClick={handleRestart}
             className="bg-[#137c69] text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-[#0f6656] transition shadow-sm"
           >
-            התחל שוב
+            להתחיל מחדש
           </button>
         </div>
       ) : (

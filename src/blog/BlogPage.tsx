@@ -49,11 +49,11 @@ export function BlogPage() {
             return <p key={i}>{block.text}</p>;
           })}</div>
           {article.sources.length > 0 && <section className="sk-blog-sources" aria-labelledby="sources-title"><h2 id="sources-title">מקורות</h2><ol>{article.sources.map((source, i) => <li key={i}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.label} ↗</a></li>)}</ol></section>}
-          <aside className="sk-blog-cta"><p className="sk-land-kicker">עכשיו תור הפה</p><h2>מהקריאה לשיחה.</h2><p>שיעור ראשון של שבע דקות בחינם, בטלפון או במחשב.</p><a className="sk-primary" href={`${base}/#free-lesson`}>לשיעור ראשון בחינם <ArrowLeft size={18} aria-hidden="true" /></a></aside>
+          <aside className="sk-blog-cta"><p className="sk-land-kicker">עכשיו תור הפה</p><h2>מהקריאה לשיחה.</h2><p>שיעור ראשון בחינם, בטלפון או במחשב.</p><a className="sk-primary" href={`${base}/#free-lesson`}>לשיעור ראשון בחינם <ArrowLeft size={18} aria-hidden="true" /></a></aside>
         </article>
         {others.length > 0 && <section className="sk-blog-related" aria-labelledby="related-title"><h2 id="related-title">עוד רעיונות לשיחה הבאה</h2><div className="sk-blog-grid">{others.map(item => <ArticleCard key={item.slug} article={item} base={base} />)}</div></section>}
       </> : <>
-        <header className="sk-blog-intro"><p className="sk-land-kicker">הבלוג של ספיקול · השיטה מאחורי השיחה</p><h1>פחות לשנן.<br /><span>יותר להבין איך לומדים.</span></h1><p className="sk-blog-lede">על אנגלית מדוברת, תרגול בקול והמילים שנשארות איתך. רעיונות שלוקחים לשיחה הבאה.</p></header>
+        <header className="sk-blog-intro"><p className="sk-land-kicker">הבלוג של ספיקול · השיטה מאחורי השיחה</p><h1>פחות לשנן.<br /><span>יותר להבין איך לומדים.</span></h1><p className="sk-blog-lede">על אנגלית מדוברת, תרגול בקול והמילים שנשארות בזיכרון. רעיונות שלוקחים לשיחה הבאה.</p></header>
         {blogArticles.length ? <div className="sk-blog-grid">{blogArticles.map(item => <ArticleCard key={item.slug} article={item} base={base} />)}</div> : <p>מאמרים חדשים יופיעו כאן בקרוב.</p>}
       </>}
     </main>
