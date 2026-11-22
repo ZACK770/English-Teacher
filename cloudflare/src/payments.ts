@@ -3,10 +3,16 @@ import { purchaseAttribution } from "./analytics";
 import { CheckoutStore } from "./checkout";
 import { SubscriptionStore } from "./subscriptions";
 import { providerTime } from "./nedarim";
+import { reconcilePhoneKeva } from "./keva-sync";
+import { visiblePhone } from "./phone";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
 export const PREFIX = "dibura-";
+
+export function canPurchaseByPhone(pkg: { product?: string; billing?: string; automated_purchase?: boolean; duration_months?: number }) {
+  return canPurchaseAutomatically(pkg) || (pkg.product === "school" && pkg.billing === "monthly" && !pkg.duration_months);
+}
 
 export function safeMessage(value: unknown): string {
   let text = String(value).replace(/<[^>]*>/g, " ");
@@ -229,15 +235,22 @@ export class PaymentStore {
     const customer = await this.business.record("customers", customerId);
     if (!body || !customer) throw new Error("Unknown customer or package");
     const pkg = PackageSchema.parse(body);
-    if (!canPurchaseAutomatically(pkg)) throw new Error("ההצטרפות למסלול זה דרך נציג");
+    if (!(allowHidden ? canPurchaseAutomatically(pkg) : canPurchaseByPhone(pkg))) throw new Error("ההצטרפות למסלול זה דרך נציג");
     if (!pkg.active || (!allowHidden && !pkg.phone_enabled)) throw new Error("Inactive package");
     const amount = agorot(pkg.price_ils);
     const orderId = randomHex(16);
     const now = nowIso();
-    await this.db
+    const monthly = !allowHidden && pkg.billing === "monthly";
+    const phone = monthly ? visiblePhone(customer.phone) : "";
+    if (monthly && (!phone || await this.db.prepare(`SELECT 1 FROM standing_orders WHERE customer_id=? AND state IN ('pending','active','past_due')
+      UNION ALL SELECT 1 FROM subscriptions WHERE customer_id=? AND status IN ('active','paused','past_due')
+      UNION ALL SELECT 1 FROM phone_keva_enrollments e JOIN payment_orders o ON o.id=e.order_id WHERE o.customer_id=? AND o.state IN ('selected','issued','awaiting_settlement')`)
+      .bind(customerId, customerId, customerId).first())) throw new Error("כבר קיים מנוי או בקשת הצטרפות בטיפול");
+    await this.db.batch([this.db
       .prepare("INSERT INTO payment_orders (id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'selected',?,?)")
-      .bind(orderId, callId, customerId, packageId, JSON.stringify(pkg), amount, (await this.business.economics()).vat_rate, now, now)
-      .run();
+      .bind(orderId, callId, customerId, packageId, JSON.stringify(pkg), amount, (await this.business.economics()).vat_rate, now, now),
+      ...(monthly ? [this.db.prepare("INSERT INTO phone_keva_enrollments(order_id,phone) VALUES (?,?)").bind(orderId, phone)] : []),
+    ]);
     return (await this.db.prepare("SELECT * FROM payment_orders WHERE id=?").bind(orderId).first<Record<string, any>>())!;
   }
 
@@ -282,6 +295,7 @@ export class PaymentStore {
     const amount = agorot(data.Amount);
     const order = await this.db.prepare("SELECT * FROM payment_orders WHERE id=?").bind(orderId).first<Record<string, any>>();
     if (!order) return { ignored: true };
+    if (order.channel === "phone" && JSON.parse(order.snapshot).billing === "monthly") return { ignored: true };
     if (amount !== order.amount_agorot) throw new Error("Payment amount mismatch");
     if (order.state === "paid") {
       if (order.transaction_id !== transactionId) throw new Error("Additional transaction requires review");
@@ -325,10 +339,16 @@ const selectionMenu = (name: string, text: string, keys = "0,9") => ({
 
 export async function paymentResponse(store: PaymentStore, env: Env, base: string, params: Record<string, string>, customerId: string, packageIds: string[]): Promise<Record<string, unknown>> {
   const callId = params.PBXcallId;
+  if (!paymentsConfigured(env)) return selectionMenu("isaacPayExit", "התשלום הטלפוני אינו זמין כרגע. לשירות הקישו 9. לחזרה הקישו 0.");
   let order = await store.orderForCall(callId);
+  if (order && order.customer_id !== customerId) throw new HttpError(403, "Customer mismatch");
   if (order && params.isaacPayStatus) {
     await store.recordPbxResult(callId, params.isaacPayStatus, params.CONFIRM_isaacPayStatus ?? "");
     order = await store.orderForCall(callId);
+    if (order?.state === "awaiting_settlement" && JSON.parse(order.snapshot).billing === "monthly") {
+      await reconcilePhoneKeva(env, order.id).catch(() => undefined);
+      order = await store.orderForCall(callId);
+    }
   }
   if (params.PBXcallStatus === "HANGUP") {
     await store.cancelSelection(callId);
@@ -337,7 +357,6 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   if (["0", "9", "ERROR"].includes(params.isaacPayExit)) {
     return { type: "goTo", goTo: extensionPath(base, params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"] };
   }
-  if (!paymentsConfigured(env)) return selectionMenu("isaacPayExit", "התשלום הטלפוני אינו זמין כרגע. לשירות הקישו 9. לחזרה הקישו 0.");
   if (customerId.startsWith("anonymous-")) return selectionMenu("isaacPayExit", "לרכישת חבילה יש להתקשר ממספר גלוי. לשירות הקישו 9. לחזרה הקישו 0.");
   if (order) {
     const state = order.state;
@@ -345,7 +364,9 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     if (state !== "selected") {
       const message = state === "failed" || state === "cancelled"
         ? "התשלום לא אושר או שהרכישה בוטלה."
-        : "ממתינים לאישור חברת הסליקה. החבילה תיפתח אוטומטית לאחר קבלת האישור. אין לבצע תשלום נוסף.";
+        : JSON.parse(order.snapshot).billing === "monthly"
+          ? "בקשת ההצטרפות נקלטה. המנוי ייפתח בתוך דקות לאחר קבלת האישור. אין לבצע תשלום נוסף."
+          : "ממתינים לאישור חברת הסליקה. החבילה תיפתח אוטומטית לאחר קבלת האישור. אין לבצע תשלום נוסף.";
       return selectionMenu("isaacPayExit", message + " לחזרה הקישו 0. לשירות הקישו 9.");
     }
     if (["0", "ERROR"].includes(params.isaacPayConfirm)) {
@@ -354,14 +375,24 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     }
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
     if (params.isaacPayConfirm === "1") {
+      const current = PackageSchema.safeParse(await store.business.record("packages", order.package_id));
+      if (!current.success || !current.data.active || !current.data.phone_enabled || !canPurchaseByPhone(current.data) ||
+        agorot(current.data.price_ils) !== order.amount_agorot) {
+        await store.cancelSelection(callId);
+        return selectionMenu("isaacPayExit", "החבילה השתנתה או אינה זמינה לרכישה. לחזרה הקישו 0. לשירות הקישו 9.");
+      }
       if (!(await store.issue(callId))) return selectionMenu("isaacPayExit", "הבקשה כבר בטיפול או פג תוקפה. לחזרה הקישו 0. לשירות הקישו 9.");
       return {
         type: "creditCard", name: "isaacPayStatus", post: true, sum: order.amount_agorot / 100, sumChangeable: "no", payments: 1,
-        paymentsMode: "regular", cvv: "yes", tz: "yes", terminal: env.NEDARIM_PHONE_TERMINAL ?? "", category: PREFIX + order.id,
+        paymentsMode: pkg.billing === "monthly" ? "kevaMonthly" : "regular",
+        ...(pkg.billing === "monthly" ? { kevaDay: Math.min(28, Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", day: "numeric" }).format(new Date()))) } : {}),
+        cvv: "yes", tz: "yes", terminal: env.NEDARIM_PHONE_TERMINAL ?? "", category: PREFIX + order.id,
         noFailExit: "no", noSuccess: "yes", noConfirmation: "yes",
       };
     }
-    const text = `בחרתם ${pkg.name}. החבילה כוללת ${pkg.minutes} דקות, בתוקף ל-${pkg.validity_days} ימים, במחיר ${order.amount_agorot / 100} שקלים. לתשלום חד פעמי באשראי הקישו 1. לביטול הקישו 0.`;
+    const text = pkg.billing === "monthly"
+      ? `בחרתם ${pkg.name}. המנוי כולל ${pkg.minutes} דקות בחודש, במחיר ${order.amount_agorot / 100} שקלים לחודש. להצטרפות בהוראת קבע באשראי הקישו 1. לביטול הקישו 0.`
+      : `בחרתם ${pkg.name}. החבילה כוללת ${pkg.minutes} דקות, בתוקף ל-${pkg.validity_days} ימים, במחיר ${order.amount_agorot / 100} שקלים. לתשלום חד פעמי באשראי הקישו 1. לביטול הקישו 0.`;
     return selectionMenu("isaacPayConfirm", text, "0,1");
   }
   const choice = params.isaacPackage ?? "";
@@ -381,11 +412,13 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   const lines: string[] = [];
   packageIds.forEach((id, index) => {
     const p = packages[id];
-    if (p && p.active && canPurchaseAutomatically(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
-      lines.push(`לרכישה מיידית של ${p.name}: ${p.minutes} דקות, בתוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
+    if (p && p.active && canPurchaseByPhone(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
+      lines.push(p.billing === "monthly"
+        ? `למנוי ${p.name}: ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש בהוראת קבע באשראי, הקישו ${index + 1}.`
+        : `לרכישה מיידית של ${p.name}: ${p.minutes} דקות, בתוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
     }
   });
-  const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 && !canPurchaseAutomatically(p)).sort((a, b) => a.price_ils - b.price_ils);
+  const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 && !canPurchaseByPhone(p)).sort((a, b) => a.price_ils - b.price_ils);
   const describe = (p: Record<string, any>) => p.billing === "monthly"
     ? `${p.name}, ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
     : `${p.name}, ${p.minutes} דקות בכל חודש למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
@@ -417,6 +450,21 @@ export async function handleWebhook(request: Request, env: Env): Promise<Record<
   try {
     const keva = !["", "0", "undefined", "null"].includes(String(data.KevaId ?? ""));
     const checkout = new CheckoutStore(store.business);
+    if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
+    const phoneEnrollment = /^dibura-([0-9a-f]{32})$/.exec(String(data.Groupe ?? ""));
+    const pendingPhone = phoneEnrollment && await env.DB.prepare(`SELECT o.state FROM phone_keva_enrollments e JOIN payment_orders o ON o.id=e.order_id WHERE o.id=?`)
+      .bind(phoneEnrollment[1]).first<{ state: string }>();
+    if (phoneEnrollment && pendingPhone && pendingPhone.state !== "paid") {
+      if (!paymentsConfigured(env)) return { ignored: true };
+      if (String(data.Status ?? "").toLowerCase() === "error") {
+        await store.issueForData(data, "refusal", data.Message ?? "החיוב סורב");
+        await env.DB.prepare("UPDATE payment_orders SET state='failed',updated_at=? WHERE id=? AND state IN ('issued','awaiting_settlement')")
+          .bind(nowIso(), phoneEnrollment[1]).run();
+      } else {
+        await reconcilePhoneKeva(env, phoneEnrollment[1], keva ? String(data.KevaId) : undefined);
+      }
+      return { recorded: true };
+    }
     if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
     if (keva && !data.TransactionId) return await checkout.kevaCreated(data, mosadId);
     const settled = await store.settle(data, mosadId);

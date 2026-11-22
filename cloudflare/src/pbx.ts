@@ -1,11 +1,10 @@
-import { canPurchaseAutomatically } from "../../src/pricing";
 import { PAYMENT_FAILED_MESSAGE } from "../../src/paymentCopy";
 import { adOpening, adRuntimeContext, PHONE_TUTOR_PITCH, registerPirsumfonEntry, startAdEntry } from "./ad-entry";
 import { z } from "zod";
 import { BusinessStore } from "./business";
 import { canCallWithLessonSummary, normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
 import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
-import { PaymentStore, paymentResponse } from "./payments";
+import { PaymentStore, paymentResponse, canPurchaseByPhone } from "./payments";
 import { ProgressStore } from "./progress";
 import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
@@ -291,7 +290,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     const context = await b.loadContext("payments:" + callId);
     let ids: string[] = context.package_ids;
     if (!ids) {
-      ids = (await b.list("packages")).filter((pkg) => pkg.active && canPurchaseAutomatically(pkg) && pkg.price_ils > 0 && (pkg.phone_enabled ?? true)).slice(0, 8).map((pkg) => pkg.id);
+      ids = (await b.list("packages")).filter((pkg) => pkg.active && canPurchaseByPhone(pkg) && pkg.price_ils > 0 && (pkg.phone_enabled ?? true)).slice(0, 8).map((pkg) => pkg.id);
       await b.saveContext("payments:" + callId, { package_ids: ids });
     }
     result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
