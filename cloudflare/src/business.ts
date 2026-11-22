@@ -276,7 +276,7 @@ export class BusinessStore {
           SELECT r.id,r.customer_id,r.product,r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS remaining
           FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
           WHERE r.id=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
-          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.admin_suspended_at IS NOT NULL))
           AND (r.customer_id=? OR r.subscription_id IN
             (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
              WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
@@ -383,11 +383,11 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.admin_suspended_at IS NOT NULL))
       AND r.product='school' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       LIMIT 1`).bind(customerId, customerId, at, at).first();
     if (receipt) return true;
-    return !!await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active' AND p.product='school'
+    return !!await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active' AND s.admin_suspended_at IS NULL AND p.product='school'
       AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
         (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
       .bind(at, at, customerId, customerId).first();
@@ -399,7 +399,7 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.admin_suspended_at IS NOT NULL))
       AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       GROUP BY r.id HAVING r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) >= 1
       ORDER BY r.expires_at`)

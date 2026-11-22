@@ -55,6 +55,26 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
   insert("subscriptions", { id, customer_id: owner, plan_id: "plan", status, price_agorot: 100, started_at: now, created_at: now, updated_at: now });
 }
 
+it("only lets the CRM owner change the subscription on the matching customer card", async () => {
+  customer();
+  customer("other", "0504444444");
+  planAndSubscription("person1", "active");
+  const path = "/v1/admin/crm/people/person1/subscriptions/sub/suspend";
+  const admin = { Authorization: "Bearer crm-test-secret" };
+  const send = (route: string, headers: HeadersInit, method = "POST") =>
+    worker.fetch(new Request("https://speakcall.app" + route, { method, headers }), env);
+  insert("admin_users", { id: "staff", username: "staff", display_name: "staff", role: "staff", created_at: now });
+  insert("admin_sessions", { token_hash: await sha256Hex("a".repeat(64)), user_id: "staff", created_at: now, expires_at: "2099-01-01" });
+  expect((await send(path, {})).status).toBe(401);
+  expect((await send(path, { Cookie: "admin_session=" + "a".repeat(64), Origin: "https://speakcall.app" })).status).toBe(403);
+  expect((await send(path, admin, "GET")).status).toBe(405);
+  expect((await send(path.replace("/person1/", "/other/"), admin)).status).toBe(404);
+  expect((await send(path, admin)).status).toBe(200);
+  const detail = await send("/v1/admin/crm/people/person1", admin, "GET");
+  expect((await detail.json() as any).subscriptions).toEqual([{ id: "sub", plan_name: "תכנית", status: "active", admin_suspended_at: expect.any(String) }]);
+  expect(sql.prepare("SELECT actor,status FROM admin_audit_log WHERE path=? AND status=200").get(path)).toMatchObject({ actor: "bearer", status: 200 });
+});
+
 describe("CRM customer reset", () => {
   it.each([false, true])("prepares no compound SQL during reset with linked history %s", async history => {
     customer();

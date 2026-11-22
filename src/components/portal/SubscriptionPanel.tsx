@@ -4,6 +4,7 @@ import "./subscriptions.css";
 
 export type SubscriptionSummary = {
   id: string; plan_name: string; status: string; owner: boolean; price_agorot: number; renewal_amount_agorot: number;
+  admin_suspended_at?: string | null;
   term_months: number | null; current_period_start: string; current_period_end: string; pause_until: string | null;
   pause_days_remaining: number; rollover_minutes: number; rollover: { minutes: number; expires_at: string }[];
   guarantee_status: string | null; extension_months: number; members: { customer_id: string; name: string; phone: string }[];
@@ -84,6 +85,7 @@ function SubscriptionCard({ sub, admin, act }: { sub: SubscriptionSummary; admin
   const path = "/" + sub.id;
   return <article className="subscription-card">
     <div className="subscription-heading"><strong>{sub.plan_name}</strong><span>{statuses[sub.status] || "לא ידוע"}</span></div>
+    {sub.admin_suspended_at && <p className="subscription-note">הגישה דרך מנוי זה הושעתה. אפשר לפנות לתמיכה.</p>}
     {!admin && !sub.owner && <p className="subscription-note">אתם חלק ממנוי משפחתי. הדקות משותפות, ההתקדמות אישית. ניהול המנוי אצל בעל החשבון.</p>}
     <dl>
       <div><dt>{sub.term_months ? "מחיר המסלול הנעול" : "מחיר חודשי נעול"}</dt><dd>{money(sub.price_agorot)}{sub.term_months ? ` ל־${sub.term_months} חודשים` : " לחודש"}</dd></div>

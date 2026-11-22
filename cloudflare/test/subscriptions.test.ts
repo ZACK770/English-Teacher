@@ -241,6 +241,61 @@ describe("subscription promises against production SQL", () => {
   it("clamps calendar-month arithmetic at month ends", () => {
     expect(addMonths("2026-01-31T00:00:00Z", 1)).toBe("2026-02-28T00:00:00.000+00:00");
   });
+  it("removes and restores subscription access for new phone and web sessions, including family", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    const { customer_id: member } = await store.addMember(sub.id, "0502222222", "Family");
+    const env = { DB: b.db, ADMIN_BEARER_SECRET: "admin" } as Env;
+    const path = "/v1/admin/crm/people/owner/subscriptions/" + sub.id;
+    const admin = (action: string) => worker.fetch(new Request("https://test" + path + "/" + action, {
+      method: "POST", headers: { Authorization: "Bearer admin" },
+    }), env);
+    const { token } = await b.portalInvite("owner");
+    async function webAccess() {
+      const response = await worker.fetch(new Request("https://test/v1/portal/me", { headers: { Authorization: "Bearer " + token } }), env);
+      expect(response.status).toBe(200);
+      return (await response.json() as any).access.paid;
+    }
+    async function checkAccess(mode: "paid" | "blocked") {
+      expect(await webAccess()).toBe(mode === "paid");
+      expect(await b.hasSchoolCallbackMinutes("owner")).toBe(mode === "paid");
+      expect(await b.hasPaidAccess(member)).toBe(mode === "paid");
+      for (const customer of ["owner", member]) {
+        for (const channel of ["voice", "text"] as const) {
+          const call = [mode, customer, channel].join("-");
+          expect((await b.reserveCall(customer, "teacher", call, 60, channel)).mode).toBe(mode);
+          await b.cancelCallReservation(call);
+        }
+      }
+    }
+    await checkAccess("paid");
+    const before = receipts();
+    expect(await (await admin("suspend")).json()).toMatchObject({ id: sub.id, status: "active", admin_suspended_at: expect.any(String) });
+    expect((await admin("suspend")).status).toBe(409);
+    await checkAccess("blocked");
+    expect(await (await admin("reopen")).json()).toMatchObject({ id: sub.id, status: "active", admin_suspended_at: null });
+    await checkAccess("paid");
+    expect(receipts()).toEqual(before);
+    expect(await store.get(sub.id)).toEqual(sub);
+  });
+  it("keeps the manual hold through billing renewals and customer pause/resume", async () => {
+    const sub = await store.create("owner", "school-step", at);
+    const env = { DB: b.db, ADMIN_BEARER_SECRET: "admin" } as Env;
+    const path = "https://test/v1/admin/crm/people/owner/subscriptions/" + sub.id;
+    const admin = (action: string) => worker.fetch(new Request(path + "/" + action, {
+      method: "POST", headers: { Authorization: "Bearer admin" },
+    }), env);
+    expect((await admin("suspend")).status).toBe(200);
+    await store.pause(sub.id, 1, at);
+    await store.resume(sub.id, at);
+    const renewedAt = "2026-02-01T00:00:01.000Z";
+    date(renewedAt);
+    await store.recordRenewal(sub.id, renewedAt, "renewed-while-suspended");
+    expect(await b.hasPaidAccess("owner")).toBe(false);
+    expect((await b.reserveCall("owner", "teacher", "suspended-renewed", 60)).mode).toBe("blocked");
+    await store.cancel(sub.id, renewedAt);
+    expect((await admin("reopen")).status).toBe(409);
+    expect((await store.get(sub.id)).status).toBe("cancelled");
+  });
   it("does not spend a future period granted by an early renewal", async () => {
     const sub = await store.create("owner", "school-step", at);
     await store.recordRenewal(sub.id, at, "early-charge");

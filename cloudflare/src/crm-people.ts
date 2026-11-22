@@ -33,7 +33,7 @@ async function load(env: Env) {
       (s.transcript_json IS NOT NULL AND s.transcript_json <> 'null' AND s.transcript_json <> '[]') AS has_transcript,
       c.bot_id,c.channel FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id`,
     "SELECT * FROM sales_receipts",
-    "SELECT * FROM subscriptions ORDER BY created_at,id",
+    "SELECT s.*,COALESCE(p.name,s.plan_id) AS plan_name FROM subscriptions s LEFT JOIN plans p ON p.id=s.plan_id ORDER BY s.created_at,s.id",
     "SELECT * FROM callback_requests",
     "SELECT * FROM ivr_voicemails",
     "SELECT id,label FROM bots",
@@ -120,10 +120,27 @@ function journey(data: Data, id: string) {
   return rows.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 }
 export async function crmPeople(request: Request, env: Env, path: string, actor?: { role: string; username: string }): Promise<Response | null> {
+  const ok = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
+  const action = path.match(/^\/v1\/admin\/crm\/people\/([^/]+)\/subscriptions\/([^/]+)\/(suspend|reopen)$/);
+  if (action) {
+    if (request.method !== "POST") throw new HttpError(405, "פעולה לא נתמכת");
+    if (actor?.role !== "owner") throw new HttpError(403, "רק בעל חשבון הניהול יכול לשנות את הגישה למנוי.");
+    const customerId = decodeURIComponent(action[1]), id = decodeURIComponent(action[2]);
+    const suspend = action[3] === "suspend";
+    const row = await env.DB.prepare(`UPDATE subscriptions SET admin_suspended_at=?
+      WHERE id=? AND customer_id=? AND status IN ('active','paused','past_due')
+      AND admin_suspended_at IS ${suspend ? "" : "NOT "}NULL
+      RETURNING id,status,admin_suspended_at`)
+      .bind(suspend ? new Date().toISOString() : null, id, customerId).first();
+    if (row) return ok(row);
+    if (!await env.DB.prepare("SELECT 1 FROM subscriptions WHERE id=? AND customer_id=?").bind(id, customerId).first()) {
+      throw new HttpError(404, "המנוי לא נמצא בכרטיס הלקוח.");
+    }
+    throw new HttpError(409, "מצב המנוי השתנה. יש לרענן את הכרטיס ולנסות שוב.");
+  }
   const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript)$/);
   if (!match) return null;
   if (request.method !== "GET" && !(request.method === "DELETE" && match[2])) throw new HttpError(405, "פעולה לא נתמכת");
-  const ok = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
   if (match[3]) {
     const row = await env.DB.prepare("SELECT transcript_json FROM sessions WHERE call_id=?").bind(decodeURIComponent(match[3])).first<Row>();
     if (!row) throw new HttpError(404, "השיחה לא נמצאה");
@@ -134,7 +151,8 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     const id = decodeURIComponent(match[2]), p = data.people.get(id);
     if (!p) throw new HttpError(404, "הלקוח לא נמצא");
     if (request.method === "DELETE") return resetCustomer(request, env, person(data, p), actor);
-    return ok({ ...person(data, p), journey: journey(data, id), calls: (data.sessions.get(id) || []).map(s => costCall(data, s)).sort((a, b) => b.started_at.localeCompare(a.started_at)), assumptions: { usd_ils: data.economics.usd_ils, telephony_rate_ils: data.economics.forecast_cost_per_minute, telephony_note: "אומדן לפי עלות הדקה החזויה בהנחות העסק; אינו חיוב ספק מאומת" } });
+    const subscriptions = (data.subscriptions.get(id) || []).map(({ id, plan_name, status, admin_suspended_at }) => ({ id, plan_name, status, admin_suspended_at }));
+    return ok({ ...person(data, p), subscriptions, journey: journey(data, id), calls: (data.sessions.get(id) || []).map(s => costCall(data, s)).sort((a, b) => b.started_at.localeCompare(a.started_at)), assumptions: { usd_ils: data.economics.usd_ils, telephony_rate_ils: data.economics.forecast_cost_per_minute, telephony_note: "אומדן לפי עלות הדקה החזויה בהנחות העסק; אינו חיוב ספק מאומת" } });
   }
   const params = new URL(request.url).searchParams;
   const limit = Number(params.get("limit") || 50), cursor = params.get("cursor") || "", status = params.get("status") || "", q = (params.get("q") || "").trim().toLowerCase(), source = params.get("source") || "";
