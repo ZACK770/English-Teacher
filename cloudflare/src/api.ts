@@ -250,7 +250,11 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
     if (!kind || !MODELS[kind]) throw new HttpError(404, "Not found");
     if (method === "GET" && seg.length === 4) return ok({ items: await b.list(kind) });
     if ((method === "POST" && seg.length === 4) || (method === "PUT" && seg.length === 5)) {
-      const parsed = MODELS[kind].safeParse(await json(request));
+      const input = await json(request);
+      if (kind === "customers" && method === "PUT" && input && typeof input === "object" && !Object.hasOwn(input, "preferred_bot")) {
+        input.preferred_bot = (await b.record("customers", seg[4]))?.preferred_bot ?? "";
+      }
+      const parsed = MODELS[kind].safeParse(input);
       if (!parsed.success) throw new HttpError(422, "נתונים לא תקינים או מספר טלפון שכבר רשום");
       try { return ok(await b.save(kind, parsed.data, seg[4] ?? null), method === "POST" ? 201 : 200); }
       catch { throw new HttpError(422, "נתונים לא תקינים או מספר טלפון שכבר רשום"); }

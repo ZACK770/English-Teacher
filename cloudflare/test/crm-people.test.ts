@@ -494,3 +494,15 @@ describe("CRM read-only endpoints", () => {
     expect(card.journey.some((step: any) => step.call_id === "translate" || step.call_id === "navigate")).toBe(false);
   });
 });
+
+describe("CRM customer editing", () => {
+  it("preserves the saved teacher when the profile form omits it", async () => {
+    await new BusinessStore(env.DB).save("customers", { name: "לקוח", phone: "0501234567", preferred_bot: "teacher1" }, "person1");
+    const update = (extra: Record<string, string>) => worker.fetch(new Request("https://speakcall.app/v1/admin/business/customers/person1", {
+      method: "PUT", headers: { Authorization: "Bearer crm-test-secret", "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "לקוח", phone: "0501234567", notes: "הערה", ...extra }),
+    }), env);
+    expect(await (await update({})).json()).toMatchObject({ notes: "הערה", preferred_bot: "teacher1" });
+    expect(await (await update({ preferred_bot: "" })).json()).toMatchObject({ preferred_bot: "" });
+  });
+});
