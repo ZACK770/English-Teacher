@@ -1253,7 +1253,7 @@ describe("real learner portal", () => {
       TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_API_KEY: "system-test",
     } as Env;
     const pending: Promise<unknown>[] = [];
-    const ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) } as ExecutionContext;
+    const ctx = { waitUntil(promise: Promise<unknown>) { pending.push(promise); } } as unknown as ExecutionContext;
     const send = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ status: "OK", errorCode: 0 }));
     vi.stubGlobal("fetch", send);
     const dial = (id: string, route = "ad", path = "50", phone = "0501112233", extra: Record<string, string> = {}) =>
