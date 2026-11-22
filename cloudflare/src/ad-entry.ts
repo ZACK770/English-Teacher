@@ -40,9 +40,28 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
   return startSchool(b, progress, s, callId, customerId);
 }
 
+export async function registerPirsumfonEntry(b: BusinessStore, callId: string, customerId: string, campaign: unknown) {
+  const name = campaignName(campaign || "pirsumfon");
+  const saved = await b.loadContext("preferences:" + customerId);
+  const newCaller = !saved.plan && !saved.intro_school_seen;
+  if (!saved.ad_campaign || (newCaller && !saved.pirsumfon_campaign)) {
+    await b.savePreference(customerId, {
+      ad_campaign: saved.ad_campaign || name,
+      ...(newCaller && !saved.pirsumfon_campaign ? { pirsumfon_campaign: name } : {}),
+    });
+  }
+  const entryId = "pirsumfon-" + await sha256Hex(callId);
+  const at = nowIso();
+  await b.db.prepare("INSERT OR IGNORE INTO console_records (kind, id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(AD_ENTRIES, entryId, JSON.stringify({ call_id: callId, customer_id: customerId, campaign: name, new_caller: newCaller, at }), at, at).run();
+}
+
 export function adOpening(context: Record<string, any>): string | null {
   if (context.entry !== "ad") return null;
   if (context.ad_new_caller) {
+    if (context.pirsumfon_sales) {
+      return "This is the caller's first SpeakCall lesson after the Pirsumfon welcome. Say warmly and briefly in Hebrew: \"שלום, הגעת לספיקול!\" Introduce yourself by name and ask for their first name only if unknown. Do not mention a duration, menu or registration in the opening.";
+    }
     return "The caller just pressed 1 at the end of a SpeakCall ad. Say warmly and briefly in Hebrew: \"שלום, הגעת לספיקול!\" Introduce yourself by name and ask for their first name only if unknown. Do not mention a duration, menu or registration in the opening.";
   }
   return "This returning learner pressed 1 at the end of a SpeakCall ad. Welcome them back briefly in Hebrew by name if known (\"טוב לשמוע אותך שוב\"), without the new-caller introduction or intake, and continue from their last lesson with one short question.";
