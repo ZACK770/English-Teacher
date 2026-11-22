@@ -45,7 +45,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
     { id: 'campaigns', label: 'קמפיינים ואינטייק', icon: Mail, badge: 'A/B' },
     { id: 'economics', label: 'אקסל רווח ועלויות', icon: Table, badge: 'חדש' },
     { id: 'bots', label: 'מורים ובוטים (שוכי)', icon: Bot },
-    { id: 'customers', label: 'לקוחות ו-CRM', icon: Users },
     { id: 'courses', label: 'קורסים ומסלולים', icon: GraduationCap },
     { id: 'packages', label: 'חבילות וסליקה', icon: CreditCard },
     { id: 'narrations', label: 'קריינות IVR', icon: Volume2 },
