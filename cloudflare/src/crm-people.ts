@@ -3,6 +3,7 @@ import { practiceInternal } from "./practice";
 import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
 import { resetCustomer } from "./crm-reset";
+import { practiceMetrics } from "./crm-practice";
 
 export const SHORT_SESSION_SECONDS = 60;
 export const INACTIVE_DAYS = 3;
@@ -46,9 +47,17 @@ async function load(env: Env) {
     "SELECT id,body FROM console_settings WHERE id LIKE 'ivr:preferences:%'",
     "SELECT id,customer_id,package_id,state,channel,amount_agorot,created_at,updated_at,transaction_id,receipt_id FROM payment_orders WHERE channel='web' ORDER BY created_at",
     "SELECT entitlement_id,state,monthly_agorot,last_refusal_at,keva_id FROM standing_orders ORDER BY created_at,id",
+    "SELECT customer_id,day,seconds FROM practice_days",
+    "SELECT customer_id,day,sent_at,responded_at,status FROM practice_reminder_events WHERE day >= date('now','-31 days')",
+    "SELECT id,body FROM console_records WHERE kind='packages'",
   ];
   const [results, economics] = await Promise.all([env.DB.batch<Row>(queries.map(q => env.DB.prepare(q))), new BusinessStore(env.DB).economics()]);
   const [typed, records, allSessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members, preferences, paymentOrders, standingOrders] = results.map(r => r.results);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const daysByCustomer = new Map<string, Row[]>(), remindersByCustomer = new Map<string, Row[]>();
+  for (const [rows, map] of [[results[15].results, daysByCustomer], [results[16].results, remindersByCustomer]] as const) for (const row of rows) { const rows = map.get(row.customer_id) || []; rows.push(row); map.set(row.customer_id, rows); }
+  const practice = new Map(typed.map(p => [p.id, practiceMetrics(daysByCustomer.get(p.id) as any || [], remindersByCustomer.get(p.id) as any || [], today)]));
+  const packages = new Map<string, Row>(results[17].results.map(p => [p.id, { ...parse(p.body), id: p.id }]));
   for (const sub of subscriptions) sub.standing_orders = standingOrders.filter(o => o.entitlement_id === sub.id);
   const botRows = new Map(bots.map(b => [b.id, b]));
   // This CRM belongs to the English school. Unknown legacy sessions are retained,
@@ -86,7 +95,7 @@ async function load(env: Env) {
     const sub = subscriptions.find(s => s.id === member.subscription_id);
     if (sub) familySubscriptions.set(member.customer_id, [...(familySubscriptions.get(member.customer_id) || []), sub]);
   }
-  return { familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
+  return { practice, packages, familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
 }
 type Data = Awaited<ReturnType<typeof load>>;
 const schoolEvents = (data: Data, id: string) => (data.events.get(id) || []).filter(e => !(e.kind === "ivr-events" && ["translator", "start-translation", "languages"].includes(e.route)));
@@ -122,7 +131,7 @@ function personDetails(data: Data, p: Row) {
   const subscription = { id: sub?.id || null, plan_name: sub?.plan_name || null, status: sub?.status || null, current_period_end: sub?.current_period_end || null, access };
   const nedarim = { state: order?.state || "none", amount: order ? n(order.monthly_agorot) / 100 : null, last_refusal_at: order?.last_refusal_at || null, keva_id_present: !!order?.keva_id };
   const summary = { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", notes: p.notes || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status], card_payment: { available: data.cardPaymentAvailable, orders: paymentOrders.length, paid: paymentOrders.filter(o => o.state === "paid").length, latest_state: lastPayment?.state || "none", latest_at: lastPayment?.updated_at || null } };
-  return { summary: { ...summary, subscription, nedarim }, times, callback };
+  return { summary: { ...summary, subscription, nedarim, current_streak: data.practice.get(p.id)?.current_streak || 0, practice_days_30: data.practice.get(p.id)?.practice_days_30 || 0 }, times, callback };
 }
 function person(data: Data, p: Row) {
   return personDetails(data, p).summary;
@@ -166,7 +175,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     if (!sub) throw new HttpError(404, "המנוי לא נמצא");
     return Response.json(sub, { headers: { "Cache-Control": "no-store" } });
   }
-  const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript|analytics|calls)$/);
+  const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript|analytics|returning|calls)$/);
   if (!match) return null;
   if (request.method !== "GET" && !(request.method === "DELETE" && match[2])) throw new HttpError(405, "פעולה לא נתמכת");
   const ok = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
@@ -176,6 +185,18 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     return ok({ call_id: decodeURIComponent(match[3]), turns: parse(row.transcript_json, []), recording: null });
   }
   const data = await load(env);
+  if (path === "/v1/admin/crm/returning") {
+    const items = [...data.people.values()].flatMap(p => {
+      const metrics = data.practice.get(p.id);
+      if (!metrics || metrics.practice_days_total < 2) return [];
+      const subs = data.subscriptions.get(p.id) || data.familySubscriptions.get(p.id) || [];
+      const sub = subs.filter(s => s.status === "active").at(-1) || subs.at(-1);
+      const pkg = data.packages.get(sub?.package_id || sub?.plan_id);
+      return [{ id: p.id, name: p.name || "ללא שם", phone: p.phone || "", ...metrics, package: pkg ? { id: pkg.id, name: pkg.name } : null, monthly_minutes: pkg?.monthly_minutes ?? null }];
+    });
+    const sent = items.reduce((n, p) => n + p.reminders_sent, 0), responded = items.reduce((n, p) => n + p.reminders_responded, 0);
+    return ok({ items, totals: { returning: items.length, today: items.filter(p => p.practiced_today).length, week: items.filter(p => p.practiced_week).length, streaks: items.filter(p => p.current_streak >= 3).length, reminder_rate: sent ? responded / sent * 100 : 0 } });
+  }
   if (path === "/v1/admin/crm/calls") {
     const params = new URL(request.url).searchParams;
     const from = params.get("from") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -226,7 +247,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
   const subscriptionAccess = params.get("access") || "";
   if (subscriptionAccess && !["open", "suspended", "payment_hold", "inactive", "none"].includes(subscriptionAccess)) throw new HttpError(422, "מסנן מנוי לא תקין");
   const limit = Number(params.get("limit") || 50), cursor = params.get("cursor") || "", status = params.get("status") || "", q = (params.get("q") || "").trim().toLowerCase(), source = params.get("source") || "", sort = params.get("sort") || "last_activity", direction = params.get("direction") === "asc" ? "asc" : "desc";
-  const sortable = new Set(["name", "status", "ad_source", "track", "first_seen", "last_activity", "calls_count", "minutes_used", "total_cost_ils", "revenue_ils"]);
+  const sortable = new Set(["current_streak", "practice_days_30", "name", "status", "ad_source", "track", "first_seen", "last_activity", "calls_count", "minutes_used", "total_cost_ils", "revenue_ils"]);
   if (!Number.isInteger(limit) || limit < 1 || limit > 200 || (status && !Object.hasOwn(STATUS_LABELS, status)) || !sortable.has(sort)) throw new HttpError(422, "מסנן לא תקין");
   const terms = q.split(/\s+/).filter(Boolean);
   let rows = [...data.people.values()].map(p => person(data, p)).filter(p => {
