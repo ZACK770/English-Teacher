@@ -471,6 +471,14 @@ describe("CRM read-only endpoints", () => {
     expect(card.total_cost_ils).toBe(1.6);
     expect((await (await request("people")).json() as any).items[0].total_cost_ils).toBe(1.6);
   });
+  it("exposes saved recordings in the calls list and requires admin playback authentication", async () => {
+    customer(); session();
+    insert("call_recordings", { call_id: "call1", profile_id: "teacher1", customer_id: "person1", r2_key: "recordings/call1.ulaw", bytes: 8000, duration_ms: 1000, created_at: now });
+    const card = await (await request("people/person1")).json() as any;
+    expect(card.calls[0].recording).toBe(true);
+    expect((await request("recordings/call1/audio", false)).status).toBe(401);
+    expect((await request("recordings/missing/audio")).status).toBe(404);
+  });
   it("returns chronological journey/calls, lazy transcript, null recording and empty transcript", async () => {
     customer(); session(); session("empty", null);
     event("ivr-events", { call_id: "call1", route: "main", input: { isaacMain: "2" }, output: { goTo: "/99/2" } });

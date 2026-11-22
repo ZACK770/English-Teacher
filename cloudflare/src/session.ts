@@ -10,6 +10,7 @@ import { GeminiLive, type ToolCall } from "./gemini";
 import { geminiKeyForCall } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
+import { CallRecorder } from "./recordings";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt, type PromptArtifact } from "./prompt";
@@ -76,10 +77,17 @@ export class TutorSession {
   private finalSent = false;
   private b: BusinessStore;
   private progress: ProgressStore;
+  private recorder?: CallRecorder;
+
+  private sendAudio(frame: Uint8Array) {
+    this.pbx.send(frame);
+    this.recorder?.send(frame);
+  }
 
   constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null = null, private portal?: { customerId: string; teacherId: string }) {
     this.b = new BusinessStore(env.DB);
     this.progress = new ProgressStore(env.DB);
+    this.recorder = new CallRecorder(env, () => `recordings/${this.callId}.ulaw`);
   }
 
   receive(data: string | ArrayBuffer) {
@@ -97,6 +105,7 @@ export class TutorSession {
       return;
     }
     if (data.byteLength % 2) return;
+    this.recorder?.receive(new Uint8Array(data));
     this.input.push(new Uint8Array(data));
   }
 
@@ -311,6 +320,7 @@ export class TutorSession {
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
         this.output = [];
         try { this.pbx.close(1000, "session ended"); } catch { /* peer already closed */ }
+        await this.recorder?.finish(this.callId, this.profileId, this.customerId);
       }
       if (willCallWithSummary) {
         const text = lessonSummaryAudioText(this.meter.lessonSummary?.points, this.meter.learnerTurns);
@@ -499,7 +509,7 @@ export class TutorSession {
       for (let offset = 0; offset < pcm.length && !this.disconnected; offset += FRAME_BYTES) {
         const frame = new Uint8Array(FRAME_BYTES);
         frame.set(pcm.subarray(offset, offset + FRAME_BYTES));
-        this.pbx.send(frame);
+        this.sendAudio(frame);
         await sleep(FRAME_MS);
       }
       if (!this.disconnected) await sleep(200);
@@ -609,7 +619,7 @@ export class TutorSession {
     while (!this.abort.signal.aborted) {
       await sleep(FRAME_MS, this.abort.signal);
       const audio = this.output.shift();
-      this.pbx.send(audio ?? SILENCE_FRAME);
+      this.sendAudio(audio ?? SILENCE_FRAME);
       if (audio && !this.firstSent) {
         this.firstSent = true;
         await markQuickIntro(this.b, this.callId, this.customerId);
@@ -661,10 +671,10 @@ export class TutorSession {
     }
     for (const frame of this.output.splice(0)) {
       if (this.disconnected) break;
-      this.pbx.send(frame);
+      this.sendAudio(frame);
       await sleep(FRAME_MS);
     }
-    for (let i = 0; i < 10 && !this.disconnected; i++) { this.pbx.send(SILENCE_FRAME); await sleep(FRAME_MS); }
+    for (let i = 0; i < 10 && !this.disconnected; i++) { this.sendAudio(SILENCE_FRAME); await sleep(FRAME_MS); }
   }
 
   private async basicListen(intro: string) {

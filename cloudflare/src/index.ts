@@ -14,6 +14,7 @@ import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
 import { blogHtml, blogRoute, isBlogPath } from "../../src/blog/routes";
 import { geminiBudgetStatus } from "./gemini-budget";
 import { dispatchVoicemails } from "./voicemails";
+import { cleanupRecordings } from "./recordings";
 import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./admin-auth";
 import { SubscriptionStore } from "./subscriptions";
 import { BusinessStore } from "./business";
@@ -200,6 +201,7 @@ export default {
     })().catch(() => console.error("Nedarim reconciliation failed")));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
+    ctx.waitUntil(cleanupRecordings(env).catch(() => console.warn("Recording retention failed")));
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
