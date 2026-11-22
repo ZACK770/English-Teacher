@@ -375,6 +375,68 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("lesson callback scheduling", () => {
+  it.each(["00:00", "07:59", "22:00", "23:10"])("explains why the exact time %s cannot be scheduled", async time => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    expect(await recordSalesTool(b, "learner-a", "outside-hours", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening", time })).toEqual({
+      saved: false,
+      reason: "outside_hours",
+      allowed_hours: "08:00–22:00",
+      time_zone: "Asia/Jerusalem",
+      closed_period: "Friday 14:00–Saturday 20:00",
+      next_step: "explain_hours_and_offer_another_time",
+    });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([]);
+    expect(await b.list("sales-followups")).toEqual([]);
+    expect(await b.loadContext("preferences:learner-a")).not.toHaveProperty("next_lesson");
+  });
+  it.each(["08:00", "21:59"])("still accepts the exact time %s inside the calling hours", async time => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    expect(await recordSalesTool(b, "learner-a", "inside-hours", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning", time })).toBe(true);
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it.each(["2026-01-08T10:00:00Z", "2026-01-09T10:00:00Z"])("distinguishes the weekend restriction from the daily hours: %s", async now => {
+    vi.useFakeTimers().setSystemTime(new Date(now));
+    expect(await recordSalesTool(b, "learner-a", "weekend", "schedule_next_lesson", { day: "tomorrow", part_of_day: "afternoon", time: "15:00" })).toMatchObject({
+      saved: false, reason: "outside_calling_window", closed_period: "Friday 14:00–Saturday 20:00",
+    });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([]);
+  });
+  it("does not mislabel an unsupported exact-time day as outside hours", async () => {
+    expect(await recordSalesTool(b, "learner-a", "unsupported-day", "schedule_next_lesson", { day: "today", part_of_day: "morning", time: "10:00" })).toBe(false);
+  });
+  it("passes scheduling failures through recordTool into the Gemini function response", async () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
+    session.profileId = "student"; session.customerId = "learner-a"; session.callId = "schedule-result";
+    session.controls = { ...controlsFromSettings(false), sales: true };
+    session.salesWindowOpen = true;
+    vi.spyOn(session.b, "loadContext").mockRejectedValueOnce(new Error("database unavailable"));
+    const args = { day: "tomorrow", part_of_day: "evening", time: "23:10" };
+    const calls = [
+      { id: "unavailable", name: "schedule_next_lesson", args },
+      { id: "outside", name: "schedule_next_lesson", args },
+      { id: "inside", name: "schedule_next_lesson", args: { ...args, time: "19:35" } },
+      { id: "invalid", name: "schedule_next_lesson", args: {} },
+    ];
+    const events: GeminiEvent[] = [{ type: "tool_call", calls }];
+    const ai = new GeminiLive("wss://example.test", "test", {});
+    const send = vi.fn();
+    (ai as any).socket = { send };
+    vi.spyOn(ai, "next").mockImplementation(async () => {
+      if (!events.length) session.abort.abort();
+      return events.shift()!;
+    });
+    session.ai = ai;
+    await session.aiToOutput();
+    const responses = send.mock.calls.map(([payload]) => JSON.parse(payload).toolResponse.functionResponses[0]);
+    expect(responses.map(response => response.id)).toEqual(calls.map(call => call.id));
+    expect(responses.every(response => response.name === "schedule_next_lesson")).toBe(true);
+    expect(responses[0].response).toEqual({ saved: false });
+    expect(responses[1].response).toMatchObject({ saved: false, reason: "outside_hours", allowed_hours: "08:00–22:00", next_step: "explain_hours_and_offer_another_time" });
+    expect(responses[2].response).toEqual({ saved: true });
+    expect(responses[3].response).toEqual({ saved: false });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
   it.each(["021234567", "+97231234567", "048123456", "081234567", "091234567"])("queues the actual caller's landline %s ahead of the account phone", async phone => {
     expect(await recordSalesTool(b, "learner-a", "landline", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" }, undefined, phone)).toBe(true);
     expect(db.sql.prepare("SELECT phone FROM callback_requests").get()?.phone).toBe(phone.startsWith("+972") ? "0" + phone.slice(4) : phone);
@@ -438,7 +500,7 @@ describe("lesson callback scheduling", () => {
   it.each([false, true])("skips an exact-time callback when all minutes are exhausted (has receipt: %s)", async paid => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     const args = { day: "tomorrow", part_of_day: "evening", time: "19:35" };
-    expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", { ...args, time: "23:10" })).toBe(false);
+    expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", { ...args, time: "23:10" })).toMatchObject({ saved: false, reason: "outside_hours" });
     expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", args)).toBe(true);
     expect(db.sql.prepare("SELECT next_attempt_at FROM callback_requests").get()?.next_attempt_at).toBe("2026-01-05T17:35:00.000Z");
     for (const [id, product] of [["intro", "school-opening"], ["free-1", "school"], ["free-2", "school"]]) {
