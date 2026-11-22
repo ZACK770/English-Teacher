@@ -31,6 +31,7 @@ async function load(env: Env) {
       s.input_text_tokens,s.input_audio_tokens,s.output_text_tokens,s.output_audio_tokens,s.thoughts_tokens,
       s.estimated_cost_usd,s.cost_basis,s.model,
       (s.transcript_json IS NOT NULL AND s.transcript_json <> 'null' AND s.transcript_json <> '[]') AS has_transcript,
+      EXISTS(SELECT 1 FROM call_recordings r WHERE r.call_id=s.call_id) AS recording,
       c.bot_id,c.channel FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id`,
     "SELECT * FROM sales_receipts WHERE product='school'",
     "SELECT s.*,p.product FROM subscriptions s LEFT JOIN plans p ON p.id=s.plan_id WHERE p.product='school' OR p.product IS NULL ORDER BY s.created_at,s.id",
@@ -114,7 +115,7 @@ function costCall(data: Data, s: Row) {
   const rate = s.channel === "phone" ? data.economics.forecast_cost_per_minute : 0;
   const ai_cost_usd = n(s.estimated_cost_usd), ai_cost_ils = ai_cost_usd * (data.economics.usd_ils || DEFAULT_USD_ILS);
   const telephony_cost_ils = n(s.duration_seconds) / 60 * rate;
-  return { ...s, started_at: String(s.started_at), teacher: data.bots.get(s.bot_id) || s.bot_id || "לא ידוע", recording: null, has_transcript: !!s.has_transcript, ai_cost_usd, ai_cost_ils: safe(ai_cost_ils), telephony_cost_ils: safe(telephony_cost_ils), telephony_rate_ils: rate, telephony_estimated: true, total_cost_ils: safe(ai_cost_ils + telephony_cost_ils) };
+  return { ...s, started_at: String(s.started_at), teacher: data.bots.get(s.bot_id) || s.bot_id || "לא ידוע", recording: s.recording ? true : null, has_transcript: !!s.has_transcript, ai_cost_usd, ai_cost_ils: safe(ai_cost_ils), telephony_cost_ils: safe(telephony_cost_ils), telephony_rate_ils: rate, telephony_estimated: true, total_cost_ils: safe(ai_cost_ils + telephony_cost_ils) };
 }
 function journey(data: Data, id: string) {
   const rows: Row[] = [];
