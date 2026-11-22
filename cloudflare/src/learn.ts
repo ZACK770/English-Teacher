@@ -6,7 +6,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
 import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
-import { geminiKeyForCall } from "./gemini-key";
+import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
@@ -132,7 +132,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web", tier: selected.tier });
     result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, {
-      paid: allowance.mode === "paid",
+      paid: allowance.mode === "paid" && await hasPaidReceipt(env, callId),
       storeTranscript: controls.store_transcripts,
       learning: controls.lesson ? args => learning.record(customerId, callId, args) : undefined,
       intake: async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args, { lessonBotId: botId }),
