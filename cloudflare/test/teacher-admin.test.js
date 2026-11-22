@@ -116,6 +116,22 @@ describe("teacher admin D1 backend and SQL builders", () => {
 });
 
 describe("teacher admin API backend", () => {
+  it("previews restore outside the latest 50 versions without writing or rejecting truncated history", async () => {
+    const calls = [];
+    const api = createApiBackend("secret", "https://speakcall.app", async (url, init) => {
+      calls.push([url, init.method]);
+      if (url.endsWith("/versions")) return Response.json({ versions: Array.from({ length: 50 }, (_, i) => ({ version: 100 - i })) });
+      return Response.json({ profile: { active_version: 100 }, controls: {} });
+    });
+    expect(await run(["restore", "teacher", "1"], api)).toEqual({ dry_run: true, bot: "teacher", restore_version: 1, note: "Version availability is checked on --apply." });
+    expect(calls).toEqual([["https://speakcall.app/v1/admin/config/teacher", "GET"]]);
+    expect(await run(["restore", "teacher", "1", "--apply"], api)).toMatchObject({ bot: "teacher", new_version: 100 });
+    expect(calls.at(-1)).toEqual(["https://speakcall.app/v1/admin/bots/teacher/restore/1", "POST"]);
+  });
+  it("still reports API errors when previewing restore for a missing bot", async () => {
+    const api = createApiBackend("secret", "https://speakcall.app", async () => Response.json({ detail: "Bot not found" }, { status: 404 }));
+    await expect(run(["restore", "missing", "1"], api)).rejects.toThrow("Bot not found");
+  });
   it("honors explicit /english, defaults to dry-run preview and prints saved versions", async () => {
     const calls = [];
     const fetcher = async (url, init) => {

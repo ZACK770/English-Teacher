@@ -91,9 +91,8 @@ export function createApiBackend(secret, base = "https://speakcall.app", fetcher
     },
     async restore(id, version, apply) {
       if (!apply) {
-        const history = await request("bots/" + key(id) + "/versions");
-        if (!history.versions.some(v => v.version === version)) throw new Error("Version not found.");
-        return { dry_run: true, bot: id, restore_version: version };
+        await request("config/" + key(id));
+        return { dry_run: true, bot: id, restore_version: version, note: "Version availability is checked on --apply." };
       }
       const result = await request("bots/" + key(id) + "/restore/" + version, "POST");
       return { bot: id, new_version: result.profile.active_version };
