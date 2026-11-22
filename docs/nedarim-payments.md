@@ -48,12 +48,13 @@ successful history activates through the ordinary verification path instead.
 provider AjaxId duplicate errors do not return the original transaction result.
 Existing awaiting orders and scheduled reconciliation never initiate this charge.
 
-On verified success, the returned TransactionId (or ID alias) activates the saved
-subscription and receipt; Confirmation is retained when supplied. `UpdateKevaNew`
-then moves NextDate one calendar month forward, in `dd/MM/yyyy` format. An open
-`phone_keva_next_date` payment issue is recorded before activation and remains open
-unless the provider confirms that update (`Result=OK`). Inspect unresolved issues
-in the customer's CRM before any manual collection. Declines (`Status=Error`)
+Before any first charge, `UpdateKevaNew` must confirm (`Result=OK`) moving NextDate
+one calendar month forward, in `dd/MM/yyyy` format. If this fails or is unknown,
+no charge is attempted: the order remains awaiting settlement with an open
+`phone_keva_next_date` issue. On verified charge success, the returned TransactionId
+(or ID alias) activates the saved subscription and receipt; Confirmation is retained
+when supplied. Inspect unresolved issues in the customer's CRM before any manual
+collection. Declines (`Status=Error`)
 fail the order and delete the Keva; deletion failures have a separate issue.
 Unknown/network results leave the order awaiting settlement and never delete or
 retry the Keva. Scheduled verification can still recover a later successful charge.

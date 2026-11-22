@@ -115,11 +115,11 @@ describe("in-call first monthly charge", () => {
     const module = await issue(String(choice));
     immediateProvider(String(module.category), String(amount));
     expect(JSON.stringify(await respond(result))).toContain("התשלום אושר והחבילה נפתחה");
-    expect(actions()).toEqual(["GetKevaId", "TashlumBodedNew", "UpdateKevaNew"]);
+    expect(actions()).toEqual(["GetKevaId", "UpdateKevaNew", "TashlumBodedNew"]);
     const order = (await store.orderForCall("phone-hk"))!;
-    expect(Object.fromEntries(providerForms()[1])).toMatchObject({ Action: "TashlumBodedNew", MosadNumber: "7019554", MosadId: "7019554", ApiPassword: "test-key",
+    expect(Object.fromEntries(providerForms()[2])).toMatchObject({ Action: "TashlumBodedNew", MosadNumber: "7019554", MosadId: "7019554", ApiPassword: "test-key",
       KevaId: "54321", Amount: String(amount), Currency: "1", Tashloumim: "1", Tashlumim: "1", JoinToKevaId: "Join", Groupe: "dibura-" + order.id, AjaxId: "dibura-first-" + order.id });
-    expect(Object.fromEntries(providerForms()[2])).toMatchObject({ Action: "UpdateKevaNew", KevaId: "54321", NextDate: "22/12/2026" });
+    expect(Object.fromEntries(providerForms()[1])).toMatchObject({ Action: "UpdateKevaNew", KevaId: "54321", NextDate: "22/12/2026" });
     expect(order).toMatchObject({ state: "paid", transaction_id: "987654", confirmation: "0012345", amount_agorot: Number(amount) * 100 });
     expect(counts()).toEqual([1, 1, 1]);
     expect(db.sql.prepare("SELECT monthly_minutes,current_period_end FROM subscriptions").get()).toEqual({ monthly_minutes: minutes, current_period_end: "2026-12-22T13:00:00.000+00:00" });
@@ -134,8 +134,8 @@ describe("in-call first monthly charge", () => {
     immediateProvider(String(module.category), "59", { charge: { Status: "Error", ErrorCode: "033" } });
     expect(await respond(result)).toMatchObject({ name: "isaacPayExit", enabledKeys: "0,9",
       files: [{ text: "הכרטיס לא אושר והמנוי לא נפתח. לחזרה הקישו 0. לשירות הקישו 9." }] });
-    expect(actions()).toEqual(["GetKevaId", "TashlumBodedNew", "DeleteKeva"]);
-    expect(providerForms()[2].get("KevaId")).toBe("54321");
+    expect(actions()).toEqual(["GetKevaId", "UpdateKevaNew", "TashlumBodedNew", "DeleteKeva"]);
+    expect(providerForms()[3].get("KevaId")).toBe("54321");
     expect((await store.orderForCall("phone-hk"))!.state).toBe("failed");
     expect(counts()).toEqual([0, 0, 0]);
     expect(await respond({ isaacPayExit: "0" })).toMatchObject({ goTo: "/" });
@@ -170,15 +170,22 @@ describe("in-call first monthly charge", () => {
     expect(counts()).toEqual([1, 1, 1]);
   });
 
-  it.each(["refused", "network", "empty"])("activates but leaves an open issue for a %s NextDate update", async failure => {
+  it.each(["refused", "network", "empty"])("does not charge and leaves an open issue for a %s NextDate update", async failure => {
     const module = await issue();
     immediateProvider(String(module.category), "59", failure === "network" ? { network: "UpdateKevaNew" } : { update: failure === "empty" ? {} : { Result: "Error" } });
-    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
-    expect((await store.orderForCall("phone-hk"))!.state).toBe("paid");
-    expect(counts()).toEqual([1, 1, 1]);
+    expect(JSON.stringify(await respond(result))).toContain("בקרוב לאחר קבלת האישור");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(actions()).toEqual(["GetKevaId", "UpdateKevaNew"]);
     expect(db.sql.prepare("SELECT kind,status FROM payment_issues WHERE kind='phone_keva_next_date'").get()).toEqual({ kind: "phone_keva_next_date", status: "open" });
     await respond(result);
-    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+    expect(actions()).not.toContain("TashlumBodedNew");
+    expect(actions()).not.toContain("DeleteKeva");
+    expect(actions().filter(action => action === "UpdateKevaNew")).toHaveLength(1);
+    provider(String(module.category));
+    await syncKevas(env, true);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(actions()).not.toContain("TashlumBodedNew");
   });
 
   it.each(["network", "empty", "unknown", "missing transaction", "amount mismatch"])("holds a %s charge result without deleting or retrying", async failure => {
@@ -192,7 +199,7 @@ describe("in-call first monthly charge", () => {
     expect(counts()).toEqual([0, 0, 0]);
     expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
     expect(actions()).not.toContain("DeleteKeva");
-    expect(actions()).not.toContain("UpdateKevaNew");
+    expect(actions().filter(action => action === "UpdateKevaNew")).toHaveLength(1);
     expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE kind='phone_keva_charge_unknown' AND status='open'").get()).toBeTruthy();
     provider(String(module.category));
     await syncKevas(env, true);

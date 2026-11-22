@@ -45,6 +45,16 @@ export async function completePhoneKevaFirstCharge(env: Env, orderId: string): P
     const claim = await env.DB.prepare(`UPDATE phone_keva_first_charges SET state='charging' WHERE order_id=? AND state='checking'
       AND EXISTS (SELECT 1 FROM payment_orders WHERE id=? AND state='awaiting_settlement')`).bind(orderId, orderId).run();
     if (!claim.meta.changes) return;
+    const start = nowIso(), end = addMonths(start, 1);
+    const nextDate = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(end));
+    try {
+      const update = JSON.parse(await manageKeva(env, { Action: "UpdateKevaNew", KevaId: kevaId, NextDate: nextDate }));
+      if (update?.Result !== "OK") throw new Error("Next date update failed");
+    } catch {
+      await setState("unknown");
+      await issue("phone_keva_next_date", "עדכון תאריך החיוב הבא לא אושר והחיוב הראשון לא בוצע. נדרשת בדיקה בנדרים פלוס לפני ניסיון תשלום נוסף.");
+      return;
+    }
     await issue("phone_keva_charge_unknown", "החיוב הראשון נשלח לבדיקה. אין לבצע חיוב נוסף לפני בדיקת ההיסטוריה בנדרים פלוס.");
     const result = JSON.parse(await manageKeva(env, { Action: "TashlumBodedNew", MosadNumber: env.NEDARIM_MOSAD_ID!,
       KevaId: kevaId, Amount: String(enrollment.amount_agorot / 100), Currency: "1", Tashloumim: "1", Tashlumim: "1",
@@ -71,11 +81,9 @@ export async function completePhoneKevaFirstCharge(env: Env, orderId: string): P
       (str(result.Groupe) && str(result.Groupe) !== group) ||
       (result.KevaId != null && str(result.KevaId).replace(/^-/, "") !== kevaId) ||
       (result.MosadNumber != null && str(result.MosadNumber) !== env.NEDARIM_MOSAD_ID)) throw new Error("Unknown charge result");
-    const start = nowIso(), end = addMonths(start, 1);
     const charge: VerifiedPhoneCharge = { transactionId, confirmation, start, end };
     await env.DB.prepare(`UPDATE phone_keva_first_charges SET state='charged',transaction_id=?,confirmation=?,period_start=?,next_date=? WHERE order_id=?`)
       .bind(transactionId, confirmation, start, end, orderId).run();
-    await issue("phone_keva_next_date", "החיוב הראשון אושר. עדכון תאריך החיוב הבא טרם אושר; יש לבדוק בנדרים פלוס כדי למנוע חיוב כפול.");
     await env.DB.prepare("UPDATE payment_issues SET status='resolved',resolved_at=?,resolution=? WHERE order_id=? AND kind='phone_keva_charge_unknown' AND status='open'")
       .bind(nowIso(), "החיוב אושר.", orderId).run();
     try {
@@ -84,15 +92,6 @@ export async function completePhoneKevaFirstCharge(env: Env, orderId: string): P
       if (!paid) throw new Error("Activation incomplete");
     } catch {
       await issue("phone_keva_activation", "החיוב הראשון אושר אך המנוי טרם נפתח. נדרשת בדיקה לפני ניסיון תשלום נוסף.");
-    }
-    try {
-      const nextDate = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(end));
-      const update = JSON.parse(await manageKeva(env, { Action: "UpdateKevaNew", KevaId: kevaId, NextDate: nextDate }));
-      if (update?.Result !== "OK") throw new Error("Next date update failed");
-      await env.DB.prepare(`UPDATE payment_issues SET status='resolved',resolved_at=?,resolution=? WHERE order_id=? AND kind='phone_keva_next_date' AND status='open'`)
-        .bind(nowIso(), "תאריך החיוב הבא עודכן בנדרים פלוס.", orderId).run();
-    } catch {
-      // The open issue also covers an interrupted update after a successful charge.
     }
   } catch {
     await env.DB.prepare("UPDATE phone_keva_first_charges SET state='unknown' WHERE order_id=? AND state IN ('checking','charging')").bind(orderId).run();
