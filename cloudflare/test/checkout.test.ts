@@ -52,6 +52,82 @@ async function hook(data: Record<string, unknown>) {
 }
 let keva: Record<string, string> = {};
 
+const paidKeva = {
+  KevaId: "12345", Groupe: "חבילות ספיקול", Phone: "+972500000001", Amount: "49",
+  Enabled: "1", Currency: "1", Success: "1", ErrorText: "",
+};
+const paidKevaDetail = {
+  KevaId: "12345", KevaGroupe: paidKeva.Groupe, KevaPhone: "0500000001", KevaAmount: "49",
+  KevaStatus: "1", KevaCurrency: "1", KevaFrequency: "1", KevaNextDate: "19/12/26",
+  HistoryData: [{ ID: "1", Amount: "49 ₪", Date: "19/11/26", TransactionId: "902" }],
+};
+const syncPaidKeva = () => worker.fetch(new Request("https://speakcall.app/v1/admin/nedarim/kevas/sync", {
+  method: "POST", headers: { Authorization: "Bearer a" },
+}), env);
+function providerKeva(row: Record<string, unknown>, detail: Record<string, unknown>) {
+  vi.setSystemTime(new Date("2026-11-22T13:00:00Z"));
+  const actions: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+    const action = new URLSearchParams(String(init.body)).get("Action") ?? "";
+    actions.push(action);
+    if (action === "GetKevaJson") return Response.json([row]);
+    if (action === "GetKevaId") return Response.json(detail);
+    throw new Error("Unexpected provider request");
+  }));
+  return actions;
+}
+
+describe("existing Nedarim subscribers", () => {
+  it.each([49, 59])("opens paid phone and portal access for an existing ₪%s monthly payment", async amount => {
+    const actions = providerKeva({ ...paidKeva, Amount: String(amount) }, { ...paidKevaDetail,
+      KevaAmount: String(amount), HistoryData: [{ ...paidKevaDetail.HistoryData[0], Amount: amount + " ₪" }],
+    });
+    expect(await b.hasPaidAccess("c1")).toBe(false);
+    expect(await (await syncPaidKeva()).json()).toEqual({ synced: 1 });
+    expect(await (await syncPaidKeva()).json()).toEqual({ synced: 1 });
+    expect(actions).toEqual(["GetKevaJson", "GetKevaId", "GetKevaJson"]);
+    expect(db.sql.prepare("SELECT customer_id,plan_id,price_agorot,status FROM subscriptions").all()).toEqual([
+      { customer_id: "c1", plan_id: "school-step", price_agorot: amount * 100, status: "active" },
+    ]);
+    expect(db.sql.prepare("SELECT reference,amount_ils,minutes,expires_at FROM sales_receipts").all()).toEqual([
+      { reference: "nedarim:7019554:902", amount_ils: amount, minutes: 60, expires_at: "2026-12-19T00:00:00.000+00:00" },
+    ]);
+    expect(await b.hasPaidAccess("c1")).toBe(true);
+    expect(await (await req("/v1/portal/billing")).json()).toMatchObject({ subscriptions: [{ state: "active", monthly_ils: amount }] });
+    await b.save("policies", { product: "school", enabled: true }, "teacher");
+    const caller = await b.identifyCall("0500000001", "paid-call", "teacher");
+    expect(await b.hasSchoolCallbackMinutes(caller)).toBe(true);
+    expect(await b.reserveCall(caller, "teacher", "paid-call", 60)).toEqual({ mode: "paid", seconds: 60 });
+    const charge = { MosadNumber: "7019554", KevaId: "12345", Confirmation: "10", Amount: String(amount), Currency: "1" };
+    expect(await (await hook({ ...charge, TransactionId: "901" })).json()).toEqual({ ignored: true });
+    expect(await (await hook({ ...charge, TransactionId: "902" })).json()).toMatchObject({ duplicate: true });
+    vi.setSystemTime(new Date("2026-12-19T13:00:00Z"));
+    expect(await b.hasPaidAccess("c1")).toBe(false);
+    expect(await (await hook({ ...charge, TransactionId: "903" })).json()).toMatchObject({ paid: true });
+    expect(await b.hasPaidAccess("c1")).toBe(true);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()).toEqual({ n: 2 });
+  });
+
+  it.each([
+    ["declined", { ErrorText: "Card declined" }, {}],
+    ["never paid", { Success: "0" }, {}],
+    ["disabled", { Enabled: "0" }, {}],
+    ["another use of the terminal", { Groupe: "Other", }, {}],
+    ["unknown plan", { Amount: "42" }, {}],
+    ["unmatched phone", { Phone: "0500000009" }, {}],
+    ["conflicting payer", {}, { KevaPhone: "0500000009" }],
+    ["non-monthly order", {}, { KevaFrequency: "2" }],
+    ["no verified charge", {}, { HistoryData: [] }],
+    ["expired charge", {}, { HistoryData: [{ ...paidKevaDetail.HistoryData[0], Date: "19/10/26" }] }],
+    ["later cancellation", {}, { HistoryData: [...paidKevaDetail.HistoryData, { ID: "3", Date: "20/11/26" }] }],
+  ])("does not open access for %s", async (_reason, row, detail) => {
+    providerKeva({ ...paidKeva, ...row }, { ...paidKevaDetail, ...detail });
+    expect((await syncPaidKeva()).status).toBe(200);
+    expect(await b.hasPaidAccess("c1")).toBe(false);
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()).toEqual({ n: 0 });
+  });
+});
+
 it.each([false, true])("attributes reconciled payments without failing settlement on analytics errors (%s)", async failAnalytics => {
   const order = await (await req("/v1/portal/checkout", { package_id: "school-foundations", attribution })).json() as any;
   const store = new PaymentStore(b);

@@ -171,6 +171,9 @@ export class CheckoutStore {
       await this.activate(sub.id, kevaId, "");
     }
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
+    const imported = await this.db.prepare("SELECT transaction_id FROM payment_orders WHERE id=? AND channel='nedarim'")
+      .bind(sub.first_order_id).first<{ transaction_id: string }>();
+    if (imported && BigInt(transactionId) < BigInt(imported.transaction_id)) return { ignored: true };
     const subscriptions = new SubscriptionStore(this.db);
     if (!sub.entitlement_id) {
       const order = await this.db.prepare("SELECT o.id,r.id AS receipt_id,r.created_at FROM payment_orders o JOIN sales_receipts r ON r.id=o.receipt_id AND r.customer_id=o.customer_id WHERE o.id=? AND o.channel='web' AND o.state='paid'").bind(sub.first_order_id).first<{ id: string; receipt_id: string; created_at: string }>();
