@@ -433,7 +433,10 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   }
   const all = await store.business.list("packages");
   const packages = Object.fromEntries(all.map((p) => [p.id, p]));
-  if (SCHOOL_SALES_PACKAGE_IDS.every((id, i) => packageIds[i] === id && packages[id]?.active && packages[id]?.phone_enabled && canPurchaseByPhone(packages[id]))) {
+  const quotedPrices = [59, 119, 199, 690, 1490];
+  const quotedPayments = [1, 1, 1, 6, 12];
+  if (SCHOOL_SALES_PACKAGE_IDS.every((id, i) => packageIds[i] === id && packages[id]?.active && packages[id]?.phone_enabled && canPurchaseByPhone(packages[id]) &&
+    packages[id].price_ils === quotedPrices[i] && (packages[id].max_payments ?? 1) === quotedPayments[i])) {
     return {
       ...selectionMenu("isaacPackage", SALES_MENU_TEXT, "0,1,2,3,4,5,9"),
       files: env.SALES_MENU_AUDIO_URL && env.SALES_MENU_AUDIO_VERSION
@@ -447,7 +450,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     if (p && p.active && canPurchaseByPhone(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
       lines.push(p.billing === "monthly"
         ? `למנוי ${customerPackageName(p.name)}: ${p.price_ils} שקלים לחודש בהוראת קבע באשראי, הקישו ${index + 1}.`
-        : `לרכישה מיידית של ${customerPackageName(p.name)}: תוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
+        : `לרכישה מיידית של ${customerPackageName(p.name)}: תוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים ${p.duration_months && p.max_payments > 1 ? `עד ${p.max_payments} תשלומים באשראי` : "בתשלום אחד באשראי"}, הקישו ${index + 1}.`);
     }
   });
   const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 &&

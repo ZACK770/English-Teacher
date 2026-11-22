@@ -318,6 +318,28 @@ describe("phone monthly enrollment", () => {
 });
 
 describe("five-package phone sales", () => {
+  it.each(SCHOOL_SALES_PACKAGE_IDS)("quotes the current price instead of stale text or recording for %s", async id => {
+    env.SALES_MENU_AUDIO_URL = "https://example.test/menu.wav";
+    env.SALES_MENU_AUDIO_VERSION = "v1";
+    await b.save("packages", { ...await b.record("packages", id), price_ils: 321 }, id);
+    const menu = await respond();
+    expect(menu.files).not.toEqual([{ text: SALES_MENU_TEXT }]);
+    const text = JSON.stringify(menu.files);
+    expect(text).toContain("321 שקלים");
+    expect(text).not.toContain("fileLink");
+    expect(text).not.toContain("דקות");
+  });
+  it.each(["school-foundations", "school-mastery"])("quotes the current installment maximum for %s", async id => {
+    env.SALES_MENU_AUDIO_URL = "https://example.test/menu.wav";
+    env.SALES_MENU_AUDIO_VERSION = "v1";
+    await b.save("packages", { ...await b.record("packages", id), max_payments: 3 }, id);
+    const menu = await respond();
+    const text = JSON.stringify(menu.files);
+    expect(menu.files).not.toEqual([{ text: SALES_MENU_TEXT }]);
+    expect(text).toContain("עד 3 תשלומים");
+    expect(text).not.toContain("fileLink");
+    expect(text).not.toContain("דקות");
+  });
   it("uses one combined versioned recording, falling back to the exact approved text", async () => {
     expect((await respond()).files).toEqual([{ text: SALES_MENU_TEXT }]);
     env.SALES_MENU_AUDIO_URL = "https://example.test/sales.wav";
@@ -355,7 +377,7 @@ describe("five-package phone sales", () => {
     expect(await hook(event)).toMatchObject({ paid: true });
     expect(await hook(event)).toMatchObject({ paid: true, duplicate: true });
     expect(counts()).toEqual([1, 1, 0]);
-    expect(db.sql.prepare("SELECT term_months,monthly_minutes,period_number FROM subscriptions").get()).toMatchObject({ term_months: months, monthly_minutes: 300, period_number: 1 });
+    expect(db.sql.prepare("SELECT term_months,monthly_minutes,period_number FROM subscriptions").get()).toMatchObject({ term_months: months, monthly_minutes: 150, period_number: 1 });
     expect(await b.hasPaidAccess("c1")).toBe(true);
   });
 
