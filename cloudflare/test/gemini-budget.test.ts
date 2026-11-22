@@ -38,6 +38,31 @@ it("retains stale reservations as spend, frees slots, and rejects late renewals"
   });
 });
 
+it("admits and renews paid leases over the daily cap while still accounting for spend and holds", () => {
+  const ledger = newBudgetLedger(now);
+  ledger.spent = limits.daily;
+  expect(applyBudget(ledger, now, limits, "acquire", "paid", 0, true)).toMatchObject({ active_jobs: 1, reserved_usd: 0.0875 });
+  expect(ledger.leases.paid.paid).toBe(true);
+  const renewed = applyBudget(ledger, now + 10_000, limits, "check", "paid", 150_000);
+  expect(renewed.denial).toBeUndefined();
+  expect(renewed).toMatchObject({ estimated_spend_usd: 20.15, reserved_usd: 0.0875, active_jobs: 1 });
+  expect(ledger.leases.paid.until).toBe(now + 45_000);
+  expect(applyBudget(ledger, now + 10_000, limits, "acquire", "free").denial).toBe("gemini_budget_reached");
+  expect(applyBudget(ledger, now + 20_000, limits, "release", "paid", 200_000)).toMatchObject({ estimated_spend_usd: 20.2, active_jobs: 0 });
+});
+
+it("does not upgrade a free lease on check and still rejects paid jobs at concurrency or lease expiry", () => {
+  const ledger = newBudgetLedger(now);
+  const single = { ...limits, maxJobs: 1 };
+  applyBudget(ledger, now, single, "acquire", "free");
+  ledger.spent = limits.daily;
+  expect(applyBudget(ledger, now, single, "check", "free", 0, true).denial).toBe("gemini_budget_reached");
+  expect(applyBudget(ledger, now, single, "acquire", "paid", 0, true).denial).toBe("system_busy");
+  applyBudget(ledger, now, single, "release", "free");
+  expect(applyBudget(ledger, now, single, "acquire", "paid", 0, true).denial).toBeUndefined();
+  expect(applyBudget(ledger, now + 35_000, single, "check", "paid", 0, true).denial).toBe("gemini_guard_unavailable");
+});
+
 it("resets spend at UTC midnight without dropping active jobs or repeating the prior day's notice", () => {
   const start = Date.parse("2026-11-19T23:59:50Z");
   const ledger = newBudgetLedger(start);
@@ -123,6 +148,46 @@ const memoryGuard = (env: Partial<Env>) => {
   const caller = { ...env, GEMINI_BUDGET: { getByName: () => ({ fetch: (url: string, init?: RequestInit) => guard.fetch(new Request(url, init)) }) } } as unknown as Env;
   return { guard, caller, tasks };
 };
+
+it("passes paid admission and heartbeats through the guard without exempting free calls", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const { guard, caller } = memoryGuard({ GEMINI_DAILY_BUDGET_USD: "0.01", GEMINI_MAX_CONCURRENT: "1" });
+  const stopped = vi.fn();
+  await expect(acquireGeminiBudget(caller, () => 0, stopped)).rejects.toMatchObject({ reason: "gemini_budget_reached" });
+  const release = await acquireGeminiBudget(caller, () => 0.2, stopped, { paid: true });
+  await expect(acquireGeminiBudget(caller, () => 0, stopped, { paid: true })).rejects.toMatchObject({ reason: "system_busy" });
+  await vi.advanceTimersByTimeAsync(40_000);
+  expect(stopped).not.toHaveBeenCalled();
+  await release();
+  expect(await (await guard.fetch(new Request("https://budget.internal/status"))).json()).toMatchObject({ active_jobs: 0, estimated_spend_usd: 0.2 });
+});
+
+it.each(["true", 1, null, {}, []])("rejects a non-boolean paid flag: %j", async paid => {
+  const { guard } = memoryGuard({});
+  for (const op of ["acquire", "check"]) {
+    const response = await guard.fetch(new Request("https://budget.internal/" + op, {
+      method: "POST", body: JSON.stringify({ id: crypto.randomUUID(), paid }),
+    }));
+    expect(response.status).toBe(400);
+  }
+});
+
+it("fails closed for paid calls when the guard is unavailable on admission or renewal", async () => {
+  vi.useFakeTimers();
+  const stopped = vi.fn();
+  const fetch = vi.fn()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(Response.json({}))
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(Response.json({}));
+  const env = { GEMINI_BUDGET: { getByName: () => ({ fetch }) } } as unknown as Env;
+  await expect(acquireGeminiBudget(env, () => 0, stopped, { paid: true })).rejects.toMatchObject({ reason: "gemini_guard_unavailable" });
+  const release = await acquireGeminiBudget(env, () => 0, stopped, { paid: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(stopped).toHaveBeenCalledExactlyOnceWith("gemini_guard_unavailable");
+  await release();
+});
 
 it("alerts once per hour after three Gemini failures in a row and resets on success", () => {
   let result = applyGeminiOutcome(undefined, now, "failure", "credits depleted");

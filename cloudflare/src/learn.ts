@@ -6,7 +6,7 @@ import { BusinessStore } from "./business";
 import { adultControls, controlsFromSettings, type TutorControls, VOICE_OPTIONS } from "./controls";
 import { type Env, type Settings, HttpError, bearer, randomHex, sha256Hex } from "./env";
 import { GeminiLive } from "./gemini";
-import { geminiKeyForCall } from "./gemini-key";
+import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { runtimeContext } from "./pbx";
@@ -16,13 +16,14 @@ import { LearningStore } from "./learning";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; elapsedSeconds: number }
 interface LiveOptions {
+  paid?: boolean;
   storeTranscript?: boolean;
   beforeConnect?: () => Promise<void>;
   learning?: (args: unknown) => Promise<boolean>;
   intake?: (args: unknown) => Promise<boolean>;
 }
 
-async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, { storeTranscript = true, beforeConnect, learning, intake }: LiveOptions = {}): Promise<LiveResult> {
+async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, { paid = false, storeTranscript = true, beforeConnect, learning, intake }: LiveOptions = {}): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -35,7 +36,7 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
   const release = await acquireGeminiBudget(env, () => meter.usage(s).estimated_cost_usd, reason => {
     budgetError = new GeminiBudgetError(reason);
     ai.close();
-  });
+  }, { paid });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const work = async () => {
     await ai.connect();
@@ -131,6 +132,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     }
     await progress.logLatency(botId, callId, "session_started", 0, 0, { channel: "web", tier: selected.tier });
     result = await runLive(env, s, progress, botId, callId, artifact.setup_message, text, allowance.seconds, (Math.min(120, allowance.seconds) + 15) * 1000, {
+      paid: allowance.mode === "paid" && await hasPaidReceipt(env, callId),
       storeTranscript: controls.store_transcripts,
       learning: controls.lesson ? args => learning.record(customerId, callId, args) : undefined,
       intake: async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args, { lessonBotId: botId }),

@@ -558,6 +558,35 @@ it("blocks browser, PBX, and text calls at the shared budget without connecting 
   });
 });
 
+it("admits paid browser, PBX, and text lessons over the daily Gemini cap", async () => {
+  env.GEMINI_DAILY_BUDGET_USD = "0.01";
+  const { id } = await b.save("packages", PackageSchema.parse({ name: "Paid minutes", product: "school", minutes: 60, price_ils: 39, active: true }));
+  await b.receipt({ customer_id: "learner-a", package_id: id, reference: "paid-budget-test", amount_ils: 39 });
+  const connect = vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValue(new Error("Test model unavailable"));
+  const start = { type: "start", format: "pcm16;rate=8000;ch=1" };
+  const browser = { send: vi.fn(), close: vi.fn() };
+  await new TutorSession(browser as unknown as WebSocket, env, settings(env), crypto.randomUUID(), null, { customerId: "learner-a", teacherId: "" })
+    .run(JSON.stringify({ ...start, token: "portal", callId: "paid-browser" }), "student", false);
+  expect(connect).toHaveBeenCalledTimes(1);
+  const phone = { send: vi.fn(), close: vi.fn() };
+  await new TutorSession(phone as unknown as WebSocket, env, settings(env), crypto.randomUUID())
+    .run(JSON.stringify({ ...start, token: "test-channel", callId: "paid-phone", caller: "0500000001" }), "student", false);
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect((await request("/v1/bots/student/turn", tokenA, { text: "Hello" })).status).toBe(502);
+  expect(connect).toHaveBeenCalledTimes(3);
+});
+
+it("keeps complimentary minutes under the daily Gemini cap", async () => {
+  env.GEMINI_DAILY_BUDGET_USD = "0.01";
+  const { id } = await b.save("packages", PackageSchema.parse({ name: "Gift minutes", product: "school", minutes: 60, price_ils: 0, active: true }));
+  await b.receipt({ customer_id: "learner-a", package_id: id, reference: "gift-budget-test", amount_ils: 0 });
+  const connect = vi.spyOn(GeminiLive.prototype, "connect").mockRejectedValue(new Error("Test model unavailable"));
+  const phone = { send: vi.fn(), close: vi.fn() };
+  await new TutorSession(phone as unknown as WebSocket, env, settings(env), crypto.randomUUID())
+    .run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "gift-phone", caller: "0500000001" }), "student", false);
+  expect(connect).not.toHaveBeenCalled();
+});
+
 it("defaults blocked calls to the quota extension while preserving custom policy destinations", () => {
   expect(AccessPolicySchema.parse({}).blocked_extension).toBe("/88");
   expect(SCHOOL_FREE_POLICY.blocked_extension).toBe(QUOTA_EXTENSION_PATH);
