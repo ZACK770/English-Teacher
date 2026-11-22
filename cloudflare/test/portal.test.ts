@@ -8,7 +8,7 @@ import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
-import { handleCallback, quickOpening, runtimeContext, startSchool } from "../src/pbx";
+import { handleCallback, markQuickIntro, quickOpening, runtimeContext, startSchool } from "../src/pbx";
 import { adCampaignReport, matchesEmailReadBack, recordSalesTool, wordsEmail } from "../src/ad-entry";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
@@ -1246,6 +1246,66 @@ describe("real learner portal", () => {
     expect((await call("0765673575", "/99", "old-call", "&isaacMain=1")).goTo).toBe("/99/7");
     await expect(call("0765673575", "/5", "taxi-call")).rejects.toMatchObject({ status: 403 });
     await expect(call("0700000000", "/", "foreign-call")).rejects.toMatchObject({ status: 400 });
+  });
+  it("plays the Pirsumfon welcome, moves to the main menu and keeps the first-lesson sales flow across calls", async () => {
+    const pbxEnv = {
+      ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_BODY_SECRET: "body-test",
+      TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_API_KEY: "system-test",
+    } as Env;
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) } as ExecutionContext;
+    const send = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ status: "OK", errorCode: 0 }));
+    vi.stubGlobal("fetch", send);
+    const dial = (id: string, route = "ad", path = "50", phone = "0501112233", extra: Record<string, string> = {}) =>
+      worker.fetch(new Request("https://voice.example/v1/technoline/ivr/" + route, {
+        method: "POST",
+        body: new URLSearchParams({
+          callback_key: "body-test", PBXnum: "0765673575", PBXphone: phone, PBXcallId: id,
+          PBXextensionPath: path, PBXcallStatus: "CALL", ...extra,
+        }),
+      }), pbxEnv, ctx).then(r => r.json());
+    try {
+      const welcome = await dial("pirsumfon-1");
+      expect(welcome).toEqual([
+        { type: "simpleMessage", files: [{ fileLink: expect.stringContaining("/brand/phone/pirsumfon-welcome-v1.wav") }] },
+        { type: "goTo", goTo: "/" },
+      ]);
+      expect(await dial("pirsumfon-1")).toEqual(welcome);
+      expect(await dial("pirsumfon-1", "ad", "50", "0501112233", { PBXcallStatus: "HANGUP" })).toEqual({ type: "hangup" });
+      expect(await dial("outside", "ad", "51")).toMatchObject({ type: "goTo", goTo: "/7" });
+      expect(await dial("pirsumfon-hidden", "ad", "50", "anonymous")).toMatchObject({ name: "hiddenCallerEnd" });
+      await dial("pirsumfon-2", "ad", "50", "0501112244");
+      await dial("pirsumfon-3", "ad", "50", "0501112255");
+      await Promise.all(pending);
+      expect(send.mock.calls.map(([, init]) => JSON.parse(init.body as string))).toEqual([
+        expect.objectContaining({ phones: ["0501112233"], messagesType: "RH", callId: "0765674487", dialRetries: 0 }),
+        expect.objectContaining({ phones: ["0501112244"], messagesType: "RH", callId: "0765674429", dialRetries: 0 }),
+        expect.objectContaining({ phones: ["0501112255"], messagesType: "RH", callId: "0765674487", dialRetries: 0 }),
+      ]);
+      expect(send.mock.calls[0][0]).toBe("https://api.tlivr.com/campaignApi.php");
+      expect(await b.loadContext("pirsumfon-1")).not.toHaveProperty("entry");
+      expect(await dial("pirsumfon-1", "school", "1")).toMatchObject({ type: "goTo", goTo: "/7" });
+      for (const did of ["0765674487", "0765674429"]) {
+        const id = "redial-" + did;
+        expect(await dial(id, "school", "1", "0501112233", { PBXdid: did })).toMatchObject({ type: "goTo", goTo: "/7" });
+        expect(await b.loadContext(id)).toMatchObject({ entry: "ad", campaign: "pirsumfon", ad_new_caller: true });
+        expect(await quickOpening(b, id)).toContain("first SpeakCall lesson after the Pirsumfon welcome");
+        expect(await runtimeContext(b, id)).toContain("Ad caller flow");
+      }
+      await markQuickIntro(b, "pirsumfon-1", (await b.customerForCall("pirsumfon-1"))!);
+      await dial("after-first-lesson", "school", "1");
+      expect(await b.loadContext("after-first-lesson")).not.toHaveProperty("entry");
+      expect((await b.list("ad-entries")).filter(entry => entry.campaign === "pirsumfon")).toHaveLength(3);
+
+      vi.spyOn(console, "warn").mockImplementationOnce(() => undefined);
+      send.mockResolvedValueOnce(Response.json({ status: "ERROR", errorCode: 6 }));
+      expect(await dial("provider-unavailable")).toEqual(welcome);
+      await Promise.all(pending);
+      expect(console.warn).toHaveBeenCalledWith("Pirsumfon ping failed");
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
   });
   it("routes an ad press-1 to the same school teacher with an ad opening, sales tools and a campaign report", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/99" } as Env;
