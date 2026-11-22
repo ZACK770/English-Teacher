@@ -12,7 +12,7 @@ const phoneNumber = (value: string) => {
 };
 const configuration = z.object({ narration_id: z.string().min(1).max(100), inbound_enabled: z.boolean().default(false) });
 const dialOptions = z.object({ extension_id: z.string().regex(/^\d{1,20}$/), inbound_fallback: z.boolean().default(false) });
-const audioPath = "/v1/technoline/caller-messages/audio/";
+export const callerMessageAudioPath = "/v1/technoline/caller-messages/audio/message.wav";
 
 export async function callerMessageAdmin(request: Request, env: Env, path: string) {
   const match = /^\/v1\/admin\/caller-messages\/([^/]+)(\/dial)?$/.exec(path);
@@ -104,15 +104,14 @@ export async function callerMessagePlayback(env: Env, p: Record<string, string>,
   return {
     type: "audioPlayer", name, beepPlay: "NO",
     keyActions: Object.fromEntries("0 1 2 3 4 5 6 7 8 9 STAR POUND".split(" ").map(key => [key, "none"])),
-    files: [{ fileLink: env.PUBLIC_BASE_URL.replace(/\/$/, "") + audioPath + token + ".wav" }],
+    files: [{ fileLink: env.PUBLIC_BASE_URL.replace(/\/$/, "") + callerMessageAudioPath + "?token=" + token }],
   };
 }
 
-export async function callerMessageAudio(env: Env, path: string) {
-  const match = /^([0-9a-f]{48})\.wav$/.exec(path.slice(audioPath.length));
-  if (!match) throw new HttpError(404, "No caller message audio");
+export async function callerMessageAudio(env: Env, token: string | null) {
+  if (!token || !/^[0-9a-f]{48}$/.test(token)) throw new HttpError(404, "No caller message audio");
   const claim = await env.DB.prepare("SELECT narration_id,audio_hash FROM caller_messages WHERE playback_token=? AND playback_until>? AND played_at IS NULL")
-    .bind(match[1], Date.now()).first<{ narration_id: string; audio_hash: string }>();
+    .bind(token, Date.now()).first<{ narration_id: string; audio_hash: string }>();
   const audio = claim && await new BusinessStore(env.DB).getAudio(claim.narration_id);
   if (!audio || await sha256Hex(audio.wav) !== claim?.audio_hash) throw new HttpError(404, "No caller message audio");
   return new Response(audio.wav, { headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store" } });

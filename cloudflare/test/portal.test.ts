@@ -561,6 +561,10 @@ describe("one-time caller messages", () => {
     const pending = await callback("first");
     expect(pending).toMatchObject({ type: "audioPlayer", name: "isaacPersonalMessage" });
     const fileUrl = pending.files[0].fileLink as string;
+    const { origin, pathname, searchParams } = new URL(fileUrl);
+    expect(pathname).toBe("/v1/technoline/caller-messages/audio/message.wav");
+    expect(searchParams.get("token")).toMatch(/^[0-9a-f]{48}$/);
+    expect((await worker.fetch(new Request(origin + pathname), env)).status).toBe(404);
     const audio = await worker.fetch(new Request(fileUrl), env);
     expect(audio.headers.get("Content-Type")).toBe("audio/wav");
     expect((await audio.arrayBuffer()).byteLength).toBe(48_044);
