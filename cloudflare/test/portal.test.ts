@@ -1351,6 +1351,14 @@ describe("real learner portal", () => {
       vi.unstubAllGlobals();
     }
   });
+  it("opens the lesson and translator without dictating a menu phrase", async () => {
+    await b.saveContext("quick-school", { quick_entry: "school" });
+    await b.saveContext("quick-translation", { quick_entry: "translation" });
+    expect(await quickOpening(b, "quick-school")).toContain("ספיקול, פשוט לדבר. אם צריך את התפריט, מספיק לבקש.");
+    expect(await quickOpening(b, "quick-translation")).toContain("ספיקול, תרגום. אם צריך את התפריט, מספיק לבקש. מה לתרגם?");
+    expect(await runtimeContext(b, "quick-translation")).toContain("navigation request in the caller's own words");
+  });
+
   it("routes an ad press-1 to the same school teacher with an ad opening, sales tools and a campaign report", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/99" } as Env;
     const call = (id: string, campaign: string) => handleCallback(new Request(`https://x/v1/technoline/ivr/ad?key=cb&PBXcallId=${id}&PBXnum=0765673575&PBXextensionPath=%2F99&PBXphone=0501112233&campaign=${encodeURIComponent(campaign)}`), pbxEnv, settings(pbxEnv), "ad");
@@ -1439,9 +1447,15 @@ describe("real learner portal", () => {
 
   it.each([
     ["אני רוצה שיחת סיכום.", true, false],
-    ["כן", false, false],
+    ["כן", true, false],
+    ["בטח, תודה!", true, false],
+    ["Yes, please.", true, false],
+    ["לא, תודה.", false, false],
+    ["No, thanks.", false, false],
+    ["", false, false],
     ["אני לא רוצה שיחת סיכום", false, false],
     ["אני רוצה שיחת סיכום.", false, true],
+    ["Sure, that would help.", false, "Don't send me a summary."],
   ] as const)("only dials after closing, with unrevoked consent: %s / expected=%s", async (speech, accepted, revoked) => {
     const at = new Date("2026-01-04T10:00:00Z");
     vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(at);
@@ -1457,10 +1471,12 @@ describe("real learner portal", () => {
     vi.spyOn(GeminiLive.prototype, "close").mockImplementation(() => {});
     vi.spyOn(GeminiLive.prototype, "submitToolResult").mockImplementation(() => {});
     const next = vi.spyOn(GeminiLive.prototype, "next").mockResolvedValue({ type: "closed" })
+      .mockResolvedValueOnce({ type: "transcript", role: "tutor", text: "שיחת סיכום תעזור? לשלוח?" })
+      .mockResolvedValueOnce({ type: "turn_complete" })
       .mockResolvedValueOnce({ type: "transcript", role: "learner", text: speech })
       .mockResolvedValueOnce({ type: "tool_call", calls: [{ name: "request_summary_callback" }] })
       .mockResolvedValueOnce({ type: "turn_complete" });
-    if (revoked) next.mockResolvedValueOnce({ type: "transcript", role: "learner", text: "לא רוצה שיחת סיכום" });
+    if (revoked) next.mockResolvedValueOnce({ type: "transcript", role: "learner", text: typeof revoked === "string" ? revoked : "לא רוצה שיחת סיכום" });
     next.mockResolvedValueOnce({ type: "tool_call", calls: [
       { name: "record_lesson_summary", args: { summary_he: "סיכום", success_he: "הצלחה", next_step_he: "המשך", points: 42 } },
       { name: "end_session", args: { reason: "caller_requested" } },

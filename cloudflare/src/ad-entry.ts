@@ -72,16 +72,19 @@ export const PHONE_NUMBER_GUIDANCE = `If asked how to call SpeakCall again, the 
 
 export const SUMMARY_CALLBACK_TOOL = {
   name: "request_summary_callback",
-  description: "Queue one voice recap to this caller after hangup, only when they say the explicit consent phrase in this turn.",
+  description: "Request one voice recap after hangup, only when the caller clearly accepts your offer or directly requests a summary call in this turn.",
   parameters: { type: "object", properties: {} },
 };
 
-export const SUMMARY_CALLBACK_GUIDANCE = 'At a natural close after practice or when asked, offer one optional short voice recap after hangup. Say: "אפשר לקבל למספר הזה שיחה עם סיכום קצר והנקודות מהשיעור. בשביל זה, אפשר לומר: אני רוצה שיחת סיכום." Wait for that explicit request and call request_summary_callback. Only if it returns saved=true say "אקבע שיחת סיכום קצרה אחרי שנסיים; אפשר לשמור את המספר להמשך אימון." Do not promise delivery. Do not confuse it with tomorrow\'s lesson. Never ask for a phone number.';
+export const SUMMARY_CALLBACK_GUIDANCE = 'At a natural close after practice or when asked, offer one optional short voice recap after hangup. Ask naturally, e.g. "שיחת סיכום תעזור? לשלוח?" and let the caller answer in their own words. Call request_summary_callback only after a clear yes to this offer or a direct request for a summary call, in Hebrew or English. No, silence, and ambiguous or unrelated answers are not consent. If unsure, clarify once without telling the caller what to say. Only if it returns saved=true say "סגור, רשמתי שיחת סיכום קצרה." Do not promise delivery. Do not confuse it with tomorrow\'s lesson. Never ask for a phone number.';
 
-export function isSummaryCallConsent(speech: string) {
-  return /^(?:כן )?(?:אני רוצה שיחת סיכום|(?:תתקשר|תתקשרו) אלי[י]? עם (?:שיחת )?סיכום|(?:שלח|שלחו) לי שיחת סיכום)$/.test(
-    speech.normalize("NFKC").replace(/[.!?,;:]/g, " ").replace(/\s+/g, " ").trim(),
-  );
+export function revokesSummaryCall(speech: string) {
+  return /(?:אל תתקשר|אל תשלח|לא רוצה (?:שיחת )?סיכום|בלי (?:שיחת )?סיכום|בטל את שיחת הסיכום|\b(?:no summary(?: call)?|cancel (?:the )?summary call|don['’]t (?:call (?:me )?back|send (?:me )?(?:a |the )?summary))\b)/i.test(speech);
+}
+
+export function hasEligibleSummaryCallResponse(speech: string) {
+  const response = speech.normalize("NFKC").replace(/[.!?,;:"“”״]/g, " ").replace(/\s+/g, " ").trim();
+  return /\p{L}/u.test(response) && !/^(?:לא(?: תודה)?|no(?: thanks| thank you)?|nope)$/i.test(response) && !revokesSummaryCall(response);
 }
 
 export function adRuntimeContext(context: Record<string, any>): string {

@@ -235,7 +235,7 @@ export function lessonSummaryAudioText(points: number | undefined, learnerTurns:
   const result = points === undefined
     ? `היום היו ${learnerTurns} תורות דיבור בשיעור. תודה על התרגול המשותף.`
     : `בתרגול נצברו ${points} נקודות מתוך מאה. תודה על התרגול המשותף.`;
-  return `שלום, כאן ספיקול עם סיכום קצר של השיעור. ${result} אפשר לשמור את המספר שמופיע על המסך ולחייג אלינו להמשך האימון. להתראות!`;
+  return `שלום, כאן ספיקול עם סיכום קצר של השיעור. ${result} רוצים להמשיך להתאמן? שמרו את המספר שעל המסך. להתראות!`;
 }
 
 export async function callWithLessonSummary(env: Env, phone: string, callId: string, makeAudio: () => Promise<Uint8Array>, now = new Date()) {
