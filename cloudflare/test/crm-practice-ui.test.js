@@ -2,11 +2,18 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { PracticeCard, savePackageQuota } from '../../src/components/dashboard/CrmPractice';
-const practice = { current_streak: 0, best_streak: 0, today: { day: '2026-06-10' }, dates: [], week: { done: 0, target: 3 }, month: { minutes_used: 0, minutes_quota: null }, reminder_events: [] };
+const practice = { reminder: null, current_streak: 0, best_streak: 0, today: { day: '2026-06-10' }, dates: [], week: { done: 0, target: 3 }, month: { minutes_used: 0, minutes_quota: null }, reminder_events: [] };
 describe('CRM practice card', () => {
+  it.each([true, false])('shows reminder time, Hebrew weekdays and active=%s', active => {
+    const html = renderToStaticMarkup(createElement(PracticeCard, { practice: { ...practice, reminder: { time_local: '18:30', weekdays: [0, 2, 4], active } } }));
+    const text = html.replace(/<[^>]*>/g, '');
+    expect(text).toContain('תזכורת: 18:30 · א׳ ג׳ ה׳ · ' + (active ? 'פעילה' : 'מושבתת'));
+    expect(html).toContain('<bdi dir="ltr">18:30</bdi>');
+  });
   it('renders empty practice and an unset quota', () => {
     const html = renderToStaticMarkup(createElement(PracticeCard, { practice }));
     expect(html).toContain('תרגול יומי');
+    expect(html).toContain('אין תזכורת מוגדרת');
     expect(html).toContain('טרם נרשמו תזכורות.');
     expect(html).toContain('לא הוגדרה מכסה');
     expect(html).toContain('פנימי — לא מוצג ללקוח');
