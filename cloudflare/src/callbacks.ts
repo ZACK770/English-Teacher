@@ -304,7 +304,7 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   if (preferred && (preferred.getTime() < Date.parse(now) || preferred.getTime() > Date.parse(now) + 30 * 86400000)) throw new HttpError(422, "Invalid preferred_at");
   const scheduled = body.timing === "now" ? new Date(now) : preferred ?? parsePreferredTime(body.preferred_time, new Date(now)) ?? new Date(now);
   const nextAttempt = (body.timing === "now" ? nextImmediateSlot(scheduled) : nextCallingSlot(scheduled)).toISOString();
-  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND source NOT IN ('lesson_followup','lesson_summary') LIMIT 1")
+  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND source NOT IN ('lesson_followup','lesson_summary','sales_offer') LIMIT 1")
     .bind(phone, new Date(time - 86400000).toISOString()).first<{ id: string }>();
   if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
   const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "unknown");

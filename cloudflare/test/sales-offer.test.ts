@@ -70,6 +70,20 @@ describe("sales offers", () => {
     expect(await b.record("sales-offers", offerId)).toMatchObject({ expires_at: "2026-06-15T20:59:59.000Z" });
     expect(offerSchedule(new Date("2026-06-18T12:00:00Z")).at).toBe("2026-06-20T17:00:00.000Z");
   });
+  it("does not deduplicate a website callback against an automated offer, but still deduplicates website requests", async () => {
+    await selectSalesOffers(env);
+    env.SALES_OFFER_MODE = "off";
+    const submit = () => submitCallback(new Request("https://example.test", { method: "POST", body: JSON.stringify({
+      name: "Learner", phone: "0501111111", for_whom: "self", timing: "scheduled", consent: true, source: "landing",
+    }) }), env);
+    const first = await submit();
+    expect(first.status).toBe(201);
+    const result = await first.json() as { id: string };
+    expect(result.id).not.toBe(offerId);
+    expect(await (await submit()).json()).toMatchObject({ id: result.id, duplicate: true });
+    expect(sql.prepare("SELECT source FROM callback_requests ORDER BY source").all()).toEqual([{ source: "landing" }, { source: "sales_offer" }]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("has no candidates for empty history or hidden phones", async () => {
     sql.prepare("DELETE FROM console_records WHERE kind='ivr-events'").run();
     await selectSalesOffers(env);
