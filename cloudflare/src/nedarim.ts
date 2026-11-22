@@ -1,5 +1,13 @@
 import { type Env, HttpError } from "./env";
 
+export function providerDay(value: unknown) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/.exec(String(value ?? "").trim());
+  if (!match) return "";
+  const [, day, month, year] = match;
+  const date = `${year.length === 2 ? "20" + year : year}-${month}-${day}T00:00:00.000+00:00`;
+  return Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date.slice(0, 10) ? date : "";
+}
+
 export async function manageKeva(env: Env, fields: Record<string, string>) {
   try {
     if (!env.NEDARIM_MOSAD_ID || !env.NEDARIM_API_KEY) throw new Error("Missing billing configuration");

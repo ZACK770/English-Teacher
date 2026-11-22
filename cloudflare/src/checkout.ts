@@ -5,7 +5,7 @@ import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
 import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
-import { manageKeva as manage } from "./nedarim";
+import { manageKeva as manage, providerDay } from "./nedarim";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -222,6 +222,8 @@ export class CheckoutStore {
   async kevaRefused(data: Record<string, any>) {
     const sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
     if (!sub) return { ignored: true };
+    const refusalDate = providerDay(String(data.ErrorDate ?? "").trim().split(/\s/)[0]);
+    if (refusalDate && sub.last_charge_at && refusalDate.slice(0, 10) < sub.last_charge_at.slice(0, 10)) return { ignored: true };
     const now = nowIso();
     await this.db.batch([
       this.db.prepare("INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("keva_refusal:" + JSON.stringify(data))).slice(0, 32), sub.first_order_id, "keva_refusal", safeMessage(data.Message ?? "חיוב הוראת הקבע סורב"), now),

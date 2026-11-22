@@ -101,11 +101,17 @@ describe("existing Nedarim subscribers", () => {
     const charge = { MosadNumber: "7019554", KevaId: "12345", Confirmation: "10", Amount: String(amount), Currency: "1" };
     expect(await (await hook({ ...charge, TransactionId: "901" })).json()).toEqual({ ignored: true });
     expect(await (await hook({ ...charge, TransactionId: "902" })).json()).toMatchObject({ duplicate: true });
+    const refusal = { MosadNumber: "7019554", KevaId: "12345", Status: "Error", Message: "Declined" };
+    expect(await new PaymentStore(b).refusal({ ...refusal, ErrorDate: "18/11/2026 17:11" }, "7019554")).toEqual({ ignored: true });
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "active" });
     vi.setSystemTime(new Date("2026-12-19T13:00:00Z"));
     expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(await (await hook({ ...charge, TransactionId: "903" })).json()).toMatchObject({ paid: true });
     expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()).toEqual({ n: 2 });
+    vi.setSystemTime(new Date("2027-01-19T13:00:00Z"));
+    expect(await (await hook(refusal)).json()).toMatchObject({ recorded: true });
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
   });
 
   it.each([

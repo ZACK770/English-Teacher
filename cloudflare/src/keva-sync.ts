@@ -1,6 +1,6 @@
 import { BusinessStore, PackageSchema } from "./business";
 import { type Env, nowIso, sha256Hex } from "./env";
-import { manageKeva } from "./nedarim";
+import { manageKeva, providerDay } from "./nedarim";
 import { agorot } from "./payments";
 import { visiblePhone } from "./phone";
 import { addMonths, SubscriptionStore } from "./subscriptions";
@@ -8,14 +8,6 @@ import { addMonths, SubscriptionStore } from "./subscriptions";
 const str = (value: unknown) => (value == null ? "" : String(value)).trim();
 const tail9 = (phone: string) => phone.replace(/\D/g, "").slice(-9);
 const LEGACY_GROUP = "חבילות ספיקול";
-
-function providerDay(value: unknown) {
-  const match = /^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/.exec(str(value));
-  if (!match) return "";
-  const [, day, month, year] = match;
-  const date = `${year.length === 2 ? "20" + year : year}-${month}-${day}T00:00:00.000+00:00`;
-  return Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date.slice(0, 10) ? date : "";
-}
 
 async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: string) {
   if (!/^\d{1,20}$/.test(kevaId) || str(row.Groupe) !== LEGACY_GROUP || str(row.Enabled) !== "1" ||
