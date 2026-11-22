@@ -146,6 +146,23 @@ it("invites another free call instead of claiming the whole trial is over", asyn
   await running;
 });
 
+it("does not instruct an invented recap at the earlier closing stage", async () => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.addContext = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.lessonDurationMs = 40000;
+  tutor.allowanceMs = 120000;
+  tutor.meteredAt = Date.now() - 30000;
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.meter.learnerTurns).toBe(0);
+  expect(tutor.ai.addContext).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("If no actual practice happened, do not give a practice recap"));
+  expect(tutor.ai.addContext.mock.calls[0][0]).toContain("Report only observed results from this connection");
+  expect(tutor.finalSent).toBe(false);
+  tutor.stop();
+  await running;
+});
+
 it.each([0, null])("does not request quota closing without an active allowance clock: %s", async clock => {
   vi.useFakeTimers();
   const { tutor } = session();

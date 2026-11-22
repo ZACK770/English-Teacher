@@ -720,7 +720,7 @@ export class TutorSession {
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.finalSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
-          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
+          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only observed results from this connection. If no actual practice happened, do not give a practice recap or claim practice happened; offer one simple practice question instead. Never invent a recap. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
           this.closingSent = true;
         }
       }
