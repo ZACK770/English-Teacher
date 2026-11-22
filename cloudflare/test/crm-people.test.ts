@@ -55,6 +55,71 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
   insert("subscriptions", { id, customer_id: owner, plan_id: "plan", status, price_agorot: 100, started_at: now, created_at: now, updated_at: now });
 }
 
+describe("CRM subscription access", () => {
+  it("requires an owner and keeps the billing status and minutes unchanged when suspending or restoring", async () => {
+    customer();
+    customer("member", "0501234568");
+    planAndSubscription("person1", "active");
+    insert("subscription_members", { subscription_id: "sub", customer_id: "member", added_at: now });
+    const end = "2099-01-01T00:00:00+00:00";
+    sql.prepare("UPDATE subscriptions SET current_period_end=? WHERE id='sub'").run(end);
+    insert("sales_receipts", { id: "r", customer_id: "person1", package_id: "plan", product: "school", reference: "receipt", amount_ils: 100, vat_rate: 0, minutes: 20, expires_at: end, created_at: now, subscription_id: "sub" });
+    const stampBefore = sql.prepare("SELECT status,current_period_end,updated_at FROM subscriptions").get();
+    const receiptsBefore = sql.prepare("SELECT * FROM sales_receipts").all();
+    const store = new BusinessStore(env.DB);
+    await store.save("policies", { product: "school", enabled: true, opening_seconds: 420, free_calls_month: 2 }, "teacher1");
+    expect(await store.hasPaidAccess("member")).toBe(true);
+    expect((await request("subscriptions/sub/suspend", false, "POST")).status).toBe(401);
+    expect((await request("subscriptions/sub/suspend")).status).toBe(405);
+    insert("admin_users", { id: "staff", username: "staff", display_name: "staff", role: "staff", created_at: now });
+    insert("admin_sessions", { token_hash: await sha256Hex("a".repeat(64)), user_id: "staff", created_at: now, expires_at: "2099-01-01" });
+    const asStaff = new Request("https://speakcall.app/v1/admin/crm/subscriptions/sub/suspend", {
+      method: "POST", headers: { Cookie: "admin_session=" + "a".repeat(64), Origin: "https://speakcall.app" },
+    });
+    expect((await worker.fetch(asStaff, env)).status).toBe(403);
+    expect((await request("subscriptions/not-found/suspend", true, "POST")).status).toBe(404);
+    const stopped = await (await request("subscriptions/sub/suspend", true, "POST")).json();
+    expect(stopped).toMatchObject({ id: "sub", access_suspended_at: expect.any(String) });
+    expect(await (await request("subscriptions/sub/suspend", true, "POST")).json()).toEqual(stopped);
+    expect(await store.hasPaidAccess("person1")).toBe(false);
+    expect(await store.hasPaidAccess("member")).toBe(false);
+    expect(await store.hasSchoolCallbackMinutes("member")).toBe(false);
+    expect(await store.reserveCall("person1", "teacher1", "phone", 60)).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(await store.reserveCall("member", "teacher1", "web", 60, "text")).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(await store.reserveCall("member", "translator1", "translator", 60)).toMatchObject({ seconds: 60, mode: "unrestricted" });
+    expect(await (await request("subscriptions/sub/restore", true, "POST")).json()).toEqual({ id: "sub", access_suspended_at: null });
+    expect(await store.hasPaidAccess("person1")).toBe(true);
+    expect(await store.hasPaidAccess("member")).toBe(true);
+    expect(await store.reserveCall("person1", "teacher1", "restored", 60)).toMatchObject({ seconds: 60, mode: "paid" });
+    expect(sql.prepare("SELECT status,current_period_end,updated_at FROM subscriptions").get()).toEqual(stampBefore);
+    expect(sql.prepare("SELECT * FROM sales_receipts").all()).toEqual(receiptsBefore);
+    expect(sql.prepare("SELECT actor,path,status FROM admin_audit_log WHERE path LIKE '%/restore'").get())
+      .toMatchObject({ actor: "bearer", path: "/v1/admin/crm/subscriptions/sub/restore", status: 200 });
+  });
+});
+
+describe("CRM voicemail inbox", () => {
+  it("lists transcripts for admins only and filters precisely by customer", async () => {
+    customer();
+    customer("other", "0501234568");
+    for (const [index, customerId] of ["person1", "other", "unknown"].entries()) {
+      insert("ivr_voicemails", { id: String(index).repeat(64), system_phone: "system", file_id: "file" + index, customer_id: customerId,
+        caller_key: "hash", created_at: now, intake_day: now.slice(0, 10), status: "ready", transcript: "test message " + index, audio_ready: 1 });
+    }
+    const path = "voicemails?customer_id=person1";
+    expect((await request(path, false)).status).toBe(401);
+    expect((await request("voicemails/" + "0".repeat(64) + "/audio", false)).status).toBe(401);
+    const result = await request(path);
+    expect(result.headers.get("Cache-Control")).toBe("no-store");
+    const { items, next } = await result.json() as { items: unknown[]; next: string | null };
+    expect(items).toEqual([expect.objectContaining({ customer_id: "person1", transcript: "test message 0", audio_ready: 1 })]);
+    expect(next).toBeNull();
+    expect(await (await request("voicemails")).json()).toMatchObject({ items: [
+      { customer_id: null }, { customer_id: "other" }, { customer_id: "person1" },
+    ] });
+  });
+});
+
 describe("CRM customer reset", () => {
   it.each([false, true])("prepares no compound SQL during reset with linked history %s", async history => {
     customer();
@@ -320,6 +385,17 @@ describe("CRM status priority", () => {
   });
 });
 describe("CRM read-only endpoints", () => {
+  it("counts returning customers once on every day they were active", async () => {
+    customer(); session();
+    const earlier = new Date(Date.parse(now) - 2 * 86400000).toISOString();
+    event("ivr-events", { route: "main", at: earlier });
+    event("ivr-events", { route: "school", at: earlier });
+    const { days } = await (await request("analytics")).json() as any;
+    expect(days).toEqual(expect.arrayContaining([
+      expect.objectContaining({ date: earlier.slice(0, 10), active: 1, calls: 0 }),
+      expect.objectContaining({ date: now.slice(0, 10), active: 1, calls: 1 }),
+    ]));
+  });
   it("requires admin and handles empty/not found/invalid filters/methods", async () => {
     expect((await request("people", false)).status).toBe(401);
     expect(await (await request("people")).json()).toMatchObject({ items: [], total: 0, cursor: null, counts: { paying: 0 } });
@@ -374,6 +450,7 @@ describe("CRM read-only endpoints", () => {
     expect((await (await request("people")).json() as any).items[0].status).toBe("callback_pending");
     sql.prepare("INSERT INTO sales_receipts VALUES ('r1','person1','p1','school','test',59,0.18,100,?,?,NULL,NULL)").run(now, now);
     expect((await (await request("people")).json() as any).items[0]).toMatchObject({ status: "paying", revenue_ils: 59 });
+    expect(await (await request("analytics")).json()).toMatchObject({ totals: { callbacks_waiting: 1 }, statuses: { paying: 1, callback_pending: 0 } });
   });
   it.each(["queued", "dialing", "done", "dialed", "failed"])("uses the matching callback's %s state instead of a stale lesson followup", async (status) => {
     customer();
@@ -404,5 +481,40 @@ describe("CRM read-only endpoints", () => {
     expect(result.journey).toEqual(expect.arrayContaining([expect.objectContaining({ label: "תפריט ראשי", input: { isaacMain: "2" }, destination: "/99/2", call_id: "call1" })]));
     expect(await (await request("calls/call1/transcript")).json()).toMatchObject({ turns: [{ role: "learner", text: "Hello" }], recording: null });
     expect(await (await request("calls/empty/transcript")).json()).toMatchObject({ turns: [] });
+  });
+  it("provides real analytics, smart multi-term search and sortable customer columns", async () => {
+    customer(); customer("person2", "0507654321"); session();
+    sql.prepare("UPDATE console_records SET body=? WHERE kind='customers' AND id='person1'").run(JSON.stringify({ name: "יעל כהן", phone: "0501234567", source: "קמפיין נובמבר", notes: "מבקשת שיעור ערב" }));
+    const analytics = await (await request("analytics")).json() as any;
+    expect(analytics).toMatchObject({ totals: { leads: 2, customers_with_calls: 1, calls: 1, minutes: 2 }, statuses: { trial: 1, new: 1 } });
+    expect(analytics.sources).toEqual(expect.arrayContaining([expect.objectContaining({ source: "קמפיין נובמבר", leads: 1, trials: 1 })]));
+    expect(analytics.days).toHaveLength(30);
+    expect((await (await request("people?q=יעל%20ערב")).json() as any).items).toHaveLength(1);
+    const sorted = await (await request("people?sort=name&direction=desc")).json() as any;
+    expect(sorted.items.map((p: any) => p.id)).toEqual(["person1", "person2"]);
+    expect((await request("people?sort=not-a-column")).status).toBe(422);
+  });
+  it("excludes translator and navigation activity from the English-school CRM", async () => {
+    customer(); session("english"); session("translate"); session("navigate");
+    sql.prepare("INSERT INTO bots(id,label,role,created_at,updated_at) VALUES ('translator-bot','תרגומון','translator',?,?),('voice-navigator-live','ניווט','custom',?,?)").run(now, now, now, now);
+    sql.prepare("UPDATE call_customers SET bot_id='translator-bot' WHERE call_id='translate'").run();
+    sql.prepare("UPDATE call_customers SET bot_id='voice-navigator-live' WHERE call_id='navigate'").run();
+    event("ivr-events", { call_id: "translate", route: "translator" });
+    const card = await (await request("people/person1")).json() as any;
+    expect(card.calls.map((c: any) => c.call_id)).toEqual(["english"]);
+    expect(card).toMatchObject({ calls_count: 1, minutes_used: 2, card_payment: { available: false } });
+    expect(card.journey.some((step: any) => step.call_id === "translate" || step.call_id === "navigate")).toBe(false);
+  });
+});
+
+describe("CRM customer editing", () => {
+  it("preserves the saved teacher when the profile form omits it", async () => {
+    await new BusinessStore(env.DB).save("customers", { name: "לקוח", phone: "0501234567", preferred_bot: "teacher1" }, "person1");
+    const update = (extra: Record<string, string>) => worker.fetch(new Request("https://speakcall.app/v1/admin/business/customers/person1", {
+      method: "PUT", headers: { Authorization: "Bearer crm-test-secret", "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "לקוח", phone: "0501234567", notes: "הערה", ...extra }),
+    }), env);
+    expect(await (await update({})).json()).toMatchObject({ notes: "הערה", preferred_bot: "teacher1" });
+    expect(await (await update({ preferred_bot: "" })).json()).toMatchObject({ preferred_bot: "" });
   });
 });

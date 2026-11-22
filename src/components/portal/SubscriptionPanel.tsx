@@ -5,6 +5,7 @@ import "./subscriptions.css";
 export type SubscriptionSummary = {
   id: string; plan_name: string; status: string; owner: boolean; price_agorot: number; renewal_amount_agorot: number;
   term_months: number | null; current_period_start: string; current_period_end: string; pause_until: string | null;
+  access_suspended_at?: string | null;
   pause_days_remaining: number; rollover_minutes: number; rollover: { minutes: number; expires_at: string }[];
   guarantee_status: string | null; extension_months: number; members: { customer_id: string; name: string; phone: string }[];
 };
@@ -19,7 +20,7 @@ function errorMessage(error: unknown) {
   return "הפעולה לא הושלמה. בדקו שהמנוי פעיל, שנותרו ימי הקפאה, שהאסמכתה ייחודית ושלא חרגתם מארבעה בני משפחה. אפשר לנסות שוב או לפנות לתמיכה.";
 }
 
-export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh }: { token: string; customerId?: string; subscriptions?: SubscriptionSummary[]; onRefresh?: () => Promise<void> }) {
+export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh, manageAccess = false }: { token: string; customerId?: string; subscriptions?: SubscriptionSummary[]; onRefresh?: () => Promise<void>; manageAccess?: boolean }) {
   const admin = !!customerId;
   const [items, setItems] = useState<SubscriptionSummary[]>(subscriptions ?? []);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -56,6 +57,22 @@ export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh 
     catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   };
+  const changeAccess = async (sub: SubscriptionSummary) => {
+    const restore = !!sub.access_suspended_at;
+    if (!confirm(restore
+      ? 'להסיר את ההשעיה הידנית? החזרה לתרגול כפופה לתוקף המנוי וליתרת הדקות.'
+      : 'להשעות את גישת המנוי לתרגול בטלפון ובאתר, גם לבני המשפחה? החיוב לא ישתנה.')) return;
+    setBusy(true); setError(""); setNote("");
+    try {
+      const result = await portalRequest<Pick<SubscriptionSummary, 'id' | 'access_suspended_at'>>(
+        "/v1/admin/crm/subscriptions/" + encodeURIComponent(sub.id) + (restore ? "/restore" : "/suspend"), token, {});
+      setItems(current => current.map(item => item.id === result.id ? { ...item, access_suspended_at: result.access_suspended_at } : item));
+      setNote(restore ? "ההשעיה הידנית הוסרה." : "הגישה דרך המנוי הושעתה.");
+    } catch (e) {
+      if (e instanceof PortalError && e.status === 401) window.dispatchEvent(new Event('admin-session-expired'));
+      setError("לא הצלחנו לעדכן את הגישה למנוי. נסו שוב.");
+    } finally { setBusy(false); }
+  };
   const selectedPlan = plans.find(p => p.id === planId);
   return <section className={"subscription-panel " + (admin ? "subscription-admin" : "")} dir="rtl" aria-label={admin ? "מנוי" : "המנוי שלי"}>
     <h3>{admin ? "מנוי" : "המנוי שלי"}</h3>
@@ -69,13 +86,13 @@ export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh 
         <small>רישום זכאות בלבד — לא מתבצע חיוב אשראי.</small>
       </div>}
       {!items.length && !error && <p>עדיין אין מנוי בחשבון.</p>}
-      {items.map(sub => <SubscriptionCard key={sub.id} sub={sub} admin={admin} act={act} />)}
+      {items.map(sub => <SubscriptionCard key={sub.id} sub={sub} admin={admin} act={act} changeAccess={manageAccess && admin ? changeAccess : undefined} />)}
     </fieldset>
     {busy && <p role="status">מעדכנים את המנוי…</p>}
   </section>;
 }
 
-function SubscriptionCard({ sub, admin, act }: { sub: SubscriptionSummary; admin: boolean; act: (path: string, body?: unknown, method?: string) => Promise<void> }) {
+function SubscriptionCard({ sub, admin, act, changeAccess }: { sub: SubscriptionSummary; admin: boolean; act: (path: string, body?: unknown, method?: string) => Promise<void>; changeAccess?: (sub: SubscriptionSummary) => Promise<void> }) {
   const [days, setDays] = useState(7);
   const [reference, setReference] = useState("");
   const [name, setName] = useState("");
@@ -84,6 +101,11 @@ function SubscriptionCard({ sub, admin, act }: { sub: SubscriptionSummary; admin
   const path = "/" + sub.id;
   return <article className="subscription-card">
     <div className="subscription-heading"><strong>{sub.plan_name}</strong><span>{statuses[sub.status] || "לא ידוע"}</span></div>
+    {sub.access_suspended_at && <p className="subscription-error">הגישה דרך המנוי הושעתה על ידי מנהל.</p>}
+    {changeAccess && (sub.status !== "expired" || sub.access_suspended_at) && <div className="subscription-actions">
+      <button type="button" onClick={() => void changeAccess(sub)}>{sub.access_suspended_at ? "פתיחת גישה מחדש" : "השעיית גישה"}</button>
+      <small>גישה לתרגול בלבד, ללא שינוי בחיוב.</small>
+    </div>}
     {!admin && !sub.owner && <p className="subscription-note">אתם חלק ממנוי משפחתי. הדקות משותפות, ההתקדמות אישית. ניהול המנוי אצל בעל החשבון.</p>}
     <dl>
       <div><dt>{sub.term_months ? "מחיר המסלול הנעול" : "מחיר חודשי נעול"}</dt><dd>{money(sub.price_agorot)}{sub.term_months ? ` ל־${sub.term_months} חודשים` : " לחודש"}</dd></div>

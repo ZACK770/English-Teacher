@@ -22,7 +22,6 @@ import { OverviewView } from './OverviewView';
 import { CampaignsView } from './CampaignsView';
 import { EconomicsExcelView } from './EconomicsExcelView';
 import { BotsView } from './BotsView';
-import { CustomersView } from './CustomersView';
 import { CoursesView } from './CoursesView';
 import { PackagesView } from './PackagesView';
 import { NarrationsView } from './NarrationsView';
@@ -33,18 +32,19 @@ import { ConnectionsView } from './ConnectionsView';
 interface DashboardLayoutProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
+  children?: React.ReactNode;
 }
 
-export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, onSelectTab }) => {
+export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, onSelectTab, children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const navItems = [
+    { id: 'customers', label: 'לקוחות ו־CRM', icon: Users },
     { id: 'overview', label: 'סקירה כללית', icon: LayoutDashboard },
     { id: 'analytics', label: 'אנליטיקס', icon: Activity },
     { id: 'campaigns', label: 'קמפיינים ואינטייק', icon: Mail, badge: 'A/B' },
     { id: 'economics', label: 'אקסל רווח ועלויות', icon: Table, badge: 'חדש' },
     { id: 'bots', label: 'מורים ובוטים (שוכי)', icon: Bot },
-    { id: 'customers', label: 'לקוחות ו-CRM', icon: Users },
     { id: 'courses', label: 'קורסים ומסלולים', icon: GraduationCap },
     { id: 'packages', label: 'חבילות וסליקה', icon: CreditCard },
     { id: 'narrations', label: 'קריינות IVR', icon: Volume2 },
@@ -142,14 +142,14 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
       </aside>
 
       {/* Main Content Area */}
-      <main className="dashboard-main flex-1 p-6 bg-[#0b0f17]">
+      <main className={`dashboard-main flex-1 bg-[#0b0f17] ${currentTab === 'customers' ? '' : 'p-6'}`}>
         <div className="max-w-7xl mx-auto">
+          {children}
           {currentTab === 'overview' && <OverviewView onNavigate={onSelectTab} />}
           {currentTab === 'analytics' && <AnalyticsView />}
           {currentTab === 'campaigns' && <CampaignsView />}
           {currentTab === 'economics' && <EconomicsExcelView />}
           {currentTab === 'bots' && <BotsView />}
-          {currentTab === 'customers' && <CustomersView />}
           {currentTab === 'courses' && <CoursesView />}
           {currentTab === 'packages' && <PackagesView />}
           {currentTab === 'narrations' && <NarrationsView />}

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { useApp } from '../../store/AppContext';
 import { Customer } from '../../types';
 import { Users, Plus, Search, ExternalLink, PhoneCall, Copy, Check, FileText } from 'lucide-react';
-import { VoicemailInbox } from './VoicemailInbox';
 import { SubscriptionPanel } from '../portal/SubscriptionPanel';
 import { portalRequest } from '../portal/portalApi';
 
@@ -99,7 +98,6 @@ export const CustomersView: React.FC = () => {
         </button>
       </div>
 
-      <VoicemailInbox customerIds={new Set(customers.map(customer => customer.id))} onOpenCustomer={setSelectedCustomerId} />
 
       {/* Search Toolbar */}
       <label className="block text-xs text-[#718087]">מפתח ניהול API<input aria-label="מפתח ניהול API" type="password" autoComplete="off" className="border rounded-lg p-2 mr-2" value={adminToken} onChange={e => setAdminToken(e.target.value)} /></label>

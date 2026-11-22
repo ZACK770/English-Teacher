@@ -144,7 +144,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   const ok = (v: unknown, status = 200) => Response.json(v, { status });
   if (path === "/v1/admin/analytics" && method === "GET") return analyticsSummary(request, env);
   if (path === "/v1/admin/crm/sync" && method === "POST") return ok(await syncCrm(env));
-  if (path === "/v1/admin/crm/voicemails" && method === "GET") return Response.json(await listVoicemails(env, url.searchParams.get("before")), { headers: { "Cache-Control": "no-store" } });
+  if (path === "/v1/admin/crm/voicemails" && method === "GET") return Response.json(await listVoicemails(env, url.searchParams.get("before"), url.searchParams.get("customer_id")), { headers: { "Cache-Control": "no-store" } });
   const voicemail = path.match(/^\/v1\/admin\/crm\/voicemails\/([a-f0-9]{64})\/audio$/);
   if (voicemail && method === "GET") return voicemailAudio(env, voicemail[1]);
   if (path === "/v1/admin/ad-campaigns" && method === "GET") return ok(await adCampaignReport(env));
@@ -250,7 +250,11 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
     if (!kind || !MODELS[kind]) throw new HttpError(404, "Not found");
     if (method === "GET" && seg.length === 4) return ok({ items: await b.list(kind) });
     if ((method === "POST" && seg.length === 4) || (method === "PUT" && seg.length === 5)) {
-      const parsed = MODELS[kind].safeParse(await json(request));
+      const input = await json(request);
+      if (kind === "customers" && method === "PUT" && input && typeof input === "object" && !Object.hasOwn(input, "preferred_bot")) {
+        input.preferred_bot = (await b.record("customers", seg[4]))?.preferred_bot ?? "";
+      }
+      const parsed = MODELS[kind].safeParse(input);
       if (!parsed.success) throw new HttpError(422, "נתונים לא תקינים או מספר טלפון שכבר רשום");
       try { return ok(await b.save(kind, parsed.data, seg[4] ?? null), method === "POST" ? 201 : 200); }
       catch { throw new HttpError(422, "נתונים לא תקינים או מספר טלפון שכבר רשום"); }

@@ -49,6 +49,15 @@ describe("subscription UI states", () => {
     expect(html).toContain("הערכת אחריות");
     expect(html).not.toContain("ניהול המנוי אצל בעל החשבון");
   });
+  it("shows access management only in the CRM and explains that billing is unchanged", () => {
+    const crm = subscriptions => renderToStaticMarkup(createElement(SubscriptionPanel, { token: "", customerId: "owner", manageAccess: true, subscriptions }));
+    const suspended = { ...sub, access_suspended_at: "2026-01-01" };
+    expect(crm([sub])).toContain("השעיית גישה");
+    expect(crm([sub])).toContain("ללא שינוי בחיוב");
+    expect(crm([suspended])).toContain("פתיחת גישה מחדש");
+    expect(render([suspended])).toContain("הגישה דרך המנוי הושעתה");
+    expect(render([suspended])).not.toContain("פתיחת גישה מחדש");
+  });
   it("labels prepaid mastery prices as a term price rather than a monthly charge", () => {
     const html = render([{ ...sub, term_months: 12, price_agorot: 149000 }]);
     expect(html).toContain("מחיר המסלול הנעול");
