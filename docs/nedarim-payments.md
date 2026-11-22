@@ -1,5 +1,20 @@
 # Nedarim Plus telephone payments
 
+## Existing SpeakCall standing orders (Cloudflare)
+
+The hourly standing-order sync imports monthly orders in the Nedarim category
+`חבילות ספיקול` only if the payer matches an existing primary phone and the
+latest charge is confirmed, positive, and still covers the current period.
+An enabled order alone is not proof of payment. The legacy ₪49 rate uses the
+Step plan's minutes and keeps its actual rate; other rates must match exactly
+one active monthly school plan. Unknown phones, prices and conflicts are left
+untouched. Website checkout remains separate.
+
+The import creates the paid receipt and subscription atomically without
+charging or changing the order in Nedarim. Subsequent charges use the existing
+signed webhook and admin reconciliation. An operator can run the same sync
+with authenticated `POST /v1/admin/nedarim/kevas/sync`.
+
 The existing `/99/3` sales callback now offers active, positive-price packages.
 No package prices or commercial policies are silently created or activated.
 School and translator entitlements remain separate in the existing wallet.

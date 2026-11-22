@@ -5,7 +5,7 @@ import { type Env, HttpError, nowIso, randomHex, sha256Hex } from "./env";
 import { PREFIX, agorot, safeMessage } from "./payments";
 import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
-import { manageKeva as manage } from "./nedarim";
+import { manageKeva as manage, providerDay } from "./nedarim";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -171,6 +171,9 @@ export class CheckoutStore {
       await this.activate(sub.id, kevaId, "");
     }
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
+    const imported = await this.db.prepare("SELECT transaction_id FROM payment_orders WHERE id=? AND channel='nedarim'")
+      .bind(sub.first_order_id).first<{ transaction_id: string }>();
+    if (imported && BigInt(transactionId) < BigInt(imported.transaction_id)) return { ignored: true };
     const subscriptions = new SubscriptionStore(this.db);
     if (!sub.entitlement_id) {
       const order = await this.db.prepare("SELECT o.id,r.id AS receipt_id,r.created_at FROM payment_orders o JOIN sales_receipts r ON r.id=o.receipt_id AND r.customer_id=o.customer_id WHERE o.id=? AND o.channel='web' AND o.state='paid'").bind(sub.first_order_id).first<{ id: string; receipt_id: string; created_at: string }>();
@@ -207,9 +210,10 @@ export class CheckoutStore {
     const expected = await subscriptions.renewalAmount(sub.entitlement_id);
     const amount = agorot(data.Amount);
     const now = nowIso();
+    const chargedAt = providerDay(String(data.TransactionTime ?? "").trim().split(/\s/)[0]) || now;
     const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate, statements: [
       ...(amount === expected ? [] : [this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("subscription_amount_difference:" + reference)).slice(0, 32), sub.first_order_id, "subscription_amount_difference", `הפרש גבייה במנוי: נדרש ${expected / 100} ₪, חויב ${amount / 100} ₪, יתרה להסדרה ${(expected - amount) / 100} ₪`, now)]),
-      this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(now, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
+      this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(chargedAt, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:keva_charge", sub.id, now),
     ] });
     const receipt = await this.db.prepare("SELECT r.id FROM subscription_renewals n JOIN sales_receipts r ON r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=?").bind(reference).first<{ id: string }>();
@@ -219,6 +223,8 @@ export class CheckoutStore {
   async kevaRefused(data: Record<string, any>) {
     const sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(String(data.KevaId)).first<Record<string, any>>();
     if (!sub) return { ignored: true };
+    const refusalDate = providerDay(String(data.ErrorDate ?? "").trim().split(/\s/)[0]);
+    if (refusalDate && sub.last_charge_at && refusalDate.slice(0, 10) < sub.last_charge_at.slice(0, 10)) return { ignored: true };
     const now = nowIso();
     await this.db.batch([
       this.db.prepare("INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("keva_refusal:" + JSON.stringify(data))).slice(0, 32), sub.first_order_id, "keva_refusal", safeMessage(data.Message ?? "חיוב הוראת הקבע סורב"), now),
