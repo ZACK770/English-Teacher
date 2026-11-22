@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
+import { URL as FileURL } from "node:url";
 import type { Env } from "../src/env";
 import { callCostReport, callReviewReport, runCallReviews, sampleTutorTranscript, syncCallReviewPhone } from "../src/call-review";
 import worker from "../src/index";
@@ -11,19 +12,19 @@ const transcript = JSON.stringify([{ role: "learner", text: "I need help." }, { 
 let sql: DatabaseSync, env: Env;
 beforeEach(() => {
   sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).filter(f => f.endsWith(".sql")).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
+  const dir = new FileURL("../migrations/", import.meta.url);
+  for (const file of readdirSync(dir).filter(f => f.endsWith(".sql")).sort()) sql.exec(readFileSync(new FileURL(file, dir), "utf8"));
   const db = {
     prepare(query: string) {
       const numbered = /\?\d/.test(query);
       const statement = sql.prepare(query);
       let args: SQLInputValue[] = [];
-      const values = () => numbered ? [Object.fromEntries(args.map((value, i) => [`?${i + 1}`, value]))] : args;
+      const values = () => Object.fromEntries(args.map((value, i) => [`?${i + 1}`, value]));
       const wrapper = {
         bind: (...a: SQLInputValue[]) => { args = a; return wrapper; },
-        first: async () => statement.get(...values()) ?? null,
-        all: async () => ({ results: statement.all(...values()) }),
-        run: async () => statement.run(...values()),
+        first: async () => (numbered ? statement.get(values()) : statement.get(...args)) ?? null,
+        all: async () => ({ results: numbered ? statement.all(values()) : statement.all(...args) }),
+        run: async () => numbered ? statement.run(values()) : statement.run(...args),
       };
       return wrapper;
     },
