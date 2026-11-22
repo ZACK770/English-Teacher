@@ -36,7 +36,7 @@ beforeEach(async () => {
   await b.save("customers", { name: "Learner", phone: "0501111111" }, "learner");
   await b.save("ivr-events", { customer_id: "learner", route: "sales" }, "event");
   sql.prepare("UPDATE console_records SET created_at=? WHERE id='event'").run("2026-06-14T12:00:00Z");
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ status: "OK", errorCode: 0 })));
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "OK", errorCode: 0 })));
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); sql.close(); });
 const offerId = "sales-offer:learner";
@@ -160,6 +160,7 @@ describe("explicitly gated test offers", () => {
     vi.setSystemTime(later);
     await dispatchCallbacks(env);
     await enterSalesOffer(b, env, "repeat-call", "learner");
+    expect(await b.loadContext("repeat-call")).toMatchObject({ offer_call: repeat });
     expect(await offerGift(b, env, repeat!, "learner", "second-gift")).toBe(240);
   });
   it("reserves a test gift instead of consuming subscriber minutes in TutorSession", async () => {
@@ -173,7 +174,9 @@ describe("explicitly gated test offers", () => {
     }, controlsFromSettings(false));
     const reserve = vi.spyOn(BusinessStore.prototype, "reserveCall");
     const tutor = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "test-owner") as any;
-    tutor.latency = vi.fn(async (event: string) => { if (event === "access_checked") tutor.stop("test_complete"); });
+    tutor.latency = vi.fn(async (event: string) => {
+      if (event === "access_checked") { tutor.meteredAt = Date.now(); tutor.stop("test_complete"); }
+    });
     await tutor.run(JSON.stringify({ type: "start", token: "teacher-channel", callId: "test-session", caller: "0501111111", format: "pcm16;rate=8000;ch=1" }), "teacher", false);
     expect(reserve).not.toHaveBeenCalled();
     expect(sql.prepare("SELECT product,receipt_id,reserved_seconds FROM usage_allocations WHERE call_id='test-session'").get())
@@ -217,6 +220,13 @@ describe("explicitly gated test offers", () => {
     await b.save("sales-offers", { ...offer, status: "answered", call_id: "test-call" }, id!);
     expect(await offerGift(b, env, id!, "learner", "gift")).toBe(0);
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "test-call" }, "learner")).toBeNull();
+  });
+  it("does not extend the subscriber override to a different phone", async () => {
+    await b.save("customers", { name: "Other", phone: "0502222222" }, "other");
+    await new SubscriptionStore(b.db).create("other", "school-step", now.toISOString());
+    await b.save("ivr-events", { customer_id: "other", route: "sales" }, "other-event");
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT phone FROM callback_requests").all()).toEqual([{ phone: "0501111111" }]);
   });
 });
 
