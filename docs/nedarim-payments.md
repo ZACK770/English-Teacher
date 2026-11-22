@@ -106,6 +106,8 @@ Refusals use the provider event time in Israel; an older refusal cannot block a
 newer verified payment. A current refusal holds the standing order's access and
 minutes, not other purchases. The notice appears in the portal and when calling
 the school without other usable minutes. A later verified charge clears the hold.
+An unseen charge whose timestamp cannot establish its place after the latest
+charge or refusal is flagged for billing review instead of granting another period.
 
 A full credit in GetHistoryJson is matched by the original transaction ID in
 `זיכוי עסקה:` and its amount. Its minutes stay reversed; only a reversal of the

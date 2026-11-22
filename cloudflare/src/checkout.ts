@@ -213,9 +213,14 @@ export class CheckoutStore {
     const confirmedAt = providerTime(data.TransactionTime);
     if (sub.state === "cancelled") throw new Error("Subscription is not renewable");
     if ((sub.last_refusal_at && (!confirmedAt || confirmedAt <= sub.last_refusal_at)) ||
-      (confirmedAt && sub.last_charge_at && confirmedAt <= sub.last_charge_at)) return { ignored: true };
+      (confirmedAt && sub.last_charge_at && confirmedAt <= sub.last_charge_at)) {
+      const id = (await sha256Hex("keva_charge_review:" + reference)).slice(0, 32);
+      await this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)")
+        .bind(id, sub.first_order_id, "keva_charge_review", `חיוב הוראת קבע דורש שיוך לתקופה: עסקה ${transactionId}, ${amount / 100} ₪. יש לאמת מול נדרים פלוס.`, now).run();
+      return { review: true };
+    }
     const chargedAt = confirmedAt || providerDay(data.TransactionTime) || now;
-    const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate,
+    const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: amount, vatRate: (await this.business.economics()).vat_rate,
       keva: { id: sub.id, confirmedAt: confirmedAt || null }, statements: [
       ...(amount === expected ? [] : [this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("subscription_amount_difference:" + reference)).slice(0, 32), sub.first_order_id, "subscription_amount_difference", `הפרש גבייה במנוי: נדרש ${expected / 100} ₪, חויב ${amount / 100} ₪, יתרה להסדרה ${(expected - amount) / 100} ₪`, now)]),
       this.db.prepare("UPDATE standing_orders SET state='active',last_charge_at=?,last_refusal_at=NULL,next_date=?,updated_at=? WHERE id=?").bind(chargedAt, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),

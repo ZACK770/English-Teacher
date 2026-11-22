@@ -132,6 +132,24 @@ describe("existing Nedarim subscribers", () => {
     expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
   });
 
+  it("records an unseen out-of-order charge for review instead of silently losing it", async () => {
+    providerKeva(paidKeva, paidKevaDetail);
+    expect((await syncPaidKeva()).status).toBe(200);
+    vi.setSystemTime(new Date("2027-01-22T13:00:00Z"));
+    const store = new PaymentStore(b);
+    const charge = { MosadNumber: "7019554", KevaId: "12345", Currency: "1", Amount: "49", Confirmation: "10" };
+    const later = { ...charge, TransactionId: "905", TransactionTime: "19/01/2027 12:00:00" };
+    const earlier = { ...charge, TransactionId: "904", TransactionTime: "19/12/2026 12:00:00" };
+    expect(await store.settle(later, "7019554")).toMatchObject({ paid: true });
+    vi.spyOn(store, "providerRows").mockImplementation(async (_env, action) => action === "GetHistoryJson" ? [earlier, later] : []);
+    expect(await store.reconcile(env)).toMatchObject({ GetHistoryJson: { received: 2, matched: 2 } });
+    expect(await store.settle(earlier, "7019554")).toEqual({ review: true });
+    expect(db.sql.prepare("SELECT message FROM payment_issues WHERE kind='keva_charge_review' AND status='open'").all())
+      .toEqual([{ message: expect.stringContaining("904") }]);
+    expect(db.sql.prepare("SELECT state,last_charge_at FROM standing_orders").get())
+      .toEqual({ state: "active", last_charge_at: "2027-01-19T10:00:00.000+00:00" });
+  });
+
   it("reconciles only a full, linked reversal of the current charge and keeps its minutes reversed after recovery", async () => {
     providerKeva(paidKeva, paidKevaDetail);
     expect((await syncPaidKeva()).status).toBe(200);
