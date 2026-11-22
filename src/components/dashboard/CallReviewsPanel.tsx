@@ -6,7 +6,7 @@ type Status = 'reviewed' | 'rules_only' | 'no_transcript' | 'pending' | 'failed'
 type Review = { source: Source; status: Status; call_id: string; ended_at: string; findings: { code: string }[] };
 type Candidate = {
   profile_id: string; profile_label: string; bot_version: number; code: string; affected: number; reviewed: number; learners: number;
-  evidence_call_ids: string[]; proposed_instruction: string;
+  evidence_call_ids: string[]; proposed_instruction_he: string;
 };
 type Report = {
   coverage: { source: Source; status: Status; logs: number; review_cost_usd: number }[];
@@ -102,7 +102,7 @@ export function CallReviewsReport({ report, request }: { report: Report; request
         <strong><bdi>{r.profile_label || r.profile_id}</bdi> · גרסה {r.bot_version} · {finding(r.code)}</strong>
         <p>{r.affected} מתוך {r.reviewed} סקירות, אצל {r.learners} תלמידים. נדרשת בדיקה לפני שינוי.</p>
         <details><summary>הצעת הנחיה ושיחות תומכות</summary>
-          <p lang="en" dir="ltr">{r.proposed_instruction}</p>
+          <p>{r.proposed_instruction_he}</p>
           <ul>{r.evidence_call_ids.map(id => <li key={id}><bdi>{id}</bdi></li>)}</ul>
         </details>
       </li>)}</ul> : <p className="crm-muted">עדיין אין דפוס שעובר את הסף להצעת שינוי.</p>}

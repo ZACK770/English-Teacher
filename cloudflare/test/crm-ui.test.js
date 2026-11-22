@@ -115,7 +115,7 @@ describe("CRM call review tab", () => {
       findings: [{ code: "menu_error:options", logs: 1 }, { code: "wrong_language", logs: 1 }],
       prompt_candidates: [{
         profile_id: "teacher", profile_label: "המורה שוחי", bot_version: 4, code: "wrong_language", affected: 3, reviewed: 4, learners: 2,
-        evidence_call_ids: ["review-1"], proposed_instruction: "Use the configured support language.",
+        evidence_call_ids: ["review-1"], proposed_instruction_he: "תן עזרה קצרה בשפת העזר שנבחרה.",
       }],
       recent: [{ source: "ai", status: "reviewed", call_id: "review-1", ended_at: "2026-11-22T12:00:00Z", findings: [{ code: "wrong_language" }] }],
     };
@@ -128,6 +128,7 @@ describe("CRM call review tab", () => {
     expect(html).toContain("המורה שוחי");
     expect(html).toContain("גרסה 4");
     expect(html).toContain("review-1");
+    expect(html).toContain("תן עזרה קצרה בשפת העזר שנבחרה.");
     expect(request).not.toHaveBeenCalled();
   });
 
