@@ -968,6 +968,65 @@ describe("call minute reservations", () => {
 
   const reserve = (callId: string, seconds = 60, customer = "learner-a") => b.reserveCall(customer, "student", callId, seconds);
 
+  it.each([[-1, false], [0, true], [420, true], [3600, true], [3601, false], [1.5, false]])(
+    "validates a trial pool of %s seconds", (trial_total_seconds, valid) => {
+      expect(AccessPolicySchema.safeParse({ trial_total_seconds }).success).toBe(valid);
+    },
+  );
+
+  it.each([[120, 300], [240, 180]])("carries an opening billed at %s seconds into a %s-second free call", async (opening, remaining) => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 2, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
+    expect(await reserve("pool-opening", 600)).toMatchObject({ mode: "free", seconds: 240 });
+    await b.settleCall("pool-opening", opening);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_call_minutes: remaining / 60, free_calls_left: 1 });
+    expect(await reserve("pool-free", 600)).toMatchObject({ mode: "free", seconds: remaining });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ free_call_minutes: 0, free_calls_left: 0 });
+    await b.settleCall("pool-free", remaining);
+    expect(await reserve("pool-exhausted", 600)).toMatchObject({ mode: "blocked", seconds: 0 });
+  });
+
+  it.each([undefined, 0])("preserves separate opening and free allowances with trial_total_seconds=%s", async trial_total_seconds => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 2, free_call_seconds: 420, trial_total_seconds }, "student");
+    expect(await reserve("legacy-opening", 600)).toMatchObject({ seconds: 240 });
+    await b.settleCall("legacy-opening", 120);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ free_call_minutes: 7, free_calls_left: 2 });
+    expect(await reserve("legacy-free", 600)).toMatchObject({ seconds: 420 });
+  });
+
+  it.each([[9, 0], [10, 10]])("requires at least ten of the %s remaining pool seconds", async (remaining, expected) => {
+    await b.save("policies", { enabled: true, free_calls_month: 10, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
+    expect(await reserve("used-pool", 600)).toMatchObject({ seconds: 420 });
+    await b.settleCall("used-pool", 420 - remaining);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ free_calls_left: expected ? 1 : 0, free_call_minutes: expected / 60 });
+    expect(await reserve("last-pool", 600)).toMatchObject({ seconds: expected, mode: expected ? "free" : "blocked" });
+  });
+
+  it("counts outstanding pool reservations atomically and respects the call cap", async () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-12-12T10:00:00Z"));
+    await b.save("policies", { enabled: true, free_calls_month: 10, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
+    expect(await reserve("stale-pool", 300)).toMatchObject({ seconds: 300 });
+    vi.setSystemTime(new Date("2026-12-13T10:00:00Z"));
+    const calls = await Promise.all([reserve("pool-one", 100), reserve("pool-two", 100)]);
+    expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 100]);
+    await b.settleCall(calls[0].seconds ? "pool-one" : "pool-two", 100);
+    expect(await reserve("pool-last", 100)).toMatchObject({ seconds: 20 });
+  });
+
+  it("excludes other months, customers, products and paid allocations from the trial pool", async () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-12-12T10:00:00Z"));
+    await b.save("policies", { enabled: true, free_calls_month: 2, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
+    for (const [id, customer, product, receipt, created] of [
+      ["old", "learner-a", "school", null, "2026-11-12T10:00:00Z"],
+      ["other", "learner-b", "school", null, "2026-12-12T09:00:00Z"],
+      ["basic", "learner-a", "school-basic", null, "2026-12-12T09:00:00Z"],
+      ["paid", "learner-a", "school", "paid-receipt", "2026-12-12T09:00:00Z"],
+    ]) {
+      await db.prepare("INSERT INTO usage_allocations VALUES (?,?,?,?,420,420,?)").bind(id, customer, product, receipt, created).run();
+    }
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ free_call_minutes: 7, free_calls_left: 1 });
+    expect(await reserve("fresh-pool", 600)).toMatchObject({ seconds: 420 });
+  });
+
   it("allows only one concurrent paid call and preserves the unused balance", async () => {
     await b.save("policies", { enabled: true }, "student");
     await buyMinute();
