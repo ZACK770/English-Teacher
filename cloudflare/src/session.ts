@@ -62,6 +62,7 @@ export class TutorSession {
   private reason = "";
   private disconnectDetails: Record<string, unknown> = {};
   private intakeReminded = false;
+  private endConfirmationAt: number | null = null;
   private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
   private summaryCallbackRequested = false;
   private summaryCallbackSpeech = "";
@@ -95,6 +96,8 @@ export class TutorSession {
   private closingSent = false;
   private lessonDurationMs = 0;
   private allowanceMs = 0;
+  private freeTrial = false;
+  private freeFollowup = false;
   private finalSent = false;
   private b: BusinessStore;
   private progress: ProgressStore;
@@ -268,6 +271,8 @@ export class TutorSession {
         const seconds = await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId);
         if (seconds) allowance = { seconds, mode: "free" };
       }
+      this.freeTrial = allowance.mode === "free";
+      this.freeFollowup = allowance.free_followup === true;
       reserved = allowance.seconds > 0;
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
@@ -363,6 +368,7 @@ export class TutorSession {
         if (this.callId && this.customerId && this.controls) {
           try {
             await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended", ...this.disconnectDetails });
+            await this.latency("audio_queue_at_end", { ...this.audioQueueDetails(), disconnected: this.disconnected, phase: "before_drain" }).catch(() => {});
             await this.drainFinalAudio();
           } finally {
             if (reserved && this.meteredAt !== null) {
@@ -434,6 +440,11 @@ export class TutorSession {
     this.partial = data.slice(whole);
   }
 
+  private audioQueueDetails() {
+    const bytes = this.output.reduce((sum, frame) => sum + frame.byteLength, this.partial.byteLength);
+    return { queued_audio_bytes: bytes, queued_audio_ms: bytes * FRAME_MS / FRAME_BYTES };
+  }
+
   private async pbxToAi() {
     let batch: Uint8Array[] = [];
     while (!this.abort.signal.aborted) {
@@ -472,13 +483,14 @@ export class TutorSession {
         this.carry = carry;
         this.enqueue(pcm);
       } else if (event.type === "interrupted") {
+        const queued = this.audioQueueDetails();
         this.pendingEmail = null;
         this.summaryCallbackSpeech = "";
         this.reminderSpeech = "";
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
-        await this.latency("tutor_interrupted");
+        await this.latency("tutor_interrupted", queued);
       } else if (event.type === "transcript") {
         const pending = this.pendingEmail;
         if (pending) {
@@ -511,7 +523,7 @@ export class TutorSession {
         this.meter.tutorTurns++;
         this.learnerSeen = false;
         this.firstAudio = false;
-        await this.latency("tutor_turn_complete", { tutor_turn: this.meter.tutorTurns });
+        await this.latency("tutor_turn_complete", { tutor_turn: this.meter.tutorTurns, ...this.audioQueueDetails() });
         if (this.controls?.lesson) {
           await new LearningStore(this.env.DB).exposures(this.customerId, this.callId, this.controls.lesson.vocabulary, this.meter.transcript.filter(t => t.role === "tutor").map(t => t.text).join(" "));
         }
@@ -591,7 +603,7 @@ export class TutorSession {
     }
   }
 
-  private async recordTool(call: ToolCall): Promise<SalesToolResult> {
+  private async recordTool(call: ToolCall): Promise<SalesToolResult | { saved: false; reason: "confirmation_required"; next_step: string }> {
     const args = call.args ?? {};
     if (call.name === "save_mastery_domain") {
       if (!this.masteryDomain || !this.controls?.lesson) return false;
@@ -689,6 +701,13 @@ export class TutorSession {
         return false;
       }
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
+      if (reason === "task_completed" && !this.canCompleteSession()) {
+        const maySuggest = this.controls?.ending_policy === "model_discretion" || (this.controls?.ending_policy === "after_target_with_permission" && this.meteredAt !== null && Date.now() - this.meteredAt >= this.controls.target_lesson_minutes * 60000);
+        if (maySuggest) this.endConfirmationAt ??= this.meter.transcript.length;
+        return { saved: false, reason: "confirmation_required", next_step: maySuggest
+          ? 'Ask the learner "רוצה לסיים?" and wait for their answer. Only after they agree, say the full goodbye and call end_session again. If they decline, continue the lesson.'
+          : "Continue the lesson with another useful exercise. Do not suggest ending or ask for permission to end. End only if the learner explicitly asks to stop or the application signals the allowance is ending." };
+      }
       const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
       if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);
       this.reason = "model:" + reason;
@@ -704,6 +723,23 @@ export class TutorSession {
       return true;
     }
     return this.meter.recordLearning(call.name ?? "", args);
+  }
+
+  private canCompleteSession() {
+    if (this.finalSent || (this.meteredAt !== null && this.allowanceMs > 0 && Date.now() - this.meteredAt >= this.allowanceMs)) return true;
+    const learner = this.meter.transcript.filter(t => t.role === "learner").at(-1)?.text.trim() ?? "";
+    if (/^(?:תפסיק|תפסיקי|די|רוצה לסיים|אני רוצה לסיים|בוא נסיים|להתראות|stop|stop please|please stop|goodbye|bye|I want to stop|let's stop)[.!?\s]*$/i.test(learner)) return true;
+    if (this.endConfirmationAt !== null) {
+      const turns = this.meter.transcript.slice(this.endConfirmationAt);
+      let answer = turns.length - 1;
+      while (answer >= 0 && turns[answer].role !== "learner") answer--;
+      let previous = answer - 1;
+      while (previous >= 0 && turns[previous].role !== "learner") previous--;
+      const question = turns.slice(previous + 1, answer).filter(t => t.role === "tutor").map(t => t.text).join(" ");
+      if (answer >= 0 && /רוצה לסיים|want to (?:end|stop|finish)/i.test(question) && isEmailConfirmation(turns[answer].text)) return true;
+    }
+    if (!this.controls?.lesson) return !!this.controls && this.meter.learnerTurns > 0 && this.meter.tutorTurns > 0;
+    return this.controls.ending_policy === "model_discretion" && this.meter.learnerTurns > 0 && this.meter.lessonSummary !== null;
   }
 
   private async pacedOutput() {
@@ -729,13 +765,13 @@ export class TutorSession {
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.finalSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
-          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
+          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only observed results from this connection. If no actual practice happened, do not give a practice recap or claim practice happened; offer one simple practice question instead. Never invent a recap. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
           this.closingSent = true;
         }
       }
       if (this.ai && this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
         this.finalSent = true;
-        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now: give a brief summary and a warm invitation to call again, in one or two short Hebrew sentences. If the lesson summary is not saved yet, call record_lesson_summary silently in the same turn. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
+        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now in one or two short Hebrew sentences: " + (this.freeTrial ? this.freeFollowup ? '"זמן השיחה הזו הסתיים. אפשר להתקשר שוב ולהמשיך את ההתנסות החינמית."' : '"זמן ההתנסות החינמית הסתיים."' : '"זמן השיחה הסתיים."') + (!this.portal && this.profileId.startsWith("isaac-") && (!this.returnPath || this.returnPath === this.extension(QUOTA_EXTENSION_PATH)) ? ' Then say "מיד נעבור לתפריט, שם אפשר לבחור חבילה להמשך הלימוד."' : "") + " Do not give a practice recap or claim any practice happened. If the lesson summary is not saved yet, call record_lesson_summary silently with only observed results. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
       }
       await sleep(500, this.abort.signal);
     }

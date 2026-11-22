@@ -1162,9 +1162,9 @@ describe("call minute reservations", () => {
 
   it.each([0, 1])("carries fractional trial seconds to a third call with free_calls_month=%s", async free_calls_month => {
     await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month, free_call_seconds: 10, trial_total_seconds: 420 }, "student");
-    expect(await reserve("trial-opening", 600)).toEqual({ mode: "free", seconds: 240 });
+    expect(await reserve("trial-opening", 600)).toEqual({ mode: "free", seconds: 240, free_followup: true });
     await b.settleCall("trial-opening", 240);
-    expect(await reserve("trial-followup", 600)).toEqual({ mode: "free", seconds: 180 });
+    expect(await reserve("trial-followup", 600)).toEqual({ mode: "free", seconds: 180, free_followup: false });
     await b.settleCall("trial-followup", 169.212);
     const summary = await b.accessSummary("learner-a", []);
     expect(summary).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
@@ -1179,14 +1179,14 @@ describe("call minute reservations", () => {
 
   it.each(["voice", "text"] as const)("caps the %s trial follow-up by maxSeconds and retains the unused remainder", async channel => {
     await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 0, free_call_seconds: 10, trial_total_seconds: 420 }, "student");
-    expect(await reserve("capped-opening", 600)).toEqual({ mode: "free", seconds: 240 });
+    expect(await reserve("capped-opening", 600)).toEqual({ mode: "free", seconds: 240, free_followup: true });
     await b.settleCall("capped-opening", 240);
-    expect(await b.reserveCall("learner-a", "student", "capped-followup", 60, channel)).toEqual({ mode: "free", seconds: 60 });
+    expect(await b.reserveCall("learner-a", "student", "capped-followup", 60, channel)).toEqual({ mode: "free", seconds: 60, free_followup: true });
     await b.settleCall("capped-followup", 20);
     const summary = await b.accessSummary("learner-a", []);
     expect(summary.free_calls_left).toBe(1);
     expect(summary.free_call_minutes).toBeCloseTo(160 / 60);
-    expect(await b.reserveCall("learner-a", "student", "capped-again", 30, channel)).toEqual({ mode: "free", seconds: 30 });
+    expect(await b.reserveCall("learner-a", "student", "capped-again", 30, channel)).toEqual({ mode: "free", seconds: 30, free_followup: true });
   });
 
   it.each([0, 240])("blocks a half-second tail with opening_seconds=%s", async opening_seconds => {
@@ -1201,7 +1201,7 @@ describe("call minute reservations", () => {
   it("carries a fifty-second opening through short calls until the lifetime trial is exhausted", async () => {
     await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 1, free_call_seconds: 60, trial_total_seconds: 420 }, "student");
     expect(await reserve("trial-hidden", 600, "anonymous-hidden")).toMatchObject({ mode: "blocked", seconds: 0 });
-    expect(await reserve("trial-short-opening", 600)).toEqual({ mode: "free", seconds: 240 });
+    expect(await reserve("trial-short-opening", 600)).toEqual({ mode: "free", seconds: 240, free_followup: true });
     await b.settleCall("trial-short-opening", 50);
     let remaining = 370;
     for (const [i, billed] of [20, 15, 0, 110, 50, 100, 74, 1].entries()) {
@@ -1224,12 +1224,12 @@ describe("call minute reservations", () => {
 
   it("preserves finite-trial opening eligibility after cancelled and zero-billed attempts", async () => {
     await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 0, trial_total_seconds: 420 }, "student");
-    expect(await reserve("trial-cancelled", 600)).toEqual({ mode: "free", seconds: 240 });
+    expect(await reserve("trial-cancelled", 600)).toEqual({ mode: "free", seconds: 240, free_followup: true });
     await b.cancelCallReservation("trial-cancelled");
-    expect(await reserve("trial-zero", 600)).toEqual({ mode: "free", seconds: 240 });
+    expect(await reserve("trial-zero", 600)).toEqual({ mode: "free", seconds: 240, free_followup: true });
     await b.settleCall("trial-zero", 0);
     expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 4, free_calls_left: 1, free_call_minutes: 7 });
-    expect(await reserve("trial-retry", 600)).toEqual({ mode: "free", seconds: 240 });
+    expect(await reserve("trial-retry", 600)).toEqual({ mode: "free", seconds: 240, free_followup: true });
   });
 
   it.each([undefined, 0])("retains non-trial opening retries and monthly call limits with trial_total_seconds=%s", async trial_total_seconds => {

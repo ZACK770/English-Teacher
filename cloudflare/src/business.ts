@@ -146,7 +146,7 @@ export const ACTIVE_SCHOOL_PACKAGE_ID_SQL = `COALESCE((SELECT r.package_id FROM 
         (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=candidate.customer_id AND m.removed_at IS NULL))
       ORDER BY s.created_at DESC LIMIT 1))`;
 
-export interface Allowance { seconds: number; mode: string; extension?: string; intro?: string }
+export interface Allowance { seconds: number; mode: string; extension?: string; intro?: string; free_followup?: boolean }
 
 export class BusinessStore {
   constructor(public db: D1Database) {}
@@ -337,6 +337,13 @@ export class BusinessStore {
     if (policy.product === "school" && await this.schoolPaymentFailed(customerId)) return paymentFailed;
     if (policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
     const anonymous = customerId.startsWith("anonymous-");
+    const monthPrefix = now.slice(0, 7) + "%";
+    const freeRemaining = policy.trial_total_seconds > 0
+      ? "? - (SELECT COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0) FROM usage_allocations WHERE customer_id=? AND (product=? OR (product=? AND receipt_id IS NULL)))"
+      : "? - (SELECT COUNT(*) FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0))";
+    const freeRemainingArgs = policy.trial_total_seconds > 0
+      ? [policy.trial_total_seconds, customerId, policy.product + "-opening", policy.product]
+      : [policy.free_calls_month, customerId, policy.product, monthPrefix];
     if (!anonymous && channel === "voice" && policy.opening_seconds) {
       const openingProduct = policy.product + "-opening";
       const seconds = Math.min(maxSeconds, policy.opening_seconds);
@@ -351,15 +358,15 @@ export class BusinessStore {
         WHERE (?=0 OR remaining>=1) AND NOT EXISTS (${activeSession}) AND NOT EXISTS
         (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=?
           AND (billed_seconds>=60 OR (?>0 AND billed_seconds>0)))
-        RETURNING reserved_seconds`)
+        RETURNING reserved_seconds, (${freeRemaining}) AS free_remaining`)
         .bind(callId, customerId, openingProduct, seconds, now,
           policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId, openingProduct, policy.product,
-          policy.trial_total_seconds, customerId, cutoff, customerId, openingProduct, policy.trial_total_seconds).first<{ reserved_seconds: number }>();
+          policy.trial_total_seconds, customerId, cutoff, customerId, openingProduct, policy.trial_total_seconds,
+          ...freeRemainingArgs).first<{ reserved_seconds: number; free_remaining: number }>();
       if (opening) {
-        return { seconds: opening.reserved_seconds, mode: "free" };
+        return { seconds: opening.reserved_seconds, mode: "free", free_followup: opening.free_remaining >= 1 };
       }
     }
-    const monthPrefix = now.slice(0, 7) + "%";
     if (!anonymous && (policy.trial_total_seconds > 0 || policy.free_calls_month > 0)) {
       const seconds = policy.trial_total_seconds > 0 ? Math.min(maxSeconds, policy.trial_total_seconds) : Math.min(maxSeconds, policy.free_call_seconds);
       const allocation = await this.db.prepare(`
@@ -376,12 +383,13 @@ export class BusinessStore {
           SELECT COUNT(*) FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL
             AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)
         ) < ?) AND NOT EXISTS (${activeSession})
-        RETURNING reserved_seconds
+        RETURNING reserved_seconds, (${freeRemaining}) AS free_remaining
       `).bind(callId, customerId, policy.product, seconds, now,
         policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId,
         policy.product + "-opening", policy.product, policy.trial_total_seconds, policy.trial_total_seconds,
-        customerId, policy.product, monthPrefix, policy.free_calls_month, customerId, cutoff).first<{ reserved_seconds: number }>();
-      if (allocation) return { seconds: allocation.reserved_seconds, mode: "free" };
+        customerId, policy.product, monthPrefix, policy.free_calls_month, customerId, cutoff,
+        ...freeRemainingArgs).first<{ reserved_seconds: number; free_remaining: number }>();
+      if (allocation) return { seconds: allocation.reserved_seconds, mode: "free", free_followup: allocation.free_remaining >= 1 };
     }
     if (policy.basic_enabled && !anonymous) {
       const product = policy.product + "-basic";
