@@ -448,7 +448,7 @@ describe("CRM read-only endpoints", () => {
     expect((await (await request("people")).json() as any).items[0].status).toBe("offer_no_buy");
     event("sales-followups", { type: "lesson", status: "pending" });
     expect((await (await request("people")).json() as any).items[0].status).toBe("callback_pending");
-    sql.prepare("INSERT INTO sales_receipts VALUES ('r1','person1','p1','school','test',59,0.18,100,?,?,NULL,NULL)").run(now, now);
+    sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES ('r1','person1','p1','school','test',59,0.18,100,?,?)").run(now, now);
     expect((await (await request("people")).json() as any).items[0]).toMatchObject({ status: "paying", revenue_ils: 59 });
     expect(await (await request("analytics")).json()).toMatchObject({ totals: { callbacks_waiting: 1 }, statuses: { paying: 1, callback_pending: 0 } });
   });

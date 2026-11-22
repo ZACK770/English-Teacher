@@ -110,8 +110,15 @@ describe("existing Nedarim subscribers", () => {
     expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()).toEqual({ n: 2 });
     vi.setSystemTime(new Date("2027-01-19T13:00:00Z"));
-    expect(await (await hook(refusal)).json()).toMatchObject({ recorded: true });
+    expect(await (await hook({ ...refusal, ErrorTime: "19/01/2027 14:00:00" })).json()).toEqual({ recorded: true });
     expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
+    expect(await b.hasPaidAccess("c1")).toBe(false);
+    expect(await b.hasSchoolCallbackMinutes("c1")).toBe(false);
+    await b.cancelCallReservation("paid-call");
+    expect(await b.reserveCall(caller, "teacher", "blocked-call", 60)).toMatchObject({ mode: "payment_failed", seconds: 0 });
+    const portalToken = (await b.portalInvite("c1")).token;
+    token = portalToken;
+    expect(await (await req("/v1/portal/me")).json()).toMatchObject({ access: { paid: false, payment_failed: true } });
   });
 
   it("records a refusal newer than a recovered charge even if both arrive later", async () => {
@@ -123,6 +130,33 @@ describe("existing Nedarim subscribers", () => {
       .toMatchObject({ paid: true });
     expect(await store.refusal({ ...common, Status: "Error", ErrorDate: "19/01/2027 12:00" }, "7019554")).toEqual({ recorded: true });
     expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
+  });
+
+  it("reconciles only a full, linked reversal of the current charge and keeps its minutes reversed after recovery", async () => {
+    providerKeva(paidKeva, paidKevaDetail);
+    expect((await syncPaidKeva()).status).toBe(200);
+    vi.setSystemTime(new Date("2026-11-24T13:00:00Z"));
+    const common = { Currency: "1", TransactionTime: "23/11/2026 12:00:00", Amount: "-49" };
+    const reversal = { ...common, TransactionId: "906", Comments: "זיכוי עסקה: 902" };
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const action = new URLSearchParams(String(init.body)).get("Action");
+      return Response.json(action === "GetHistoryJson" ? [
+        { ...common, TransactionId: "903", KevaId: "12345", Comments: "החזרת הוראת קבע" },
+        { ...reversal, TransactionId: "904", Comments: "זיכוי עסקה: 999" },
+        { ...reversal, TransactionId: "905", Amount: "-10" },
+        reversal,
+      ] : [{ ID: "10", KevaId: "12345", ErrorDate: "22/11/2026 12:00", Error: "Declined" }]);
+    }));
+    const store = new PaymentStore(b);
+    expect(await store.reconcile(env)).toMatchObject({ GetHistoryJson: { received: 4, matched: 1 }, GetErrorLogsJson: { received: 1, matched: 0 } });
+    expect(await b.hasPaidAccess("c1")).toBe(false);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_return'").get()).toEqual({ n: 1 });
+    expect(await store.settle({ ...reversal, MosadNumber: "7019554" }, "7019554")).toEqual({ ignored: true });
+    vi.setSystemTime(new Date("2026-12-19T13:00:00Z"));
+    expect(await (await hook({ MosadNumber: "7019554", KevaId: "12345", TransactionId: "907", Amount: "49", Currency: "1", Confirmation: "10", TransactionTime: "19/12/2026 12:00:00" })).json()).toMatchObject({ paid: true });
+    expect(await b.hasPaidAccess("c1")).toBe(true);
+    expect(await b.schoolPaymentFailed("c1")).toBe(false);
+    expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE payment_reversed_at IS NOT NULL").get()).toEqual({ n: 1 });
   });
 
   it.each([
@@ -516,7 +550,8 @@ describe("website checkout", () => {
     expect(db.sql.prepare("SELECT reference FROM subscription_renewals").get()?.reference).toBe("nedarim-keva:4242:2");
     expect(db.sql.prepare("SELECT amount_ils FROM sales_receipts ORDER BY valid_from DESC LIMIT 1").get()?.amount_ils).toBe(119);
     expect(db.sql.prepare("SELECT next_date FROM standing_orders").get()?.next_date).toBe(standingOrderStart().StartFrom);
-    const refusal = { MosadNumber: "7019554", Status: "Error", Source: "Keva", KevaId: "4242", Message: "סירוב" };
+    vi.setSystemTime(new Date("2026-02-02T00:00:00Z"));
+    const refusal = { MosadNumber: "7019554", Status: "Error", Source: "Keva", KevaId: "4242", ErrorTime: "01/02/2026 10:00:00", Message: "סירוב" };
     await hook(refusal);
     await hook(refusal);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM payment_issues WHERE kind='keva_refusal'").get()).toMatchObject({ n: 1 });
@@ -566,17 +601,19 @@ describe("website checkout", () => {
   });
 
   it("keeps a refused paused subscription frozen and resumes it as past due", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const o = await (await req("/v1/portal/checkout", { package_id: "school-step" })).json() as any;
     await hook({ MosadNumber: "7019554", TransactionId: "20", Confirmation: "5", Amount: "59", Currency: "1", Groupe: "dibura-" + o.id });
     keva = { KevaId: "4242", KevaStatus: "1", KevaGroupe: "dibura-" + o.subscription.id, KevaAmount: "59" };
     await req("/v1/portal/checkout/" + o.id + "/keva", { keva_id: "4242" });
     await req("/v1/portal/subscriptions/" + o.id + "/pause", { days: 7 });
-    expect((await hook({ MosadNumber: "7019554", Status: "Error", KevaId: "4242", Message: "refused" })).status).toBe(200);
+    vi.setSystemTime(new Date("2026-01-02T00:00:00Z"));
+    expect((await hook({ MosadNumber: "7019554", Status: "Error", KevaId: "4242", ErrorTime: "01/01/2026 10:00:00", Message: "refused" })).status).toBe(200);
     const store = new SubscriptionStore(env.DB);
     expect(await store.get(o.id)).toMatchObject({ status: "paused", resume_status: "past_due" });
     await req("/v1/portal/subscriptions/" + o.id + "/resume", {});
     expect((await store.get(o.id)).status).toBe("past_due");
-    expect((await hook({ MosadNumber: "7019554", TransactionId: "21", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242" })).status).toBe(200);
+    expect((await hook({ MosadNumber: "7019554", TransactionId: "21", Confirmation: "6", Amount: "59", Currency: "1", Groupe: "dibura-" + o.subscription.id, KevaId: "4242", TransactionTime: "01/01/2026 11:00:00" })).status).toBe(200);
     expect((await store.get(o.id)).status).toBe("active");
   });
 

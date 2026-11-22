@@ -264,7 +264,11 @@ export class PaymentStore {
   async settle(data: Record<string, any>, mosadId: string): Promise<Record<string, unknown>> {
     if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
     if (![undefined, null, "", "OK"].includes(data.Status)) return { ignored: true };
-    if (String(data.Amount ?? "").startsWith("-")) return new CheckoutStore(this.business).kevaReturn(data);
+    if (String(data.Amount ?? "").trim().startsWith("-")) {
+      const result = await new CheckoutStore(this.business).kevaReturn(data);
+      if (result.ignored && await this.issueForData(data, "settlement_review", "")) return { review: true };
+      return result;
+    }
     const category = String(data.Groupe ?? "");
     if (!["", "0"].includes(String(data.KevaId ?? ""))) return new CheckoutStore(this.business).kevaCharge(data, mosadId);
     if (!category.startsWith(PREFIX)) return { ignored: true };

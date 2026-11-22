@@ -171,7 +171,6 @@ export class CheckoutStore {
       await this.activate(sub.id, kevaId, "");
     }
     const amount = agorot(data.Amount);
-    if (!amount) return { ignored: true };
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
     const imported = await this.db.prepare("SELECT transaction_id FROM payment_orders WHERE id=? AND channel='nedarim'")
       .bind(sub.first_order_id).first<{ transaction_id: string }>();
@@ -212,7 +211,8 @@ export class CheckoutStore {
     const expected = await subscriptions.renewalAmount(sub.entitlement_id);
     const now = nowIso();
     const confirmedAt = providerTime(data.TransactionTime);
-    if (sub.state === "cancelled" || (sub.last_refusal_at && (!confirmedAt || confirmedAt <= sub.last_refusal_at)) ||
+    if (sub.state === "cancelled") throw new Error("Subscription is not renewable");
+    if ((sub.last_refusal_at && (!confirmedAt || confirmedAt <= sub.last_refusal_at)) ||
       (confirmedAt && sub.last_charge_at && confirmedAt <= sub.last_charge_at)) return { ignored: true };
     const chargedAt = confirmedAt || providerDay(data.TransactionTime) || now;
     const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate,
@@ -227,13 +227,16 @@ export class CheckoutStore {
 
   async kevaReturn(data: Record<string, any>) {
     const originalId = /(?:^|\s)זיכוי עסקה:\s*(\d{1,30})(?!\d)/.exec(String(data.Comments ?? ""))?.[1];
-    const amount = /^-\d+(?:\.\d{1,2})?$/.test(String(data.Amount)) ? agorot(String(data.Amount).slice(1)) : 0;
+    const rawAmount = String(data.Amount ?? "").trim();
+    const amount = /^-\d+(?:\.\d{1,2}0*)?$/.test(rawAmount) && Number(rawAmount) < 0 ? agorot(rawAmount.slice(1)) : 0;
     if (!originalId || !amount || String(data.Currency) !== "1") return { ignored: true };
     const ref = await this.db.prepare(`SELECT o.keva_id,COALESCE(r.id,p.receipt_id) AS receipt_id FROM standing_orders o JOIN payment_orders p ON p.id=o.first_order_id
       LEFT JOIN subscription_renewals n ON n.subscription_id=o.entitlement_id AND n.reference='nedarim-keva:'||o.keva_id||':'||?1
       LEFT JOIN sales_receipts r ON r.reference='subscription:'||n.subscription_id||':'||n.period_start
-      WHERE o.keva_id IS NOT NULL AND (r.amount_ils=?2 OR (p.transaction_id=?1 AND p.amount_agorot=?3))`)
-      .bind(originalId, amount / 100, amount).all<{ keva_id: string; receipt_id: string }>();
+      WHERE o.keva_id IS NOT NULL AND (r.amount_ils=?2 OR (p.transaction_id=?1 AND p.amount_agorot=?3))
+        AND (?4='' OR o.keva_id=?4)`)
+      .bind(originalId, amount / 100, amount, String(data.KevaId ?? "").replace(/^-/, "").replace(/^0$/, ""))
+      .all<{ keva_id: string; receipt_id: string }>();
     if (ref.results.length !== 1) return { ignored: true };
     return this.kevaRefused({ KevaId: ref.results[0].keva_id, ErrorTime: data.TransactionTime }, { charge: originalId, receipt: ref.results[0].receipt_id });
   }
@@ -249,28 +252,33 @@ export class CheckoutStore {
       (data.Source && data.Source !== "Keva") || !["", "1"].includes(String(data.Currency ?? "")) ||
       /כפילו(?:ת|יו)|עסקה כפולה|duplicate/i.test(message)) return { ignored: true };
     const providerDayKey = providerDay(String(rawTime).trim().split(/\s/)[0]).slice(0, 10);
-    const id = (await sha256Hex(kind + ":" + kevaId + ":" + (returned?.charge ?? refusedAt))).slice(0, 32);
+    const id = (await sha256Hex(kind + ":" + kevaId + ":" + (returned?.charge ?? refusedAt.slice(0, 16)))).slice(0, 32);
     const changes = await this.db.batch([
       this.db.prepare(`UPDATE standing_orders SET state='past_due',last_refusal_at=?1,updated_at=?2
         WHERE keva_id=?3 AND state IN ('active','past_due') AND (last_refusal_at IS NULL OR last_refusal_at<?1)
         AND (last_charge_at IS NULL OR (last_charge_at<?1 AND
-          (?5 IS NOT NULL OR substr(last_charge_at,11) <> 'T00:00:00.000+00:00' OR substr(last_charge_at,1,10)<?4)))
+          (?5 IS NOT NULL OR substr(last_charge_at,11) <> 'T00:00:00.000+00:00' OR substr(last_charge_at,1,10)<?4
+            OR NOT EXISTS (SELECT 1 FROM payment_orders p WHERE p.id=standing_orders.first_order_id AND p.channel='nedarim'
+              AND NOT EXISTS (SELECT 1 FROM subscription_renewals n WHERE n.subscription_id=standing_orders.entitlement_id)))))
         AND COALESCE(last_charge_at,(SELECT p.updated_at FROM payment_orders p WHERE p.id=standing_orders.first_order_id))<?1
         AND (?5 IS NULL OR COALESCE(
           (SELECT substr(n.reference,length('nedarim-keva:'||?3||':')+1) FROM subscription_renewals n
           WHERE n.subscription_id=standing_orders.entitlement_id AND n.reference GLOB ('nedarim-keva:'||?3||':*') ORDER BY n.period_start DESC LIMIT 1),
           (SELECT p.transaction_id FROM payment_orders p WHERE p.id=standing_orders.first_order_id))=?5)
         RETURNING id`).bind(refusedAt, now, kevaId, providerDayKey, returned?.charge ?? null),
-      ...(returned ? [this.db.prepare("UPDATE sales_receipts SET payment_reversed_at=? WHERE id=? AND created_at<? AND payment_reversed_at IS NULL")
-        .bind(refusedAt, returned.receipt, refusedAt)] : []),
+      ...(returned ? [this.db.prepare("UPDATE sales_receipts SET payment_reversed_at=? WHERE id=? AND payment_reversed_at IS NULL RETURNING id")
+        .bind(refusedAt, returned.receipt)] : []),
       this.db.prepare(`UPDATE subscriptions SET status=CASE WHEN status='paused' THEN 'paused' ELSE 'past_due' END,
         resume_status='past_due',updated_at=? WHERE status IN ('active','paused') AND id IN
         (SELECT entitlement_id FROM standing_orders WHERE keva_id=? AND state='past_due' AND last_refusal_at=?)`).bind(now, kevaId, refusedAt),
-      this.db.prepare(`INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at)
+      returned ? this.db.prepare(`INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at)
+        SELECT ?,o.first_order_id,?,?,? FROM standing_orders o JOIN sales_receipts r ON r.id=?
+        WHERE o.keva_id=? AND r.payment_reversed_at=?`).bind(id, kind, message, now, returned.receipt, kevaId, refusedAt)
+      : this.db.prepare(`INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at)
         SELECT ?,first_order_id,?,?,? FROM standing_orders WHERE keva_id=? AND state='past_due' AND last_refusal_at=?`)
         .bind(id, kind, message, now, kevaId, refusedAt),
     ]);
-    return changes[0].results.length ? { recorded: true } : { ignored: true };
+    return changes[0].results.length || (returned && changes[1].results.length) ? { recorded: true } : { ignored: true };
   }
 
   async cancel(env: Env, subscriptionId: string, customerId: string) {
