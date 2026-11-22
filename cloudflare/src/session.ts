@@ -3,7 +3,7 @@ import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
-import { BusinessStore } from "./business";
+import { type Allowance, BusinessStore } from "./business";
 import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText, normalizePhone } from "./callbacks";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
@@ -18,7 +18,7 @@ import { practiceSummary } from "./practice";
 import { reminderGuidance, savePracticeReminder } from "./practice-reminders";
 import { masteryDomainGuidance, saveMasteryDomain } from "./mastery-domain";
 import { compilePrompt, type PromptArtifact } from "./prompt";
-import { OFFER_GUIDANCE, offerGift, SALES_EXTENSION_PATH } from "./sales-offer";
+import { OFFER_GUIDANCE, offerGift, salesOfferTestPhone, SALES_EXTENSION_PATH } from "./sales-offer";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
 import { LearningStore } from "./learning";
@@ -266,7 +266,9 @@ export class TutorSession {
         this.controls.opening_message = OFFER_GUIDANCE;
         this.controls.summary_callback = false;
       }
-      let allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      const testGift = this.offerCall && salesOfferTestPhone(this.env, this.callerPhone)
+        ? await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId) : 0;
+      let allowance: Allowance = testGift ? { seconds: testGift, mode: "free" } : await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
       if (this.offerCall && !allowance.seconds && ["free", "blocked"].includes(allowance.mode)) {
         const seconds = await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId);
         if (seconds) allowance = { seconds, mode: "free" };

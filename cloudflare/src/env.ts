@@ -2,6 +2,10 @@ export interface Env {
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";
   SALES_OFFER_ALLOWLIST?: string;
   SALES_OFFER_PRACTICE_MINUTES?: string;
+  SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest";
+  SALES_OFFER_MIN_TUTOR_CALLS?: string;
+  SALES_OFFER_MIN_TUTOR_MINUTES?: string;
+  SALES_OFFER_TEST_PHONES?: string;
   GA_MEASUREMENT_ID?: string;
   CF_BEACON_TOKEN?: string;
   DB: D1Database;

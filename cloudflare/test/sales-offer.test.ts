@@ -4,10 +4,13 @@ import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { dispatchCallbacks, submitCallback } from "../src/callbacks";
-import type { Env } from "../src/env";
+import { type Env, settings } from "../src/env";
+import { controlsFromSettings } from "../src/controls";
+import { ProgressStore } from "../src/progress";
+import { TutorSession } from "../src/session";
 import { PaymentStore } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
-import { customerBought, enterSalesOffer, offerGift, offerSchedule, salesOfferAllowed, salesOfferResponse, selectSalesOffers } from "../src/sales-offer";
+import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers } from "../src/sales-offer";
 
 let sql: DatabaseSync, b: BusinessStore, env: Env;
 const now = new Date("2026-06-15T14:00:00Z");
@@ -42,6 +45,180 @@ async function answered() {
   sql.prepare("UPDATE callback_requests SET status='dialed',updated_at=?").run(now.toISOString());
   await enterSalesOffer(b, env, "call", "learner");
 }
+
+async function tutorCalls(customerId = "learner", count = 3, seconds = 200, role = "teacher") {
+  sql.prepare("INSERT OR IGNORE INTO bots(id,label,role,created_at,updated_at) VALUES (?,?,?,?,?)")
+    .run(role, role, role, now.toISOString(), now.toISOString());
+  for (let i = 0; i < count; i++) {
+    const callId = customerId + "-" + role + "-" + i;
+    sql.prepare("INSERT INTO call_customers VALUES (?,?,?,?,?)").run(callId, customerId, role, "phone", now.toISOString());
+    sql.prepare(`INSERT INTO sessions(student_id,call_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json)
+      VALUES (?,?,?,?,?,1,1,'[]')`).run(customerId, callId, "2026-01-01T12:00:00Z", "2026-01-01T12:05:00Z", seconds);
+  }
+}
+
+describe("high-interest sales offer audience", () => {
+  beforeEach(() => {
+    env.SALES_OFFER_AUDIENCE = "high_interest";
+    sql.prepare("DELETE FROM console_records WHERE kind='ivr-events'").run();
+  });
+  it("selects historic teacher sessions without sales entry and queues tomorrow at 17:00 only once", async () => {
+    await tutorCalls();
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT next_attempt_at FROM callback_requests").get()).toMatchObject({ next_attempt_at: "2026-06-16T14:00:00.000Z" });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+    vi.setSystemTime(new Date(+now + 86400000));
+    await selectSalesOffers(env, new Date());
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it("requires both configured call and minute thresholds and ignores non-teacher sessions", async () => {
+    await tutorCalls("learner", 2, 200);
+    await tutorCalls("learner", 5, 600, "translator");
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    env.SALES_OFFER_MIN_TUTOR_CALLS = "2";
+    env.SALES_OFFER_MIN_TUTOR_MINUTES = "10";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    env.SALES_OFFER_MIN_TUTOR_MINUTES = "5";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it.each(["off", "allowlist"])("retains the %s gate for high-interest selection", async mode => {
+    await tutorCalls();
+    env.SALES_OFFER_MODE = mode as Env["SALES_OFFER_MODE"];
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("excludes hidden phones and empty activity and fails closed on malformed thresholds", async () => {
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    await tutorCalls();
+    env.SALES_OFFER_MIN_TUTOR_CALLS = "invalid";
+    await selectSalesOffers(env);
+    env.SALES_OFFER_MIN_TUTOR_CALLS = "3";
+    env.SALES_OFFER_MIN_TUTOR_MINUTES = "-1";
+    await selectSalesOffers(env);
+    env.SALES_OFFER_MIN_TUTOR_MINUTES = "0";
+    sql.prepare("UPDATE customer_phones SET phone='private'").run();
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("excludes usable receipts, but not reversed receipts, and checks purchases again before dial", async () => {
+    await tutorCalls();
+    sql.prepare(`INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at)
+      VALUES ('r','learner','school-step','school','r',59,0,30,'2026-07-01T00:00:00Z',?)`).run(now.toISOString());
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    sql.prepare("UPDATE sales_receipts SET payment_reversed_at=?").run(now.toISOString());
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+    sql.prepare("INSERT INTO payment_orders(id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at) VALUES ('paid','purchase','learner','school-step','{}',5900,0,'paid',?,?)").run(now.toISOString(), now.toISOString());
+    vi.setSystemTime(new Date("2026-06-16T14:00:00Z"));
+    await dispatchCallbacks(env);
+    expect(sql.prepare("SELECT status,last_error FROM callback_requests").get()).toMatchObject({ status: "failed", last_error: "Sales offer customer already purchased" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("excludes family members of an active subscription", async () => {
+    await tutorCalls();
+    await b.save("customers", { name: "Owner", phone: "0502222222" }, "owner");
+    const sub = await new SubscriptionStore(b.db).create("owner", "school-step", now.toISOString());
+    sql.prepare("INSERT INTO subscription_members(subscription_id,customer_id,added_at) VALUES (?,?,?)").run(sub.id, "learner", now.toISOString());
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("caps each scheduled run at 100 and advances past previously offered customers", async () => {
+    for (let i = 0; i < 101; i++) {
+      const id = "audience-" + String(i).padStart(3, "0");
+      await b.save("customers", { name: "Test", phone: "050" + String(i).padStart(7, "0") }, id);
+      await tutorCalls(id);
+    }
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(100);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(101);
+  });
+});
+
+describe("explicitly gated test offers", () => {
+  beforeEach(() => { env.SALES_OFFER_TEST_PHONES = "+972501111111"; });
+  it("can repeat for an existing subscriber at distinct times, with one gift per offer", async () => {
+    await new SubscriptionStore(b.db).create("learner", "school-step", now.toISOString());
+    const id = await queueTestSalesOffer(env, "0501111111", now);
+    expect(await queueTestSalesOffer(env, "+972501111111", now)).toBe(id);
+    await dispatchCallbacks(env);
+    await enterSalesOffer(b, env, "test-call", "learner");
+    expect(await b.loadContext("test-call")).toMatchObject({ offer_call: id });
+    expect(await offerGift(b, env, id!, "learner", "gift")).toBe(240);
+    expect(await offerGift(b, env, id!, "learner", "gift-again")).toBe(0);
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "test-call" }, "learner")).toMatchObject({ name: "isaacOffer" });
+    await b.settleCall("gift", 240);
+    const later = new Date(+now + 600000);
+    const repeat = await queueTestSalesOffer(env, "0501111111", later);
+    expect(repeat).not.toBe(id);
+    vi.setSystemTime(later);
+    await dispatchCallbacks(env);
+    await enterSalesOffer(b, env, "repeat-call", "learner");
+    expect(await offerGift(b, env, repeat!, "learner", "second-gift")).toBe(240);
+  });
+  it("reserves a test gift instead of consuming subscriber minutes in TutorSession", async () => {
+    await new SubscriptionStore(b.db).create("learner", "school-step", now.toISOString());
+    const id = await queueTestSalesOffer(env, "0501111111", now);
+    await dispatchCallbacks(env);
+    await enterSalesOffer(b, env, "test-session", "learner");
+    await new ProgressStore(b.db).createBot({
+      id: "teacher", label: "Teacher", role: "teacher", description: "", audience: "general",
+      channel_id: "teacher-channel", enabled: true, phone_enabled: true, web_enabled: true,
+    }, controlsFromSettings(false));
+    const reserve = vi.spyOn(BusinessStore.prototype, "reserveCall");
+    const tutor = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "test-owner") as any;
+    tutor.latency = vi.fn(async (event: string) => { if (event === "access_checked") tutor.stop("test_complete"); });
+    await tutor.run(JSON.stringify({ type: "start", token: "teacher-channel", callId: "test-session", caller: "0501111111", format: "pcm16;rate=8000;ch=1" }), "teacher", false);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(sql.prepare("SELECT product,receipt_id,reserved_seconds FROM usage_allocations WHERE call_id='test-session'").get())
+      .toMatchObject({ product: "school-offer-gift", receipt_id: id, reserved_seconds: 240 });
+  });
+  it("lets scheduled selection bypass buyers and old offers only for test phones", async () => {
+    await answered();
+    await new SubscriptionStore(b.db).create("learner", "school-step", now.toISOString());
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+    sql.prepare("UPDATE console_records SET created_at=? WHERE id='event'").run(now.toISOString());
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(2);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(2);
+  });
+  it.each(["off", "allowlist"])("never bypasses mode %s without phone authorization", async mode => {
+    env.SALES_OFFER_MODE = mode as Env["SALES_OFFER_MODE"];
+    await expect(queueTestSalesOffer(env, "0501111111", now)).rejects.toMatchObject({ status: 403 });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("does not authorize other phones or missing customers and rejects invalid/past/closed times", async () => {
+    await expect(queueTestSalesOffer(env, "0502222222", now)).rejects.toMatchObject({ status: 403 });
+    for (const at of [new Date("invalid"), new Date(+now - 1), new Date("2026-06-15T23:00:00Z")]) {
+      await expect(queueTestSalesOffer(env, "0501111111", at)).rejects.toMatchObject({ status: 422 });
+    }
+    env.SALES_OFFER_TEST_PHONES += ",0502222222";
+    await expect(queueTestSalesOffer(env, "0502222222", now)).rejects.toMatchObject({ status: 404 });
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("rechecks removal from the test list at dial, menu and gift time", async () => {
+    await new SubscriptionStore(b.db).create("learner", "school-step", now.toISOString());
+    const id = await queueTestSalesOffer(env, "0501111111", now);
+    env.SALES_OFFER_TEST_PHONES = "";
+    await dispatchCallbacks(env);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(sql.prepare("SELECT status FROM callback_requests").get()).toMatchObject({ status: "failed" });
+    await b.saveContext("test-call", { offer_call: id });
+    const offer = await b.record("sales-offers", id!);
+    await b.save("sales-offers", { ...offer, status: "answered", call_id: "test-call" }, id!);
+    expect(await offerGift(b, env, id!, "learner", "gift")).toBe(0);
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "test-call" }, "learner")).toBeNull();
+  });
+});
 
 describe("sales offers", () => {
   it("fails closed and normalizes the allowlist", async () => {

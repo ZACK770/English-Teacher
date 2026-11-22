@@ -1,6 +1,6 @@
 import { BusinessStore } from "./business";
 import { fromLocal, localDate, nextCallingSlot, normalizePhone } from "./callbacks";
-import { type Env, nowIso } from "./env";
+import { type Env, HttpError, nowIso } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
 
 export const SALES_EXTENSION_PATH = "/3";
@@ -13,6 +13,27 @@ export function salesOfferAllowed(env: Env, phone: string): boolean {
     (env.SALES_OFFER_ALLOWLIST ?? "").split(",").some(p => normalizePhone(p.trim()) === normalized));
 }
 
+const phoneList = (value = "") => value.split(",").map(p => normalizePhone(p.trim())).filter((p): p is string => !!p);
+export function salesOfferTestPhone(env: Env, phone: string): boolean {
+  const normalized = normalizePhone(phone);
+  return !!normalized && salesOfferAllowed(env, normalized) && phoneList(env.SALES_OFFER_TEST_PHONES).includes(normalized);
+}
+
+const buyerSql = (customer: string, at: string) => `(
+  EXISTS(SELECT 1 FROM payment_orders WHERE customer_id=${customer} AND state='paid')
+  OR EXISTS(SELECT 1 FROM subscriptions s WHERE s.status='active' AND (s.customer_id=${customer} OR EXISTS(
+    SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=${customer} AND m.removed_at IS NULL)))
+  OR EXISTS(SELECT 1 FROM sales_receipts r WHERE (r.customer_id=${customer} OR r.subscription_id IN (
+    SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+    WHERE m.customer_id=${customer} AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
+    AND julianday(r.expires_at)>julianday(${at}) AND (r.valid_from IS NULL OR julianday(r.valid_from)<=julianday(${at}))
+    AND r.payment_reversed_at IS NULL
+    AND NOT EXISTS(SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
+    AND NOT EXISTS(SELECT 1 FROM standing_orders o WHERE (o.state='past_due' OR o.last_refusal_at IS NOT NULL)
+      AND (o.entitlement_id=r.subscription_id OR (o.entitlement_id IS NULL AND o.first_order_id IN (SELECT id FROM payment_orders WHERE receipt_id=r.id))))
+    AND r.minutes*60-COALESCE((SELECT SUM(COALESCE(billed_seconds,reserved_seconds)) FROM usage_allocations WHERE receipt_id=r.id),0)>=1)
+)`;
+
 export function offerSchedule(drop: Date) {
   const local = localDate(drop);
   local.setUTCDate(local.getUTCDate() + 1);
@@ -24,35 +45,74 @@ export function offerSchedule(drop: Date) {
 }
 
 export async function customerBought(b: BusinessStore, customerId: string, now = nowIso()): Promise<boolean> {
-  return !!await b.db.prepare(`SELECT 1 WHERE
-    EXISTS(SELECT 1 FROM payment_orders WHERE customer_id=? AND state='paid')
-    OR EXISTS(SELECT 1 FROM sales_receipts r WHERE customer_id=? AND expires_at>? AND (valid_from IS NULL OR valid_from<=?)
-      AND minutes*60>COALESCE((SELECT SUM(COALESCE(billed_seconds,reserved_seconds)) FROM usage_allocations WHERE receipt_id=r.id),0))
-    OR EXISTS(SELECT 1 FROM subscriptions s LEFT JOIN subscription_members m ON m.subscription_id=s.id AND m.removed_at IS NULL
-      WHERE (s.customer_id=? OR m.customer_id=?) AND s.status='active')`)
-    .bind(customerId, customerId, now, now, customerId, customerId).first();
+  return !!await b.db.prepare(`SELECT 1 WHERE ${buyerSql("?1", "?2")}`).bind(customerId, now).first();
+}
+
+function scheduleAt(at: Date) {
+  const end = localDate(at);
+  end.setUTCHours(23, 59, 59, 0);
+  return { at: at.toISOString(), expires: fromLocal(end).toISOString() };
+}
+
+async function queueOffer(b: BusinessStore, env: Env, customerId: string, phone: string, droppedAt: string, schedule: { at: string; expires: string }, now: Date) {
+  const test = salesOfferTestPhone(env, phone);
+  if (!salesOfferAllowed(env, phone) || !test && await customerBought(b, customerId, now.toISOString())) return null;
+  const id = test ? `sales-offer:test:${customerId}:${schedule.at}` : "sales-offer:" + customerId;
+  const offer = { id, customer_id: customerId, phone, dropped_at: droppedAt, status: "queued", expires_at: schedule.expires, test };
+  await b.db.batch([
+    b.db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
+      SELECT 'sales-offers',?,?,?,? WHERE ?=1 OR NOT EXISTS(
+        SELECT 1 FROM console_records WHERE kind='sales-offers' AND json_extract(body,'$.customer_id')=?)`)
+      .bind(id, JSON.stringify(offer), now.toISOString(), now.toISOString(), test ? 1 : 0, customerId),
+    b.db.prepare(`INSERT OR IGNORE INTO callback_requests(id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at)
+      SELECT ?,?,'','self','Sales offer','scheduled',?,'sales_offer',?,'queued',0,?,?,?
+      WHERE EXISTS(SELECT 1 FROM console_records WHERE kind='sales-offers' AND id=? AND json_extract(body,'$.status')='queued')`)
+      .bind(id, phone, schedule.at, now.toISOString(), now.toISOString(), now.toISOString(), schedule.at, id),
+  ]);
+  return id;
+}
+
+export async function queueTestSalesOffer(env: Env, rawPhone: string, at: Date) {
+  const phone = normalizePhone(rawPhone);
+  if (!phone || !salesOfferTestPhone(env, phone)) throw new HttpError(403, "Test phone not enabled");
+  if (!Number.isFinite(+at) || +at < Date.now() || +nextCallingSlot(at) !== +at) throw new HttpError(422, "Invalid test calling time");
+  const b = new BusinessStore(env.DB);
+  const customerId = await b.customerForPhone(phone);
+  if (!customerId) throw new HttpError(404, "Test customer not found");
+  return queueOffer(b, env, customerId, phone, nowIso(), scheduleAt(at), new Date());
 }
 
 export async function selectSalesOffers(env: Env, now = new Date()) {
   if (!["on", "allowlist"].includes(env.SALES_OFFER_MODE ?? "")) return;
+  const audience = env.SALES_OFFER_AUDIENCE ?? "dropoffs";
+  if (!["dropoffs", "high_interest"].includes(audience)) return;
+  const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 3);
+  const minMinutes = Number(env.SALES_OFFER_MIN_TUTOR_MINUTES ?? 0);
+  if (audience === "high_interest" && (env.SALES_OFFER_MIN_TUTOR_CALLS?.trim() === "" || env.SALES_OFFER_MIN_TUTOR_MINUTES?.trim() === "" ||
+    !Number.isInteger(minCalls) || minCalls < 0 || !Number.isFinite(minMinutes) || minMinutes < 0)) return;
   const b = new BusinessStore(env.DB);
-  const { results } = await env.DB.prepare(`SELECT json_extract(body,'$.customer_id') AS customer_id, MAX(created_at) AS dropped_at
-    FROM console_records WHERE kind='ivr-events' AND json_extract(body,'$.route')='sales' AND created_at>?
-    GROUP BY json_extract(body,'$.customer_id')`).bind(new Date(+now - 36 * 3600000).toISOString()).all<{ customer_id: string; dropped_at: string }>();
+  const candidates = audience === "high_interest" ? `SELECT COALESCE(c.customer_id,s.student_id) AS customer_id, ?1 AS dropped_at
+    FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id
+    LEFT JOIN prompt_snapshots p ON p.call_id=s.call_id
+    JOIN bots b ON b.id=COALESCE(c.bot_id,p.profile_id) AND b.role='teacher'
+    GROUP BY COALESCE(c.customer_id,s.student_id)
+    HAVING COUNT(*)>=?2 AND SUM(MAX(0,s.duration_seconds))>=?3`
+    : `SELECT json_extract(body,'$.customer_id') AS customer_id, MAX(created_at) AS dropped_at
+      FROM console_records WHERE kind='ivr-events' AND json_extract(body,'$.route')='sales' AND created_at>?2 AND ?3=0
+      GROUP BY json_extract(body,'$.customer_id')`;
+  const { results } = await env.DB.prepare(`WITH candidates AS (${candidates})
+    SELECT t.customer_id,t.dropped_at,ph.phone FROM candidates t JOIN customer_phones ph ON ph.customer_id=t.customer_id
+    WHERE length(ph.phone) BETWEEN 8 AND 15 AND ph.phone NOT GLOB '*[^0-9]*' AND ph.phone GLOB '*[1-9]*'
+    AND (?6='on' OR ph.phone IN (SELECT value FROM json_each(?5)))
+    AND (ph.phone IN (SELECT value FROM json_each(?4)) OR (
+      NOT ${buyerSql("t.customer_id", "?1")} AND NOT EXISTS(
+        SELECT 1 FROM console_records WHERE kind='sales-offers' AND json_extract(body,'$.customer_id')=t.customer_id)))
+    ORDER BY t.customer_id LIMIT 100`)
+    .bind(now.toISOString(), audience === "high_interest" ? minCalls : new Date(+now - 36 * 3600000).toISOString(),
+      audience === "high_interest" ? minMinutes * 60 : 0, JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)),
+      JSON.stringify(phoneList(env.SALES_OFFER_ALLOWLIST)), env.SALES_OFFER_MODE).all<{ customer_id: string; dropped_at: string; phone: string }>();
   for (const row of results) {
-    const phone = normalizePhone((await b.record("customers", row.customer_id))?.phone ?? "");
-    if (!phone || !salesOfferAllowed(env, phone) || await customerBought(b, row.customer_id, now.toISOString())) continue;
-    const id = "sales-offer:" + row.customer_id;
-    const schedule = offerSchedule(new Date(row.dropped_at));
-    const offer = { id, customer_id: row.customer_id, phone, dropped_at: row.dropped_at, status: "queued", expires_at: schedule.expires };
-    await env.DB.batch([
-      env.DB.prepare("INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at) VALUES ('sales-offers',?,?,?,?)")
-        .bind(id, JSON.stringify(offer), now.toISOString(), now.toISOString()),
-      env.DB.prepare(`INSERT OR IGNORE INTO callback_requests(id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at)
-        SELECT ?,?,'','self','Sales offer','scheduled',?,'sales_offer',?,'queued',0,?,?,?
-        WHERE EXISTS(SELECT 1 FROM console_records WHERE kind='sales-offers' AND id=? AND created_at=?)`)
-        .bind(id, phone, schedule.at, now.toISOString(), now.toISOString(), now.toISOString(), schedule.at, id, now.toISOString()),
-    ]);
+    await queueOffer(b, env, row.customer_id, row.phone, row.dropped_at, offerSchedule(new Date(row.dropped_at)), now);
   }
 }
 
@@ -61,7 +121,7 @@ export async function salesOfferDialError(env: Env, id: string, phone: string, n
   const offer = await b.record("sales-offers", id);
   if (!salesOfferAllowed(env, phone)) return "Sales offer gate disabled for phone";
   if (!offer || offer.phone !== normalizePhone(phone) || !["queued", "dialed"].includes(offer.status) || offer.expires_at <= now.toISOString()) return "Sales offer unavailable or expired";
-  if (await customerBought(b, offer.customer_id, now.toISOString())) return "Sales offer customer already purchased";
+  if (!salesOfferTestPhone(env, phone) && await customerBought(b, offer.customer_id, now.toISOString())) return "Sales offer customer already purchased";
   return null;
 }
 
@@ -82,7 +142,7 @@ export async function enterSalesOffer(b: BusinessStore, env: Env, callId: string
 export async function offerGift(b: BusinessStore, env: Env, offerId: string, customerId: string, callId: string) {
   const offer = await b.record("sales-offers", offerId);
   if (!offer || offer.customer_id !== customerId || offer.status !== "answered" || offer.expires_at <= nowIso() ||
-    !salesOfferAllowed(env, offer.phone) || await customerBought(b, customerId)) return 0;
+    !salesOfferAllowed(env, offer.phone) || !salesOfferTestPhone(env, offer.phone) && await customerBought(b, customerId)) return 0;
   const minutes = Number(env.SALES_OFFER_PRACTICE_MINUTES ?? 4);
   const seconds = (Number.isFinite(minutes) && minutes > 0 ? minutes : 4) * 60;
   const result = await b.db.prepare(`INSERT OR IGNORE INTO usage_allocations(call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
@@ -101,7 +161,7 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
   if (!context.offer_call) return null;
   const offer = await b.record("sales-offers", context.offer_call);
   if (!offer || offer.customer_id !== customerId || offer.call_id !== p.PBXcallId || offer.expires_at <= nowIso() ||
-    !salesOfferAllowed(env, offer.phone) || await customerBought(b, customerId)) return null;
+    !salesOfferAllowed(env, offer.phone) || !salesOfferTestPhone(env, offer.phone) && await customerBought(b, customerId)) return null;
   if (p.PBXcallStatus === "HANGUP") return { type: "hangup" };
   if (p.isaacOfferUnavailable) return { type: "hangup" };
   if (offer.status === "declined") return null;
