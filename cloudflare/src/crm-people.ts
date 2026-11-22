@@ -80,7 +80,12 @@ async function load(env: Env) {
   for (const c of callbacks) c.customer_id = aliases.get(phoneKey(c.phone));
   const group = (rows: Row[], key: string) => { const map = new Map<string, Row[]>(); for (const row of rows) { const id = row[key]; if (id) { if (!map.has(id)) map.set(id, []); map.get(id)!.push(row); } } return map; };
   const cardPaymentAvailable = /^[0-9]{1,7}$/.test(env.NEDARIM_IFRAME_MOSAD ?? env.NEDARIM_MOSAD_ID ?? "") && !!env.NEDARIM_API_VALID && !!env.NEDARIM_API_KEY && !!env.NEDARIM_WEBHOOK_SECRET && /^[0-9]{7}$/.test(env.NEDARIM_MOSAD_ID ?? "");
-  return { people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
+  const familySubscriptions = new Map<string, Row[]>();
+  for (const member of members.filter(m => !m.removed_at)) {
+    const sub = subscriptions.find(s => s.id === member.subscription_id);
+    if (sub) familySubscriptions.set(member.customer_id, [...(familySubscriptions.get(member.customer_id) || []), sub]);
+  }
+  return { familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
 }
 type Data = Awaited<ReturnType<typeof load>>;
 const schoolEvents = (data: Data, id: string) => (data.events.get(id) || []).filter(e => !(e.kind === "ivr-events" && ["translator", "start-translation", "languages"].includes(e.route)));
@@ -107,7 +112,9 @@ function personDetails(data: Data, p: Row) {
   });
   const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback, offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
   const lastPayment = paymentOrders.at(-1);
-  const sub = subscriptions.filter(s => s.status === "active").at(-1) || subscriptions.at(-1);
+  const familySubscriptions = data.familySubscriptions.get(p.id) || [];
+  const candidates = subscriptions.length ? subscriptions : familySubscriptions;
+  const sub = candidates.filter(s => s.status === "active").at(-1) || candidates.at(-1);
   const orders: Row[] = sub?.standing_orders || [];
   const order = orders.find(o => o.state === "past_due" || o.last_refusal_at) || orders.at(-1);
   const access = !sub ? "none" : sub.access_suspended_at ? "suspended" : orders.some(o => o.state === "past_due" || o.last_refusal_at) ? "payment_hold" : sub.status === "active" && sub.started_at <= new Date().toISOString() && sub.current_period_end > new Date().toISOString() ? "open" : "inactive";

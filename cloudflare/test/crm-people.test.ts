@@ -57,6 +57,24 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM subscription access", () => {
+  it("includes current family memberships in summaries and access filters, preferring owned subscriptions", async () => {
+    customer(); customer("member", "0501234568");
+    planAndSubscription("person1", "active");
+    sql.exec("UPDATE subscriptions SET current_period_end='2099-01-01'");
+    const card = async () => await (await request("people/member")).json() as any;
+    expect((await card()).subscription.access).toBe("none");
+    insert("subscription_members", { subscription_id: "sub", customer_id: "member", added_at: now });
+    expect((await card()).subscription).toMatchObject({ id: "sub", access: "open" });
+    const list = await (await request("people?access=open")).json() as any;
+    expect(list.items.map((p: any) => p.id)).toContain("member");
+    await request("subscriptions/sub/suspend", true, "POST");
+    expect((await card()).subscription.access).toBe("suspended");
+    sql.prepare("UPDATE subscription_members SET removed_at=?").run(now);
+    expect((await card()).subscription.access).toBe("none");
+    sql.exec("UPDATE subscription_members SET removed_at=NULL");
+    planAndSubscription("member", "cancelled", "owned-sub");
+    expect((await card()).subscription).toMatchObject({ id: "owned-sub", access: "inactive" });
+  });
   it("summarizes access, payment holds and read-only standing orders on lists and cards", async () => {
     customer();
     expect((await (await request("people/person1")).json() as any).subscription.access).toBe("none");
