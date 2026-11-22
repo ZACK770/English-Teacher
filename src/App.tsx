@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppProvider } from './store/AppContext';
 import { Navbar } from './components/Navbar';
-import { DashboardLayout } from './components/dashboard/DashboardLayout';
 import { LearnerPortal } from './components/portal/LearnerPortal';
 import { JoinLanding } from './components/join/JoinLanding';
 import { SpeakoolLanding } from './components/portal/SpeakoolLanding';
@@ -17,9 +16,8 @@ import './components/dashboard/dashboard.css';
 import './components/portal/portal-polish.css';
 
 type View = 'dashboard' | 'learn' | 'join' | 'legacy' | 'home';
-const sitePath = location.pathname.slice(legalBasePath(location.pathname).length);
 const crmPath = `${legalBasePath(location.pathname)}/dashboard/crm`;
-const isCrm = /^\/dashboard\/crm(\/|$)/.test(sitePath);
+const isCrm = /^\/dashboard(?:\/crm(?:\/|$)|\/?$)/.test(location.pathname.slice(legalBasePath(location.pathname).length));
 
 function viewForPath(pathname: string): View {
   const path = pathname.slice(legalBasePath(pathname).length);
@@ -32,19 +30,17 @@ function viewForPath(pathname: string): View {
 
 export const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>(() => viewForPath(location.pathname));
-  const [dashboardTab, setDashboardTab] = useState(isCrm || (/^\/dashboard\/?$/.test(sitePath) && !location.hash) ? 'customers' : 'overview');
 
   // Sync hash routing
   useEffect(() => {
     const handleHash = () => {
-      if (isCrm) return;
+      if (viewForPath(location.pathname) === 'dashboard') { setCurrentView('dashboard'); return; }
       const fallback = viewForPath(location.pathname);
       const hash = window.location.hash.replace('#', '') || fallback;
       if (hash === 'learn' || hash === 'join' || hash === 'legacy' || hash === 'home') {
         setCurrentView(hash);
       } else if (hash === 'dashboard') {
         setCurrentView('dashboard');
-        setDashboardTab('customers');
       } else if (
         [
           'overview',
@@ -66,7 +62,6 @@ export const AppContent: React.FC = () => {
           return;
         }
         setCurrentView('dashboard');
-        setDashboardTab(hash);
       } else {
         setCurrentView(fallback);
       }
@@ -89,34 +84,19 @@ export const AppContent: React.FC = () => {
     }
     setCurrentView(view);
     if (view === 'dashboard') {
-      handleSelectDashboardTab(dashboardTab);
+      window.location.href = crmPath;
     } else {
       window.location.hash = view;
     }
   };
 
-  const handleSelectDashboardTab = (tab: string) => {
-    if (tab === 'customers') {
-      window.location.href = crmPath;
-      return;
-    }
-    if (isCrm) {
-      window.location.href = `${legalBasePath(location.pathname)}/dashboard#${tab}`;
-      return;
-    }
-    setDashboardTab(tab);
-    window.location.hash = tab;
-  };
-
   const content = (
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 font-sans flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
-      {currentView !== 'learn' && currentView !== 'home' && <Navbar currentView={currentView} onNavigate={navigateTo} logoHref={currentView === 'join' ? `${legalBasePath(window.location.pathname)}/` : undefined} />}
+      {currentView !== 'dashboard' && currentView !== 'learn' && currentView !== 'home' && <Navbar currentView={currentView} onNavigate={navigateTo} logoHref={currentView === 'join' ? `${legalBasePath(window.location.pathname)}/` : undefined} />}
 
       <div className="flex-1">
         {currentView === 'dashboard' && (
-          <DashboardLayout currentTab={dashboardTab} onSelectTab={handleSelectDashboardTab}>
-            {dashboardTab === 'customers' && <CrmPage />}
-          </DashboardLayout>
+          <CrmPage />
         )}
         {currentView === 'learn' && (
           <>
@@ -130,7 +110,7 @@ export const AppContent: React.FC = () => {
       </div>
     </div>
   );
-  return currentView === 'dashboard' || currentView === 'legacy' ? <div className="pulse-dashboard"><AdminAuthGate>{content}</AdminAuthGate></div> : content;
+  return currentView === 'dashboard' || currentView === 'legacy' ? <div className={currentView === 'legacy' ? 'pulse-dashboard' : 'unified-crm'}><AdminAuthGate>{content}</AdminAuthGate></div> : content;
 };
 
 export const App: React.FC = () => {

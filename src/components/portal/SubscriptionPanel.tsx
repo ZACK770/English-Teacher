@@ -82,7 +82,7 @@ export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh,
       {admin && <div className="subscription-create">
         <label>מסלול<select value={planId} onChange={e => setPlanId(e.target.value)}>{!plans.length && <option value="">אין מסלולים זמינים</option>}{plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         {selectedPlan?.duration_months === 12 && <label>תחום נוסף לשליטה מלאה<select value={domain} onChange={e => setDomain(e.target.value)}>{Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>}
-        <button type="button" disabled={!planId} onClick={() => void act("", { customer_id: customerId, plan_id: planId, ...(selectedPlan?.duration_months === 12 ? { domains: [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain }] } : {}) })}>יצירת מנוי</button>
+        <button type="button" disabled={!planId} onClick={() => void act("", { customer_id: customerId, plan_id: planId, ...(selectedPlan?.duration_months === 12 ? { domains: [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain }] } : {}) })}>פתיחת מנוי חדש</button>
         <small>רישום זכאות בלבד — לא מתבצע חיוב אשראי.</small>
       </div>}
       {!items.length && !error && <p>עדיין אין מנוי בחשבון.</p>}

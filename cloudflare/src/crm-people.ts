@@ -34,7 +34,7 @@ async function load(env: Env) {
       EXISTS(SELECT 1 FROM call_recordings r WHERE r.call_id=s.call_id) AS recording,
       c.bot_id,c.channel FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id`,
     "SELECT * FROM sales_receipts WHERE product='school'",
-    "SELECT s.*,p.product FROM subscriptions s LEFT JOIN plans p ON p.id=s.plan_id WHERE p.product='school' OR p.product IS NULL ORDER BY s.created_at,s.id",
+    "SELECT s.*,p.product,p.name AS plan_name FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE p.product='school' ORDER BY s.created_at,s.id",
     "SELECT * FROM callback_requests",
     "SELECT * FROM ivr_voicemails",
     "SELECT id,label,role FROM bots",
@@ -44,9 +44,11 @@ async function load(env: Env) {
     `SELECT m.*,s.customer_id AS owner_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id`,
     "SELECT id,body FROM console_settings WHERE id LIKE 'ivr:preferences:%'",
     "SELECT id,customer_id,package_id,state,channel,amount_agorot,created_at,updated_at,transaction_id,receipt_id FROM payment_orders WHERE channel='web' ORDER BY created_at",
+    "SELECT entitlement_id,state,monthly_agorot,last_refusal_at,keva_id FROM standing_orders ORDER BY created_at,id",
   ];
   const [results, economics] = await Promise.all([env.DB.batch<Row>(queries.map(q => env.DB.prepare(q))), new BusinessStore(env.DB).economics()]);
-  const [typed, records, allSessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members, preferences, paymentOrders] = results.map(r => r.results);
+  const [typed, records, allSessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members, preferences, paymentOrders, standingOrders] = results.map(r => r.results);
+  for (const sub of subscriptions) sub.standing_orders = standingOrders.filter(o => o.entitlement_id === sub.id);
   const botRows = new Map(bots.map(b => [b.id, b]));
   // This CRM belongs to the English school. Unknown legacy sessions are retained,
   // but known translator/navigation activity is deliberately excluded.
@@ -105,8 +107,14 @@ function personDetails(data: Data, p: Row) {
   });
   const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback, offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
   const lastPayment = paymentOrders.at(-1);
+  const sub = subscriptions.filter(s => s.status === "active").at(-1) || subscriptions.at(-1);
+  const orders: Row[] = sub?.standing_orders || [];
+  const order = orders.find(o => o.state === "past_due" || o.last_refusal_at) || orders.at(-1);
+  const access = !sub ? "none" : sub.access_suspended_at ? "suspended" : orders.some(o => o.state === "past_due" || o.last_refusal_at) ? "payment_hold" : sub.status === "active" && sub.started_at <= new Date().toISOString() && sub.current_period_end > new Date().toISOString() ? "open" : "inactive";
+  const subscription = { id: sub?.id || null, plan_name: sub?.plan_name || null, status: sub?.status || null, current_period_end: sub?.current_period_end || null, access };
+  const nedarim = { state: order?.state || "none", amount: order ? n(order.monthly_agorot) / 100 : null, last_refusal_at: order?.last_refusal_at || null, keva_id_present: !!order?.keva_id };
   const summary = { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", notes: p.notes || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status], card_payment: { available: data.cardPaymentAvailable, orders: paymentOrders.length, paid: paymentOrders.filter(o => o.state === "paid").length, latest_state: lastPayment?.state || "none", latest_at: lastPayment?.updated_at || null } };
-  return { summary, times, callback };
+  return { summary: { ...summary, subscription, nedarim }, times, callback };
 }
 function person(data: Data, p: Row) {
   return personDetails(data, p).summary;
@@ -115,7 +123,7 @@ function costCall(data: Data, s: Row) {
   const rate = s.channel === "phone" ? data.economics.forecast_cost_per_minute : 0;
   const ai_cost_usd = n(s.estimated_cost_usd), ai_cost_ils = ai_cost_usd * (data.economics.usd_ils || DEFAULT_USD_ILS);
   const telephony_cost_ils = n(s.duration_seconds) / 60 * rate;
-  return { ...s, started_at: String(s.started_at), teacher: data.bots.get(s.bot_id) || s.bot_id || "לא ידוע", recording: s.recording ? true : null, has_transcript: !!s.has_transcript, ai_cost_usd, ai_cost_ils: safe(ai_cost_ils), telephony_cost_ils: safe(telephony_cost_ils), telephony_rate_ils: rate, telephony_estimated: true, total_cost_ils: safe(ai_cost_ils + telephony_cost_ils) };
+  return { ...s, call_id: String(s.call_id), duration_seconds: n(s.duration_seconds), started_at: String(s.started_at), teacher: data.bots.get(s.bot_id) || s.bot_id || "לא ידוע", recording: s.recording ? true : null, has_transcript: !!s.has_transcript, ai_cost_usd, ai_cost_ils: safe(ai_cost_ils), telephony_cost_ils: safe(telephony_cost_ils), telephony_rate_ils: rate, telephony_estimated: true, total_cost_ils: safe(ai_cost_ils + telephony_cost_ils) };
 }
 function journey(data: Data, id: string) {
   const rows: Row[] = [];
@@ -150,7 +158,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     if (!sub) throw new HttpError(404, "המנוי לא נמצא");
     return Response.json(sub, { headers: { "Cache-Control": "no-store" } });
   }
-  const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript|analytics)$/);
+  const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript|analytics|calls)$/);
   if (!match) return null;
   if (request.method !== "GET" && !(request.method === "DELETE" && match[2])) throw new HttpError(405, "פעולה לא נתמכת");
   const ok = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
@@ -160,6 +168,22 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     return ok({ call_id: decodeURIComponent(match[3]), turns: parse(row.transcript_json, []), recording: null });
   }
   const data = await load(env);
+  if (path === "/v1/admin/crm/calls") {
+    const params = new URL(request.url).searchParams;
+    const from = params.get("from") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+    const to = params.get("to") || new Date().toISOString().slice(0, 10);
+    const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
+    if (!validDate(from) || !validDate(to) || from > to) throw new HttpError(422, "טווח תאריכים לא תקין");
+    const all = [...data.sessions.entries()].flatMap(([id, sessions]) => sessions.map(s => ({ ...costCall(data, s), customer_id: id, customer_name: data.people.get(id)?.name || "ללא שם" })))
+      .filter(s => s.started_at.slice(0, 10) >= from && s.started_at.slice(0, 10) <= to).sort((a, b) => b.started_at.localeCompare(a.started_at) || a.call_id.localeCompare(b.call_id));
+    const totals = { calls: all.length, minutes: safe(all.reduce((v, s) => v + n(s.duration_seconds) / 60, 0)), ai_cost_ils: safe(all.reduce((v, s) => v + s.ai_cost_ils, 0)), telephony_cost_ils: safe(all.reduce((v, s) => v + s.telephony_cost_ils, 0)), total_cost_ils: safe(all.reduce((v, s) => v + s.total_cost_ils, 0)) };
+    const aggregate = (key: "customer_id" | "teacher") => {
+      const rows = new Map<string, { id: string; name: string; calls: number; total_cost_ils: number }>();
+      for (const s of all) { const id = String(s[key]); const row = rows.get(id) || { id, name: key === "teacher" ? s.teacher : s.customer_name, calls: 0, total_cost_ils: 0 }; row.calls++; row.total_cost_ils = safe(row.total_cost_ils + s.total_cost_ils); rows.set(id, row); }
+      return [...rows.values()].sort((a, b) => b.total_cost_ils - a.total_cost_ils);
+    };
+    return ok({ from, to, items: all.slice(0, 2000), capped: all.length > 2000, totals, insights: { cost_per_minute: totals.minutes ? safe(totals.total_cost_ils / totals.minutes) : 0, short_call_share: all.length ? safe(all.filter(s => n(s.duration_seconds) < 60).length / all.length) : 0, top_customers: aggregate("customer_id").slice(0, 5), by_teacher: aggregate("teacher") } });
+  }
   if (path === "/v1/admin/crm/analytics") {
     const details = [...data.people.values()].map(p => personDetails(data, p));
     const people = details.map(p => p.summary);
@@ -190,13 +214,15 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     return ok({ ...person(data, p), journey: journey(data, id), calls: (data.sessions.get(id) || []).map(s => costCall(data, s)).sort((a, b) => b.started_at.localeCompare(a.started_at)), assumptions: { usd_ils: data.economics.usd_ils, telephony_rate_ils: data.economics.forecast_cost_per_minute, telephony_note: "אומדן לפי עלות הדקה החזויה בהנחות העסק; אינו חיוב ספק מאומת" } });
   }
   const params = new URL(request.url).searchParams;
+  const subscriptionAccess = params.get("access") || "";
+  if (subscriptionAccess && !["open", "suspended", "payment_hold", "inactive", "none"].includes(subscriptionAccess)) throw new HttpError(422, "מסנן מנוי לא תקין");
   const limit = Number(params.get("limit") || 50), cursor = params.get("cursor") || "", status = params.get("status") || "", q = (params.get("q") || "").trim().toLowerCase(), source = params.get("source") || "", sort = params.get("sort") || "last_activity", direction = params.get("direction") === "asc" ? "asc" : "desc";
   const sortable = new Set(["name", "status", "ad_source", "track", "first_seen", "last_activity", "calls_count", "minutes_used", "total_cost_ils", "revenue_ils"]);
   if (!Number.isInteger(limit) || limit < 1 || limit > 200 || (status && !Object.hasOwn(STATUS_LABELS, status)) || !sortable.has(sort)) throw new HttpError(422, "מסנן לא תקין");
   const terms = q.split(/\s+/).filter(Boolean);
   let rows = [...data.people.values()].map(p => person(data, p)).filter(p => {
     const haystack = [p.name, p.phone, visiblePhone(p.phone), p.email, p.id, p.status, p.status_label, p.ad_source, p.track, p.notes].join(" ").toLowerCase();
-    return terms.every(term => haystack.includes(term)) && (!source || p.ad_source === source);
+    return terms.every(term => haystack.includes(term)) && (!source || p.ad_source === source) && (!subscriptionAccess || p.subscription.access === subscriptionAccess);
   }).sort((a: Row, b: Row) => {
     const av = a[sort] ?? "", bv = b[sort] ?? "";
     const compared = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv), "he");

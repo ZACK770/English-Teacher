@@ -1,3 +1,27 @@
+.crm-root { --paper:#f5f8f7; --card:#fff; --line:#d8e5df; --ink:#172b35; --quiet:#61756e; --accent:#176d56; color-scheme:light; }
+.crm-root .crm-primary { color:white; }
+.crm-root :is(.crm-tools input,.crm-form input,.crm-form textarea,.crm-transcript>div,.crm-choices code) { background:white; }
+.crm-root th { background:#edf4f0; }
+.crm-root td { border-color:var(--line); }
+.crm-root tr:hover td { background:#f0f7f3; }
+.crm-root .crm-button { color:#176d56; background:#eef7f1; border-color:#bdd6c9; }
+.crm-root .crm-button:hover { background:#dcefe3; }
+.crm-root .crm-payment { background:#eef6f2; border-color:var(--line); }
+.crm-root :is(.crm-success,.crm-notice) { color:#176d56; }
+.crm-root .crm-notice { background:#e4f3e9; }
+.crm-root .crm-error { background:#fff0ee; color:#a02c2c; }
+.crm-root .crm-badge { background:#e9efeb; color:#425c4d; }
+.crm-root .crm-paying { background:#def4e9; color:#176644; }
+.crm-root .crm-access-suspended,.crm-root .crm-access-payment_hold { background:#fff0d9; color:#8a4d08; }
+.crm-root .crm-table-scroll { scrollbar-color:#b6cdc2 #edf4f0; }
+ .crm-subscription-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:20px; padding:22px; margin:20px 0; background:#fff; border:1px solid #d8e5e1; border-radius:16px; }
+ .crm-subscription-bar h2, .crm-subscription-bar h3 { margin:0 0 10px; }
+ .crm-access-open { background:#def4e9; color:#176644; }
+ .crm-access-suspended, .crm-access-payment_hold { background:#fff0d9; color:#8a4d08; }
+ .crm-access-none, .crm-access-inactive { background:#edf0f2; color:#52616b; }
+ .crm-month-costs { display:flex; flex-wrap:wrap; gap:18px; margin-bottom:20px; }
+ .crm-call-path { background:#f2f7f5; border-radius:12px; padding:16px; margin:-8px 0 24px; }
+ .crm-tools select { background:white; color:#172b35; border:1px solid #cfdfd9; border-radius:8px; padding:10px; }
 .crm-workspace-nav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
 .crm-workspace-nav a{padding:8px 12px;border:1px solid var(--line);border-radius:9px}
 .crm-workspace-nav a[aria-current=page]{background:var(--accent);color:var(--paper);font-weight:700}

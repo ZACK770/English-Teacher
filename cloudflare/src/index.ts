@@ -183,7 +183,7 @@ export default {
     catch (error) {
       response = error instanceof HttpError ? Response.json({ detail: error.detail }, { status: error.status }) : Response.json({ detail: "Request failed" }, { status: 500 });
     }
-    if (/^\/dashboard\/crm(\/|$)/.test(path) && response.headers.get("Content-Type")?.includes("text/html")) {
+    if (/^\/dashboard(?:\/crm(?:\/|$)|\/?$)/.test(path) && response.headers.get("Content-Type")?.includes("text/html")) {
       const html = (await response.text()).replace(/<link\b[^>]*href=["']https:\/\/fonts\.(?:googleapis|gstatic)\.com[^>]*>/g, "");
       const headers = new Headers(response.headers);
       headers.delete("Content-Length");
