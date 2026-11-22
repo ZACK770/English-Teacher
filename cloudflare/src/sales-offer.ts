@@ -5,6 +5,7 @@ import { PaymentStore, paymentResponse } from "./payments";
 import { SCHOOL_FREE_POLICY } from "../../src/pricing";
 
 export const SALES_EXTENSION_PATH = "/3";
+export const SALES_OFFER_RECORDING = "sales-offer-month20-22a3e286bc65.wav";
 export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.";
 export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call from SpeakCall after the learner’s trial. Speak Hebrew for guidance. Greet warmly by name if known: "שלום, כאן ספיקול, חזרנו לתרגול קצר". Do a short English practice. Close politely and warmly, not abruptly, and say a short special message follows. Never take card details or quote prices.';
 
@@ -186,6 +187,20 @@ const offerMenu = (text: string, name = "isaacOffer", keys = "0,1,2") => ({
   type: "simpleMenu", name, enabledKeys: keys, times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ text }],
 });
 
+async function recordedOfferMenu(env: Env) {
+  const menu = offerMenu(SALES_OFFER_TEXT);
+  if (!env.PUBLIC_BASE_URL || !env.ASSETS) return menu;
+  try {
+    const url = new URL(env.PUBLIC_BASE_URL.replace(/\/$/, "") + "/brand/phone/" + SALES_OFFER_RECORDING);
+    if (!["https:", "http:"].includes(url.protocol)) return menu;
+    const audio = await env.ASSETS.fetch(new Request(url, { method: "HEAD" }));
+    if (audio.ok && /^audio\/(?:x-)?wav(?:e)?(?:;|$)/i.test(audio.headers.get("Content-Type") ?? "")) {
+      return { ...menu, files: [{ fileLink: url.toString(), fileName: SALES_OFFER_RECORDING.replace(/\.wav$/, "") }] };
+    }
+  } catch {}
+  return menu;
+}
+
 export async function salesOfferResponse(b: BusinessStore, env: Env, base: string, p: Record<string, string>, customerId: string): Promise<Record<string, any> | null> {
   const context = await b.loadContext(p.PBXcallId);
   if (!context.offer_call) return null;
@@ -210,5 +225,5 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
     }
     return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
   }
-  return offerMenu(SALES_OFFER_TEXT);
+  return recordedOfferMenu(env);
 }

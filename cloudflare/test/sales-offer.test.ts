@@ -10,7 +10,7 @@ import { ProgressStore } from "../src/progress";
 import { TutorSession } from "../src/session";
 import { PaymentStore } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
-import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT } from "../src/sales-offer";
+import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT, SALES_OFFER_RECORDING } from "../src/sales-offer";
 
 let sql: DatabaseSync, b: BusinessStore, env: Env;
 const now = new Date("2026-06-15T14:00:00Z");
@@ -316,6 +316,47 @@ describe("explicitly gated test offers", () => {
 describe("sales offers", () => {
   it("uses the exact twenty-shekel menu without moving renewal disclosure into the menu", () => {
     expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.");
+  });
+  it("bundles the offer recording in the same telephone WAV format as the other prompts", () => {
+    const audio = readFileSync(new FileURL("../../public/brand/phone/" + SALES_OFFER_RECORDING, import.meta.url));
+    expect(audio.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(audio.toString("ascii", 8, 12)).toBe("WAVE");
+    expect(audio.readUInt16LE(20)).toBe(1);
+    expect(audio.readUInt16LE(22)).toBe(1);
+    expect(audio.readUInt32LE(24)).toBe(8000);
+    expect(audio.readUInt16LE(34)).toBe(16);
+  });
+  it("plays the available recorded offer with a content-versioned Technoline cache name", async () => {
+    await answered();
+    env.PUBLIC_BASE_URL = "https://example.test/";
+    const assets = vi.fn(async () => new Response(null, { headers: { "Content-Type": "audio/wav" } }));
+    env.ASSETS = { fetch: assets } as unknown as Fetcher;
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call" }, "learner")).toMatchObject({
+      name: "isaacOffer", enabledKeys: "0,1,2", files: [{
+        fileLink: "https://example.test/brand/phone/" + SALES_OFFER_RECORDING,
+        fileName: SALES_OFFER_RECORDING.replace(/\.wav$/, ""),
+      }],
+    });
+    expect(assets.mock.calls).toHaveLength(1);
+    const request = (assets.mock.calls[0] as unknown as [Request])[0];
+    expect(request.method).toBe("HEAD");
+    expect(request.url).toBe("https://example.test/brand/phone/" + SALES_OFFER_RECORDING);
+    await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "0" }, "learner");
+    expect(assets).toHaveBeenCalledTimes(1);
+  });
+  it.each(["no-url", "no-binding", "missing-file", "html-fallback", "fetch-error", "invalid-url"])("retains offer TTS when the recording is unavailable: %s", async reason => {
+    await answered();
+    env.PUBLIC_BASE_URL = reason === "no-url" ? "" : reason === "invalid-url" ? "not a URL" : "https://example.test";
+    const assets = vi.fn(async () => {
+      if (reason === "fetch-error") throw new Error("Unavailable");
+      return new Response(null, {
+        status: reason === "missing-file" ? 404 : 200,
+        headers: { "Content-Type": reason === "html-fallback" ? "text/html" : "audio/wav" },
+      });
+    });
+    if (reason !== "no-binding") env.ASSETS = { fetch: assets } as unknown as Fetcher;
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call" }, "learner"))
+      .toMatchObject({ name: "isaacOffer", files: [{ text: SALES_OFFER_TEXT }] });
   });
   it("fails closed and normalizes the allowlist", async () => {
     env.SALES_OFFER_MODE = "off";
