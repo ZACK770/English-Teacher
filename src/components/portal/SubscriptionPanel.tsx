@@ -107,18 +107,18 @@ function SubscriptionCard({ sub, admin, act, changeAccess }: { sub: Subscription
       <button type="button" onClick={() => void changeAccess(sub)}>{sub.access_suspended_at ? "פתיחת גישה מחדש" : "השעיית גישה"}</button>
       <small>גישה לתרגול בלבד, ללא שינוי בחיוב.</small>
     </div>}
-    {!admin && !sub.owner && <p className="subscription-note">אתם חלק ממנוי משפחתי. הדקות משותפות, ההתקדמות אישית. ניהול המנוי אצל בעל החשבון.</p>}
+    {!admin && !sub.owner && <p className="subscription-note">זהו מנוי משפחתי. החבילה משותפת, ההתקדמות אישית. ניהול המנוי בחשבון הראשי.</p>}
     <dl>
       <div><dt>{sub.term_months ? "מחיר המסלול הנעול" : "מחיר חודשי נעול"}</dt><dd>{money(sub.price_agorot)}{sub.term_months ? ` ל־${sub.term_months} חודשים` : " לחודש"}</dd></div>
       {admin && <div><dt>סכום חידוש כולל משפחה</dt><dd>{money(sub.renewal_amount_agorot)}</dd></div>}
       <div><dt>{admin ? "תקופה נוכחית" : "בתוקף עד"}</dt><dd>{admin && <>{date(sub.current_period_start)} — </>}{date(sub.current_period_end)}</dd></div>
-      <div><dt>דקות שהועברו מהחודש הקודם</dt><dd>{sub.rollover_minutes.toLocaleString("he-IL", { maximumFractionDigits: 1 })}</dd></div>
+      {admin && <div><dt>דקות שהועברו מהחודש הקודם</dt><dd>{sub.rollover_minutes.toLocaleString("he-IL", { maximumFractionDigits: 1 })}</dd></div>}
       <div><dt>ימי הקפאה שנותרו השנה</dt><dd>{Math.floor(sub.pause_days_remaining)}</dd></div>
       {sub.pause_until && <div><dt>המנוי מוקפא עד</dt><dd>{date(sub.pause_until)}</dd></div>}
       {admin && <div><dt>אחריות</dt><dd>{sub.guarantee_status ? guarantees[sub.guarantee_status] : "לא חלה במסלול זה"}</dd></div>}
     </dl>
     <small>המחיר נעול כל עוד המנוי פעיל</small>
-    {sub.rollover.map((r, i) => <p key={i}>{r.minutes.toLocaleString("he-IL", { maximumFractionDigits: 1 })} דקות מועברות · תוקף עד {date(r.expires_at)}{sub.status === "paused" && " · התוקף יוארך בסיום ההקפאה"}</p>)}
+    {admin && sub.rollover.map((r, i) => <p key={i}>{r.minutes.toLocaleString("he-IL", { maximumFractionDigits: 1 })} דקות מועברות · תוקף עד {date(r.expires_at)}{sub.status === "paused" && " · התוקף יוארך בסיום ההקפאה"}</p>)}
     {(admin || sub.owner) && <>
       <div className="subscription-actions">
         {active && <><label>ימי הקפאה (1–60)<input type="number" min="1" max={Math.min(60, Math.floor(sub.pause_days_remaining))} value={days} onChange={e => setDays(Number(e.target.value))} /></label><button type="button" disabled={!Number.isInteger(days) || days < 1 || days > Math.min(60, sub.pause_days_remaining)} onClick={() => void act(path + "/pause", { days })}>הקפאה</button></>}

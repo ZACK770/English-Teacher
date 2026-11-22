@@ -182,7 +182,8 @@ describe("voice socket closure", () => {
     const socket = await connect();
     socket.onmessage({ data: JSON.stringify({ type: "hangup", reason: "access_blocked" }) });
     socket.onclose({ code: 1000, reason: "session ended", wasClean: true });
-    expect(render()).toContain("שיחות הטעימה נוצלו ואין דקות בחבילה");
+    expect(render()).toContain("שיחות הטעימה נוצלו ואין כרגע חבילת תרגול זמינה");
+    expect(render()).not.toContain("דקות");
     expect(render()).not.toContain("החיבור לשיחה נסגר לפני");
   });
   it("uses the connection fallback for an unrecognized hangup, not a balance suggestion", async () => {

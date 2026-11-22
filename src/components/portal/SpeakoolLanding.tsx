@@ -21,7 +21,7 @@ const faq = [
   ["צריך אינטרנט?", "לא. מספיק טלפון רגיל, גם כשר. מי שרוצה יכול לדבר גם מהמחשב."],
   ["למה השיחה מוגבלת בזמן?", "שיחות קצרות ותכופות נדבקות יותר משיעור ארוך פעם בשבוע. במסלולים הגבוהים השיחה ארוכה יותר."],
   ["מה קורה כשהזמן נגמר?", "המורה מודיע לפני הסוף, מסכם, שומר את מה שלמדת ונפרד. שום דבר לא הולך לאיבוד."],
-  ["איך משלמים?", "בכרטיס אשראי באתר, בדף תשלום מאובטח: מנוי חודשי מתחדש בהוראת קבע וניתן לביטול בכל עת, ומסלולי השליטה אפשר לחלק לתשלומים. תוספת דקות אפשר לרכוש גם בטלפון, מקש 3."],
+  ["איך משלמים?", "בכרטיס אשראי באתר, בדף תשלום מאובטח: מנוי חודשי מתחדש בהוראת קבע וניתן לביטול בכל עת, ומסלולי השליטה אפשר לחלק לתשלומים. חבילת תרגול נוספת אפשר לרכוש גם בטלפון, מקש 3."],
 ];
 
 const domains = [
@@ -97,7 +97,7 @@ export function SpeakoolLanding() {
       <section className="sk-shell sk-land-hero" aria-labelledby="landing-heading">
         <div className="sk-land-hero-copy">
           <h1 id="landing-heading">פשוט לדבר <span>באנגלית.</span></h1>
-          <p className="sk-land-lede">שיעור ראשון של 7 דקות עם מורה AI.<br />בלי כרטיס אשראי.</p>
+          <p className="sk-land-lede">שיעור ראשון עם מורה AI.<br />בלי כרטיס אשראי.</p>
           <div className="sk-land-hero-actions"><button ref={heroButton} type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={19} /></button><a href={tel}>לחייג בעצמי</a></div>
         </div>
         <div className="sk-land-hero-art" aria-hidden="true">
@@ -108,13 +108,13 @@ export function SpeakoolLanding() {
         <div className="sk-land-offer-panel">
           <div>
             <p className="sk-land-kicker">שיעור ראשון בחינם</p>
-            <h2 id="free-lesson-title">שבע דקות. בלי הרצאות.</h2>
+            <h2 id="free-lesson-title">שיחה ראשונה. בלי הרצאות.</h2>
             <p>בוחרים נושא ומדברים בקצב שלך. המורה עוזר כשנתקעים ובסוף מסכם מה כדאי לתרגל בפעם הבאה.</p>
             <div className="sk-land-cta"><button type="button" className="sk-primary" onClick={e => openEntry("trial", e.currentTarget)}>להתנסות בחינם <ArrowLeft aria-hidden="true" size={17} /></button></div>
             {legacyCallback && <LessonCallbackForm tel={tel} privacy={base + "/privacy"} />}
           </div>
           <div className="sk-land-clock" aria-hidden="true">
-            <strong>10</strong><span>דקות · חינם</span>
+            <strong>1</strong><span>שיחה · חינם</span>
           </div>
         </div>
       </section>
@@ -161,7 +161,7 @@ export function SpeakoolLanding() {
         <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.billing === "monthly").map(p => <article key={p.id} className={p.recommended ? "is-pro" : ""}>
           {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p className="sk-land-line">{p.tagline}</p>
           <div className="sk-land-price"><strong>{p.price_ils}</strong><span>₪ לחודש</span></div>
-          <ul><li>{p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li><li>שנתי: ₪{p.annual_price_ils} · מחיר של 10 חודשים</li></ul>
+          <ul><li>שנתי: ₪{p.annual_price_ils} · מחיר של 10 חודשים</li></ul>
           <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={learn + "?plan=" + p.id}>להצטרפות · ₪{p.price_ils} לחודש</a>
         </article>)}</div>
         <h3>מסלול שליטה · מחיר קבוע, אפשרות לתשלומים</h3>
@@ -169,15 +169,15 @@ export function SpeakoolLanding() {
           {p.recommended && <em>מומלץ</em>}<h3>{p.name}</h3><p>{p.tagline}</p>
           <div className="sk-land-price"><strong>₪{p.price_ils.toLocaleString("he-IL")}</strong><span>ל־{p.duration_months} חודשים</span></div>
           <p>במקום ₪{p.anchor_price_ils?.toLocaleString("he-IL")}</p><small>לעומת מנוי שוטף לאותה תקופה</small>
-          <ul><li>עד {p.minutes} דקות בחודש</li><li>עד {p.max_call_minutes} דקות לשיחה</li></ul>
+
           <a className={p.recommended ? "sk-primary" : "sk-secondary"} href={learn + "?plan=" + p.id}>להצטרפות · עד {p.duration_months} תשלומים</a>
         </article>)}</div>
         <p>{MASTERY_GUARANTEE}</p>
         <h3>תוספות ורכישה חד־פעמית</h3>
         <div className="sk-land-grid">{PRICING_PACKAGES.filter(p => p.product === "school" && p.automated_purchase).map(p => <article key={p.id}>
           <h3>{p.name}</h3><div className="sk-land-price"><strong>₪{p.price_ils}</strong><span>חד־פעמי</span></div>
-          <p>{p.minutes} דקות · תוקף {p.validity_days} ימים</p><p>{p.tagline}</p>
-          {p.product === "school" && <p>עד {p.max_call_minutes} דקות לשיחה</p>}
+          <p>בתוקף ל־{p.validity_days} ימים</p><p>{p.tagline}</p>
+
           <a className="sk-secondary" href={tel}>לרכישה בטלפון, מקש 3</a>
         </article>)}</div>
         <p>תוספת משפחתית: ₪39 לחודש לכל בן משפחה נוסף · הצטרפות דרך נציג.</p>

@@ -1,6 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+// Icon packages are externalized by the Workers test runner; test content/accessibility, not SVG internals.
+vi.mock("lucide-react", () => ({ ArrowLeft: () => null, Check: () => null, ChevronLeft: () => null, ChevronRight: () => null, Flame: () => null, Phone: () => null, Sparkles: () => null, Target: () => null, Trophy: () => null }));
 import { PracticeCalendar, PracticeJourney } from "../../src/components/portal/PracticeJourney";
 import { monthDays, shiftDay, shiftMonth } from "../../src/components/portal/practiceCalendar";
 

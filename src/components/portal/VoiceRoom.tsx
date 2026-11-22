@@ -10,7 +10,7 @@ const earlyClose = "החיבור לשיחה נסגר לפני שהמורה הת�
 const micPermission = "כדי לדבר כאן צריך לאפשר גישה למיקרופון בדפדפן.";
 const callErrors: Record<string, string> = {
   call_failed: connectionError,
-  access_blocked: "שיחות הטעימה נוצלו ואין דקות בחבילה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3.",
+  access_blocked: "שיחות הטעימה נוצלו ואין כרגע חבילת תרגול זמינה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3.",
   payment_failed: PAYMENT_FAILED_MESSAGE,
   customer_busy: "כבר יש לך שיחה פעילה. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.",
   system_busy: "כל קווי השיחה תפוסים כרגע. אפשר לנסות שוב בעוד רגע.",
@@ -247,6 +247,6 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
       {connected && <button className="sk-icon" title={muted ? "פתיחת מיקרופון" : "השתקת מיקרופון"} aria-label={muted ? "פתיחת מיקרופון" : "השתקת מיקרופון"} aria-pressed={muted} onClick={toggleMic}>{muted ? <MicOff /> : <Mic />}</button>}
       {error && !connected && <button className="sk-secondary" onClick={() => startRef.current()}>לנסות שוב</button>}
       {exit}
-    </div><small>כמו בטלפון, גם כאן השיחה משתמשת בדקות הלימוד שלך.</small>
+    </div><small>כמו בטלפון, גם כאן השיחה היא חלק מחבילת התרגול שלך.</small>
   </div>;
 }
