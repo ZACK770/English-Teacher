@@ -71,7 +71,7 @@ export async function enterSalesOffer(b: BusinessStore, env: Env, callId: string
   const phone = normalizePhone(customer?.phone ?? "");
   if (!phone || !salesOfferAllowed(env, phone)) return;
   const row = await b.db.prepare("SELECT id FROM callback_requests WHERE source='sales_offer' AND phone=? AND status IN ('dialing','dialed') AND updated_at>? ORDER BY updated_at DESC LIMIT 1")
-    .bind(phone, new Date(Date.now() - 30 * 60000).toISOString()).first<{ id: string }>();
+    .bind(phone, new Date(Date.now() - 45 * 60000).toISOString()).first<{ id: string }>();
   if (!row || await salesOfferDialError(env, row.id, phone, new Date())) return;
   const offer = await b.record("sales-offers", row.id);
   if (offer?.customer_id !== customerId) return;

@@ -133,6 +133,23 @@ describe("sales offers", () => {
     await enterSalesOffer(b, env, "call", "learner");
     expect(await b.loadContext("call")).toEqual({});
   });
+  it.each([30, 32, 40])("attributes provider retries answered %s minutes after campaign submission", async minutes => {
+    await selectSalesOffers(env);
+    await dispatchCallbacks(env);
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]!.body));
+    expect(body).toMatchObject({ dialRetries: 2, betweenRetries: 15 });
+    vi.setSystemTime(new Date(+now + minutes * 60000));
+    await enterSalesOffer(b, env, "retry-call", "learner");
+    expect(await b.loadContext("retry-call")).toMatchObject({ offer_call: offerId });
+    expect(await b.record("sales-offers", offerId)).toMatchObject({ call_id: "retry-call", status: "answered" });
+  });
+  it.each([45, 46])("does not attribute a call outside the retry window after %s minutes", async minutes => {
+    await selectSalesOffers(env);
+    await dispatchCallbacks(env);
+    vi.setSystemTime(new Date(+now + minutes * 60000));
+    await enterSalesOffer(b, env, "stale-call", "learner");
+    expect(await b.loadContext("stale-call")).toEqual({});
+  });
   it.each(["0", "ERROR", "2"])("handles offer key %s", async choice => {
     await answered();
     const response = await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: choice }, "learner");
