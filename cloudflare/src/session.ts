@@ -678,8 +678,11 @@ export class TutorSession {
       }
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       if (reason === "task_completed" && !this.canCompleteSession()) {
-        this.endConfirmationAt ??= this.meter.transcript.length;
-        return { saved: false, reason: "confirmation_required", next_step: 'Ask the learner "רוצה לסיים?" and wait for their answer. Only after they agree, say the full goodbye and call end_session again. If they decline, continue the lesson.' };
+        const maySuggest = this.controls?.ending_policy === "model_discretion" || (this.controls?.ending_policy === "after_target_with_permission" && this.meteredAt !== null && Date.now() - this.meteredAt >= this.controls.target_lesson_minutes * 60000);
+        if (maySuggest) this.endConfirmationAt ??= this.meter.transcript.length;
+        return { saved: false, reason: "confirmation_required", next_step: maySuggest
+          ? 'Ask the learner "רוצה לסיים?" and wait for their answer. Only after they agree, say the full goodbye and call end_session again. If they decline, continue the lesson.'
+          : "Continue the lesson with another useful exercise. Do not suggest ending or ask for permission to end. End only if the learner explicitly asks to stop or the application signals the allowance is ending." };
       }
       const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
       if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);

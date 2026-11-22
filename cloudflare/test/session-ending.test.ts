@@ -6,7 +6,7 @@ import { TutorSession } from "../src/session";
 function session() {
   const env = {} as Env;
   const tutor = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
-  tutor.controls = { ...controlsFromSettings(false), intake_pending: false, lesson: { vocabulary: [], grammar: [] } };
+  tutor.controls = { ...controlsFromSettings(false), ending_policy: "model_discretion", intake_pending: false, lesson: { vocabulary: [], grammar: [] } };
   return tutor;
 }
 
@@ -41,6 +41,25 @@ it("does not accept an unrelated yes without the confirmation question", async (
   await tutor.recordTool(complete);
   tutor.meter.transcript.push({ role: "tutor", text: "Do you want water?" }, { role: "learner", text: "yes" });
   expect(await tutor.recordTool(complete)).toMatchObject({ saved: false });
+});
+
+it.each(["learner_only", "before_target", "no_clock"])("continues rather than suggesting an ending when forbidden: %s", async mode => {
+  const tutor = session();
+  tutor.controls.ending_policy = mode === "learner_only" ? "learner_only" : "after_target_with_permission";
+  tutor.controls.target_lesson_minutes = 10;
+  tutor.meteredAt = mode === "no_clock" ? null : Date.now() - (mode === "learner_only" ? 700000 : 1000);
+  const result = await tutor.recordTool(complete);
+  expect(result).toMatchObject({ saved: false, next_step: expect.stringContaining("Continue the lesson") });
+  expect(result.next_step).not.toContain("רוצה לסיים");
+  expect(tutor.endConfirmationAt).toBeNull();
+});
+
+it("requests permission after the configured lesson target", async () => {
+  const tutor = session();
+  tutor.controls.ending_policy = "after_target_with_permission";
+  tutor.controls.target_lesson_minutes = 10;
+  tutor.meteredAt = Date.now() - 600000;
+  expect(await tutor.recordTool(complete)).toMatchObject({ saved: false, next_step: expect.stringContaining("רוצה לסיים?") });
 });
 
 it.each(["explicit", "closing", "quota", "discretion", "translation"])("allows existing permitted endings: %s", async mode => {
