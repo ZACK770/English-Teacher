@@ -18,6 +18,7 @@ import { adminAuth, adminIdentity, adminOwners, audit, requireOrigin } from "./a
 import { SubscriptionStore } from "./subscriptions";
 import { BusinessStore } from "./business";
 import { crmPeople } from "./crm-people";
+import { callCostReport, callReviewReport, runCallReviews, syncCallReviewPhone } from "./call-review";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -74,6 +75,11 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     const ownerResponse = await adminOwners(request, env, path, identity);
     if (ownerResponse) return ownerResponse;
     if (path === "/v1/admin/gemini-budget" && request.method === "GET") return geminiBudgetStatus(env);
+    if (request.method === "GET" && ["/v1/admin/call-reviews", "/v1/admin/call-reviews/cost"].includes(path)) {
+      if (identity.role !== "owner") throw new HttpError(403, "Forbidden");
+      const report = path.endsWith("/cost") ? await callCostReport(env, url.searchParams.get("call_id") ?? "") : await callReviewReport(env);
+      return Response.json(report, { headers: { "Cache-Control": "no-store" } });
+    }
     if (path === "/v1/admin/nedarim/kevas" && request.method === "GET") return listKevas(env);
     if (path === "/v1/admin/nedarim/kevas/sync" && request.method === "POST") return Response.json({ synced: await syncKevas(env, true) });
     if (path === "/v1/admin/portal-login/status" && request.method === "GET") return Response.json(await phoneAuthStatus(env));
@@ -197,6 +203,8 @@ export default {
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));
+    ctx.waitUntil(runCallReviews(env).catch(() => console.error("Call review job failed")));
+    ctx.waitUntil(syncCallReviewPhone(env).catch(() => console.error("Call review phone history sync failed")));
     ctx.waitUntil(new BusinessStore(env.DB).releaseStaleReservations());
   },
 };

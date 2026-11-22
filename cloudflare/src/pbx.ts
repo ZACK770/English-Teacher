@@ -318,6 +318,6 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   }
   withRecordedAudio(result, s.publicBaseUrl);
   const inputs = Object.fromEntries(Object.entries(p).filter(([key]) => key.startsWith("isaac") || key === "FILEID_isaacMessage").map(([key, value]) => [key, value.slice(0, 200)]));
-  await b.save("ivr-events", { call_id: callId, customer_id: customerId, route, input: inputs, output: result, latency_ms: Date.now() - clock, at: nowIso(), request_method: request.method }, randomHex(16));
+  await b.save("ivr-events", { call_id: callId, customer_id: customerId, route, input: inputs, output: result, finished: p.PBXcallStatus === "HANGUP", latency_ms: Date.now() - clock, at: nowIso(), request_method: request.method }, randomHex(16));
   return result;
 }
