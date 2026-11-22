@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, upsample8kTo16k, wav, wavToPcm } from "../src/audio";
 import { parseStartFrame, transferCommand } from "../src/technoline";
 import { adultControls, controlsFromSettings, TutorControlsSchema } from "../src/controls";
@@ -48,7 +49,7 @@ describe("Technoline protocol", () => {
     expect([extensionPath("/", ""), extensionPath("/", "/7"), extensionPath("/99", ""), extensionPath("/99", "/7")]).toEqual(["/", "/7", "/99", "/99/7"]);
     const rebase = (primary: string, base: string, target: string) =>
       (TutorSession.prototype as any).rebase.call({ s: { projectPath: primary }, pbxBase: base, extension: (x = "") => extensionPath(base, x) }, target);
-    expect([rebase("/", "/99", "/8"), rebase("/", "/99", "/"), rebase("/99", "/", "/99/8")]).toEqual(["/99/8", "/99", "/8"]);
+    expect([rebase("/", "/99", QUOTA_EXTENSION_PATH), rebase("/", "/99", "/"), rebase("/99", "/", "/99" + QUOTA_EXTENSION_PATH)]).toEqual(["/99/88", "/99", "/88"]);
     expect([withinBase("/", "/5"), withinBase("/99", "/99/1"), withinBase("/99", "/990"), withinBase("/99", "/5")]).toEqual([true, true, false, false]);
   });
   it("only transfers to IVR paths", () => {

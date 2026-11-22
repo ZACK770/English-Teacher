@@ -81,9 +81,60 @@ several bots in one PBX call do not overwrite traces or collide in reservations.
 
 Live (2026-11-19): english-engine serves system 0765673575 at base "/" with the
 Speakool layout (/1 school, /2 personal area = options, /2/1 teacher, /2/2 lesson
-type, /3 packages, /4 messages, /7 stream, /8 quota). The /99 Dibura subtree below
+type, /3 packages, /4 messages, /7 stream). The Worker quota destination is
+**/88** (provisioning pending), reached only by `goTo`, not a one-digit menu key.
+Root /8 (extension12239) is password-protected voiceMail, NOT the quota API;
+leave it untouched. Root /6 is also reserved by the menus. The /99 Dibura subtree below
 still calls the suspended Render service, not the Worker; its key9->/9 layout is
 legacy and not served by cloudflare/src/pbx.ts.
+
+### Pending Worker quota extension cutover
+
+The shared `QUOTA_EXTENSION_PATH` in `src/pbx-paths.ts` is `/88`. Worker payment
+failures, Isaac hard limits, and new default access policies use it. Explicit
+`blocked_extension` policy values still win: code deployment does not repair
+existing D1 rows. After provisioning /88, update **only** `blocked_extension` to
+`/88` in policies `isaac-basic`, `isaac-advanced` (currently `/8`), `adult`, and
+`student` (currently `/99/8`), preserving all other fields. No D1 update has been
+performed. Historical SQL migrations and the legacy Python /99 reconciler retain
+their original /99/8 destination; do not run that reconciler to provision /88.
+
+Managed API creation lives in `app/pbx.py`: `PBXClient.request` and
+`reconcile_project`. The admin entry point is `POST /v1/admin/pbx/reconcile`.
+It is intentionally restricted to /99, not suitable for this root-level change.
+
+Read-only verification found root id **10863**, system **0765673575**, and /4 id
+**10996**, type `api`, route `/v1/technoline/ivr/service`, method `POST`, paramsMode
+`chain`. Its callback credential is currently in `settings.addParams.callback_key`,
+not a URL query. Never print the URL or any addParams values; preserve both forms
+of authentication if the provider settings change before provisioning.
+
+The exact creation request (NOT executed) is an HTTP POST to
+`https://api.tlivr.com/ivrFilesApi.php` with query parameters `apiKey=<system key>`
+and `action=extensionSet`, and this form-encoded body:
+
+```text
+extensionId=NEW
+belowExtension=10863
+name=Speakool · quota
+extension=88
+type=api
+settings[url]=<derived in memory from /4 settings.url; replace only pathname with /v1/technoline/ivr/quota>
+settings[paramsMode]=chain
+settings[method]=POST
+settings[addParams][callback_key]=<copied in memory from /4 settings.addParams.callback_key>
+```
+
+Use `GET` with `action=folderSettings&path=/4` (apiKey in the query) to obtain the
+source settings; parse the URL and replace its pathname only, preserving origin,
+query, and fragment. Copy every addParams entry using
+`settings[addParams][<key>]`, not only callback_key if more entries appear.
+Before any write, verify system identity, use `foldersList` to confirm root child
+88 is absent, and save redacted snapshots outside Git. Never overwrite an existing
+/88 without review. After creation read `folderSettings` at `/88`, compare URL and
+auth settings in memory, and report only id/type/path/verification booleans.
+Provision first, then change the policy rows and deploy; verify with a real call.
+The documentation-only request above has not changed PBX routing or D1.
 
 - /99 entry: 1 starts learning, 2 starts translation, 9 opens options.
 - /99/1 direct school entry; /99/1/1 optional dynamic teacher selection.
@@ -109,6 +160,26 @@ Customer identity, preferred teacher/language, minutes and history are shared
 between website and phone. Hidden callers remain isolated.
 
 ## Copy, audio and logs
+
+### Approved quota-end recording (/88)
+
+The quota menu uses Technoline file ID `1486276` from extension `14279` (`/88`),
+display name `quota-charon2-49b7392d8dbf`, instead of TTS or a console narration
+binding. This is Isaac's approved `Charon2.wav`, resampled to PCM16, 8 kHz mono
+(12.651 seconds, 202494 bytes); the provider stores uploads as 24 kbps / 8 kHz
+mono Opus. It was uploaded with `uploadFile`, `extensionId=14279`,
+`checkDuplicate=STOP`, and verified with `filesList` and `fileDownload`.
+The upload did not change extension settings or the PBX tree.
+
+The recording says: "וואו, היה כיף! שיעורי הניסיון הסתיימו. כדי להמשיך ללמוד אנגלית כל יום, אפשר להצטרף עכשיו למנוי חודשי. למעבר לתפריט המנויים ולתשלום באשראי, מקישים 1."
+
+Key 1 still transfers to `/3` (Isaac's native card extensions). Keys 0/2,
+the support target 4, repeat count, timeout and error handling remain unchanged.
+The separate payment-failure support notice is unchanged. No new PBX routing
+setting is required: `/88` already calls `/v1/technoline/ivr/quota` with POST/chain
+and body callback authentication. Merging/deploying the Worker is a separate
+step; explicit D1 `blocked_extension` overrides still take precedence and must
+be reviewed separately for cutover.
 
 Telephone call recording is enabled in production by `RECORD_PHONE_CALLS="1"`
 in `cloudflare/wrangler.toml`; without it phone calls are not recorded. Portal

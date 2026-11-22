@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { nowIso, randomHex, sha256Hex, tokenUrlsafe } from "./env";
 import { SCHOOL_CALL_FILTER, SCHOOL_SESSION_FILTER } from "./school-history";
 import { canPurchaseAutomatically, SCHOOL_FREE_POLICY } from "../../src/pricing";
@@ -71,7 +72,7 @@ export const AccessPolicySchema = z.object({
   free_calls_month: z.number().int().min(0).max(100).default(0),
   free_call_seconds: z.number().int().min(10).max(600).default(60),
   opening_seconds: z.number().int().min(0).max(600).default(0),
-  blocked_extension: z.string().max(150).refine((v) => v.startsWith("/"), "שלוחה צריכה להתחיל בלוכסן").default("/"),
+  blocked_extension: z.string().max(150).refine((v) => v.startsWith("/"), "שלוחה צריכה להתחיל בלוכסן").default(QUOTA_EXTENSION_PATH),
   basic_enabled: z.boolean().default(false),
   basic_calls_day: z.number().int().min(0).max(50).default(3),
   basic_call_seconds: z.number().int().min(30).max(900).default(120),
@@ -261,7 +262,7 @@ export class BusinessStore {
     const activeSession = "SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL AND created_at>?";
     const busy = { seconds: 0, mode: "busy" };
     const blocked = { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
-    const paymentFailed = { seconds: 0, mode: "payment_failed", extension: "/3" };
+    const paymentFailed = { seconds: 0, mode: "payment_failed", extension: QUOTA_EXTENSION_PATH };
     if (!policy.enabled) {
       if ((teacher || policyRow) && policy.product === "school" && await this.schoolPaymentBlocked(customerId)) return paymentFailed;
       if ((teacher || policyRow) && policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;

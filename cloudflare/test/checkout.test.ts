@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
@@ -115,7 +116,7 @@ describe("existing Nedarim subscribers", () => {
     expect(await b.hasPaidAccess("c1")).toBe(false);
     expect(await b.hasSchoolCallbackMinutes("c1")).toBe(false);
     await b.cancelCallReservation("paid-call");
-    expect(await b.reserveCall(caller, "teacher", "blocked-call", 60)).toMatchObject({ mode: "payment_failed", seconds: 0 });
+    expect(await b.reserveCall(caller, "teacher", "blocked-call", 60)).toMatchObject({ mode: "payment_failed", seconds: 0, extension: QUOTA_EXTENSION_PATH });
     const portalToken = (await b.portalInvite("c1")).token;
     token = portalToken;
     expect(await (await req("/v1/portal/me")).json()).toMatchObject({ access: { paid: false, payment_failed: true } });

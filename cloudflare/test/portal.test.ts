@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
-import { BusinessStore } from "../src/business";
+import { AccessPolicySchema, BusinessStore } from "../src/business";
 import { BasicTranslator } from "../src/basic";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { type Env, settings } from "../src/env";
@@ -518,10 +519,15 @@ describe("lesson callback scheduling", () => {
 it("serves root options, mode and bots routes and the quota learning key", async () => {
   const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" } as Env;
   const call = (route: string, path: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/${route}?key=cb&PBXcallId=journeys&PBXnum=0765673575&PBXextensionPath=${encodeURIComponent(path)}&PBXphone=0500000001${extra}`), pbxEnv, settings(pbxEnv), route);
-  expect(await call("quota", "/8")).toMatchObject({ type: "simpleMenu", enabledKeys: "0,1,2", files: [{ text: expect.stringContaining("ללמידה הקישו 2") }] });
-  expect(await call("quota", "/8", "&isaacQuota=2")).toMatchObject({ goTo: "/1" });
-  expect(await call("quota", "/8", "&isaacQuota=ERROR")).toEqual({ type: "hangup" });
-  expect(await call("quota", "/8", "&isaacQuota=7")).toMatchObject({ type: "simpleMenu" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH)).toMatchObject({ type: "simpleMenu", name: "isaacQuota", enabledKeys: "0,1,2",
+    times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ fileId: "1486276", extensionId: "14279" }] });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=1")).toMatchObject({ goTo: "/3" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=0")).toMatchObject({ goTo: "/" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=4")).toMatchObject({ goTo: "/4" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=2")).toMatchObject({ goTo: "/1" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=ERROR")).toEqual({ type: "hangup" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=7")).toMatchObject({ type: "simpleMenu", files: [{ fileId: "1486276", extensionId: "14279" }] });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&PBXcallStatus=HANGUP")).toEqual({ type: "hangup" });
   expect(await call("options", "/2", "&isaacOptions=1")).toMatchObject({ goTo: "/2/1" });
   expect(await call("options", "/2", "&isaacOptions=2")).toMatchObject({ goTo: "/2/2" });
   expect(await call("mode", "/2/2")).toMatchObject({ enabledKeys: "0,1,2" });
@@ -550,6 +556,44 @@ it("blocks browser, PBX, and text calls at the shared budget without connecting 
   expect(await (await request("/v1/admin/gemini-budget", env.ADMIN_BEARER_SECRET)).json()).toMatchObject({
     daily_budget_usd: 0.01, active_jobs: 0, alert_state: "pending",
   });
+});
+
+it("defaults blocked calls to the quota extension while preserving custom policy destinations", () => {
+  expect(AccessPolicySchema.parse({}).blocked_extension).toBe("/88");
+  expect(SCHOOL_FREE_POLICY.blocked_extension).toBe(QUOTA_EXTENSION_PATH);
+  expect(AccessPolicySchema.parse({ blocked_extension: "/sales" }).blocked_extension).toBe("/sales");
+  expect(() => AccessPolicySchema.parse({ blocked_extension: "" })).toThrow();
+});
+
+it.each(["/", "/99"])("routes payment-blocked school entry to the quota extension under %s", async projectPath => {
+  vi.spyOn(b, "schoolPaymentBlocked").mockResolvedValue(true);
+  expect(await startSchool(b, progress, { ...settings(env), projectPath }, "blocked-entry", "learner-a"))
+    .toMatchObject({ type: "goTo", goTo: projectPath === "/" ? "/88" : "/99/88" });
+});
+
+it.each(["setup", "connected"])("transfers isaac calls to quota at the %s hard time limit", async stage => {
+  const controls = { ...controlsFromSettings(false), store_transcripts: false };
+  await progress.createBot({ id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general", channel_id: "isaac-channel", phone_enabled: true, web_enabled: true, enabled: true }, controls);
+  vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ seconds: 1, mode: "free" });
+  const timers = new Map<number, () => void>();
+  const setTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+    timers.set(delay, callback);
+    return setTimer(callback, delay);
+  }) as typeof setTimeout);
+  vi.spyOn(GeminiLive.prototype, "connect").mockImplementation(async () => {
+    if (stage === "setup") timers.get(21000)!();
+  });
+  vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  const socket = { send: vi.fn(), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, { ...settings(env), projectPath: "/" }, crypto.randomUUID());
+  vi.spyOn(tutor as any, "pbxToAi").mockResolvedValue(undefined);
+  vi.spyOn(tutor as any, "aiToOutput").mockImplementation(async () => { timers.get(1000)!(); });
+  vi.spyOn(tutor as any, "pacedOutput").mockResolvedValue(undefined);
+  vi.spyOn(tutor as any, "watchdog").mockResolvedValue(undefined);
+  await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "isaac-channel", callId: "hard-limit", caller: "0500000002" }), "isaac-basic", false);
+  expect(socket.send).toHaveBeenCalledWith(transferCommand("/88"));
 });
 
 it("routes a caller out of minutes to the quota menu even when Gemini is unavailable", async () => {
@@ -971,7 +1015,7 @@ describe("call minute reservations", () => {
   });
 
   it("blocks a second phone or web session for the same caller and admits another after release", async () => {
-    await b.save("policies", { enabled: false, blocked_extension: "/99/8" }, "student");
+    await b.save("policies", { enabled: false, blocked_extension: QUOTA_EXTENSION_PATH }, "student");
     const frame = (callId: string, token = "test-channel") => JSON.stringify({
       type: "start", token, format: "pcm16;rate=8000;ch=1", callId, caller: "0500000001",
     });
