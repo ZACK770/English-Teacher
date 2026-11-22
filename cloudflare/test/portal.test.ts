@@ -1208,7 +1208,7 @@ describe("call minute reservations", () => {
       .run(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().replace("Z", "+00:00"));
     const work: Promise<unknown>[] = [];
     const ctx = { waitUntil(task: Promise<unknown>) { work.push(task); } };
-    await worker.scheduled({} as ScheduledController, env, ctx as ExecutionContext);
+    await worker.scheduled({ cron: "*/10 * * * *" } as ScheduledController, env, ctx as ExecutionContext);
     await Promise.all(work);
     await b.settleCall("stale", 40);
     expect((await reserve("active-retry", 10, "learner-b")).mode).toBe("busy");

@@ -201,8 +201,12 @@ export default {
     if (log) await audit(env, request, path, actor, response.status).catch(() => undefined);
     return response;
   },
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(dispatchPracticeReminders(env).catch(() => console.warn("Practice reminders failed")));
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (controller.cron === "*/5 * * * *") {
+      ctx.waitUntil(dispatchPracticeReminders(env).catch(() => console.warn("Practice reminders failed")));
+      return;
+    }
+    if (controller.cron !== "*/10 * * * *") return;
     ctx.waitUntil(new SubscriptionStore(env.DB, env).tick().catch(() => undefined));
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil((async () => {
