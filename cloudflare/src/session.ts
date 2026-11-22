@@ -311,7 +311,7 @@ export class TutorSession {
       }
     } finally {
       if (geminiConnected) void reportGeminiOutcome(this.env, !this.geminiFailure, this.geminiFailure);
-      if (this.finalSent && this.reason.startsWith("model:") && this.profileId.startsWith("isaac-")) this.returnPath = this.extension(QUOTA_EXTENSION_PATH);
+      if (this.finalSent && this.reason.startsWith("model:") && this.profileId.startsWith("isaac-") && !this.returnPath) this.returnPath = this.extension(QUOTA_EXTENSION_PATH);
       this.settling = true;
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (hardLimit !== undefined) clearTimeout(hardLimit);

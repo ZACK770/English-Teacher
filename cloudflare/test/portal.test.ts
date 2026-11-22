@@ -653,7 +653,12 @@ it.each([240, 10.788])("keeps the hard cut at a %s-second allowance if Gemini ne
   expect(socket.send).toHaveBeenCalledWith(transferCommand("/88"));
 });
 
-it.each(["/", "/99"])("routes a quota-closing model goodbye to the purchase menu under %s", async projectPath => {
+it.each([
+  ["/", undefined, "/88"], ["/99", undefined, "/99/88"],
+  ["/", "main", "/"], ["/99", "main", "/99"],
+  ["/", "school", "/1"], ["/99", "school", "/99/1"],
+  ["/", "options", "/2"], ["/99", "options", "/99/2"],
+])("routes quota closing under %s with destination %s to %s", async (projectPath, destination, expected) => {
   vi.useFakeTimers();
   const controls = { ...controlsFromSettings(false), store_transcripts: false };
   await progress.createBot({ id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general", channel_id: "isaac-channel", phone_enabled: true, web_enabled: true, enabled: true }, controls);
@@ -667,14 +672,14 @@ it.each(["/", "/99"])("routes a quota-closing model goodbye to the purchase menu
   vi.spyOn(tutor, "aiToOutput").mockImplementation(async () => {
     tutor.finalSent = true;
     tutor.controls.intake_pending = true;
-    expect(await tutor.recordTool({ name: "end_session", args: { reason: "task_completed" } })).toBe(true);
+    expect(await tutor.recordTool({ name: "end_session", args: { reason: destination ? "caller_requested" : "task_completed", destination } })).toBe(true);
   });
   vi.spyOn(tutor, "pacedOutput").mockResolvedValue(undefined);
   vi.spyOn(tutor, "watchdog").mockResolvedValue(undefined);
   vi.spyOn(tutor, "drainFinalAudio").mockResolvedValue(undefined);
-  await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "isaac-channel", callId: "quota-goodbye", caller: "0500000002" }), "isaac-basic", false);
-  expect(tutor.reason).toBe("model:task_completed");
-  expect(socket.send).toHaveBeenCalledWith(transferCommand(projectPath === "/" ? "/88" : "/99/88"));
+  await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "isaac-channel", callId: "quota-goodbye~segment", caller: "0500000002" }), "isaac-basic", false);
+  expect(tutor.reason).toBe(destination ? "model:caller_requested" : "model:task_completed");
+  expect(socket.send).toHaveBeenCalledWith(transferCommand(expected!));
 });
 
 it("routes a caller out of minutes to the quota menu even when Gemini is unavailable", async () => {
