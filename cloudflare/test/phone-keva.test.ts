@@ -235,4 +235,20 @@ describe("phone monthly enrollment", () => {
     expect(standing.monthly_agorot).toBe(5900);
     expect(JSON.parse(String(standing.snapshot))).toMatchObject({ price_ils: 59, minutes: 60, billing: "monthly" });
   });
+
+  it.each([["0", "/"], ["9", "/4"], ["ERROR", "/"]])("allows exit %s while payments are unavailable without processing results", async (key, destination) => {
+    await issue();
+    env.NEDARIM_PHONE_ENABLED = "false";
+    expect(await respond({ isaacPayExit: key, isaacPayStatus: "OK" })).toMatchObject({ type: "goTo", goTo: destination });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("issued");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("handles hangup and cancels selection even when payments become unavailable", async () => {
+    await respond({ isaacPackage: "1" });
+    env.NEDARIM_PHONE_ENABLED = "false";
+    expect(await respond({ PBXcallStatus: "HANGUP", isaacPayStatus: "OK" })).toEqual({ type: "hangup" });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

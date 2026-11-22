@@ -339,6 +339,13 @@ const selectionMenu = (name: string, text: string, keys = "0,9") => ({
 
 export async function paymentResponse(store: PaymentStore, env: Env, base: string, params: Record<string, string>, customerId: string, packageIds: string[]): Promise<Record<string, unknown>> {
   const callId = params.PBXcallId;
+  if (params.PBXcallStatus === "HANGUP") {
+    await store.cancelSelection(callId);
+    return { type: "hangup" };
+  }
+  if (["0", "9", "ERROR"].includes(params.isaacPayExit)) {
+    return { type: "goTo", goTo: extensionPath(base, params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"] };
+  }
   if (!paymentsConfigured(env)) return selectionMenu("isaacPayExit", "התשלום הטלפוני אינו זמין כרגע. לשירות הקישו 9. לחזרה הקישו 0.");
   let order = await store.orderForCall(callId);
   if (order && order.customer_id !== customerId) throw new HttpError(403, "Customer mismatch");
@@ -349,13 +356,6 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       await reconcilePhoneKeva(env, order.id).catch(() => undefined);
       order = await store.orderForCall(callId);
     }
-  }
-  if (params.PBXcallStatus === "HANGUP") {
-    await store.cancelSelection(callId);
-    return { type: "hangup" };
-  }
-  if (["0", "9", "ERROR"].includes(params.isaacPayExit)) {
-    return { type: "goTo", goTo: extensionPath(base, params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"] };
   }
   if (customerId.startsWith("anonymous-")) return selectionMenu("isaacPayExit", "לרכישת חבילה יש להתקשר ממספר גלוי. לשירות הקישו 9. לחזרה הקישו 0.");
   if (order) {
