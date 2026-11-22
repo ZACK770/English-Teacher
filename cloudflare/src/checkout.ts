@@ -7,6 +7,7 @@ import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
 import { manageKeva as manage, providerDay, providerTime } from "./nedarim";
 import { customerPackageName } from "../../src/paymentCopy";
+import { isSalesOfferPackage } from "./sales-offer-product";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -55,6 +56,7 @@ export class CheckoutStore {
   }
 
   async start(env: Env, customerId: string, packageId: string, domain?: string) {
+    if (isSalesOfferPackage(packageId)) throw new HttpError(422, "המסלול הזה לא פתוח לרכישה באתר.");
     if (!checkoutConfigured(env)) throw new HttpError(503, "התשלום באתר עוד לא פתוח. אפשר להצטרף דרך נציג.");
     if (customerId.startsWith("anonymous-")) throw new HttpError(403, "כדי לשלם צריך להתחבר עם מספר טלפון.");
     const body = await this.business.record("packages", packageId);

@@ -114,7 +114,7 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
   if (["0", "ERROR"].includes(choice)) return { type: "hangup" };
   if (choice === "1") {
     try {
-      await new PaymentStore(b).create(p.PBXcallId, customerId, "school-offer-week");
+      await new PaymentStore(b).create(p.PBXcallId, customerId, "school-offer-week", false, env);
     } catch {
       return offerMenu("החבילה אינה זמינה לרכישה. לסיום הקישו 0.", "isaacOfferUnavailable", "0");
     }

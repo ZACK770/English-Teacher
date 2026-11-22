@@ -4,6 +4,7 @@ import { nowIso, randomHex, sha256Hex, tokenUrlsafe } from "./env";
 import { SCHOOL_CALL_FILTER, SCHOOL_SESSION_FILTER } from "./school-history";
 import { canPurchaseAutomatically, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { visiblePhone } from "./phone";
+import { SALES_OFFER_PACKAGE } from "./sales-offer-product";
 
 export const CustomerSchema = z.object({
   name: z.string().max(100),
@@ -280,6 +281,26 @@ export class BusinessStore {
     const busy = { seconds: 0, mode: "busy" };
     const blocked = { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
     const paymentFailed = { seconds: 0, mode: "payment_failed", extension: QUOTA_EXTENSION_PATH };
+    if (policy.product === "school") {
+      const offer = await this.db.prepare(`SELECT r.id, ${receiptOnHold} AS held FROM sales_receipts r
+        JOIN subscriptions s ON s.id=r.subscription_id
+        WHERE r.customer_id=? AND r.package_id=? AND s.period_number=1
+        AND r.valid_from<=? AND s.current_period_end>? LIMIT 1`)
+        .bind(customerId, SALES_OFFER_PACKAGE, now, now).first<{ id: string; held: number }>();
+      if (offer) {
+        if (offer.held) return blocked;
+        const allocation = await this.db.prepare(`INSERT OR IGNORE INTO usage_allocations
+          (call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
+          SELECT ?,?,'school',?,MIN(600,?,1800-COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)),NULL,?
+          FROM usage_allocations WHERE receipt_id=?
+          HAVING COUNT(CASE WHEN COALESCE(billed_seconds,reserved_seconds)>0 THEN 1 END)<3
+          AND COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)<1800
+          AND NOT EXISTS (${activeSession}) RETURNING reserved_seconds`)
+          .bind(callId, customerId, offer.id, maxSeconds, now, offer.id, customerId, cutoff).first<{ reserved_seconds: number }>();
+        if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
+        return await this.db.prepare(activeSession).bind(customerId, cutoff).first() ? busy : blocked;
+      }
+    }
     if (!policy.enabled) {
       if ((teacher || policyRow) && policy.product === "school" && await this.schoolPaymentBlocked(customerId)) return paymentFailed;
       if ((teacher || policyRow) && policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;

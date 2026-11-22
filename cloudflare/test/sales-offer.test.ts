@@ -130,15 +130,15 @@ describe("sales offers", () => {
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "other" }, "learner")).toBeNull();
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call" }, "learner")).toMatchObject({ name: "isaacOffer", enabledKeys: "0,1,2" });
     const create = vi.spyOn(PaymentStore.prototype, "create");
+    sql.prepare("DELETE FROM console_records WHERE kind='packages' AND id='school-offer-week'").run();
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacOfferUnavailable" });
-    expect(create).toHaveBeenCalledWith("call", "learner", "school-offer-week");
+    expect(create).toHaveBeenCalledWith("call", "learner", "school-offer-week", false, env);
     expect(await b.record("sales-offers", offerId)).toMatchObject({ status: "accepted" });
   });
   it("continues an available offer into existing terms then credit card flow", async () => {
     await answered();
     env = { ...env, NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" };
-    await b.save("packages", { ...await b.record("packages", "school-step"), id: "school-offer-week", active: true, phone_enabled: true, automated_purchase: true, price_ils: 10 }, "school-offer-week");
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
-    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard", sum: 10 });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard", sum: 59 });
   });
 });

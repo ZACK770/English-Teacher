@@ -13,6 +13,7 @@ import { enqueueVoicemail, processVoicemail } from "./voicemails";
 import { withRecordedAudio } from "./phone-audio";
 import { pingPirsumfonCaller, pirsumfonWelcome } from "./pirsumfon";
 import { enterSalesOffer, salesOfferResponse } from "./sales-offer";
+import { isSalesOfferPackage } from "./sales-offer-product";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
@@ -297,7 +298,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     const context = await b.loadContext("payments:" + callId);
     let ids: string[] = context.package_ids;
     if (!ids) {
-      const available = (await b.list("packages")).filter((pkg) => pkg.active && canPurchaseByPhone(pkg) && pkg.price_ils > 0 && (pkg.phone_enabled ?? true));
+      const available = (await b.list("packages")).filter((pkg) => !isSalesOfferPackage(pkg.id) && pkg.active && canPurchaseByPhone(pkg) && pkg.price_ils > 0 && (pkg.phone_enabled ?? true));
       ids = SCHOOL_SALES_PACKAGE_IDS.every(id => available.some(p => p.id === id))
         ? [...SCHOOL_SALES_PACKAGE_IDS]
         : available.filter(p => p.product === "school").sort((a, b) => a.price_ils - b.price_ils).slice(0, 8).map(pkg => pkg.id);
