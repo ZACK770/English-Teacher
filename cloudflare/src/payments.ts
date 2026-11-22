@@ -418,7 +418,8 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
         : `לרכישה מיידית של ${p.name}: ${p.minutes} דקות, בתוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
     }
   });
-  const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 && !canPurchaseByPhone(p)).sort((a, b) => a.price_ils - b.price_ils);
+  const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 &&
+    (!canPurchaseByPhone(p) || p.phone_enabled === false)).sort((a, b) => a.price_ils - b.price_ils);
   const describe = (p: Record<string, any>) => p.billing === "monthly"
     ? `${p.name}, ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
     : `${p.name}, ${p.minutes} דקות בכל חודש למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;

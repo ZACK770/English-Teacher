@@ -251,4 +251,17 @@ describe("phone monthly enrollment", () => {
     expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("announces representative-only monthly plans but does not offer them as purchase keys", async () => {
+    await b.save("packages", { ...await b.record("packages", "school-pace"), phone_enabled: false }, "school-pace");
+    const menu = await respond();
+    const text = JSON.stringify(menu.files);
+    expect(text).toContain("בקצב, 200 דקות בחודש, ב-119 שקלים לחודש");
+    expect(text).toContain("באמצעות נציג");
+    expect(text).not.toContain("למנוי בקצב:");
+    expect(text).toContain("למנוי צעד:");
+    expect(text).toContain("למנוי שוטף:");
+    expect((await respond({ isaacPackage: "2" })).name).toBe("isaacPayExit");
+    expect(counts()).toEqual([0, 0, 0]);
+  });
 });
