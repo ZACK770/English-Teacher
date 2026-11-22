@@ -24,7 +24,7 @@ it.each(["כן", "yes"])("accepts a new confirmation after the requested questio
   const tutor = session();
   tutor.meter.transcript.push({ role: "learner", text: "כן" });
   await tutor.recordTool(complete);
-  tutor.meter.transcript.push({ role: "tutor", text: "רוצה " }, { role: "tutor", text: "לסיים?" }, { role: "learner", text: answer });
+  tutor.meter.transcript.push({ role: "tutor", text: "רוצה" }, { role: "tutor", text: "לסיים?" }, { role: "learner", text: answer });
   expect(await tutor.recordTool(complete)).toBe(true);
   expect(tutor.reason).toBe("model:task_completed");
 });

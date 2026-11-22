@@ -708,7 +708,7 @@ export class TutorSession {
       while (answer >= 0 && turns[answer].role !== "learner") answer--;
       let previous = answer - 1;
       while (previous >= 0 && turns[previous].role !== "learner") previous--;
-      const question = turns.slice(previous + 1, answer).filter(t => t.role === "tutor").map(t => t.text).join("");
+      const question = turns.slice(previous + 1, answer).filter(t => t.role === "tutor").map(t => t.text).join(" ");
       if (answer >= 0 && /רוצה לסיים|want to (?:end|stop|finish)/i.test(question) && isEmailConfirmation(turns[answer].text)) return true;
     }
     if (!this.controls?.lesson) return !!this.controls && this.meter.learnerTurns > 0 && this.meter.tutorTurns > 0;
