@@ -115,6 +115,22 @@ it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-
   await running;
 });
 
+it.each(["portal", "other teacher", "other destination"])("does not promise a packages transfer for %s", async mode => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.prompt = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.profileId = mode === "other teacher" ? "other" : "isaac-basic";
+  if (mode === "portal") tutor.portal = { customerId: "customer", teacherId: "teacher" };
+  if (mode === "other destination") tutor.returnPath = "/2";
+  tutor.allowanceMs = 30000;
+  tutor.meteredAt = Date.now() - 5000;
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.ai.prompt.mock.calls[0][0]).not.toContain("מיד נעבור לתפריט");
+  tutor.stop();
+  await running;
+});
+
 it.each([0, null])("does not request quota closing without an active allowance clock: %s", async clock => {
   vi.useFakeTimers();
   const { tutor } = session();
