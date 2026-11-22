@@ -31,15 +31,17 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
   if (!owner) return;
   if (enrollment && owner.customer_id !== enrollment.customer_id) return;
 
-  const monthlyAgorot = agorot(row.Amount);
-  const plans = (await db.prepare(`SELECT id,included_minutes FROM plans WHERE product='school' AND billing='monthly' AND active=1
+  const monthlyAgorot = enrollment?.amount_agorot ?? agorot(row.Amount);
+  const business = new BusinessStore(db);
+  const saved = enrollment ? PackageSchema.safeParse(JSON.parse(enrollment.snapshot)) : null;
+  if (saved && (!saved.success || saved.data.billing !== "monthly" || saved.data.product !== "school" || saved.data.minutes < 1)) return;
+  const plans = enrollment && saved?.success ? [{ id: enrollment.package_id, included_minutes: saved.data.minutes }] : (await db.prepare(`SELECT id,included_minutes FROM plans WHERE product='school' AND billing='monthly' AND active=1
     AND CASE WHEN ?1=4900 THEN id='school-step' ELSE price_agorot=?1 END`).bind(monthlyAgorot)
     .all<{ id: string; included_minutes: number }>()).results;
   if (plans.length !== 1 || plans[0].included_minutes < 1) return;
-  const plan = plans[0], business = new BusinessStore(db);
-  if (enrollment && plan.id !== enrollment.package_id) return;
-  const pkg = PackageSchema.safeParse(await business.record("packages", plan.id));
-  if (!pkg.success || !pkg.data.active || pkg.data.billing !== "monthly" || pkg.data.product !== "school") return;
+  const plan = plans[0];
+  const pkg = saved ?? PackageSchema.safeParse(await business.record("packages", plan.id));
+  if (!pkg.success || (!enrollment && !pkg.data.active) || pkg.data.billing !== "monthly" || pkg.data.product !== "school") return;
 
   const detail = JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
   if (str(detail?.KevaId) !== kevaId || str(detail.KevaStatus) !== "1" || str(detail.KevaFrequency) !== "1" ||
@@ -66,9 +68,9 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
   const receiptId = (await sha256Hex("legacy-keva-receipt:" + kevaId + ":" + transactionId)).slice(0, 20);
   const reference = `nedarim:${env.NEDARIM_MOSAD_ID}:${transactionId}`;
   if (await db.prepare("SELECT 1 FROM sales_receipts WHERE reference=?").bind(reference).first()) return;
-  const vat = (await business.economics()).vat_rate;
+  const vat = enrollment?.vat_rate ?? (await business.economics()).vat_rate;
   const snapshot = JSON.stringify({ ...pkg.data, price_ils: monthlyAgorot / 100 });
-  await new SubscriptionStore(db).create(customerId, plan.id, start, undefined, {
+  await new SubscriptionStore(db).create(customerId, plan.id, start, enrollment ? [] : undefined, {
     id, priceAgorot: monthlyAgorot, monthlyMinutes: plan.included_minutes, termMonths: null, grantFirstPeriod: false,
     period: { number: 1, start, end },
     statements: [

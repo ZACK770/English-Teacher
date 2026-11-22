@@ -219,4 +219,20 @@ describe("phone monthly enrollment", () => {
     expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("התשלום לא אושר");
     expect(counts()).toEqual([0, 0, 0]);
   });
+
+  it.each(["callback", "webhook", "sync"])("honors issued price, minutes and terms after catalog edits through %s", async completion => {
+    const module = await issue();
+    provider(String(module.category));
+    await b.save("packages", { ...await b.record("packages", "school-step"), active: false, phone_enabled: false,
+      price_ils: 99, minutes: 999, billing: "one_time", duration_months: 6 }, "school-step");
+    if (completion === "callback") await respond({ isaacPayStatus: "OK" });
+    else if (completion === "webhook") await hook({ MosadNumber: "7019554", Groupe: module.category, KevaId: "54321", Amount: "59", Currency: "1" });
+    else await syncKevas(env, true);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(db.sql.prepare("SELECT price_agorot,monthly_minutes,term_months FROM subscriptions").get()).toEqual({ price_agorot: 5900, monthly_minutes: 60, term_months: null });
+    expect(db.sql.prepare("SELECT amount_ils,minutes FROM sales_receipts").get()).toEqual({ amount_ils: 59, minutes: 60 });
+    const standing = db.sql.prepare("SELECT monthly_agorot,snapshot FROM standing_orders").get()!;
+    expect(standing.monthly_agorot).toBe(5900);
+    expect(JSON.parse(String(standing.snapshot))).toMatchObject({ price_ils: 59, minutes: 60, billing: "monthly" });
+  });
 });
