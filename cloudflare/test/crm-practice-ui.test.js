@@ -10,11 +10,14 @@ describe('CRM practice card', () => {
     expect(html).toContain('טרם נרשמו תזכורות.');
     expect(html).toContain('לא הוגדרה מכסה');
     expect(html).toContain('פנימי — לא מוצג ללקוח');
+    expect(html.replace(/<[^>]*>/g, '')).toContain('0 מתוך 3');
+    expect(html.replace(/<[^>]*>/g, '')).toContain('0 דקות — לא הוגדרה מכסה');
   });
   it('highlights practiced dates, over-quota usage and failed reminders', () => {
     const html = renderToStaticMarkup(createElement(PracticeCard, { practice: { ...practice, dates: ['2026-06-10'], month: { minutes_used: 61, minutes_quota: 60 }, reminder_events: [{ day: '2026-06-10', status: 'failed', sent_at: null, responded_at: null }] } }));
     expect(html).toContain('#bbf7d0');
     expect(html).toContain('#dc2626');
     expect(html).toContain('נכשלה');
+    expect(html.replace(/<[^>]*>/g, '')).toContain('61 מתוך 60 דקות');
   });
 });
