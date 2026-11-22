@@ -39,7 +39,7 @@ purchases create the same subscription entitlements as web purchases.
 No provider routing changes are made by this flow.
 
 Monthly phone enrollment uses `kevaMonthly`. Only a fresh in-call PBX OK can
-claim a first charge (migration `0028_phone_keva_first_charge.sql`): its confirmation
+claim a first charge (migration `0030_phone_keva_first_charge.sql`): its confirmation
 is the KevaId, checked through `GetKevaId` against the saved order, primary phone,
 institution, active monthly ILS status, creation date and empty history. A previously
 successful history activates through the ordinary verification path instead.
