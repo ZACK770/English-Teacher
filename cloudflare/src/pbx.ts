@@ -313,16 +313,18 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   if (result.goTo === extensionPath(system.base, "/7") && system.phone === SPEAKCALL_PHONE && canCallWithLessonSummary(env, p.PBXphone ?? "")) {
     await b.saveContext(callId, { summary_callback_caller: await sha256Hex(normalizePhone(p.PBXphone)!) });
   }
-  if (route === "options" && result.type === "simpleMenu") {
-    const others = (await progress.listBots()).some((bot) => bot.enabled && bot.phone_enabled && !["teacher", "translator"].includes(bot.role));
-    result.enabledKeys = "0,1,2,3,4" + (others ? ",6" : "");
-    if (others) result.files[0] = { text: result.files[0].text + " לשירותים נוספים הקישו 6." };
-  }
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
   if (slot && result.files?.length) {
     if (route === "service" && result.name === "isaacThanks") slot = "thanks";
     const audio = await narrationForSlot(b, slot, result.files[0].text ?? "");
     if (audio && s.publicBaseUrl) result.files[0] = { fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` };
+  }
+  if (route === "options" && result.type === "simpleMenu") {
+    const others = (await progress.listBots()).some((bot) => bot.enabled && bot.phone_enabled && !["teacher", "translator"].includes(bot.role));
+    result.enabledKeys = "0,1,2,3,4" + (others ? ",6" : "");
+    const more = "לשירותים נוספים הקישו 6.";
+    if (others && result.files[0].text) result.files[0] = { text: result.files[0].text + " " + more };
+    else if (others) result.files.push({ text: more });
   }
   withRecordedAudio(result, s.publicBaseUrl);
   const inputs = Object.fromEntries(Object.entries(p).filter(([key]) => key.startsWith("isaac") || key === "FILEID_isaacMessage").map(([key, value]) => [key, value.slice(0, 200)]));
