@@ -178,6 +178,18 @@ describe("CRM voicemail inbox", () => {
 });
 
 describe("CRM customer reset", () => {
+  it("deletes the customer's practice history and reminders while preserving other customers", async () => {
+    customer(); customer("other", "0507654321");
+    for (const id of ["person1", "other"]) {
+      insert("practice_days", { customer_id: id, day: "2026-06-14", seconds: 120, calls: 1, first_at: now, last_at: now });
+      insert("practice_reminders", { customer_id: id, time_local: "20:00", source: "lesson", created_at: now, updated_at: now });
+      insert("practice_reminder_events", { id, customer_id: id, day: "2026-06-14", scheduled_for: now, status: "dry_run" });
+    }
+    const response = await reset();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ deleted: { practice_days: 1, practice_reminders: 1, practice_reminder_events: 1 } });
+    for (const table of ["practice_days", "practice_reminders", "practice_reminder_events"]) expect(sql.prepare(`SELECT customer_id FROM ${table}`).all()).toEqual([{ customer_id: "other" }]);
+  });
   it.each([false, true])("prepares no compound SQL during reset with linked history %s", async history => {
     customer();
     if (history) {
@@ -321,7 +333,7 @@ describe("CRM customer reset", () => {
     expect((await reset("0501234567", oldId)).status).toBe(200);
     const freshId = await b.identifyCall("0501234567", "fresh-call", "ivr");
     expect(freshId).toBe(oldId);
-    expect(await b.loadContext("preferences:" + freshId)).toEqual({});
+    expect(await b.loadContext("preferences:" + freshId)).toEqual({ last_verified_caller: "0501234567" });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions WHERE student_id=?").get(freshId)).toMatchObject({ n: 0 });
     await startAdEntry(b, new ProgressStore(env.DB), {} as any, "fresh-call", freshId, "test");
     expect(await b.loadContext("fresh-call")).toMatchObject({ ad_new_caller: true });
@@ -470,7 +482,7 @@ describe("CRM customer reset", () => {
     expect(await b.loadContext("preferences:other")).toEqual({ intro_school_seen: true });
     expect(sql.prepare("SELECT used FROM api_quota").get()).toMatchObject({ used: 10 });
     const freshId = await b.identifyCall("+972501234567", "fresh-call", "ivr");
-    expect(await b.loadContext("preferences:" + freshId)).toEqual({});
+    expect(await b.loadContext("preferences:" + freshId)).toEqual({ last_verified_caller: "0501234567" });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions WHERE student_id=?").get(freshId)).toMatchObject({ n: 0 });
     await startAdEntry(b, new ProgressStore(env.DB), {} as any, "fresh-call", freshId, "test");
     expect(await b.loadContext("fresh-call")).toMatchObject({ ad_new_caller: true });

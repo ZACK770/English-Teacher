@@ -5,8 +5,13 @@ import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { type Env, settings } from "../src/env";
 import { handleCallback } from "../src/pbx";
-import { PaymentStore, paymentResponse, handleWebhook } from "../src/payments";
+import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT } from "../src/payments";
+import worker from "../src/index";
 import { syncKevas } from "../src/keva-sync";
+import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
+import { TutorSession } from "../src/session";
+import { controlsFromSettings } from "../src/controls";
+import { buildSetupPayload } from "../src/prompt";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -38,11 +43,15 @@ class SqlD1 {
 
 let db: SqlD1, b: BusinessStore, env: Env, store: PaymentStore;
 let rows: Record<string, any>[], detail: Record<string, any>;
-const ids = ["school-step", "school-pace", "school-fluent", "school-topup"];
+const ids = [...SCHOOL_SALES_PACKAGE_IDS];
 const respond = (params: Record<string, string> = {}, callId = "phone-hk") => paymentResponse(store, env, "/", { PBXcallId: callId, ...params }, "c1", ids);
 async function issue(choice = "1") {
   expect(await respond({ isaacPackage: choice })).toMatchObject({ name: "isaacPayConfirm" });
-  return respond({ isaacPayConfirm: "1" });
+  return respond({ isaacPayConfirm: "2" });
+}
+async function purchaseMaster() {
+  const module = await issue("5");
+  await hook({ MosadNumber: "7019554", Groupe: module.category, Amount: "1490", Currency: "1", TransactionId: "987654", Confirmation: "approved" });
 }
 function provider(category: string, amount = "59") {
   rows = [{ KevaId: "54321", Groupe: category, Phone: "0500000001", Amount: amount, Currency: "1", Enabled: "1", Success: "1", ErrorText: "", CreationDate: "22/11/2026" }];
@@ -86,10 +95,10 @@ describe("phone monthly enrollment", () => {
     const response = await handleCallback(new Request("https://example.test/v1/technoline/ivr/sales?key=cb&PBXnum=0765673575&PBXextensionPath=/3&PBXphone=0500000001&PBXcallId=sales-menu"), env, settings(env), "sales");
     expect(response.name).toBe("isaacPackage");
     const text = JSON.stringify(response.files);
-    for (const amount of [59, 119, 199, 39]) expect(text).toContain(String(amount));
+    expect(response.files).toEqual([{ text: SALES_MENU_TEXT }]);
+    expect(text).not.toContain("דקות");
     const context = await b.loadContext("payments:sales-menu");
-    for (const id of ids) expect(context.package_ids).toContain(id);
-    expect(context.package_ids).not.toContain("school-foundations");
+    expect(context.package_ids).toEqual(ids);
   });
 
   it.each([["1", 59], ["2", 119], ["3", 199]])("issues monthly HK for choice %s and activates immediately and idempotently", async (choice, amount) => {
@@ -112,9 +121,10 @@ describe("phone monthly enrollment", () => {
   it("clamps the billing day to 28 and preserves the one-time top-up", async () => {
     vi.setSystemTime(new Date("2026-11-30T13:00:00Z"));
     expect(await issue()).toMatchObject({ kevaDay: 28 });
-    const module = await respond({ isaacPackage: "4" }, "topup");
+    const topup = (params: Record<string, string>) => paymentResponse(store, env, "/", { PBXcallId: "topup", ...params }, "c1", ["school-topup"]);
+    const module = await topup({ isaacPackage: "1" });
     expect(module.name).toBe("isaacPayConfirm");
-    expect(await respond({ isaacPayConfirm: "1" }, "topup")).toMatchObject({ paymentsMode: "regular", payments: 1, sum: 39 });
+    expect(await topup({ isaacPayConfirm: "2" })).toMatchObject({ paymentsMode: "regular", payments: 1, sum: 39 });
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM phone_keva_enrollments").get()!.n).toBe(1);
   });
 
@@ -129,7 +139,7 @@ describe("phone monthly enrollment", () => {
 
   it.each(["webhook", "sync"])("keeps an invisible Keva pending, then completes through %s", async completion => {
     const module = await issue();
-    expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("בתוך דקות");
+    expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("בקרוב");
     expect(counts()).toEqual([0, 0, 0]);
     provider(String(module.category));
     if (completion === "webhook") {
@@ -152,7 +162,7 @@ describe("phone monthly enrollment", () => {
     if (reason === "no charge") detail.HistoryData = [];
     if (reason === "old Keva") rows[0].CreationDate = "20/10/2026";
     if (reason === "wrong group") rows[0].Groupe = "not-ours";
-    expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("בתוך דקות");
+    expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("בקרוב");
     await syncKevas(env, true);
     expect(counts()).toEqual([0, 0, 0]);
   });
@@ -176,7 +186,7 @@ describe("phone monthly enrollment", () => {
   it("does not issue when the D1 price changed, or a package is no longer phone-enabled", async () => {
     await respond({ isaacPackage: "1" });
     await b.save("packages", { ...await b.record("packages", "school-step"), price_ils: 69 }, "school-step");
-    expect((await respond({ isaacPayConfirm: "1" })).type).not.toBe("creditCard");
+    expect((await respond({ isaacPayConfirm: "2" })).type).not.toBe("creditCard");
     await b.save("packages", { ...await b.record("packages", "school-step"), phone_enabled: false }, "school-step");
     expect((await respond({ isaacPackage: "1" }, "new-call")).name).toBe("isaacPayExit");
   });
@@ -194,7 +204,7 @@ describe("phone monthly enrollment", () => {
     await issue();
     expect((await respond({ isaacPackage: "2" }, "another-call")).name).toBe("isaacPayExit");
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Provider unavailable"); }));
-    expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("בתוך דקות");
+    expect(JSON.stringify(await respond({ isaacPayStatus: "OK" }))).toContain("בקרוב");
     expect(counts()).toEqual([0, 0, 0]);
   });
 
@@ -304,13 +314,178 @@ describe("phone monthly enrollment", () => {
     await b.save("packages", { ...await b.record("packages", "school-pace"), phone_enabled: false }, "school-pace");
     const menu = await respond();
     const text = JSON.stringify(menu.files);
-    expect(text).toContain("בקצב, ב-119 שקלים לחודש");
+    expect(text).toContain("סמול טוק, ב-119 שקלים לחודש");
     expect(text).not.toContain("דקות");
     expect(text).toContain("באמצעות נציג");
-    expect(text).not.toContain("למנוי בקצב:");
-    expect(text).toContain("למנוי צעד:");
-    expect(text).toContain("למנוי שוטף:");
+    expect(text).not.toContain("למנוי סמול טוק:");
+    expect(text).toContain("למנוי סטארט:");
+    expect(text).toContain("למנוי פרו:");
     expect((await respond({ isaacPackage: "2" })).name).toBe("isaacPayExit");
     expect(counts()).toEqual([0, 0, 0]);
+  });
+});
+
+describe("five-package phone sales", () => {
+  it("keeps the phone Master default, then saves the first-lesson choice through the tutor tool", async () => {
+    await purchaseMaster();
+    const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get()!;
+    expect(JSON.parse(String(original.domains_json)).every((d: any) => d.domain === "everyday")).toBe(true);
+    expect(await masteryDomainGuidance(env.DB, "c1")).toContain("באיזה תחום הכי חשוב לך להתחזק?");
+    const session = new TutorSession({} as WebSocket, env, settings(env), "owner") as any;
+    session.customerId = "c1";
+    session.controls = { lesson: {} };
+    session.masteryDomain = true;
+    session.ai = { addContext: vi.fn() };
+    expect(await session.recordTool({ name: "save_mastery_domain", args: { domain: "travel" } })).toBe(true);
+    expect(JSON.parse(String(db.sql.prepare("SELECT domains_json FROM subscriptions").get()!.domains_json))).toEqual([...JSON.parse(String(original.domains_json)), { domain: "travel" }]);
+    expect(JSON.parse(String(db.sql.prepare("SELECT snapshot FROM payment_orders").get()!.snapshot)).guarantee_domain).toBe("travel");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await session.recordTool({ name: "save_mastery_domain", args: { domain: "business" } })).toBe(false);
+  });
+  it("does not offer or save a domain for missing, unpaid, anonymous or other customers", async () => {
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    const module = await issue("5");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await saveMasteryDomain(env.DB, "c1", "travel")).toBe(false);
+    await hook({ MosadNumber: "7019554", Groupe: module.category, Amount: "1490", Currency: "1", TransactionId: "987654", Confirmation: "approved" });
+    for (const id of ["anonymous-1", "other", ""]) {
+      expect(await masteryDomainGuidance(env.DB, id)).toBeNull();
+      expect(await saveMasteryDomain(env.DB, id, "travel")).toBe(false);
+    }
+    for (const domain of [undefined, "", "everyday", "invented"]) expect(await saveMasteryDomain(env.DB, "c1", domain)).toBe(false);
+    expect(await masteryDomainGuidance(env.DB, "c1")).not.toBeNull();
+  });
+  it("does not offer the phone choice for a web subscription or suspended access", async () => {
+    await purchaseMaster();
+    db.sql.exec("UPDATE payment_orders SET channel='web'");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await saveMasteryDomain(env.DB, "c1", "travel")).toBe(false);
+    db.sql.exec("UPDATE payment_orders SET channel='phone'; UPDATE subscriptions SET access_suspended_at='2026-11-22T13:00:00Z'");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+  });
+  it("offers only in the first school lesson after purchase, not on subsequent lessons", async () => {
+    await purchaseMaster();
+    db.sql.exec(`INSERT INTO bots(id,label,role,created_at,updated_at) VALUES('master-teacher','Teacher','teacher','2026-11-01','2026-11-01');
+      INSERT INTO call_customers(call_id,customer_id,bot_id,channel,created_at) VALUES('past-lesson','c1','master-teacher','phone','2026-11-22');
+      INSERT INTO sessions(student_id,call_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json)
+      VALUES('c1','past-lesson','2026-11-22T12:00:00Z','2026-11-22T12:05:00Z',300,1,1,'[]')`);
+    expect(await masteryDomainGuidance(env.DB, "c1")).not.toBeNull();
+    db.sql.exec("UPDATE sessions SET started_at='2026-11-22T13:01:00Z',ended_at='2026-11-22T13:06:00Z'");
+    vi.setSystemTime(new Date("2026-11-22T13:10:00Z"));
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+  });
+  it("rolls back the domain choice if updating the purchase snapshot fails", async () => {
+    await purchaseMaster();
+    const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get();
+    db.sql.exec("CREATE TRIGGER domain_failure BEFORE UPDATE OF snapshot ON payment_orders BEGIN SELECT RAISE(ABORT,'snapshot update failed'); END");
+    await expect(saveMasteryDomain(env.DB, "c1", "travel")).rejects.toThrow("snapshot update failed");
+    expect(db.sql.prepare("SELECT domains_json FROM subscriptions").get()).toEqual(original);
+  });
+  it("exposes the domain tool only for eligible identified lessons", () => {
+    const controls: Parameters<typeof buildSetupPayload>[0] = { ...controlsFromSettings(true), lesson: { level: "beginner", topic: "everyday", conversation_mode: "guided", learning_load: "light", correction_policy: "after_answer", closing_activity: "roleplay", vocabulary: [], grammar: [] } };
+    for (const [customerId, masteryDomain, expected] of [["c1", true, true], ["c1", false, false], ["anonymous-1", true, false], [undefined, true, false]] as const) {
+      expect(buildSetupPayload(controls, "test", "teacher", settings(env), { customerId, masteryDomain }).setup.tools[0].functionDeclarations.some(t => t.name === "save_mastery_domain")).toBe(expected);
+    }
+    expect(buildSetupPayload(controlsFromSettings(true), "test", "translator", settings(env), { customerId: "c1", masteryDomain: true }).setup.tools[0].functionDeclarations.some(t => t.name === "save_mastery_domain")).toBe(false);
+  });
+  it.each(SCHOOL_SALES_PACKAGE_IDS)("quotes the current price instead of stale text or recording for %s", async id => {
+    env.SALES_MENU_AUDIO_URL = "https://example.test/menu.wav";
+    env.SALES_MENU_AUDIO_VERSION = "v1";
+    await b.save("packages", { ...await b.record("packages", id), price_ils: 321 }, id);
+    const menu = await respond();
+    expect(menu.files).not.toEqual([{ text: SALES_MENU_TEXT }]);
+    const text = JSON.stringify(menu.files);
+    expect(text).toContain("321 שקלים");
+    expect(text).not.toContain("fileLink");
+    expect(text).not.toContain("דקות");
+  });
+  it.each(["school-foundations", "school-mastery"])("quotes the current installment maximum for %s", async id => {
+    env.SALES_MENU_AUDIO_URL = "https://example.test/menu.wav";
+    env.SALES_MENU_AUDIO_VERSION = "v1";
+    await b.save("packages", { ...await b.record("packages", id), max_payments: 3 }, id);
+    const menu = await respond();
+    const text = JSON.stringify(menu.files);
+    expect(menu.files).not.toEqual([{ text: SALES_MENU_TEXT }]);
+    expect(text).toContain("עד 3 תשלומים");
+    expect(text).not.toContain("fileLink");
+    expect(text).not.toContain("דקות");
+  });
+  it("uses one combined versioned recording, falling back to the exact approved text", async () => {
+    expect((await respond()).files).toEqual([{ text: SALES_MENU_TEXT }]);
+    env.SALES_MENU_AUDIO_URL = "https://example.test/sales.wav";
+    expect((await respond()).files).toEqual([{ text: SALES_MENU_TEXT }]);
+    env.SALES_MENU_AUDIO_VERSION = "v3";
+    expect(await respond()).toMatchObject({ enabledKeys: "0,1,2,3,4,5,9", files: [{ fileLink: "https://example.test/sales.wav", fileName: "sales-menu-v3" }] });
+    Object.assign(env, { TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" });
+    const response = await handleCallback(new Request("https://example.test/v1/technoline/ivr/sales?key=cb&PBXnum=0765673575&PBXextensionPath=/3&PBXphone=0500000001&PBXcallId=recorded-sales"), env, settings(env), "sales");
+    expect(response.files).toEqual([{ fileLink: "https://example.test/sales.wav", fileName: "sales-menu-v3" }]);
+    expect(await respond({ isaacPackage: "0" })).toMatchObject({ type: "goTo", goTo: "/" });
+    expect(await respond({ isaacPackage: "9" })).toMatchObject({ type: "goTo", goTo: "/4" });
+  });
+
+  it("reads the approved terms on 1, returns to terms, and only issues on 2", async () => {
+    expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1,2", files: [{ text: TERMS_STEP_TEXT }] });
+    for (let i = 0; i < 2; i++) {
+      expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "simpleMenu", name: "isaacPayConfirm", files: [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }] });
+      expect((await store.orderForCall("phone-hk"))?.state).toBe("selected");
+    }
+    expect(await respond({ isaacPayConfirm: "2" })).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", payments: 1, sum: 59 });
+    expect(JSON.stringify(await respond())).not.toContain("דקות");
+    expect(TERMS_TEXT).toContain("עד 60 דקות בחודש");
+    expect(TERMS_TEXT).not.toContain("לא עוברות");
+  });
+
+  it.each([["4", 690, 6], ["5", 1490, 12]])("allows regular installments and grants the term subscription for key %s", async (choice, amount, months) => {
+    expect((await respond({ isaacPackage: String(choice) })).files).toEqual([{ text: TERMS_STEP_TEXT }]);
+    const module = await respond({ isaacPayConfirm: "2" });
+    expect(module).toMatchObject({ type: "creditCard", sum: amount, payments: months, paymentsMode: "regular" });
+    expect(module).not.toHaveProperty("kevaDay");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM phone_keva_enrollments").get()!.n).toBe(0);
+    const event = { MosadNumber: "7019554", Groupe: module.category, Amount: String(amount), Currency: "1", TransactionId: "987654", Confirmation: "approved" };
+    await expect(hook({ ...event, Amount: "1" })).rejects.toMatchObject({ status: 400 });
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(await hook(event)).toMatchObject({ paid: true });
+    expect(await hook(event)).toMatchObject({ paid: true, duplicate: true });
+    expect(counts()).toEqual([1, 1, 0]);
+    expect(db.sql.prepare("SELECT term_months,monthly_minutes,period_number FROM subscriptions").get()).toMatchObject({ term_months: months, monthly_minutes: 150, period_number: 1 });
+    expect(await b.hasPaidAccess("c1")).toBe(true);
+  });
+
+  it("reconciles one-time duration purchases through the same entitlement path", async () => {
+    await respond({ isaacPackage: "4" });
+    const module = await respond({ isaacPayConfirm: "2" });
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const action = new URLSearchParams(String(init.body)).get("Action");
+      return Response.json(action === "GetHistoryJson" ? [{ Groupe: module.category, Amount: "690", Currency: "1", TransactionId: "987654", Confirmation: "approved" }] : []);
+    }));
+    expect(await store.reconcile(env)).toMatchObject({ GetHistoryJson: { matched: 1 } });
+    expect(counts()).toEqual([1, 1, 0]);
+  });
+
+  it("cancels at terms without charging or exposing minute wording", async () => {
+    for (const choice of ["1", "2", "3", "4", "5"]) {
+      const call = "cancel-" + choice;
+      expect(JSON.stringify(await respond({ isaacPackage: choice }, call))).not.toContain("דקות");
+      expect(await respond({ isaacPayConfirm: "0" }, call)).toMatchObject({ type: "goTo" });
+      expect((await store.orderForCall(call))?.state).toBe("cancelled");
+    }
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("publishes cadence but never the internal quota", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/public/packages"), env);
+    expect(response.status).toBe(200);
+    const data = await response.json() as { items: Record<string, any>[] };
+    expect(data.items.find(p => p.id === "school-step")).toMatchObject({ name: "סטארט", sessions_per_week: 3 });
+    expect(data.items.find(p => p.id === "school-mastery")).toMatchObject({ sessions_per_week: 7, max_payments: 12 });
+    expect(JSON.stringify(data)).not.toContain("monthly_minutes");
+  });
+
+  it("offers service and return when the catalog is empty", async () => {
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.active',json('false')) WHERE kind='packages'");
+    const response = await paymentResponse(store, env, "/", { PBXcallId: "empty-sales" }, "c1", []);
+    expect(response).toMatchObject({ type: "simpleMenu", name: "isaacPayExit", enabledKeys: "0,9" });
+    expect(JSON.stringify(response)).not.toContain("דקות");
   });
 });

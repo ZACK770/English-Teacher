@@ -519,11 +519,11 @@ describe("website checkout", () => {
     expect((await hook({ ...paid, Amount: "1" })).status).toBe(400);
     expect((await hook(paid)).status).toBe(200);
     expect((await hook(paid)).status).toBe(200);
-    expect(db.sql.prepare("SELECT COUNT(*) n, MAX(minutes) m FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 1, m: 300 });
+    expect(db.sql.prepare("SELECT COUNT(*) n, MAX(minutes) m FROM sales_receipts WHERE customer_id='c1'").get()).toMatchObject({ n: 1, m: 150 });
     expect((await (await req("/v1/portal/checkout/" + o.id)).json() as any).state).toBe("paid");
     const store = new SubscriptionStore(env.DB);
     const sub = await store.get(o.id);
-    expect(sub).toMatchObject({ term_months: 12, monthly_minutes: 300, period_number: 1, price_agorot: 149000 });
+    expect(sub).toMatchObject({ term_months: 12, monthly_minutes: 150, period_number: 1, price_agorot: 149000 });
     expect(JSON.parse(sub.domains_json)).toContainEqual({ domain: "business" });
     expect(db.sql.prepare("SELECT entitlement_id FROM payment_orders WHERE id=?").get(o.id)?.entitlement_id).toBe(sub.id);
     await store.tick(addMonths(sub.started_at, 1));

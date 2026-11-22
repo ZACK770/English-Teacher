@@ -1,4 +1,5 @@
 import { BusinessStore } from "./business";
+import { practiceInternal } from "./practice";
 import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
 import { resetCustomer } from "./crm-reset";
@@ -218,7 +219,8 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     const id = decodeURIComponent(match[2]), p = data.people.get(id);
     if (!p) throw new HttpError(404, "הלקוח לא נמצא");
     if (request.method === "DELETE") return resetCustomer(request, env, person(data, p), actor);
-    return ok({ ...person(data, p), journey: journey(data, id), calls: (data.sessions.get(id) || []).map(s => costCall(data, s)).sort((a, b) => b.started_at.localeCompare(a.started_at)), assumptions: { usd_ils: data.economics.usd_ils, telephony_rate_ils: data.economics.forecast_cost_per_minute, telephony_note: "אומדן לפי עלות הדקה החזויה בהנחות העסק; אינו חיוב ספק מאומת" } });
+    const practice = await practiceInternal(env.DB, id);
+    return ok({ ...person(data, p), practice, journey: journey(data, id), calls: (data.sessions.get(id) || []).map(s => costCall(data, s)).sort((a, b) => b.started_at.localeCompare(a.started_at)), assumptions: { usd_ils: data.economics.usd_ils, telephony_rate_ils: data.economics.forecast_cost_per_minute, telephony_note: "אומדן לפי עלות הדקה החזויה בהנחות העסק; אינו חיוב ספק מאומת" } });
   }
   const params = new URL(request.url).searchParams;
   const subscriptionAccess = params.get("access") || "";
