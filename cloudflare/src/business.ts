@@ -133,6 +133,18 @@ const receiptOnHold = `(r.payment_reversed_at IS NOT NULL OR EXISTS (SELECT 1 FR
     AND (o.entitlement_id=r.subscription_id OR (o.entitlement_id IS NULL AND o.first_order_id IN
       (SELECT id FROM payment_orders WHERE receipt_id=r.id)))))`;
 
+export const ACTIVE_SCHOOL_PACKAGE_ID_SQL = `COALESCE((SELECT r.package_id FROM sales_receipts r
+      WHERE (r.customer_id=candidate.customer_id OR r.subscription_id IN
+        (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+         WHERE m.customer_id=candidate.customer_id AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
+      AND NOT ${receiptOnHold} AND r.product='school' AND r.package_id<>'school-topup' AND r.expires_at>candidate.at AND (r.valid_from IS NULL OR r.valid_from<=candidate.at)
+      ORDER BY r.created_at DESC LIMIT 1), (SELECT s.plan_id FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+      WHERE s.status='active' AND s.access_suspended_at IS NULL AND p.product='school'
+      AND NOT EXISTS (SELECT 1 FROM standing_orders o WHERE o.entitlement_id=s.id AND (o.state='past_due' OR o.last_refusal_at IS NOT NULL))
+      AND s.started_at<=candidate.at AND s.current_period_end>candidate.at AND (s.customer_id=candidate.customer_id OR EXISTS
+        (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=candidate.customer_id AND m.removed_at IS NULL))
+      ORDER BY s.created_at DESC LIMIT 1))`;
+
 export interface Allowance { seconds: number; mode: string; extension?: string; intro?: string }
 
 export class BusinessStore {
@@ -431,19 +443,8 @@ export class BusinessStore {
   }
 
   async activeSchoolPackage(customerId: string, at = nowIso()) {
-    const receipt = await this.db.prepare(`SELECT r.package_id AS id FROM sales_receipts r
-      WHERE (r.customer_id=? OR r.subscription_id IN
-        (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
-         WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT ${receiptOnHold} AND r.product='school' AND r.package_id<>'school-topup' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
-      ORDER BY r.created_at DESC LIMIT 1`).bind(customerId, customerId, at, at).first<{ id: string }>();
-    const sub = receipt ? null : await this.db.prepare(`SELECT s.plan_id AS id FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-      WHERE s.status='active' AND s.access_suspended_at IS NULL AND p.product='school'
-      AND NOT EXISTS (SELECT 1 FROM standing_orders o WHERE o.entitlement_id=s.id AND (o.state='past_due' OR o.last_refusal_at IS NOT NULL))
-      AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
-        (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL))
-      ORDER BY s.created_at DESC LIMIT 1`).bind(at, at, customerId, customerId).first<{ id: string }>();
-    const id = receipt?.id ?? sub?.id;
+    const selected = await this.db.prepare(`SELECT ${ACTIVE_SCHOOL_PACKAGE_ID_SQL} AS id FROM (SELECT ? AS customer_id, ? AS at) candidate`).bind(customerId, at).first<{ id: string | null }>();
+    const id = selected?.id;
     const pkg = id ? await this.record("packages", id) : null;
     return pkg ? { id: id!, name: String(pkg.name), sessions_per_week: Number(pkg.sessions_per_week ?? 7), monthly_minutes: pkg.monthly_minutes as number | undefined } : null;
   }

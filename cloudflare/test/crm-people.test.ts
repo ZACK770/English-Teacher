@@ -48,7 +48,7 @@ function session(id = "call1", transcript: string | null = JSON.stringify([{ rol
 const request = (path: string, auth = true, method = "GET") => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/" + path, { method, headers: auth ? { Authorization: "Bearer crm-test-secret" } : {} }), env);
 const reset = (confirm: unknown = "0501234567", id = "person1", headers: Record<string, string> = { Authorization: "Bearer crm-test-secret" }) => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/people/" + id, { method: "DELETE", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ confirm }) }), env);
 describe('returning practice customers', () => {
-  it('prefers the active subscription and ignores newer top-up receipts', async () => {
+  it('matches the card receipt priority and ignores newer top-up receipts', async () => {
     customer();
     planAndSubscription('person1', 'active');
     sql.exec("UPDATE subscriptions SET plan_id='school-step', current_period_end='2099-01-01'");
@@ -57,11 +57,29 @@ describe('returning practice customers', () => {
     receipt('regular', 'school-pace', '2026-01-01');
     receipt('addon', 'school-topup', '2026-01-02');
     const result = async () => (await (await request('returning')).json() as any).items[0];
-    expect(await result()).toMatchObject({ package: { id: 'school-step' }, monthly_minutes: 60 });
+    expect(await result()).toMatchObject({ package: { id: 'school-pace' }, monthly_minutes: 200 });
     sql.exec("UPDATE subscriptions SET status='cancelled'");
     expect(await result()).toMatchObject({ package: { id: 'school-pace' }, monthly_minutes: 200 });
     sql.exec("DELETE FROM sales_receipts WHERE id='regular'");
     expect(await result()).toMatchObject({ package: null, monthly_minutes: null });
+    sql.exec("UPDATE subscriptions SET status='active'");
+    expect(await result()).toMatchObject({ package: { id: 'school-step' }, monthly_minutes: 60 });
+  });
+  it('uses the same newer family receipt package as the practice card', async () => {
+    customer(); customer('family-owner', '0501234568');
+    planAndSubscription('person1', 'active', 'own');
+    planAndSubscription('family-owner', 'active', 'family');
+    sql.exec("UPDATE subscriptions SET plan_id='school-step', current_period_end='2099-01-01'");
+    insert('subscription_members', { subscription_id: 'family', customer_id: 'person1', added_at: now });
+    for (const day of ['2026-01-01', '2026-01-02']) insert('practice_days', { customer_id: 'person1', day, seconds: 120, calls: 1, first_at: now, last_at: now });
+    for (const [id, customerId, sub, packageId, at] of [['own-receipt', 'person1', 'own', 'school-step', '2026-01-01'], ['family-receipt', 'family-owner', 'family', 'school-pace', '2026-01-02'], ['addon', 'person1', 'own', 'school-topup', '2026-01-03']]) {
+      insert('sales_receipts', { id, customer_id: customerId, subscription_id: sub, package_id: packageId, product: 'school', reference: id, amount_ils: 39, vat_rate: 0, minutes: 60, expires_at: '2099-01-01', created_at: at });
+    }
+    const returning = (await (await request('returning')).json() as any).items.find((p: any) => p.id === 'person1');
+    const card = await (await request('people/person1')).json() as any;
+    expect(returning).toMatchObject({ package: { id: 'school-pace' }, monthly_minutes: 200 });
+    expect(returning.package.id).toBe(card.practice.package.id);
+    expect(returning.monthly_minutes).toBe(card.practice.month.minutes_quota);
   });
   it('returns an empty summary when practice tables are empty', async () => {
     const response = await request('returning');

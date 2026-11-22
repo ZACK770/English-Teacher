@@ -1,4 +1,4 @@
-import { BusinessStore } from "./business";
+import { ACTIVE_SCHOOL_PACKAGE_ID_SQL, BusinessStore } from "./business";
 import { practiceInternal } from "./practice";
 import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
@@ -50,14 +50,16 @@ async function load(env: Env) {
     "SELECT customer_id,day,seconds FROM practice_days",
     "SELECT customer_id,day,sent_at,responded_at,status FROM practice_reminder_events WHERE day >= date('now','-31 days')",
     "SELECT id,body FROM console_records WHERE kind='packages'",
+    `SELECT candidate.customer_id, ${ACTIVE_SCHOOL_PACKAGE_ID_SQL} AS package_id FROM (SELECT id AS customer_id, ? AS at FROM customers) candidate`,
   ];
-  const [results, economics] = await Promise.all([env.DB.batch<Row>(queries.map(q => env.DB.prepare(q))), new BusinessStore(env.DB).economics()]);
+  const [results, economics] = await Promise.all([env.DB.batch<Row>(queries.map((q, i) => i === 18 ? env.DB.prepare(q).bind(new Date().toISOString()) : env.DB.prepare(q))), new BusinessStore(env.DB).economics()]);
   const [typed, records, allSessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members, preferences, paymentOrders, standingOrders] = results.map(r => r.results);
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const daysByCustomer = new Map<string, Row[]>(), remindersByCustomer = new Map<string, Row[]>();
   for (const [rows, map] of [[results[15].results, daysByCustomer], [results[16].results, remindersByCustomer]] as const) for (const row of rows) { const rows = map.get(row.customer_id) || []; rows.push(row); map.set(row.customer_id, rows); }
   const practice = new Map(typed.map(p => [p.id, practiceMetrics(daysByCustomer.get(p.id) as any || [], remindersByCustomer.get(p.id) as any || [], today)]));
   const packages = new Map<string, Row>(results[17].results.map(p => [p.id, { ...parse(p.body), id: p.id }]));
+  const activePackages = new Map(results[18].results.map(r => [r.customer_id, packages.get(r.package_id)]));
   for (const sub of subscriptions) sub.standing_orders = standingOrders.filter(o => o.entitlement_id === sub.id);
   const botRows = new Map(bots.map(b => [b.id, b]));
   // This CRM belongs to the English school. Unknown legacy sessions are retained,
@@ -95,7 +97,7 @@ async function load(env: Env) {
     const sub = subscriptions.find(s => s.id === member.subscription_id);
     if (sub) familySubscriptions.set(member.customer_id, [...(familySubscriptions.get(member.customer_id) || []), sub]);
   }
-  return { practice, packages, familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
+  return { practice, activePackages, familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
 }
 type Data = Awaited<ReturnType<typeof load>>;
 const schoolEvents = (data: Data, id: string) => (data.events.get(id) || []).filter(e => !(e.kind === "ivr-events" && ["translator", "start-translation", "languages"].includes(e.route)));
@@ -189,17 +191,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     const items = [...data.people.values()].flatMap(p => {
       const metrics = data.practice.get(p.id);
       if (!metrics || metrics.practice_days_total < 2) return [];
-      const subs = data.subscriptions.get(p.id) || data.familySubscriptions.get(p.id) || [];
-      const now = new Date().toISOString();
-      const available = (s: Row) => !s.access_suspended_at && !(s.standing_orders || []).some((o: Row) => o.state === "past_due" || o.last_refusal_at);
-      const sub = subs.filter(s => s.status === "active" && available(s) && s.started_at <= now && s.current_period_end > now).at(-1);
-      const ownReceipts = data.receipts.get(p.id) || [];
-      const familyReceipts = (data.familySubscriptions.get(p.id) || []).filter(s => ["active", "cancelled", "past_due"].includes(s.status)).flatMap(s => (data.receipts.get(s.customer_id) || []).filter(r => r.subscription_id === s.id));
-      const receipt = [...ownReceipts, ...familyReceipts].filter(r => {
-        const ownerSub = (data.subscriptions.get(r.customer_id) || []).find(s => s.id === r.subscription_id);
-        return r.package_id !== "school-topup" && !r.payment_reversed_at && r.expires_at > now && (!r.valid_from || r.valid_from <= now) && (!ownerSub || ownerSub.status !== "paused" && available(ownerSub));
-      }).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-      const pkg = data.packages.get(sub?.plan_id) || data.packages.get(receipt?.package_id);
+      const pkg = data.activePackages.get(p.id);
       return [{ id: p.id, name: p.name || "ללא שם", phone: p.phone || "", ...metrics, package: pkg ? { id: pkg.id, name: pkg.name } : null, monthly_minutes: pkg?.monthly_minutes ?? null }];
     });
     const sent = items.reduce((n, p) => n + p.reminders_sent, 0), responded = items.reduce((n, p) => n + p.reminders_responded, 0);
