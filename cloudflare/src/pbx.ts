@@ -1,5 +1,6 @@
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { PAYMENT_FAILED_MESSAGE } from "../../src/paymentCopy";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { adOpening, adRuntimeContext, PHONE_TUTOR_PITCH, registerPirsumfonEntry, startAdEntry } from "./ad-entry";
 import { z } from "zod";
 import { BusinessStore } from "./business";
@@ -70,7 +71,7 @@ export async function getCopy(b: BusinessStore): Promise<IVRCopy> {
 }
 
 export async function startSchool(b: BusinessStore, progress: ProgressStore, s: Settings, callId: string, customerId: string, selected?: string): Promise<IVRResponse> {
-  if (await b.schoolPaymentBlocked(customerId)) return { type: "goTo", goTo: extensionPath(s.projectPath, "/8"), removeParams: REMOVE };
+  if (await b.schoolPaymentBlocked(customerId)) return { type: "goTo", goTo: extensionPath(s.projectPath, QUOTA_EXTENSION_PATH), removeParams: REMOVE };
   const bots = (await progress.listBots()).filter((bot) => bot.enabled && bot.phone_enabled && bot.role === "teacher");
   if (!bots.length) return menu("isaacTeacher", (await getCopy(b)).school, "0,9");
   const saved = await b.loadContext("preferences:" + customerId);

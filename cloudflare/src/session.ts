@@ -1,5 +1,6 @@
 import { isEmailConfirmation, isSummaryCallConsent, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
 import { BusinessStore } from "./business";
@@ -238,7 +239,7 @@ export class TutorSession {
       this.lessonDurationMs = Math.min(allowance.seconds, this.controls.target_lesson_minutes * 60) * 1000;
       this.allowanceMs = allowance.seconds * 1000;
       hardLimit = setTimeout(() => {
-        if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
+        if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension(QUOTA_EXTENSION_PATH);
         this.stop("hard_time_limit");
       }, (allowance.seconds + 20) * 1000);
       if (this.controls.store_transcripts) await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
@@ -268,7 +269,7 @@ export class TutorSession {
         await this.latency("greeting_sent");
         clearTimeout(hardLimit);
         hardLimit = setTimeout(() => {
-          if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension("/8");
+          if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension(QUOTA_EXTENSION_PATH);
           this.stop("hard_time_limit");
         }, allowance.seconds * 1000);
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);

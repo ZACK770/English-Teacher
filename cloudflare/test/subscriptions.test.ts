@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
@@ -45,7 +46,7 @@ beforeEach(async () => {
   store = new SubscriptionStore(db as unknown as D1Database);
   b = new BusinessStore(db as unknown as D1Database);
   await b.save("customers", { name: "Owner", phone: "0501111111" }, "owner");
-  await b.save("policies", { enabled: true, product: "school", free_calls_month: 0, opening_seconds: 0, blocked_extension: "/99/8" }, "teacher");
+  await b.save("policies", { enabled: true, product: "school", free_calls_month: 0, opening_seconds: 0, blocked_extension: QUOTA_EXTENSION_PATH }, "teacher");
 });
 afterEach(() => { db.sql.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
