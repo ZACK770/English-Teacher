@@ -44,6 +44,7 @@ describe("practice reminder preferences", () => {
     ["בעשר בלילה", "22:00"], ["בשתיים בלילה", "02:00"], ["בשלוש אחרי הצהריים", "15:00"], ["באחת בצהריים", "13:00"], ["בשתים עשרה בצהריים", "12:00"],
     ["שמונה עשרה", "18:00"], ["תשע עשרה", "19:00"], ["עשרים ואחת", "21:00"], ["18:30", "18:30"],
     ["1", "13:00"], ["2", "14:00"], ["3", "15:00"], ["4", "16:00"], ["5", "17:00"], ["6", "18:00"], ["בשש בבוקר", "06:00"],
+    ["בחמש לפנות בוקר", "05:00"], ["בחמש בבוקר", "05:00"], ["5 לפנות בוקר", "05:00"], ["בשתים עשרה לפנות בוקר", "00:00"],
     ["06:00", "06:00"], ["6:00", "06:00"], ["06", "06:00"], ["01:30", "01:30"], ["01", "01:00"],
   ])("parses %s", (answer, time) => expect(parseReminderAnswer(answer)).toEqual({ active: true, time_local: time }));
   it.each(["לא תודה", "לא", "בלי תזכורת", "לבטל את התזכורת"])("recognizes refusal: %s", answer => expect(parseReminderAnswer(answer)).toEqual({ active: false }));
@@ -135,6 +136,16 @@ describe("practice reminder preferences", () => {
 
 describe("scheduled practice pings", () => {
   beforeEach(async () => { await savePracticeReminder(db, "learner", "בשמונה בערב", now); });
+  it.each(["dry_run", "live"])("does not claim or send reminders for a top-up-only customer in %s", async mode => {
+    sql.exec("UPDATE sales_receipts SET package_id='school-topup',subscription_id=NULL; DELETE FROM subscriptions");
+    const business = new BusinessStore(db);
+    expect(await business.hasPaidAccess("learner", now.toISOString())).toBe(true);
+    expect(await business.activeSchoolPackage("learner", now.toISOString())).toBeNull();
+    env.REMINDERS_MODE = mode as Env["REMINDERS_MODE"];
+    await dispatchPracticeReminders(env, now);
+    expect(events()).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("dispatches on a newly added practice weekday after the package changes", async () => {
     sql.exec("UPDATE sales_receipts SET package_id='school-pace'; UPDATE subscriptions SET plan_id='school-pace'");
     await dispatchPracticeReminders(env, new Date("2026-06-15T17:04:00Z"));

@@ -5,8 +5,8 @@ import type { Env } from "../src/env";
 import worker from "../src/index";
 
 describe("cron isolation", () => {
-  it("configures the original maintenance schedule alongside the reminder schedule", () => {
-    expect(readFileSync(new FileURL("../wrangler.toml", import.meta.url), "utf8")).toContain('crons = ["*/10 * * * *", "*/5 * * * *"]');
+  it.each(["../wrangler.toml", "../../wrangler.toml"])("configures maintenance and reminder schedules in %s", path => {
+    expect(readFileSync(new FileURL(path, import.meta.url), "utf8")).toContain('crons = ["*/10 * * * *", "*/5 * * * *"]');
   });
   it.each(["*/5 * * * *", "unknown"])("does not run maintenance on %s", async cron => {
     vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(new Date("2026-06-14T17:04:00Z"));
