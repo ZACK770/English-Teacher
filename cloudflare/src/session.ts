@@ -61,6 +61,7 @@ export class TutorSession {
   private reason = "";
   private disconnectDetails: Record<string, unknown> = {};
   private intakeReminded = false;
+  private endConfirmationAt: number | null = null;
   private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
   private summaryCallbackRequested = false;
   private summaryCallbackSpeech = "";
@@ -578,7 +579,7 @@ export class TutorSession {
     }
   }
 
-  private async recordTool(call: ToolCall): Promise<SalesToolResult> {
+  private async recordTool(call: ToolCall): Promise<SalesToolResult | { saved: false; reason: "confirmation_required"; next_step: string }> {
     const args = call.args ?? {};
     if (call.name === "save_mastery_domain") {
       if (!this.masteryDomain || !this.controls?.lesson) return false;
@@ -676,6 +677,10 @@ export class TutorSession {
         return false;
       }
       const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
+      if (reason === "task_completed" && !this.canCompleteSession()) {
+        this.endConfirmationAt ??= this.meter.transcript.length;
+        return { saved: false, reason: "confirmation_required", next_step: 'Ask the learner "רוצה לסיים?" and wait for their answer. Only after they agree, say the full goodbye and call end_session again. If they decline, continue the lesson.' };
+      }
       const destinations: Record<string, string> = { main: "", school: "/1", options: "/2" };
       if (reason === "caller_requested" && typeof args.destination === "string" && Object.hasOwn(destinations, args.destination) && this.callId.includes("~")) this.returnPath = this.extension(destinations[args.destination]);
       this.reason = "model:" + reason;
@@ -691,6 +696,23 @@ export class TutorSession {
       return true;
     }
     return this.meter.recordLearning(call.name ?? "", args);
+  }
+
+  private canCompleteSession() {
+    if (this.finalSent || (this.meteredAt !== null && this.allowanceMs > 0 && Date.now() - this.meteredAt >= this.allowanceMs)) return true;
+    const learner = this.meter.transcript.filter(t => t.role === "learner").at(-1)?.text.trim() ?? "";
+    if (/^(?:תפסיק|תפסיקי|די|רוצה לסיים|אני רוצה לסיים|בוא נסיים|להתראות|stop|stop please|please stop|goodbye|bye|I want to stop|let's stop)[.!?\s]*$/i.test(learner)) return true;
+    if (this.endConfirmationAt !== null) {
+      const turns = this.meter.transcript.slice(this.endConfirmationAt);
+      let answer = turns.length - 1;
+      while (answer >= 0 && turns[answer].role !== "learner") answer--;
+      let previous = answer - 1;
+      while (previous >= 0 && turns[previous].role !== "learner") previous--;
+      const question = turns.slice(previous + 1, answer).filter(t => t.role === "tutor").map(t => t.text).join("");
+      if (answer >= 0 && /רוצה לסיים|want to (?:end|stop|finish)/i.test(question) && isEmailConfirmation(turns[answer].text)) return true;
+    }
+    if (!this.controls?.lesson) return !!this.controls && this.meter.learnerTurns > 0 && this.meter.tutorTurns > 0;
+    return this.controls.ending_policy === "model_discretion" && this.meter.learnerTurns > 0 && this.meter.lessonSummary !== null;
   }
 
   private async pacedOutput() {
