@@ -93,6 +93,7 @@ export class TutorSession {
   private closingSent = false;
   private lessonDurationMs = 0;
   private allowanceMs = 0;
+  private freeTrial = false;
   private finalSent = false;
   private b: BusinessStore;
   private progress: ProgressStore;
@@ -256,6 +257,7 @@ export class TutorSession {
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      this.freeTrial = allowance.mode === "free";
       reserved = allowance.seconds > 0;
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
@@ -722,7 +724,7 @@ export class TutorSession {
       }
       if (this.ai && this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
         this.finalSent = true;
-        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now: give a brief summary and a warm invitation to call again, in one or two short Hebrew sentences. If the lesson summary is not saved yet, call record_lesson_summary silently in the same turn. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
+        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now in one or two short Hebrew sentences: " + (this.freeTrial ? '"זמן ההתנסות החינמית הסתיים."' : '"זמן השיחה הסתיים."') + (this.profileId.startsWith("isaac-") ? ' Then say "מיד נעבור לתפריט, שם אפשר לבחור חבילה להמשך הלימוד."' : "") + " Do not give a practice recap or claim any practice happened. If the lesson summary is not saved yet, call record_lesson_summary silently with only observed results. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
       }
       await sleep(500, this.abort.signal);
     }

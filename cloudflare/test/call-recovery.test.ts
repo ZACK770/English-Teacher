@@ -91,6 +91,8 @@ it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-
   tutor.controls = { ...controlsFromSettings(false), idle_timeout_seconds: 1 };
   tutor.meteredAt = Date.now();
   tutor.allowanceMs = allowanceMs;
+  tutor.freeTrial = true;
+  tutor.profileId = "isaac-basic";
   vi.setSystemTime(tutor.meteredAt + allowanceMs - 25500);
   tutor.lastInput = tutor.lastHuman = Date.now();
   const running = tutor.watchdog().catch(() => {});
@@ -101,7 +103,9 @@ it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-
     turnComplete: true,
   } });
   const instruction = send.mock.calls[0][0] as any;
-  expect(instruction.clientContent.turns[0].parts[0].text).toContain("invitation to call again");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("זמן ההתנסות החינמית הסתיים.");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("שם אפשר לבחור חבילה");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("Do not give a practice recap");
   expect(instruction.clientContent.turns[0].parts[0].text).toContain("end_session");
   expect(tutor.finalSent).toBe(true);
   await vi.advanceTimersByTimeAsync(1500);
@@ -139,6 +143,8 @@ it("defers the closing response request until Gemini reconnection finishes", asy
   tutor.reconnecting = null;
   await vi.advanceTimersByTimeAsync(500);
   expect(tutor.ai.prompt).toHaveBeenCalledOnce();
+  expect(tutor.ai.prompt.mock.calls[0][0]).toContain("זמן השיחה הסתיים.");
+  expect(tutor.ai.prompt.mock.calls[0][0]).not.toContain("זמן ההתנסות החינמית");
   tutor.stop();
   await running;
 });
