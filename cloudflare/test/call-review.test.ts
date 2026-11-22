@@ -97,6 +97,17 @@ describe("finished-call review", () => {
       .toEqual({ status: "failed", input_tokens: 500, output_tokens: 35, findings: "[]" });
   });
 
+  it.each([
+    { excerpt: 99, drift: 1, code: "content_drift" },
+    { excerpt: 1, drift: 99, code: "no_practice" },
+  ])("keeps the valid $code finding when the other excerpt is out of range", async ({ excerpt, drift, code }) => {
+    vi.stubGlobal("fetch", vi.fn(async () => judge("no_practice", excerpt, drift)));
+    session("a");
+    await runCallReviews(env, now);
+    expect(sql.prepare("SELECT status,findings FROM call_reviews").get())
+      .toEqual({ status: "reviewed", findings: JSON.stringify([{ code, excerpt: 1 }]) });
+  });
+
   it("persists content drift independently of the existing quality issue in the same review", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => judge("no_practice", 1, 1));
     vi.stubGlobal("fetch", fetch);

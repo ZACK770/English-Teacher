@@ -90,10 +90,9 @@ export async function reviewTutor(env: Env, raw: string | null) {
   try {
     const result = judgment.parse(JSON.parse(response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""));
     const isExcerpt = (n: number) => n >= 1 && n <= excerpts.length;
-    valid = (result.issue === "none" ? result.excerpt === 0 : isExcerpt(result.excerpt))
-      && (result.content_drift_excerpt === 0 || isExcerpt(result.content_drift_excerpt));
-    if (valid && result.issue !== "none") findings.push({ code: result.issue, excerpt: result.excerpt });
-    if (valid && result.content_drift_excerpt) findings.push({ code: "content_drift", excerpt: result.content_drift_excerpt });
+    if (result.issue !== "none" && isExcerpt(result.excerpt)) findings.push({ code: result.issue, excerpt: result.excerpt });
+    if (isExcerpt(result.content_drift_excerpt)) findings.push({ code: "content_drift", excerpt: result.content_drift_excerpt });
+    valid = findings.length > 0 || (result.issue === "none" && result.excerpt === 0 && result.content_drift_excerpt === 0);
   } catch { /* A billed malformed/blocked response is not counted as a clean review. */ }
   return { findings, valid, input: tokens.promptTokenCount, output, estimated_usd: reviewCost(tokens.promptTokenCount, output) };
 }
