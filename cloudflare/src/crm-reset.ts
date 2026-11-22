@@ -28,15 +28,17 @@ export function trialResetStatements(db: D1Database, id: string, actor: string, 
 export async function resetTrial(db: D1Database, id: string, actor: string, apply = true) {
   const exists = await db.prepare("SELECT id FROM customers WHERE id=? UNION SELECT id FROM console_records WHERE kind='customers' AND id=?").bind(id, id).first();
   if (!exists) throw new HttpError(404, "הלקוח לא נמצא");
-  const calls = await db.prepare(`SELECT call_id FROM call_customers WHERE customer_id=?1
-    UNION SELECT call_id FROM usage_allocations WHERE customer_id=?1
-    UNION SELECT call_id FROM sessions WHERE student_id=?1
-    UNION SELECT call_id FROM payment_orders WHERE customer_id=?1
-    UNION SELECT call_id FROM learning_lessons WHERE customer_id=?1
-    UNION SELECT last_call_id AS call_id FROM navigation_trips WHERE customer_id=?1 AND last_call_id IS NOT NULL
-    UNION SELECT json_extract(body,'$.call_id') AS call_id FROM console_records
-      WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=?1 AND json_extract(body,'$.call_id') IS NOT NULL`).bind(id).all<{ call_id: string }>();
-  const ids = [...new Set(calls.results.flatMap(r => [r.call_id, r.call_id.split('~')[0]]))];
+  const queries = [
+    "SELECT call_id FROM call_customers WHERE customer_id=?",
+    "SELECT call_id FROM usage_allocations WHERE customer_id=?",
+    "SELECT call_id FROM sessions WHERE student_id=?",
+    "SELECT call_id FROM payment_orders WHERE customer_id=?",
+    "SELECT call_id FROM learning_lessons WHERE customer_id=?",
+    "SELECT last_call_id AS call_id FROM navigation_trips WHERE customer_id=? AND last_call_id IS NOT NULL",
+    "SELECT json_extract(body,'$.call_id') AS call_id FROM console_records WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=? AND json_extract(body,'$.call_id') IS NOT NULL",
+  ];
+  const calls = await Promise.all(queries.map(query => db.prepare(query).bind(id).all<{ call_id: string }>()));
+  const ids = [...new Set(calls.flatMap(result => result.results.flatMap(r => r.call_id ? [r.call_id, r.call_id.split('~')[0]] : [])))];
   await requireIdleTrialCustomer(db, id, JSON.stringify(ids));
   if (!apply) {
     const totals = await db.prepare(`SELECT COUNT(*) AS deleted_rows, COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0) AS freed_seconds FROM usage_allocations WHERE ${TRIAL_USAGE_FILTER}`).bind(id).first();

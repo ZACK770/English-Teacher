@@ -16,6 +16,7 @@ beforeEach(async () => {
     sql.exec("BEGIN");
     try {
       const result = statements.map(({ sql: query, params = [] }) => {
+        if ((query.match(/\bUNION\b/gi) || []).length > 1) throw new Error("too many terms in compound SELECT");
         const results = sql.prepare(query).all(...params);
         return { success: true, results, meta: { changes: Number(sql.prepare("SELECT changes() AS n").get().n) } };
       });
@@ -73,6 +74,14 @@ describe("teacher admin D1 backend and SQL builders", () => {
     expect(JSON.parse(sql.prepare("SELECT action FROM console_audit").get().action)).toMatchObject({ action: "crm_trial_reset", actor: "ops-cli", deleted_rows: 2 });
     expect(bodies.find(b => b.batch).batch).toHaveLength(2);
     expect(await run(["reset-trial", "customer", "--apply"], backend)).toMatchObject({ deleted_rows: 0, freed_seconds: 0 });
+  });
+  it("finds active physical calls through separately queried console events in D1 mode", async () => {
+    sql.prepare("INSERT INTO customers(id,name,created_at,updated_at) VALUES ('customer','שם',?,?)").run(at, at);
+    sql.prepare("INSERT INTO console_records VALUES ('ivr-events','event',?,?,?)").run(JSON.stringify({ customer_id: "customer", call_id: "physical~lesson" }), at, at);
+    sql.prepare("INSERT INTO active_calls VALUES ('physical','teacher','owner',0,?)").run(Date.now() / 1000 + 60);
+    await expect(run(["reset-trial", "customer", "--apply"], backend)).rejects.toMatchObject({ status: 409 });
+    expect(bodies.filter(b => b.sql?.startsWith("SELECT ") && b.sql.includes(" AS call_id FROM console_records"))).toHaveLength(1);
+    expect(bodies.some(b => b.batch)).toBe(false);
   });
   it("preserves usage reserved between the safety checks and reset batch", async () => {
     sql.prepare("INSERT INTO customers(id,name,created_at,updated_at) VALUES ('customer','שם',?,?)").run(at, at);
