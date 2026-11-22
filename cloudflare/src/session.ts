@@ -16,6 +16,7 @@ import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx
 import { ProgressStore } from "./progress";
 import { practiceSummary } from "./practice";
 import { reminderGuidance, savePracticeReminder } from "./practice-reminders";
+import { masteryDomainGuidance, saveMasteryDomain } from "./mastery-domain";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
@@ -63,6 +64,7 @@ export class TutorSession {
   private summaryCallbackRequested = false;
   private summaryCallbackSpeech = "";
   private practiceReminders = false;
+  private masteryDomain = false;
   private reminderSpeech = "";
   private salesWindowOpen = false;
   private practiceStarted: { at: number; failureGapMs: number } | null = null;
@@ -220,6 +222,9 @@ export class TutorSession {
         const practice = await practiceSummary(this.env.DB, this.customerId);
         this.practiceReminders = !!practice.package && !!this.controls.lesson;
         if (this.practiceReminders) this.controls.custom_instructions += "\n" + reminderGuidance(!!practice.reminder?.active);
+        const domainGuidance = this.controls.lesson ? await masteryDomainGuidance(this.env.DB, this.customerId) : null;
+        this.masteryDomain = !!domainGuidance;
+        if (domainGuidance) this.controls.custom_instructions += "\n" + domainGuidance;
         const streak = practice.current_streak + (practice.today.practiced ? 0 : 1);
         if (practice.package && streak >= 2 && practice.current_streak > 0) this.controls.opening_message += ` Open briefly in natural Hebrew with "יום ${streak} ברצף!", then continue normally; use gender-neutral language.`;
       }
@@ -241,7 +246,7 @@ export class TutorSession {
       }
       if (this.abort.signal.aborted) return;
       const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
-      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders, freeTuning: !paid && allowance.mode !== "basic" });
+      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders, masteryDomain: this.masteryDomain, freeTuning: allowance.mode !== "basic" });
       releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
@@ -548,6 +553,15 @@ export class TutorSession {
 
   private async recordTool(call: ToolCall): Promise<boolean> {
     const args = call.args ?? {};
+    if (call.name === "save_mastery_domain") {
+      if (!this.masteryDomain || !this.controls?.lesson) return false;
+      const saved = await saveMasteryDomain(this.env.DB, this.customerId, args.domain).catch(() => false);
+      if (saved) {
+        this.masteryDomain = false;
+        this.ai?.addContext("APPLICATION NOTE: the chosen Master vocabulary domain is saved. Continue the lesson; do not ask again.");
+      }
+      return saved;
+    }
     if (call.name === "save_practice_reminder") {
       if (!this.practiceReminders || !this.controls?.lesson) return false;
       const saved = await savePracticeReminder(this.env.DB, this.customerId, this.reminderSpeech).catch(() => false);

@@ -7,7 +7,11 @@ import { type Env, settings } from "../src/env";
 import { handleCallback } from "../src/pbx";
 import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT } from "../src/payments";
 import worker from "../src/index";
-import { syncKevas } from "../src/keva-sync";
+import { reconcilePhoneKeva, syncKevas } from "../src/keva-sync";
+import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
+import { TutorSession } from "../src/session";
+import { controlsFromSettings } from "../src/controls";
+import { buildSetupPayload } from "../src/prompt";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -45,6 +49,10 @@ async function issue(choice = "1") {
   expect(await respond({ isaacPackage: choice })).toMatchObject({ name: "isaacPayConfirm" });
   return respond({ isaacPayConfirm: "2" });
 }
+async function purchaseMaster() {
+  const module = await issue("5");
+  await hook({ MosadNumber: "7019554", Groupe: module.category, Amount: "1490", Currency: "1", TransactionId: "987654", Confirmation: "approved" });
+}
 function provider(category: string, amount = "59") {
   rows = [{ KevaId: "54321", Groupe: category, Phone: "0500000001", Amount: amount, Currency: "1", Enabled: "1", Success: "1", ErrorText: "", CreationDate: "22/11/2026" }];
   detail = { KevaId: "54321", KevaGroupe: category, KevaPhone: "0500000001", KevaAmount: amount,
@@ -59,6 +67,24 @@ async function hook(data: Record<string, unknown>, signed = true) {
     headers: signed ? { "X-Nedarim-Timestamp": timestamp, "X-Nedarim-Signature": "v1=" + hex } : {} }), env);
 }
 const counts = () => ["subscriptions", "sales_receipts", "standing_orders"].map(table => db.sql.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n);
+const providerForms = () => vi.mocked(fetch).mock.calls.map(([, init]) => new URLSearchParams(String(init!.body)));
+function immediateProvider(category: string, amount = "59", options: { charge?: unknown; update?: unknown; deletion?: string; network?: string } = {}) {
+  provider(category, amount);
+  rows[0].Success = "0";
+  Object.assign(detail, { CreatedDate: "22/11/2026", KevaSuccess: "0", KevaNextDate: "22/11/2026", HistoryData: [] });
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+    const form = new URLSearchParams(String(init.body)), action = form.get("Action");
+    expect(form.get("MosadId")).toBe("7019554");
+    expect(form.get("ApiPassword")).toBe("test-key");
+    if (options.network === action) throw new Error("Provider unavailable");
+    if (action === "GetKevaJson") return Response.json(rows);
+    if (action === "GetKevaId") return Response.json(detail);
+    if (action === "TashlumBodedNew") return Response.json(options.charge ?? { Status: "OK", TransactionId: "987654", ID: "987654", Confirmation: "0012345", Amount: amount, Currency: "1", KevaId: "54321" });
+    if (action === "UpdateKevaNew") return Response.json(options.update ?? { Result: "OK" });
+    if (action === "DeleteKeva") return new Response(options.deletion ?? "OK");
+    throw new Error("Unexpected provider operation");
+  }));
+}
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -80,6 +106,148 @@ beforeEach(async () => {
   }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
+
+describe("in-call first monthly charge", () => {
+  const result = { isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" };
+  const actions = () => providerForms().map(form => form.get("Action"));
+
+  it.each([["1", "59", 60], ["2", "119", 200], ["3", "199", 300]])("charges and activates plan %s during the same callback", async (choice, amount, minutes) => {
+    const module = await issue(String(choice));
+    immediateProvider(String(module.category), String(amount));
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר והחבילה נפתחה");
+    expect(actions()).toEqual(["GetKevaId", "UpdateKevaNew", "TashlumBodedNew"]);
+    const order = (await store.orderForCall("phone-hk"))!;
+    expect(Object.fromEntries(providerForms()[2])).toMatchObject({ Action: "TashlumBodedNew", MosadNumber: "7019554", MosadId: "7019554", ApiPassword: "test-key",
+      KevaId: "54321", Amount: String(amount), Currency: "1", Tashloumim: "1", Tashlumim: "1", JoinToKevaId: "Join", Groupe: "dibura-" + order.id, AjaxId: "dibura-first-" + order.id });
+    expect(Object.fromEntries(providerForms()[1])).toMatchObject({ Action: "UpdateKevaNew", KevaId: "54321", NextDate: "22/12/2026" });
+    expect(order).toMatchObject({ state: "paid", transaction_id: "987654", confirmation: "0012345", amount_agorot: Number(amount) * 100 });
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(db.sql.prepare("SELECT monthly_minutes,current_period_end FROM subscriptions").get()).toEqual({ monthly_minutes: minutes, current_period_end: "2026-12-22T13:00:00.000+00:00" });
+    expect(db.sql.prepare("SELECT keva_id,next_date FROM standing_orders").get()).toEqual({ keva_id: "54321", next_date: "22/12/2026" });
+    expect(db.sql.prepare("SELECT keva_id FROM phone_keva_enrollments").get()).toEqual({ keva_id: "54321" });
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE status='open'").get()!.n).toBe(0);
+    expect(await b.hasPaidAccess("c1")).toBe(true);
+  });
+
+  it("deletes a declined Keva, fails the order and retains back/service navigation", async () => {
+    const module = await issue();
+    immediateProvider(String(module.category), "59", { charge: { Status: "Error", ErrorCode: "033" } });
+    expect(await respond(result)).toMatchObject({ name: "isaacPayExit", enabledKeys: "0,9",
+      files: [{ text: "הכרטיס לא אושר והמנוי לא נפתח. לחזרה הקישו 0. לשירות הקישו 9." }] });
+    expect(actions()).toEqual(["GetKevaId", "UpdateKevaNew", "TashlumBodedNew", "DeleteKeva"]);
+    expect(providerForms()[3].get("KevaId")).toBe("54321");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("failed");
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(await respond({ isaacPayExit: "0" })).toMatchObject({ goTo: "/" });
+    expect(await respond({ isaacPayExit: "9" })).toMatchObject({ goTo: "/4" });
+  });
+
+  it("records a visible issue when decline cleanup fails", async () => {
+    const module = await issue();
+    immediateProvider(String(module.category), "59", { charge: { Status: "Error" }, deletion: "Unable to delete" });
+    expect(JSON.stringify(await respond(result))).toContain("הכרטיס לא אושר");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("failed");
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE kind='phone_keva_delete_failed' AND status='open'").get()).toBeTruthy();
+    await syncKevas(env, true);
+    expect(counts()).toEqual([0, 0, 0]);
+  });
+
+  it("charges exactly once across concurrent and repeated PBX callbacks", async () => {
+    const module = await issue(); immediateProvider(String(module.category));
+    await Promise.all([respond(result), respond(result), respond(result)]);
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+    expect(actions().filter(action => action === "UpdateKevaNew")).toHaveLength(1);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(db.sql.prepare("SELECT state,transaction_id,confirmation FROM phone_keva_first_charges").get()).toEqual({ state: "charged", transaction_id: "987654", confirmation: "0012345" });
+  });
+
+  it("activates an already-charged Keva without charging or changing its billing date", async () => {
+    const module = await issue(); immediateProvider(String(module.category));
+    Object.assign(detail, { KevaNextDate: "22/12/2026", HistoryData: [{ ID: "1", Amount: "59", Date: "22/11/2026", TransactionId: "987654" }] });
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect(actions()).toEqual(["GetKevaId"]);
+    expect(counts()).toEqual([1, 1, 1]);
+  });
+
+  it.each(["refused", "network", "empty"])("does not charge and leaves an open issue for a %s NextDate update", async failure => {
+    const module = await issue();
+    immediateProvider(String(module.category), "59", failure === "network" ? { network: "UpdateKevaNew" } : { update: failure === "empty" ? {} : { Result: "Error" } });
+    expect(JSON.stringify(await respond(result))).toContain("בקרוב לאחר קבלת האישור");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(actions()).toEqual(["GetKevaId", "UpdateKevaNew"]);
+    expect(db.sql.prepare("SELECT kind,status FROM payment_issues WHERE kind='phone_keva_next_date'").get()).toEqual({ kind: "phone_keva_next_date", status: "open" });
+    await respond(result);
+    expect(actions()).not.toContain("TashlumBodedNew");
+    expect(actions()).not.toContain("DeleteKeva");
+    expect(actions().filter(action => action === "UpdateKevaNew")).toHaveLength(1);
+    provider(String(module.category));
+    await syncKevas(env, true);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(actions()).not.toContain("TashlumBodedNew");
+  });
+
+  it.each(["network", "empty", "unknown", "missing transaction", "amount mismatch"])("holds a %s charge result without deleting or retrying", async failure => {
+    const module = await issue();
+    const charge = failure === "empty" ? {} : failure === "unknown" ? { Status: "Pending" } : failure === "missing transaction" ? { Status: "OK", Confirmation: "123" }
+      : { Status: "OK", TransactionId: "987654", Confirmation: "123", Amount: "119" };
+    immediateProvider(String(module.category), "59", failure === "network" ? { network: "TashlumBodedNew" } : { charge });
+    expect(JSON.stringify(await respond(result))).toContain("בקרוב לאחר קבלת האישור");
+    await respond(result);
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+    expect(actions()).not.toContain("DeleteKeva");
+    expect(actions().filter(action => action === "UpdateKevaNew")).toHaveLength(1);
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE kind='phone_keva_charge_unknown' AND status='open'").get()).toBeTruthy();
+    provider(String(module.category));
+    await syncKevas(env, true);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+  });
+
+  it.each(["group", "phone", "amount", "status", "currency", "frequency", "institution", "old", "missing creation", "unknown history", "existing attempt", "success without history"])("does not charge an unverified %s Keva", async mismatch => {
+    const module = await issue(); immediateProvider(String(module.category));
+    if (mismatch === "group") detail.KevaGroupe = "dibura-other";
+    if (mismatch === "phone") detail.KevaPhone = "0500000002";
+    if (mismatch === "amount") detail.KevaAmount = "119";
+    if (mismatch === "status") detail.KevaStatus = "2";
+    if (mismatch === "currency") detail.KevaCurrency = "2";
+    if (mismatch === "frequency") detail.KevaFrequency = "2";
+    if (mismatch === "institution") detail.MosadNumber = "7000000";
+    if (mismatch === "old") detail.CreatedDate = "20/10/2026";
+    if (mismatch === "missing creation") delete detail.CreatedDate;
+    if (mismatch === "unknown history") delete detail.HistoryData;
+    if (mismatch === "existing attempt") detail.HistoryData = [{ ID: "2", Date: "22/11/2026" }];
+    if (mismatch === "success without history") detail.KevaSuccess = "1";
+    expect(JSON.stringify(await respond(result))).toContain("בקרוב לאחר קבלת האישור");
+    expect(actions()).toEqual(["GetKevaId"]);
+    expect(counts()).toEqual([0, 0, 0]);
+  });
+
+  it("keeps existing awaiting orders and scheduled reconciliation strictly read-only at the provider", async () => {
+    const module = await issue(); immediateProvider(String(module.category));
+    await store.recordPbxResult("phone-hk", "OK", "54321");
+    await respond(result);
+    const order = (await store.orderForCall("phone-hk"))!;
+    await reconcilePhoneKeva(env, order.id, "54321");
+    await syncKevas(env, true);
+    expect(actions()).not.toContain("TashlumBodedNew");
+    expect(actions()).not.toContain("UpdateKevaNew");
+    expect(actions()).not.toContain("DeleteKeva");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM phone_keva_first_charges").get()!.n).toBe(0);
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
+    expect(counts()).toEqual([0, 0, 0]);
+  });
+
+  it("uses the returned ID alias when no separate confirmation is present", async () => {
+    const module = await issue(); immediateProvider(String(module.category), "59", { charge: { Status: "OK", ID: "987654" } });
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect((await store.orderForCall("phone-hk"))!.transaction_id).toBe("987654");
+    expect(counts()).toEqual([1, 1, 1]);
+  });
+});
 
 describe("phone monthly enrollment", () => {
   it("offers phone-enabled monthly packages with server-derived keys and prices on the sales route", async () => {
@@ -318,6 +486,68 @@ describe("phone monthly enrollment", () => {
 });
 
 describe("five-package phone sales", () => {
+  it("keeps the phone Master default, then saves the first-lesson choice through the tutor tool", async () => {
+    await purchaseMaster();
+    const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get()!;
+    expect(JSON.parse(String(original.domains_json)).every((d: any) => d.domain === "everyday")).toBe(true);
+    expect(await masteryDomainGuidance(env.DB, "c1")).toContain("באיזה תחום הכי חשוב לך להתחזק?");
+    const session = new TutorSession({} as WebSocket, env, settings(env), "owner") as any;
+    session.customerId = "c1";
+    session.controls = { lesson: {} };
+    session.masteryDomain = true;
+    session.ai = { addContext: vi.fn() };
+    expect(await session.recordTool({ name: "save_mastery_domain", args: { domain: "travel" } })).toBe(true);
+    expect(JSON.parse(String(db.sql.prepare("SELECT domains_json FROM subscriptions").get()!.domains_json))).toEqual([...JSON.parse(String(original.domains_json)), { domain: "travel" }]);
+    expect(JSON.parse(String(db.sql.prepare("SELECT snapshot FROM payment_orders").get()!.snapshot)).guarantee_domain).toBe("travel");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await session.recordTool({ name: "save_mastery_domain", args: { domain: "business" } })).toBe(false);
+  });
+  it("does not offer or save a domain for missing, unpaid, anonymous or other customers", async () => {
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    const module = await issue("5");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await saveMasteryDomain(env.DB, "c1", "travel")).toBe(false);
+    await hook({ MosadNumber: "7019554", Groupe: module.category, Amount: "1490", Currency: "1", TransactionId: "987654", Confirmation: "approved" });
+    for (const id of ["anonymous-1", "other", ""]) {
+      expect(await masteryDomainGuidance(env.DB, id)).toBeNull();
+      expect(await saveMasteryDomain(env.DB, id, "travel")).toBe(false);
+    }
+    for (const domain of [undefined, "", "everyday", "invented"]) expect(await saveMasteryDomain(env.DB, "c1", domain)).toBe(false);
+    expect(await masteryDomainGuidance(env.DB, "c1")).not.toBeNull();
+  });
+  it("does not offer the phone choice for a web subscription or suspended access", async () => {
+    await purchaseMaster();
+    db.sql.exec("UPDATE payment_orders SET channel='web'");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await saveMasteryDomain(env.DB, "c1", "travel")).toBe(false);
+    db.sql.exec("UPDATE payment_orders SET channel='phone'; UPDATE subscriptions SET access_suspended_at='2026-11-22T13:00:00Z'");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+  });
+  it("offers only in the first school lesson after purchase, not on subsequent lessons", async () => {
+    await purchaseMaster();
+    db.sql.exec(`INSERT INTO bots(id,label,role,created_at,updated_at) VALUES('master-teacher','Teacher','teacher','2026-11-01','2026-11-01');
+      INSERT INTO call_customers(call_id,customer_id,bot_id,channel,created_at) VALUES('past-lesson','c1','master-teacher','phone','2026-11-22');
+      INSERT INTO sessions(student_id,call_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json)
+      VALUES('c1','past-lesson','2026-11-22T12:00:00Z','2026-11-22T12:05:00Z',300,1,1,'[]')`);
+    expect(await masteryDomainGuidance(env.DB, "c1")).not.toBeNull();
+    db.sql.exec("UPDATE sessions SET started_at='2026-11-22T13:01:00Z',ended_at='2026-11-22T13:06:00Z'");
+    vi.setSystemTime(new Date("2026-11-22T13:10:00Z"));
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+  });
+  it("rolls back the domain choice if updating the purchase snapshot fails", async () => {
+    await purchaseMaster();
+    const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get();
+    db.sql.exec("CREATE TRIGGER domain_failure BEFORE UPDATE OF snapshot ON payment_orders BEGIN SELECT RAISE(ABORT,'snapshot update failed'); END");
+    await expect(saveMasteryDomain(env.DB, "c1", "travel")).rejects.toThrow("snapshot update failed");
+    expect(db.sql.prepare("SELECT domains_json FROM subscriptions").get()).toEqual(original);
+  });
+  it("exposes the domain tool only for eligible identified lessons", () => {
+    const controls: Parameters<typeof buildSetupPayload>[0] = { ...controlsFromSettings(true), lesson: { level: "beginner", topic: "everyday", conversation_mode: "guided", learning_load: "light", correction_policy: "after_answer", closing_activity: "roleplay", vocabulary: [], grammar: [] } };
+    for (const [customerId, masteryDomain, expected] of [["c1", true, true], ["c1", false, false], ["anonymous-1", true, false], [undefined, true, false]] as const) {
+      expect(buildSetupPayload(controls, "test", "teacher", settings(env), { customerId, masteryDomain }).setup.tools[0].functionDeclarations.some(t => t.name === "save_mastery_domain")).toBe(expected);
+    }
+    expect(buildSetupPayload(controlsFromSettings(true), "test", "translator", settings(env), { customerId: "c1", masteryDomain: true }).setup.tools[0].functionDeclarations.some(t => t.name === "save_mastery_domain")).toBe(false);
+  });
   it.each(SCHOOL_SALES_PACKAGE_IDS)("quotes the current price instead of stale text or recording for %s", async id => {
     env.SALES_MENU_AUDIO_URL = "https://example.test/menu.wav";
     env.SALES_MENU_AUDIO_VERSION = "v1";

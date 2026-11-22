@@ -233,6 +233,7 @@ export class BusinessStore {
     }
     stmts.push(this.db.prepare("INSERT OR IGNORE INTO call_customers VALUES (?,?,?,?,?)").bind(callId, customerId, botId, "phone", now));
     await this.db.batch(stmts);
+    if (phone) await this.saveContext("preferences:" + customerId, { last_verified_caller: phone });
     return customerId;
   }
 
