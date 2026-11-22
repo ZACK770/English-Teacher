@@ -4,6 +4,7 @@ import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
 import { listKevas, syncKevas } from "./keva-sync";
+import { PaymentStore } from "./payments";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
@@ -187,7 +188,10 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(new SubscriptionStore(env.DB, env).tick().catch(() => undefined));
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
-    ctx.waitUntil(syncKevas(env).catch(error => console.error("Keva sync failed", error)));
+    ctx.waitUntil((async () => {
+      await syncKevas(env).catch(error => console.error("Keva sync failed", error));
+      if (env.NEDARIM_API_KEY) await new PaymentStore(new BusinessStore(env.DB)).reconcile(env);
+    })().catch(() => console.error("Nedarim reconciliation failed")));
     ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupCallbackQuota(env));

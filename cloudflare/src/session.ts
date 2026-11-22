@@ -205,7 +205,7 @@ export class TutorSession {
           return;
         }
         this.returnPath = allowance.extension ? this.rebase(allowance.extension) : null;
-        this.reason = "access_blocked";
+        this.reason = allowance.mode === "payment_failed" ? "payment_failed" : "access_blocked";
         return;
       }
       if (this.abort.signal.aborted) return;

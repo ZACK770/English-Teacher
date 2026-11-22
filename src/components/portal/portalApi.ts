@@ -13,8 +13,8 @@ export type Account = {
   bots: { id: string; label: string; role: string; phone_enabled: boolean }[];
   teachers: Teacher[]; materials: Material[]; preferences: Preferences; phone: string; extension: string;
   phones: { id: string; phone: string }[];
-  receipts: { id: string; minutes: number; spent_seconds: number; product: string; expires_at: string; created_at: string; valid_from?: string | null }[];
-  access?: { paid?: boolean; limited: boolean; opening_minutes?: number; free_calls_left: number; free_call_minutes: number; plan_name: string; max_call_minutes: number };
+  receipts: { id: string; minutes: number; spent_seconds: number; product: string; expires_at: string; created_at: string; valid_from?: string | null; on_hold?: number }[];
+  access?: { paid?: boolean; payment_failed?: boolean; limited: boolean; opening_minutes?: number; free_calls_left: number; free_call_minutes: number; plan_name: string; max_call_minutes: number };
   progress: { session_count: number; total_minutes: number; total_points: number; average_score: number | null; skill_averages: Record<string, number>; sessions: Lesson[] };
 };
 export const topics: Record<string, string> = { recommended: "המומלץ בשבילך", everyday: "חיי היום־יום", travel: "טיולים בחו״ל", business: "עבודה ועסקים", flights: "טיסות", medicine: "רפואה", academic: "לימודים", property: "נדל״ן", cars: "רכב",
@@ -60,10 +60,10 @@ export async function resumeLearnerSession(): Promise<boolean> {
   }
 }
 export function remainingMinutes(account: Account) {
-  return Math.max(0, Math.floor(account.receipts.filter(r => r.product === "school" && new Date(r.expires_at).getTime() > Date.now() && (!r.valid_from || new Date(r.valid_from).getTime() <= Date.now())).reduce((n, r) => n + Math.max(0, r.minutes * 60 - r.spent_seconds), 0) / 60));
+  return Math.max(0, Math.floor(account.receipts.filter(r => !r.on_hold && r.product === "school" && new Date(r.expires_at).getTime() > Date.now() && (!r.valid_from || new Date(r.valid_from).getTime() <= Date.now())).reduce((n, r) => n + Math.max(0, r.minutes * 60 - r.spent_seconds), 0) / 60));
 }
 export function futureMinutes(account: Account) {
-  return Math.max(0, Math.floor(account.receipts.filter(r => r.product === "school" && new Date(r.expires_at).getTime() > Date.now() && r.valid_from && new Date(r.valid_from).getTime() > Date.now()).reduce((n, r) => n + Math.max(0, r.minutes * 60 - r.spent_seconds), 0) / 60));
+  return Math.max(0, Math.floor(account.receipts.filter(r => !r.on_hold && r.product === "school" && new Date(r.expires_at).getTime() > Date.now() && r.valid_from && new Date(r.valid_from).getTime() > Date.now()).reduce((n, r) => n + Math.max(0, r.minutes * 60 - r.spent_seconds), 0) / 60));
 }
 export function practiceDays(sessions: Lesson[]) {
   return new Set(sessions.filter(s => s.duration_seconds >= 30).map(s => new Date(s.started_at).toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" }))).size;

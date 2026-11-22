@@ -1,4 +1,5 @@
 import { canPurchaseAutomatically } from "../../src/pricing";
+import { PAYMENT_FAILED_MESSAGE } from "../../src/paymentCopy";
 import { adOpening, adRuntimeContext, PHONE_TUTOR_PITCH, startAdEntry } from "./ad-entry";
 import { z } from "zod";
 import { BusinessStore } from "./business";
@@ -43,7 +44,7 @@ export function ivrResponse(route: string, p: Record<string, string>, copy: IVRC
     translator: ["isaacTranslation", copy.translator, "0,1,2,9", { "0": "", "1": "/2/1", "2": "/1", "9": "/2/9", START: "/2/1" }],
     languages: ["isaacLanguage", copy.languages, "0,1,2,3,4,5,6,7", { "0": "/9", ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((i) => [String(i), "/2/1"])) }],
     sales: ["isaacSales", copy.sales, "0,1", { "0": "", "1": "/4" }],
-    quota: ["isaacQuota", copy.quota, "0,1,2", { "0": "", "1": "/3", "2": "/1" }],
+    quota: ["isaacQuota", copy.quota, "0,1,2", { "0": "", "1": "/3", "2": "/1", "4": "/4" }],
     mode: ["isaacMode", copy.school_mode, "0,1,2", { "0": "/2", "1": "/1", "2": "/1" }],
     basic: ["isaacBasicMode", copy.school_mode, "0,1,2", { "0": "/1", "1": "/1/1/1", "2": "/1/1/1" }],
     advanced: ["isaacAdvancedMode", copy.school_mode, "0,1,2", { "0": "/1", "1": "/1/2/1", "2": "/1/2/1" }],
@@ -68,6 +69,7 @@ export async function getCopy(b: BusinessStore): Promise<IVRCopy> {
 }
 
 export async function startSchool(b: BusinessStore, progress: ProgressStore, s: Settings, callId: string, customerId: string, selected?: string): Promise<IVRResponse> {
+  if (await b.schoolPaymentBlocked(customerId)) return { type: "goTo", goTo: extensionPath(s.projectPath, "/8"), removeParams: REMOVE };
   const bots = (await progress.listBots()).filter((bot) => bot.enabled && bot.phone_enabled && bot.role === "teacher");
   if (!bots.length) return menu("isaacTeacher", (await getCopy(b)).school, "0,9");
   const saved = await b.loadContext("preferences:" + customerId);
@@ -291,6 +293,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     }
     result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
   } else if (p.PBXcallStatus === "HANGUP") result = { type: "hangup" };
+  else if (route === "quota" && !p.isaacQuota && await b.schoolPaymentBlocked(customerId)) result = menu("isaacQuota", PAYMENT_FAILED_MESSAGE + ". לתמיכה הקישו 4. לתפריט הראשי הקישו 0.", "0,4");
   else if (route === "ad" && p.isaacTeacher !== undefined) result = ivrResponse("school", p, copy, s.projectPath);
   else if (route === "ad") result = await startAdEntry(b, progress, s, callId, customerId, p.campaign);
   else if ((route === "main" && p.isaacMain === "1") || (route === "school" && [undefined, "1"].includes(p.isaacTeacher)) || (route === "mode" && ["1", "2"].includes(p.isaacMode))) {

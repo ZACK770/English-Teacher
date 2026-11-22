@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowUpLeft, AudioLines, BookOpen, Check, ChevronDown, Clock3, History, LogOut, Mic, MoreHorizontal, Phone, Plus, Settings2, Sprout, Trash2, Trophy, Users, X } from "lucide-react";
 import { Billing, Checkout } from "./Checkout";
+import { PAYMENT_FAILED_MESSAGE } from "../../paymentCopy";
 import { Account, futureMinutes, initialToken, Lesson, LessonSettings, Material, Plan, portalRequest, PortalError, Preferences, practiceDays, remainingMinutes, Teacher, topics, tracks } from "./portalApi";
 import { VoiceRoom } from "./VoiceRoom";
 import { clearEntryChallenges, EntryForm, QuickEntry, type EntryChannel } from "./QuickEntry";
@@ -180,6 +181,7 @@ export const LearnerPortal: React.FC = () => {
       {loading ? <main className="sk-loading"><div className="sk-loading-shape" /><h1>רגע, פותחים את המחברת.</h1></main> : !token ? <Login onToken={login} onClose={returnToLanding} error={error} /> : !account ? <main className="sk-empty"><p role="alert">{error || "לא הצלחנו להתחבר כרגע."}</p><button className="sk-primary" onClick={() => { setLoading(true); void refresh(); }}>ננסה שוב</button><button className="sk-link" onClick={resetLogin}>כניסה מחדש</button></main> : <main ref={mainRef} tabIndex={-1} className="sk-main">
         <div className="sk-page-heading"><div><h1>{headings[page][0]}</h1>{page === "home" && <p>{firstName ? "היי " + firstName + ", " : ""}כיף שחזרת. מתחילים במשפט אחד.</p>}</div></div>
         {error && <div className="sk-error" role="alert">{error}<button aria-label="סגירת הודעה" onClick={() => setError("")}><X size={15} /></button></div>}
+        {account.access?.payment_failed && <div className="sk-error" role="alert"><span>{PAYMENT_FAILED_MESSAGE}</span><a href="mailto:support@speakcall.app">פנייה לתמיכה</a></div>}
         <fieldset className="sk-content-fieldset" disabled={busy}>
           {page === "home" && renderHome()}
           {page === "intake" && <Direction purpose="plan" initial={directionDraft(p, active)} editing={!!p.plan} askTeacher={!account.teachers.length} saving={busy} onFinish={async d => { if (await run(async () => {

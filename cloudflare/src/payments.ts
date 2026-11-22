@@ -2,6 +2,7 @@ import { BusinessStore, PackageSchema } from "./business";
 import { purchaseAttribution } from "./analytics";
 import { CheckoutStore } from "./checkout";
 import { SubscriptionStore } from "./subscriptions";
+import { providerTime } from "./nedarim";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
@@ -263,6 +264,7 @@ export class PaymentStore {
   async settle(data: Record<string, any>, mosadId: string): Promise<Record<string, unknown>> {
     if (String(data.MosadNumber ?? "") !== mosadId) throw new Error("Wrong institution");
     if (![undefined, null, "", "OK"].includes(data.Status)) return { ignored: true };
+    if (String(data.Amount ?? "").startsWith("-")) return new CheckoutStore(this.business).kevaReturn(data);
     const category = String(data.Groupe ?? "");
     if (!["", "0"].includes(String(data.KevaId ?? ""))) return new CheckoutStore(this.business).kevaCharge(data, mosadId);
     if (!category.startsWith(PREFIX)) return { ignored: true };
@@ -298,7 +300,7 @@ export class PaymentStore {
           statements: [
             ...settlement,
             this.db.prepare("UPDATE payment_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.id),
-            this.db.prepare("UPDATE standing_orders SET entitlement_id=? WHERE id=?").bind(order.id, order.subscription_id),
+            this.db.prepare("UPDATE standing_orders SET entitlement_id=?,last_charge_at=? WHERE id=?").bind(order.id, providerTime(data.TransactionTime) || now, order.subscription_id),
           ] });
     } else {
       const expires = new Date(Date.now() + pkg.validity_days * 86400_000).toISOString().replace("Z", "+00:00");
