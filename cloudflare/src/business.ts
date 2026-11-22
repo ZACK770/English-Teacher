@@ -327,7 +327,7 @@ export class BusinessStore {
           FROM usage_allocations WHERE customer_id=?
             AND (product=? OR (product=? AND receipt_id IS NULL))
         )
-        WHERE (?=0 OR remaining>0) AND NOT EXISTS (${activeSession}) AND NOT EXISTS
+        WHERE (?=0 OR remaining>=1) AND NOT EXISTS (${activeSession}) AND NOT EXISTS
         (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=?
           AND (billed_seconds>=60 OR (?>0 AND billed_seconds>0)))
         RETURNING reserved_seconds`)
@@ -340,7 +340,7 @@ export class BusinessStore {
     }
     const monthPrefix = now.slice(0, 7) + "%";
     if (!anonymous && (policy.trial_total_seconds > 0 || policy.free_calls_month > 0)) {
-      const seconds = policy.trial_total_seconds > 0 ? policy.trial_total_seconds : Math.min(maxSeconds, policy.free_call_seconds);
+      const seconds = policy.trial_total_seconds > 0 ? Math.min(maxSeconds, policy.trial_total_seconds) : Math.min(maxSeconds, policy.free_call_seconds);
       const allocation = await this.db.prepare(`
         INSERT OR IGNORE INTO usage_allocations
           (call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
@@ -351,7 +351,7 @@ export class BusinessStore {
           FROM usage_allocations WHERE customer_id=?
             AND (product=? OR (product=? AND receipt_id IS NULL))
         )
-        WHERE (?=0 OR remaining>0) AND (?>0 OR (
+        WHERE (?=0 OR remaining>=1) AND (?>0 OR (
           SELECT COUNT(*) FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL
             AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)
         ) < ?) AND NOT EXISTS (${activeSession})
@@ -525,7 +525,7 @@ export class BusinessStore {
       opening_minutes: !payment_failed && !customerId.startsWith("anonymous-") && !opening
         ? (policy.trial_total_seconds > 0 ? Math.min(policy.opening_seconds, trialRemaining) : policy.opening_seconds) / 60 : 0,
       free_calls_left: payment_failed || customerId.startsWith("anonymous-") ? 0 : policy.trial_total_seconds > 0
-        ? trialRemaining > 0 ? 1 : 0 : freeCallsLeft,
+        ? trialRemaining >= 1 ? 1 : 0 : freeCallsLeft,
       free_call_minutes: policy.trial_total_seconds > 0
         ? trialRemaining / 60 : Math.round(policy.free_call_seconds / 60),
       plan_name: pkg?.success ? pkg.data.name.split(" · ")[0] : "",
