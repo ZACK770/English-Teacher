@@ -106,6 +106,7 @@ describe("finished-call review", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
     expect(body.systemInstruction.parts[0].text).toContain(HAREDI_CONTENT_RULE);
+    expect(body.systemInstruction.parts[0].text.split(HAREDI_CONTENT_RULE)).toHaveLength(2);
     expect(body.generationConfig.responseSchema.required).toContain("content_drift_excerpt");
     const report = await callReviewReport(env, now);
     expect(report.findings).toContainEqual({ code: "content_drift", logs: 1 });
