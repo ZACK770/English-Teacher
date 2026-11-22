@@ -91,6 +91,8 @@ it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-
   tutor.controls = { ...controlsFromSettings(false), idle_timeout_seconds: 1 };
   tutor.meteredAt = Date.now();
   tutor.allowanceMs = allowanceMs;
+  tutor.freeTrial = true;
+  tutor.profileId = "isaac-basic";
   vi.setSystemTime(tutor.meteredAt + allowanceMs - 25500);
   tutor.lastInput = tutor.lastHuman = Date.now();
   const running = tutor.watchdog().catch(() => {});
@@ -101,12 +103,62 @@ it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-
     turnComplete: true,
   } });
   const instruction = send.mock.calls[0][0] as any;
-  expect(instruction.clientContent.turns[0].parts[0].text).toContain("invitation to call again");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("זמן ההתנסות החינמית הסתיים.");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("שם אפשר לבחור חבילה");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("Do not give a practice recap");
   expect(instruction.clientContent.turns[0].parts[0].text).toContain("end_session");
   expect(tutor.finalSent).toBe(true);
   await vi.advanceTimersByTimeAsync(1500);
   expect(send).toHaveBeenCalledOnce();
   expect(tutor.reason).toBe("");
+  tutor.stop();
+  await running;
+});
+
+it.each(["portal", "other teacher", "other destination"])("does not promise a packages transfer for %s", async mode => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.prompt = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.profileId = mode === "other teacher" ? "other" : "isaac-basic";
+  if (mode === "portal") tutor.portal = { customerId: "customer", teacherId: "teacher" };
+  if (mode === "other destination") tutor.returnPath = "/2";
+  tutor.allowanceMs = 30000;
+  tutor.meteredAt = Date.now() - 5000;
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.ai.prompt.mock.calls[0][0]).not.toContain("מיד נעבור לתפריט");
+  tutor.stop();
+  await running;
+});
+
+it("invites another free call instead of claiming the whole trial is over", async () => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.prompt = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.freeTrial = tutor.freeFollowup = true;
+  tutor.allowanceMs = 30000;
+  tutor.meteredAt = Date.now() - 5000;
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.ai.prompt.mock.calls[0][0]).toContain("אפשר להתקשר שוב ולהמשיך את ההתנסות החינמית");
+  expect(tutor.ai.prompt.mock.calls[0][0]).not.toContain("זמן ההתנסות החינמית הסתיים");
+  tutor.stop();
+  await running;
+});
+
+it("does not instruct an invented recap at the earlier closing stage", async () => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.addContext = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.lessonDurationMs = 40000;
+  tutor.allowanceMs = 120000;
+  tutor.meteredAt = Date.now() - 30000;
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.meter.learnerTurns).toBe(0);
+  expect(tutor.ai.addContext).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("If no actual practice happened, do not give a practice recap"));
+  expect(tutor.ai.addContext.mock.calls[0][0]).toContain("Report only observed results from this connection");
+  expect(tutor.finalSent).toBe(false);
   tutor.stop();
   await running;
 });
@@ -139,6 +191,8 @@ it("defers the closing response request until Gemini reconnection finishes", asy
   tutor.reconnecting = null;
   await vi.advanceTimersByTimeAsync(500);
   expect(tutor.ai.prompt).toHaveBeenCalledOnce();
+  expect(tutor.ai.prompt.mock.calls[0][0]).toContain("זמן השיחה הסתיים.");
+  expect(tutor.ai.prompt.mock.calls[0][0]).not.toContain("זמן ההתנסות החינמית");
   tutor.stop();
   await running;
 });
