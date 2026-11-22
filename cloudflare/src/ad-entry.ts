@@ -2,7 +2,7 @@ import { z } from "zod";
 import { BusinessStore } from "./business";
 import { type Env, nowIso, randomHex, sha256Hex, type Settings } from "./env";
 import { enqueueLessonCallback, followupLessonTime, SPEAKCALL_PHONE, tomorrowAt } from "./callbacks";
-import { DEFAULT_TEACHER_NAME, PHONE_SIGNUP_NAME } from "./learner";
+import { DEFAULT_TEACHER_NAME, PHONE_SIGNUP_NAME, PlanSchema } from "./learner";
 import { ProgressStore } from "./progress";
 import { startSchool, type IVRResponse } from "./pbx";
 
@@ -32,7 +32,7 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
   const name = campaignName(campaign);
   if (context.entry !== "ad") {
     const saved = await b.loadContext("preferences:" + customerId);
-    const newCaller = !saved.plan && !saved.intro_school_seen;
+    const newCaller = !PlanSchema.safeParse(saved.plan).success;
     await b.saveContext(callId, { entry: "ad", campaign: name, ad_new_caller: newCaller });
     if (!saved.ad_campaign) await b.savePreference(customerId, { ad_campaign: name });
     await b.save(AD_ENTRIES, { call_id: callId, customer_id: customerId, campaign: name, new_caller: newCaller, at: nowIso() }, randomHex(16));
@@ -43,7 +43,7 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
 export async function registerPirsumfonEntry(b: BusinessStore, callId: string, customerId: string, campaign: unknown) {
   const name = campaignName(campaign || "pirsumfon");
   const saved = await b.loadContext("preferences:" + customerId);
-  const newCaller = !saved.plan && !saved.intro_school_seen;
+  const newCaller = !PlanSchema.safeParse(saved.plan).success;
   if (!saved.ad_campaign || (newCaller && !saved.pirsumfon_campaign)) {
     await b.savePreference(customerId, {
       ad_campaign: saved.ad_campaign || name,
