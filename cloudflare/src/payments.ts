@@ -22,6 +22,10 @@ export const TERMS_TEXT = `תקנון המנוי, בקצרה.
 לשאלות, לעזרה או לביטול, צוות השירות שלנו תמיד כאן בשבילכם.
 `;
 
+export const SALES_SINGLE_TEXT = "מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לחזרה הקישו 0.";
+export const SINGLE_TERMS_STEP_TEXT = "לאישור התקנון ולהמשך לתשלום הקישו 1. לשמיעת התקנון הקישו 2. לביטול הקישו 0.";
+export const SINGLE_TERMS_TEXT = "מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.";
+
 class ExistingMonthlyEnrollmentError extends Error {}
 
 export function canPurchaseByPhone(pkg: { product?: string; billing?: string; automated_purchase?: boolean; duration_months?: number }) {
@@ -364,12 +368,14 @@ const selectionMenu = (name: string, text: string, keys = "0,9") => ({
 
 export async function paymentResponse(store: PaymentStore, env: Env, base: string, params: Record<string, string>, customerId: string, packageIds: string[]): Promise<Record<string, unknown>> {
   const callId = params.PBXcallId;
+  const single = env.SALES_MENU_MODE === "single";
+  const singleParams = single ? ["isaacSinglePackage"] : [];
   if (params.PBXcallStatus === "HANGUP") {
     await store.cancelSelection(callId);
     return { type: "hangup" };
   }
   if (["0", "9", "ERROR"].includes(params.isaacPayExit)) {
-    return { type: "goTo", goTo: extensionPath(base, params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales"] };
+    return { type: "goTo", goTo: extensionPath(base, params.isaacPayExit === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacPayExit", "isaacSales", ...singleParams] };
   }
   if (!paymentsConfigured(env)) return selectionMenu("isaacPayExit", "התשלום הטלפוני אינו זמין כרגע. לשירות הקישו 9. לחזרה הקישו 0.");
   let order = await store.orderForCall(callId);
@@ -401,7 +407,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     }
     if (["0", "ERROR"].includes(params.isaacPayConfirm)) {
       await store.cancelSelection(callId);
-      return { type: "goTo", goTo: extensionPath(base), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales"] };
+      return { type: "goTo", goTo: extensionPath(base), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales", ...singleParams] };
     }
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
     if (params.isaacPayConfirm === "1") {
@@ -420,13 +426,34 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
         noFailExit: "no", noSuccess: "yes", noConfirmation: "yes",
       };
     }
-    const terms = selectionMenu("isaacPayConfirm", TERMS_STEP_TEXT, "0,1,2");
-    if (params.isaacPayConfirm === "2") terms.files = [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }];
+    const stepText = single ? SINGLE_TERMS_STEP_TEXT : TERMS_STEP_TEXT;
+    const terms = selectionMenu("isaacPayConfirm", stepText, "0,1,2");
+    if (params.isaacPayConfirm === "2") terms.files = [{ text: single ? SINGLE_TERMS_TEXT : TERMS_TEXT }, { text: stepText }];
     return terms;
   }
-  const choice = params.isaacPackage ?? "";
+  let choice = params.isaacPackage ?? "";
+  if (single && !choice && params.isaacSinglePackage !== "9") {
+    const singleChoice = params.isaacSinglePackage ?? "";
+    if (["0", "ERROR"].includes(singleChoice)) choice = singleChoice;
+    else {
+      const start = await store.business.record("packages", "school-step");
+      const available = packageIds.includes("school-step") && start?.active && (start.phone_enabled ?? true) &&
+        canPurchaseByPhone(start) && start.billing === "monthly" && start.price_ils === 59 && start.sessions_per_week === 3;
+      if (singleChoice === "1") {
+        if (!available) return selectionMenu("isaacPayExit", "החבילה אינה זמינה לרכישה. לחזרה הקישו 0. לשירות הקישו 9.");
+        choice = String(packageIds.indexOf("school-step") + 1);
+      } else if (available) {
+        return {
+          ...selectionMenu("isaacSinglePackage", SALES_SINGLE_TEXT, "0,1,9"),
+          files: env.SALES_SINGLE_AUDIO_URL && env.SALES_SINGLE_AUDIO_VERSION
+            ? [{ fileLink: env.SALES_SINGLE_AUDIO_URL, fileName: "sales-single-" + env.SALES_SINGLE_AUDIO_VERSION }]
+            : [{ text: SALES_SINGLE_TEXT }],
+        };
+      }
+    }
+  }
   if (["0", "9", "ERROR"].includes(choice)) {
-    return { type: "goTo", goTo: extensionPath(base, choice === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacSales"] };
+    return { type: "goTo", goTo: extensionPath(base, choice === "9" ? "/4" : ""), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
   }
   if (/^\d+$/.test(choice) && Number(choice) >= 1 && Number(choice) <= packageIds.length) {
     try {

@@ -29,6 +29,40 @@ use the recording; otherwise the approved menu text is spoken with TTS.
 Terms key 2 reads the terms and returns to the terms menu; key 1 authorizes
 continuing to the provider's card collection, and 0 cancels.
 
+### Opt-in Start-first funnel (draft, pending Isaac's approval)
+
+Only `SALES_MENU_MODE=single` enables this funnel and its shorter terms.
+Missing, empty, or any other value preserves the existing menu and terms.
+Do not enable it until Isaac approves the following caller-facing drafts.
+
+First menu (`isaacSinglePackage`):
+
+> מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לחזרה הקישו 0.
+
+Key 1 uses the existing `school-step` purchase path. Key 9 opens the unchanged
+five-package menu, including its existing `SALES_MENU_AUDIO_*` recording. Key 9
+in that full menu still opens service at `/4`, relative to the project base.
+Key 0 returns to the main menu. If Start's price/cadence/availability no longer
+matches the draft, entry falls back to the full catalog and the Start shortcut
+does not create an order. No catalog values are changed by this switch.
+
+The first menu uses Technoline text TTS unless both `SALES_SINGLE_AUDIO_URL`
+and `SALES_SINGLE_AUDIO_VERSION` are set; then its file cache name is
+`sales-single-<version>`. These settings do not affect full-menu audio.
+
+Short terms step:
+
+> לאישור התקנון ולהמשך לתשלום הקישו 1. לשמיעת התקנון הקישו 2. לביטול הקישו 0.
+
+Short terms playback:
+
+> מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.
+
+Both terms texts use Technoline text TTS, not an R2 or PBX recording. Key 2
+reads the terms and repeats the step; key 1 continues to card collection and
+key 0 cancels. The shorter drafts omit internal minute quotas; the legacy
+terms remain unchanged when the switch is off.
+
 For fixed-term packages the provider receives `paymentsMode: "regular"` and
 `payments: 6` (Max) or `payments: 12` (Master). The official
 [creditCard documentation](https://pbx.tlivr.com/apiModuleDocs.html#creditCard)
