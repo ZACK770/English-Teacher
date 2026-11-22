@@ -385,6 +385,17 @@ describe("CRM status priority", () => {
   });
 });
 describe("CRM read-only endpoints", () => {
+  it("counts returning customers once on every day they were active", async () => {
+    customer(); session();
+    const earlier = new Date(Date.parse(now) - 2 * 86400000).toISOString();
+    event("ivr-events", { route: "main", at: earlier });
+    event("ivr-events", { route: "school", at: earlier });
+    const { days } = await (await request("analytics")).json() as any;
+    expect(days).toEqual(expect.arrayContaining([
+      expect.objectContaining({ date: earlier.slice(0, 10), active: 1, calls: 0 }),
+      expect.objectContaining({ date: now.slice(0, 10), active: 1, calls: 1 }),
+    ]));
+  });
   it("requires admin and handles empty/not found/invalid filters/methods", async () => {
     expect((await request("people", false)).status).toBe(401);
     expect(await (await request("people")).json()).toMatchObject({ items: [], total: 0, cursor: null, counts: { paying: 0 } });

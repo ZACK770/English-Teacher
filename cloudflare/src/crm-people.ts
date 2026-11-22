@@ -81,7 +81,7 @@ async function load(env: Env) {
 }
 type Data = Awaited<ReturnType<typeof load>>;
 const schoolEvents = (data: Data, id: string) => (data.events.get(id) || []).filter(e => !(e.kind === "ivr-events" && ["translator", "start-translation", "languages"].includes(e.route)));
-function person(data: Data, p: Row) {
+function personDetails(data: Data, p: Row) {
   const sessions = (data.sessions.get(p.id) || []).sort((a, b) => a.started_at.localeCompare(b.started_at));
   const events = schoolEvents(data, p.id).sort((a, b) => stamp(a).localeCompare(stamp(b)));
   const receipts = data.receipts.get(p.id) || [], subscriptions = data.subscriptions.get(p.id) || [], callbacks = data.callbacks.get(p.id) || [], voicemails = data.voicemails.get(p.id) || [];
@@ -104,7 +104,11 @@ function person(data: Data, p: Row) {
   });
   const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback, offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
   const lastPayment = paymentOrders.at(-1);
-  return { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", notes: p.notes || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status], card_payment: { available: data.cardPaymentAvailable, orders: paymentOrders.length, paid: paymentOrders.filter(o => o.state === "paid").length, latest_state: lastPayment?.state || "none", latest_at: lastPayment?.updated_at || null } };
+  const summary = { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", notes: p.notes || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status], card_payment: { available: data.cardPaymentAvailable, orders: paymentOrders.length, paid: paymentOrders.filter(o => o.state === "paid").length, latest_state: lastPayment?.state || "none", latest_at: lastPayment?.updated_at || null } };
+  return { summary, times };
+}
+function person(data: Data, p: Row) {
+  return personDetails(data, p).summary;
 }
 function costCall(data: Data, s: Row) {
   const rate = s.channel === "phone" ? data.economics.forecast_cost_per_minute : 0;
@@ -156,7 +160,8 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
   }
   const data = await load(env);
   if (path === "/v1/admin/crm/analytics") {
-    const people = [...data.people.values()].map(p => person(data, p));
+    const details = [...data.people.values()].map(p => personDetails(data, p));
+    const people = details.map(p => p.summary);
     const statuses = Object.fromEntries(Object.keys(STATUS_LABELS).map(k => [k, people.filter(p => p.status === k).length]));
     const sources = new Map<string, { source: string; leads: number; trials: number; paying: number; revenue_ils: number; minutes: number }>();
     for (const p of people) {
@@ -166,10 +171,12 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     }
     const days = new Map<string, { date: string; leads: number; active: number; calls: number }>();
     for (let i = 29; i >= 0; i--) { const date = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); days.set(date, { date, leads: 0, active: 0, calls: 0 }); }
-    for (const p of people) {
-      const first = p.first_seen?.slice(0, 10), active = p.last_activity?.slice(0, 10);
+    for (const { summary, times } of details) {
+      const first = summary.first_seen?.slice(0, 10);
       if (first && days.has(first)) days.get(first)!.leads++;
-      if (active && days.has(active)) days.get(active)!.active++;
+      const activityDays = new Set(times.map(time => time.slice(0, 10)));
+      if (first) activityDays.add(first);
+      for (const date of activityDays) if (days.has(date)) days.get(date)!.active++;
     }
     for (const rows of data.sessions.values()) for (const s of rows) { const date = String(s.started_at).slice(0, 10); if (days.has(date)) days.get(date)!.calls++; }
     const cardOrders = [...data.paymentOrders.values()].flat();
