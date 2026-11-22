@@ -9,10 +9,10 @@ const str = (value: unknown) => (value == null ? "" : String(value)).trim();
 const tail9 = (phone: string) => phone.replace(/\D/g, "").slice(-9);
 const LEGACY_GROUP = "חבילות ספיקול";
 
-async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: string, enrollment?: Record<string, any>) {
+export async function verifyKevaForActivation(env: Env, row: Record<string, unknown>, kevaId: string, enrollment?: Record<string, any>, knownDetail?: Record<string, any>) {
   const group = enrollment ? "dibura-" + enrollment.id : LEGACY_GROUP;
   if (!/^\d{1,20}$/.test(kevaId) || str(row.Groupe) !== group || str(row.Enabled) !== "1" ||
-    str(row.Currency) !== "1" || !/^\d+$/.test(str(row.Success)) || Number(row.Success) < 1 || str(row.ErrorText)) return;
+    str(row.Currency) !== "1" || str(row.ErrorText)) return;
   const phone = visiblePhone(str(row.Phone));
   if (!phone) return;
   if (enrollment && (phone !== enrollment.phone || agorot(row.Amount) !== enrollment.amount_agorot ||
@@ -43,33 +43,52 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
   const pkg = saved ?? PackageSchema.safeParse(await business.record("packages", plan.id));
   if (!pkg.success || (!enrollment && !pkg.data.active) || pkg.data.billing !== "monthly" || pkg.data.product !== "school") return;
 
-  const detail = JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
+  const detail = knownDetail ?? JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
   if (str(detail?.KevaId) !== kevaId || str(detail.KevaStatus) !== "1" || str(detail.KevaFrequency) !== "1" ||
     str(detail.KevaCurrency) !== "1" || str(detail.KevaGroupe) !== group || visiblePhone(str(detail.KevaPhone)) !== phone ||
     agorot(detail.KevaAmount) !== monthlyAgorot || !Array.isArray(detail.HistoryData)) return;
   if (detail.MosadNumber != null && str(detail.MosadNumber) !== env.NEDARIM_MOSAD_ID) return;
+  return { detail, owner, plan, pkg: pkg.data, monthlyAgorot, business, phone };
+}
 
-  const events = detail.HistoryData.map((event: Record<string, unknown>) => ({ event, day: providerDay(event.Date) }));
-  if (events.some(({ day }: { day: string }) => !day)) return;
-  const start = events.map(({ day }: { day: string }) => day).sort().at(-1);
-  const latest = events.filter(({ day }: { day: string }) => day === start);
-  if (!start || latest.length !== 1 || str(latest[0].event.ID) !== "1") return;
-  const charge = latest[0].event;
+export type VerifiedPhoneCharge = { transactionId: string; confirmation: string; start: string; end: string };
+
+export async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: string, enrollment?: Record<string, any>, immediate?: VerifiedPhoneCharge, knownDetail?: Record<string, any>) {
+  if (!immediate && (!/^\d+$/.test(str(row.Success)) || Number(row.Success) < 1)) return;
+  if (immediate && !enrollment) return;
+  const verified = await verifyKevaForActivation(env, row, kevaId, enrollment, knownDetail);
+  if (!verified) return;
+  const { detail, owner, plan, pkg, monthlyAgorot, business, phone } = verified;
+  let start: string, transactionId: string, end: string;
+  const now = nowIso();
+  if (immediate) {
+    ({ start, end, transactionId } = immediate);
+    if (!Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end)) || end !== addMonths(start, 1)) return;
+  } else {
+    const events = detail.HistoryData.map((event: Record<string, unknown>) => ({ event, day: providerDay(event.Date) }));
+    if (events.some(({ day }: { day: string }) => !day)) return;
+    const latestDay = events.map(({ day }: { day: string }) => day).sort().at(-1);
+    const latest = events.filter(({ day }: { day: string }) => day === latestDay);
+    if (!latestDay || latest.length !== 1 || str(latest[0].event.ID) !== "1") return;
+    start = latestDay;
+    const charge = latest[0].event;
+    transactionId = str(charge.TransactionId);
+    if (agorot(str(charge.Amount).replace(/\s*₪$/, "")) !== monthlyAgorot) return;
+    const nextDate = providerDay(detail.KevaNextDate);
+    if (!nextDate) return;
+    end = [nextDate, addMonths(start, 1)].sort()[0];
+  }
   if (enrollment && Date.parse(start) < Date.parse(enrollment.created_at) - 86400000) return;
-  const transactionId = str(charge.TransactionId);
-  if (!/^\d{1,30}$/.test(transactionId) || agorot(str(charge.Amount).replace(/\s*₪$/, "")) !== monthlyAgorot) return;
-  const nextDate = providerDay(detail.KevaNextDate), now = nowIso();
-  if (!nextDate || start > now) return;
-  const end = [nextDate, addMonths(start, 1)].sort()[0];
-  if (end <= now) return;
+  if (!/^\d{1,30}$/.test(transactionId) || start > now || end <= now) return;
 
+  const db = env.DB;
   const customerId = owner.customer_id;
   const id = enrollment?.id ?? (await sha256Hex("legacy-keva:" + kevaId)).slice(0, 32);
   const receiptId = (await sha256Hex("legacy-keva-receipt:" + kevaId + ":" + transactionId)).slice(0, 20);
   const reference = `nedarim:${env.NEDARIM_MOSAD_ID}:${transactionId}`;
   if (await db.prepare("SELECT 1 FROM sales_receipts WHERE reference=?").bind(reference).first()) return;
   const vat = enrollment?.vat_rate ?? (await business.economics()).vat_rate;
-  const snapshot = JSON.stringify({ ...pkg.data, price_ils: monthlyAgorot / 100 });
+  const snapshot = JSON.stringify({ ...pkg, price_ils: monthlyAgorot / 100 });
   await new SubscriptionStore(db).create(customerId, plan.id, start, enrollment ? [] : undefined, {
     id, priceAgorot: monthlyAgorot, monthlyMinutes: plan.included_minutes, termMonths: null, grantFirstPeriod: false,
     period: { number: 1, start, end },
@@ -77,8 +96,8 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
       db.prepare(`INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id,valid_from)
         VALUES (?,?,?,'school',?,?,?,?,?,?,?,?)`).bind(receiptId, customerId, plan.id, reference, monthlyAgorot / 100, vat, plan.included_minutes, addMonths(end, 1), start, id, start),
       ...(enrollment ? [
-        db.prepare(`UPDATE payment_orders SET state='paid',transaction_id=?,receipt_id=?,subscription_id=?,entitlement_id=?,updated_at=?
-          WHERE id=? AND state IN ('issued','awaiting_settlement')`).bind(transactionId, receiptId, id, id, now, enrollment.id),
+        db.prepare(`UPDATE payment_orders SET state='paid',transaction_id=?,receipt_id=?,subscription_id=?,entitlement_id=?,updated_at=?,confirmation=COALESCE(?,confirmation)
+          WHERE id=? AND state IN ('issued','awaiting_settlement')`).bind(transactionId, receiptId, id, id, now, immediate?.confirmation || null, enrollment.id),
         db.prepare("UPDATE phone_keva_enrollments SET keva_id=? WHERE order_id=?").bind(kevaId, enrollment.id),
       ] : [db.prepare(`INSERT INTO payment_orders(id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,channel,transaction_id,receipt_id,subscription_id,entitlement_id,created_at,updated_at)
         VALUES (?1,?2,(SELECT p.customer_id FROM customer_phones p WHERE p.phone=?3 AND p.customer_id=?4
@@ -90,7 +109,7 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
           SELECT 1 FROM payment_orders o WHERE o.id=? AND o.state='paid' AND o.transaction_id=?
           AND NOT EXISTS (SELECT 1 FROM standing_orders s WHERE s.customer_id=o.customer_id AND s.state IN ('pending','active','past_due'))
           AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.customer_id=o.customer_id AND s.id<>? AND s.status IN ('active','paused','past_due'))
-        )),?,?,?,?,'active',?,?,?,?,?,?)`).bind(id, customerId, enrollment?.id ?? null, id, transactionId, id, plan.id, snapshot, monthlyAgorot, id, kevaId, str(detail.KevaNextDate), start, id, start, now),
+        )),?,?,?,?,'active',?,?,?,?,?,?)`).bind(id, customerId, enrollment?.id ?? null, id, transactionId, id, plan.id, snapshot, monthlyAgorot, id, kevaId, immediate ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(end)) : str(detail.KevaNextDate), start, id, start, now),
       db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind(enrollment ? "payment:phone_keva_activated" : "payment:keva_imported", id, now),
     ],
   });
