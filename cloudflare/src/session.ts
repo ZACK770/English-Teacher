@@ -93,6 +93,8 @@ export class TutorSession {
   private closingSent = false;
   private lessonDurationMs = 0;
   private allowanceMs = 0;
+  private freeTrial = false;
+  private freeFollowup = false;
   private finalSent = false;
   private b: BusinessStore;
   private progress: ProgressStore;
@@ -256,6 +258,8 @@ export class TutorSession {
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      this.freeTrial = allowance.mode === "free";
+      this.freeFollowup = allowance.free_followup === true;
       reserved = allowance.seconds > 0;
       if (this.abort.signal.aborted) return;
       await this.latency("access_checked", { mode: allowance.mode });
@@ -723,13 +727,13 @@ export class TutorSession {
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.finalSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
-          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
+          this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only observed results from this connection. If no actual practice happened, do not give a practice recap or claim practice happened; offer one simple practice question instead. Never invent a recap. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
           this.closingSent = true;
         }
       }
       if (this.ai && this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
         this.finalSent = true;
-        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now: give a brief summary and a warm invitation to call again, in one or two short Hebrew sentences. If the lesson summary is not saved yet, call record_lesson_summary silently in the same turn. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
+        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now in one or two short Hebrew sentences: " + (this.freeTrial ? this.freeFollowup ? '"זמן השיחה הזו הסתיים. אפשר להתקשר שוב ולהמשיך את ההתנסות החינמית."' : '"זמן ההתנסות החינמית הסתיים."' : '"זמן השיחה הסתיים."') + (!this.portal && this.profileId.startsWith("isaac-") && (!this.returnPath || this.returnPath === this.extension(QUOTA_EXTENSION_PATH)) ? ' Then say "מיד נעבור לתפריט, שם אפשר לבחור חבילה להמשך הלימוד."' : "") + " Do not give a practice recap or claim any practice happened. If the lesson summary is not saved yet, call record_lesson_summary silently with only observed results. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer.");
       }
       await sleep(500, this.abort.signal);
     }
