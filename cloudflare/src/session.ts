@@ -230,7 +230,7 @@ export class TutorSession {
       }
       if (this.abort.signal.aborted) return;
       const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
-      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, freeTuning: !paid && allowance.mode !== "basic" });
+      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, freeTuning: allowance.mode !== "basic" });
       releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
