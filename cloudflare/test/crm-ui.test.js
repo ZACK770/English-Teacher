@@ -2,10 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-let Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint;
+let CrmPage, Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint, CallReviewsReport, CallReviewCosts;
 beforeAll(async () => {
   vi.stubGlobal("location", { pathname: "/dashboard/crm" });
-  ({ Journey, CustomerCount, DeleteCustomer, resetErrorMessage, ResetConfirmationHint } = await import("../../src/components/dashboard/CrmPage"));
+  ({ CrmPage, Journey, CustomerCount, DeleteCustomer, resetErrorMessage, ResetConfirmationHint } = await import("../../src/components/dashboard/CrmPage"));
+  ({ CallReviewsReport, CallReviewCosts } = await import("../../src/components/dashboard/CallReviewsPanel"));
   ({ AdminIdentityContext } = await import("../../src/components/dashboard/AdminAuthGate"));
 });
 afterAll(() => vi.unstubAllGlobals());
@@ -85,5 +86,51 @@ describe("CRM filtered customer KPI", () => {
   });
   it("shows a placeholder before results load", () => {
     expect(renderToStaticMarkup(createElement(CustomerCount, { list: null, status: "trial" }))).toContain("<strong>—</strong>");
+  });
+});
+
+describe("CRM call review tab", () => {
+  it.each(["owner", "staff"])("shows the report link and page only for the owner, not %s by default", role => {
+    const previous = location.search;
+    location.search = "?view=call-reviews";
+    try {
+      const html = renderToStaticMarkup(createElement(AdminIdentityContext.Provider, { value: { username: role, role } }, createElement(CrmPage)));
+      if (role === "owner") {
+        expect(html).toContain('href="/dashboard/crm?view=call-reviews" aria-current="page"');
+        expect(html).toContain('id="crm-call-reviews-title"');
+        expect(html).not.toContain("טוענים נתוני אמת");
+      } else {
+        expect(html).not.toContain("?view=call-reviews");
+        expect(html).toContain("זמינה לבעלי החשבון בלבד");
+      }
+    } finally { location.search = previous; }
+  });
+
+  it("presents Hebrew findings, the average transcript review cost, and on-demand per-call costs", () => {
+    const report = {
+      coverage: [
+        { source: "ai", status: "reviewed", logs: 2, review_cost_usd: 0.0004 },
+        { source: "ivr", status: "rules_only", logs: 1, review_cost_usd: 0 },
+      ],
+      findings: [{ code: "menu_error:options", logs: 1 }, { code: "wrong_language", logs: 1 }],
+      prompt_candidates: [],
+      recent: [{ source: "ai", status: "reviewed", call_id: "review-1", ended_at: "2026-11-22T12:00:00Z", findings: [{ code: "wrong_language" }] }],
+    };
+    const request = vi.fn();
+    const html = renderToStaticMarkup(createElement(CallReviewsReport, { report, request }));
+    expect(html).toContain("קלט לא תקין בתפריט אפשרויות");
+    expect(html).toContain("שפה לא מתאימה");
+    expect(html).toContain("0.0002");
+    expect(html).toContain("פירוט עלות");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes unknown telephony billing from navigation time or a zero cost", () => {
+    const cost = { ai_estimated_usd: 0.34, review_estimated_usd: 0, phone: { navigation_seconds: 52, estimated_ils: null } };
+    const html = renderToStaticMarkup(createElement(CallReviewCosts, { cost }));
+    expect(html).toContain("0.34");
+    expect(html).toContain("0.00");
+    expect(html).toContain("אין נתון");
+    expect(html).toContain("שניות ניווט, לא זמן לחיוב");
   });
 });

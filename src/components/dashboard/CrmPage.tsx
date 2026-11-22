@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdminIdentity } from './AdminAuthGate';
+import { CallReviewsPanel } from './CallReviewsPanel';
 import { VoicemailInbox } from './VoicemailInbox';
 import { SubscriptionPanel } from '../portal/SubscriptionPanel';
 import './crm.css';
@@ -100,14 +101,15 @@ export function CrmPage() {
   const identity = useAdminIdentity();
   const id = location.pathname.startsWith(base + '/') ? location.pathname.slice(base.length + 1).replace(/\/$/, '') : '';
   const requested = new URLSearchParams(location.search).get('view');
-  const view = !id && (requested === 'messages' || requested === 'analytics') ? requested : 'people';
+  const view = !id && (requested === 'messages' || requested === 'analytics' || requested === 'call-reviews') ? requested : 'people';
+  const loadsCustomers = view === 'people' || view === 'analytics';
   const [q, setQ] = useState(''), [status, setStatus] = useState(''), [source, setSource] = useState('');
   const [sort, setSort] = useState('last_activity'), [direction, setDirection] = useState<SortDirection>('desc');
   const [list, setList] = useState<{ items: Person[]; counts: Record<string, number>; total: number; cursor: string | null } | null>(null), [card, setCard] = useState<Card | null>(null), [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [cursor, setCursor] = useState(''), [error, setError] = useState(''), [loading, setLoading] = useState(true), [retry, setRetry] = useState(0), [editing, setEditing] = useState(false), [creating, setCreating] = useState(false), [notice, setNotice] = useState('');
   const changeSort = (field: string) => { if (sort === field) setDirection(direction === 'asc' ? 'desc' : 'asc'); else { setSort(field); setDirection('desc'); } setCursor(''); };
   useEffect(() => {
-    if (view === 'messages') return;
+    if (!loadsCustomers) return;
     const controller = new AbortController();
     setLoading(true); setError('');
     const timer = setTimeout(() => {
@@ -118,7 +120,7 @@ export function CrmPage() {
       void promise.catch(e => { if (!signal.aborted) setError(e.message); }).finally(() => { if (!signal.aborted) setLoading(false); });
     }, view === 'people' && !id ? 180 : 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [view, id, q, status, source, cursor, sort, direction, retry]);
+  }, [view, loadsCustomers, id, q, status, source, cursor, sort, direction, retry]);
   useEffect(() => {
     if (card && location.hash === '#customer-messages') document.getElementById('customer-messages')?.scrollIntoView();
   }, [card]);
@@ -128,13 +130,15 @@ export function CrmPage() {
     <nav className="crm-workspace-nav" aria-label="ניווט קשרי לקוחות">
       {([['people', 'לקוחות'], ['messages', 'הודעות קוליות'], ['analytics', 'מדדי לקוחות']] as const).map(([key, label]) =>
         <a key={key} href={key === 'people' ? base : base + '?view=' + key} aria-current={view === key ? 'page' : undefined}>{label}</a>)}
+      {identity?.role === 'owner' && <a href={base + '?view=call-reviews'} aria-current={view === 'call-reviews' ? 'page' : undefined}>סקירת שיחות</a>}
     </nav>
     {view === 'messages' && <VoicemailInbox />}
+    {view === 'call-reviews' && (identity?.role === 'owner' ? <CallReviewsPanel request={api} /> : <p className="crm-empty">סקירת השיחות זמינה לבעלי החשבון בלבד.</p>)}
     {view === 'analytics' && analytics && <AnalyticsPanel data={analytics} />}
     {view === 'people' && <>{!id && new URLSearchParams(location.search).get("reset") === "success" && <p className="crm-success" role="status">הלקוח נמחק. בשיחה הבאה המספר יתחיל כמתקשר חדש.</p>}{notice && <div className="crm-notice" role="status">{notice}</div>}</>}
-    {view !== 'messages' && error && <div role="alert" className="crm-error">{error} <button className="crm-button" onClick={() => setRetry(retry + 1)}>ניסיון חוזר</button></div>}
+    {loadsCustomers && error && <div role="alert" className="crm-error">{error} <button className="crm-button" onClick={() => setRetry(retry + 1)}>ניסיון חוזר</button></div>}
     {view === 'people' && <>{id ? <><a className="crm-back" href={base}>→ לכל הלקוחות</a>{card && <><div className="crm-title-row"><div><div className="crm-eyebrow">כרטיס לקוח פעיל</div><h1>{card.name}</h1><div className="crm-profile"><span dir="ltr">{card.phone}</span><span>{card.email}</span><span>{card.channels.map(c => c === 'phone' ? 'טלפון' : 'אתר').join(' + ')}</span></div></div><div className="crm-actions"><Badge person={card} /><DeleteCustomer person={card} /><button className="crm-button" onClick={() => setEditing(true)}>עריכת פרטים והערות</button><button className="crm-primary" onClick={() => void invite()}>{card.card_payment.available ? 'העתקת קישור תלמיד ותשלום' : 'העתקת קישור תלמיד'}</button></div></div><div className="crm-profile crm-profile-info"><span>כניסה ראשונה: <b>{date(card.first_seen)}</b></span><span>פעילות אחרונה: <b>{date(card.last_activity)}</b></span><span>מקור: {card.ad_source}</span><span>מסלול: {card.track}</span></div><Kpis items={[["שיחות אנגלית", num(card.calls_count)], ["דקות תרגול", num(card.minutes_used)], ["עלות משוערת", money(card.total_cost_ils)], ["הכנסה מאומתת", money(card.revenue_ils)], ["יתרה משוערת", money(card.revenue_ils - card.total_cost_ils)]]} /><section className="crm-payment"><div><span className="crm-eyebrow">סליקה בכרטיס אשראי</span><h2>{card.card_payment.available ? states[card.card_payment.latest_state] || card.card_payment.latest_state : 'החיבור אינו מוגדר במלואו'}</h2><p>{card.card_payment.available ? 'הקישור האישי מוביל לאזור התלמיד, שבו ניתן לרכוש חבילה בכרטיס.' : 'חסרה לפחות אחת מהגדרות הסליקה הנדרשות; המערכת אינה מציגה אפשרות תשלום שאינה פעילה.'}</p></div><div><b>{card.card_payment.paid}</b><span>תשלומים מאומתים</span><small>{card.card_payment.orders} ניסיונות תשלום בכרטיס</small></div></section>{identity?.role === 'owner' && <SubscriptionPanel key={card.id} token="" customerId={card.id} manageAccess />}
     <VoicemailInbox key={'messages:' + card.id} customerId={card.id} />
     {card.notes && <section className="crm-notes"><h2>הערות ניהוליות</h2><p>{card.notes}</p></section>}<div className="crm-detail-grid"><section><h2>מסע במערכת <span>{card.journey.length} אירועים</span></h2><p className="crm-muted">אירועים שנשמרו בלבד · שעה מדויקת לפי שעון ישראל</p>{card.journey.length ? <Journey steps={card.journey} /> : <p className="crm-empty">טרם נרשמה פעילות.</p>}</section><section><h2>שיחות אנגלית <span>{card.calls.length}</span></h2>{card.calls.length ? card.calls.map(c => <CallCard call={c} key={c.call_id} />) : <p className="crm-empty">עדיין אין שיחות אנגלית שמורות.</p>}</section></div></>}</> : <><div className="crm-title-row"><div><div className="crm-eyebrow">מרכז עבודה אחד</div><h1>לידים, תלמידים והכנסות — בזמן אמת.</h1><p className="crm-muted">חיפוש חכם, סטטוסים מחושבים, פעילות מדויקת ואנליטיקה של בית הספר בלבד.</p></div><div className="crm-actions"><CustomerCount list={list} status={status} /><button className="crm-primary" onClick={() => setCreating(true)}>+ ליד או תלמיד חדש</button></div></div><nav className="crm-tabs" aria-label="סינון לפי מצב">{[['', 'הכול'], ...Object.entries(labels)].map(([key, label]) => <button key={key} aria-pressed={status === key} onClick={() => { setStatus(key); setCursor(''); }}>{label}<b>{key ? list?.counts[key] ?? 0 : list?.total ?? 0}</b></button>)}</nav><section className="crm-table-panel"><div className="crm-tools"><label><span>חיפוש חכם</span><input value={q} onChange={e => { setQ(e.target.value); setCursor(''); }} placeholder="שם, טלפון, מייל, סטטוס, מקור, מסלול או הערה" type="search" /></label><label><span>מקור מדויק</span><input value={source} placeholder="כל המקורות" onChange={e => { setSource(e.target.value); setCursor(''); }} /></label><span className="crm-muted">לחיצה על כל כותרת ממיינת את הטבלה</span></div><div className="crm-table-scroll"><table><thead><tr>{[['name','שם / פרטי קשר'],['status','סטטוס'],['ad_source','מקור'],['track','מסלול'],['first_seen','כניסה ראשונה'],['last_activity','פעילות אחרונה'],['calls_count','שיחות'],['minutes_used','דקות'],['total_cost_ils','עלות'],['revenue_ils','הכנסה']].map(([field, label]) => <th key={field}><SortButton field={field} active={sort} direction={direction} onSort={changeSort}>{label}</SortButton></th>)}</tr></thead><tbody>{!loading && !error && list?.items.map(p => <tr key={p.id} onClick={() => { location.href = base + '/' + encodeURIComponent(p.id); }}><td><a href={base + '/' + encodeURIComponent(p.id)}>{p.name}</a><small dir="ltr">{p.phone || p.email || 'אין פרטי קשר'}</small></td><td><Badge person={p} /></td><td>{p.ad_source}</td><td>{p.track}</td><td>{date(p.first_seen)}</td><td>{date(p.last_activity)}</td><td>{num(p.calls_count)}</td><td>{num(p.minutes_used)}</td><td>{money(p.total_cost_ils)}</td><td>{money(p.revenue_ils)}</td></tr>)}</tbody></table></div>{!loading && !error && !list?.items.length && <div className="crm-empty">לא נמצאו לקוחות. נסו מונח או מסנן אחר.</div>}<footer className="crm-pagination"><span className="crm-muted">{list?.items.length ?? 0} לקוחות בעמוד</span>{cursor && <button className="crm-button" onClick={() => setCursor('')}>לעמוד הראשון</button>}{list?.cursor && <button className="crm-button" onClick={() => setCursor(list.cursor!)}>לעמוד הבא ←</button>}</footer></section></>}
-    </>}{view !== 'messages' && loading && <p className="crm-loading" role="status">טוענים נתוני אמת…</p>}{editing && card && <CustomerForm card={card} onSaved={saved} onClose={() => setEditing(false)} />}{creating && <CustomerForm onSaved={saved} onClose={() => setCreating(false)} />}<footer className="crm-footnote">ספיקול · מרכז קשרי לקוחות</footer></div></div>;
+    </>}{loadsCustomers && loading && <p className="crm-loading" role="status">טוענים נתוני אמת…</p>}{editing && card && <CustomerForm card={card} onSaved={saved} onClose={() => setEditing(false)} />}{creating && <CustomerForm onSaved={saved} onClose={() => setCreating(false)} />}<footer className="crm-footnote">ספיקול · מרכז קשרי לקוחות</footer></div></div>;
 }
