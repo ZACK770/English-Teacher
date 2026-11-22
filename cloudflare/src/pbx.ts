@@ -34,6 +34,7 @@ export const menu = (name: string, content: string, keys: string): IVRResponse =
   type: "simpleMenu", name, enabledKeys: keys, times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ text: content }],
 });
 const REMOVE = ["isaacMain", "isaacTeacher", "isaacTranslation", "isaacLanguage", "isaacSales", "isaacQuota", "isaacBasicMode", "isaacAdvancedMode", "isaacThanks", "isaacMessage", "FILEID_isaacMessage", "isaacBotChoice", "isaacMode", "isaacOptions"];
+const SCHOOL_ENTRY_ROUTES = new Set(["main", "school", "mode", "teachers", "ad"]);
 export const streamTarget = (base: string): IVRResponse => ({ type: "goTo", goTo: extensionPath(base, "/7"), removeParams: REMOVE });
 
 export function ivrResponse(route: string, p: Record<string, string>, copy: IVRCopy, base: string): IVRResponse {
@@ -312,7 +313,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     result = await startTranslation(b, progress, s, callId, customerId);
   } else if (route === "teachers" || route === "bots") result = await chooseTeacher(b, progress, s, p, callId, customerId, route === "bots");
   else result = ivrResponse(route, p, copy, s.projectPath);
-  if (route === "school" && (p.PBXcallStatus === "HANGUP" || result.goTo === extensionPath(system.base, "/7"))) {
+  if (SCHOOL_ENTRY_ROUTES.has(route) && (p.PBXcallStatus === "HANGUP" || p.isaacPersonalMessage !== undefined || result.goTo === extensionPath(system.base, "/7"))) {
     result = await callerMessagePlayback(env, p) ?? result;
   }
   if (result.goTo === extensionPath(system.base, "/7") && system.phone === SPEAKCALL_PHONE && canCallWithLessonSummary(env, p.PBXphone ?? "")) {
@@ -324,7 +325,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     if (others) result.files.push({ text: "לשירותים נוספים הקישו 6." });
   }
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
-  if (slot && result.files?.length) {
+  if (slot && result.type !== "audioPlayer" && result.files?.length) {
     if (route === "service" && result.name === "isaacThanks") slot = "thanks";
     const audio = await narrationForSlot(b, slot, result.files[0].text ?? "");
     if (audio && s.publicBaseUrl) result.files[0] = { fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` };

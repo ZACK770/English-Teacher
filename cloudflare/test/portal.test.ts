@@ -580,6 +580,14 @@ describe("one-time caller messages", () => {
     expect(await (await request(path, "test-admin")).json()).toMatchObject({ played_at: expect.any(String) });
   });
 
+  it.each([["main", "isaacMain"], ["mode", "isaacMode"]])("plays before the lesson from %s without intercepting translation", async (route, key) => {
+    expect((await create(true)).status).toBe(201);
+    expect(await callback("translate", { isaacTranslation: "1" }, "translator")).toMatchObject({ goTo: "/7" });
+    expect(await callback("lesson", { [key]: "1" }, route)).toMatchObject({ type: "audioPlayer" });
+    expect(await callback("lesson", { [key]: "1", ...done }, route)).toMatchObject({ goTo: "/7" });
+    expect(await callback("next", { [key]: "1" }, route)).toMatchObject({ goTo: "/7" });
+  });
+
   it.each([false, true])("dispatches an authenticated outbound campaign with inbound fallback set to %s", async fallback => {
     expect((await create()).status).toBe(201);
     expect(await callback("before-activation")).toMatchObject({ goTo: "/7" });
