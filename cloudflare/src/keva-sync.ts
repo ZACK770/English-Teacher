@@ -69,7 +69,7 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
     period: { number: 1, start, end },
     statements: [
       db.prepare(`INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id,valid_from)
-        VALUES (?,?,?,'school',?,?,?,?,?,?,?,?)`).bind(receiptId, customerId, plan.id, reference, monthlyAgorot / 100, vat, plan.included_minutes, end, start, id, start),
+        VALUES (?,?,?,'school',?,?,?,?,?,?,?,?)`).bind(receiptId, customerId, plan.id, reference, monthlyAgorot / 100, vat, plan.included_minutes, addMonths(end, 1), start, id, start),
       db.prepare(`INSERT INTO payment_orders(id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,channel,transaction_id,receipt_id,subscription_id,entitlement_id,created_at,updated_at)
         VALUES (?1,?2,(SELECT p.customer_id FROM customer_phones p WHERE p.phone=?3 AND p.customer_id=?4
           AND NOT EXISTS (SELECT 1 FROM standing_orders s WHERE s.customer_id=p.customer_id AND s.state IN ('pending','active','past_due'))

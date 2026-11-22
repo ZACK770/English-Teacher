@@ -90,7 +90,7 @@ describe("existing Nedarim subscribers", () => {
       { customer_id: "c1", plan_id: "school-step", price_agorot: amount * 100, status: "active" },
     ]);
     expect(db.sql.prepare("SELECT reference,amount_ils,minutes,expires_at FROM sales_receipts").all()).toEqual([
-      { reference: "nedarim:7019554:902", amount_ils: amount, minutes: 60, expires_at: "2026-12-19T00:00:00.000+00:00" },
+      { reference: "nedarim:7019554:902", amount_ils: amount, minutes: 60, expires_at: "2027-01-19T00:00:00.000+00:00" },
     ]);
     expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(await (await req("/v1/portal/billing")).json()).toMatchObject({ subscriptions: [{ state: "active", monthly_ils: amount }] });
@@ -102,7 +102,7 @@ describe("existing Nedarim subscribers", () => {
     expect(await (await hook({ ...charge, TransactionId: "901" })).json()).toEqual({ ignored: true });
     expect(await (await hook({ ...charge, TransactionId: "902" })).json()).toMatchObject({ duplicate: true });
     vi.setSystemTime(new Date("2026-12-19T13:00:00Z"));
-    expect(await b.hasPaidAccess("c1")).toBe(false);
+    expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(await (await hook({ ...charge, TransactionId: "903" })).json()).toMatchObject({ paid: true });
     expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()).toEqual({ n: 2 });
