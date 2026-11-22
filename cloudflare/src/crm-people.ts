@@ -34,7 +34,7 @@ async function load(env: Env) {
       EXISTS(SELECT 1 FROM call_recordings r WHERE r.call_id=s.call_id) AS recording,
       c.bot_id,c.channel FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id`,
     "SELECT * FROM sales_receipts WHERE product='school'",
-    "SELECT s.*,p.product,p.name AS plan_name FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE p.product='school' ORDER BY s.created_at,s.id",
+    "SELECT s.*,p.product,p.name AS plan_name FROM subscriptions s LEFT JOIN plans p ON p.id=s.plan_id WHERE p.product='school' OR p.product IS NULL ORDER BY s.created_at,s.id",
     "SELECT * FROM callback_requests",
     "SELECT * FROM ivr_voicemails",
     "SELECT id,label,role FROM bots",
