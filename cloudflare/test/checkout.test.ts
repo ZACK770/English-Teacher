@@ -157,6 +157,7 @@ describe("existing Nedarim subscribers", () => {
     expect(await b.hasPaidAccess("c1")).toBe(true);
     expect(await b.schoolPaymentFailed("c1")).toBe(false);
     expect(db.sql.prepare("SELECT COUNT(*) n FROM sales_receipts WHERE payment_reversed_at IS NOT NULL").get()).toEqual({ n: 1 });
+    expect((await new SubscriptionStore(env.DB).summary("c1"))[0]).toMatchObject({ rollover_minutes: 0, rollover: [] });
   });
 
   it.each([

@@ -271,7 +271,7 @@ export class SubscriptionStore {
   }
   async summary(customerId: string, at = new Date().toISOString()) {
     return Promise.all((await this.list(customerId)).map(async sub => {
-      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND COALESCE(r.valid_from,r.created_at)<? AND r.expires_at>? ORDER BY r.expires_at`)
+      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND r.payment_reversed_at IS NULL AND COALESCE(r.valid_from,r.created_at)<? AND r.expires_at>? ORDER BY r.expires_at`)
         .bind(sub.id, sub.current_period_start, sub.status === "paused" ? sub.paused_at : iso(at)).all<{ expires_at: string; minutes: number }>()).results.filter(r => r.minutes > 0);
       const plan = await this.db.prepare("SELECT name FROM plans WHERE id=?").bind(sub.plan_id).first<{ name: string }>();
       const members = (await this.db.prepare("SELECT m.customer_id,c.name,c.primary_phone AS phone FROM subscription_members m JOIN customers c ON c.id=m.customer_id WHERE m.subscription_id=? AND m.removed_at IS NULL").bind(sub.id).all()).results;
