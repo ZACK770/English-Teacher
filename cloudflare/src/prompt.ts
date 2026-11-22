@@ -3,6 +3,7 @@ import type { Settings } from "./env";
 import { sha256Hex } from "./env";
 import { buildSystemInstruction, type TutorControls } from "./controls";
 import { learningTool } from "./learning";
+import { PRACTICE_REMINDER_TOOL } from "./practice-reminders";
 import {
   END_SESSION_TOOL,
   INTAKE_TOOL,
@@ -22,6 +23,7 @@ export interface PromptArtifact {
 
 export interface PromptCallContext {
   customerId?: string;
+  practiceReminders?: boolean;
 }
 
 export function buildSetupPayload(c: TutorControls, systemInstruction: string, profileId: string, s: Settings, call: PromptCallContext = {}) {
@@ -40,7 +42,7 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
   const salesTools = c.sales ? SALES_TOOLS.filter(t => !call.customerId?.startsWith("anonymous-") || t.name === "start_ad_practice") : [];
   // Intake also handles direction changes later in the same connection.
   const tools: Record<string, unknown>[] = c.lesson
-    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : [])]
+    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : []), ...(call.practiceReminders && call.customerId && !call.customerId.startsWith("anonymous-") ? [PRACTICE_REMINDER_TOOL] : [])]
     : [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL, TRANSLATION_LANGUAGE_TOOL];
   return {
     setup: {

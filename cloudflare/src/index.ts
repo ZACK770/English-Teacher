@@ -1,5 +1,6 @@
 import { type Env, bearer, secureEqual, settings, HttpError } from "./env";
 import { ingestEvent } from "./analytics";
+import { dispatchPracticeReminders } from "./practice-reminders";
 import { handleCallback } from "./pbx";
 import { handleAdmin, handlePortal, handleStatic, publicNarration } from "./api";
 import { handleWebhook } from "./payments";
@@ -201,6 +202,7 @@ export default {
     return response;
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(dispatchPracticeReminders(env).catch(() => console.warn("Practice reminders failed")));
     ctx.waitUntil(new SubscriptionStore(env.DB, env).tick().catch(() => undefined));
     ctx.waitUntil(syncCrm(env).catch(() => undefined));
     ctx.waitUntil((async () => {
