@@ -110,11 +110,10 @@ between website and phone. Hidden callers remain isolated.
 
 ## Copy, audio and logs
 
-Telephone call recording defaults to OFF. Only `RECORD_PHONE_CALLS="1"` enables
-it; enable this only after ensuring callers hear a recording announcement.
-The repository's IVR copy and tutor greetings do not establish that such an
-announcement is played by the live PBX. Portal lessons remain recorded and
-show a Hebrew notice before starting, including the 90-day retention period.
+Telephone call recording is enabled in production by `RECORD_PHONE_CALLS="1"`
+in `cloudflare/wrangler.toml`; without it phone calls are not recorded. Portal
+lessons are always recorded and show a Hebrew notice before starting.
+Recordings are kept 90 days.
 
 #pbx edits live static copy without a deployment or a provider edit.
 Narration library generates persistent8k mono WAV. Approved current audio can be
