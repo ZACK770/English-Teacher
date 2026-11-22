@@ -47,7 +47,7 @@ const ids = [...SCHOOL_SALES_PACKAGE_IDS];
 const respond = (params: Record<string, string> = {}, callId = "phone-hk") => paymentResponse(store, env, "/", { PBXcallId: callId, ...params }, "c1", ids);
 async function issue(choice = "1") {
   expect(await respond({ isaacPackage: choice })).toMatchObject({ name: "isaacPayConfirm" });
-  return respond({ isaacPayConfirm: "2" });
+  return respond({ isaacPayConfirm: "1" });
 }
 async function purchaseMaster() {
   const module = await issue("5");
@@ -284,7 +284,7 @@ describe("phone monthly enrollment", () => {
     const topup = (params: Record<string, string>) => paymentResponse(store, env, "/", { PBXcallId: "topup", ...params }, "c1", ["school-topup"]);
     const module = await topup({ isaacPackage: "1" });
     expect(module.name).toBe("isaacPayConfirm");
-    expect(await topup({ isaacPayConfirm: "2" })).toMatchObject({ paymentsMode: "regular", payments: 1, sum: 39 });
+    expect(await topup({ isaacPayConfirm: "1" })).toMatchObject({ paymentsMode: "regular", payments: 1, sum: 39 });
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM phone_keva_enrollments").get()!.n).toBe(1);
   });
 
@@ -346,7 +346,7 @@ describe("phone monthly enrollment", () => {
   it("does not issue when the D1 price changed, or a package is no longer phone-enabled", async () => {
     await respond({ isaacPackage: "1" });
     await b.save("packages", { ...await b.record("packages", "school-step"), price_ils: 69 }, "school-step");
-    expect((await respond({ isaacPayConfirm: "2" })).type).not.toBe("creditCard");
+    expect((await respond({ isaacPayConfirm: "1" })).type).not.toBe("creditCard");
     await b.save("packages", { ...await b.record("packages", "school-step"), phone_enabled: false }, "school-step");
     expect((await respond({ isaacPackage: "1" }, "new-call")).name).toBe("isaacPayExit");
   });
@@ -591,13 +591,17 @@ describe("five-package phone sales", () => {
     expect(await respond({ isaacPackage: "9" })).toMatchObject({ type: "goTo", goTo: "/4" });
   });
 
-  it("reads the approved terms on 1, returns to terms, and only issues on 2", async () => {
+  it("reads the approved terms on 2, returns to terms, and only issues on 1", async () => {
+    expect(TERMS_STEP_TEXT).toBe("המשך התהליך מהווה הסכמה לתנאי השימוש ולתקנון. לאישור התקנון והמשך הקישו 1. לשמיעת התקנון הקישו 2.");
     expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1,2", files: [{ text: TERMS_STEP_TEXT }] });
+    Object.assign(env, { TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/", PUBLIC_BASE_URL: "https://example.test" });
+    const callback = await handleCallback(new Request("https://example.test/v1/technoline/ivr/sales?key=cb&PBXnum=0765673575&PBXextensionPath=/3&PBXphone=0500000001&PBXcallId=phone-hk&isaacPayConfirm=2"), env, settings(env), "sales");
+    expect(callback.files).toEqual([{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }]);
     for (let i = 0; i < 2; i++) {
-      expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "simpleMenu", name: "isaacPayConfirm", files: [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }] });
+      expect(await respond({ isaacPayConfirm: "2" })).toMatchObject({ type: "simpleMenu", name: "isaacPayConfirm", files: [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }] });
       expect((await store.orderForCall("phone-hk"))?.state).toBe("selected");
     }
-    expect(await respond({ isaacPayConfirm: "2" })).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", payments: 1, sum: 59 });
+    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", payments: 1, sum: 59 });
     expect(JSON.stringify(await respond())).not.toContain("דקות");
     expect(TERMS_TEXT).toContain("עד 60 דקות בחודש");
     expect(TERMS_TEXT).not.toContain("לא עוברות");
@@ -605,7 +609,7 @@ describe("five-package phone sales", () => {
 
   it.each([["4", 690, 6], ["5", 1490, 12]])("allows regular installments and grants the term subscription for key %s", async (choice, amount, months) => {
     expect((await respond({ isaacPackage: String(choice) })).files).toEqual([{ text: TERMS_STEP_TEXT }]);
-    const module = await respond({ isaacPayConfirm: "2" });
+    const module = await respond({ isaacPayConfirm: "1" });
     expect(module).toMatchObject({ type: "creditCard", sum: amount, payments: months, paymentsMode: "regular" });
     expect(module).not.toHaveProperty("kevaDay");
     expect(db.sql.prepare("SELECT COUNT(*) AS n FROM phone_keva_enrollments").get()!.n).toBe(0);
@@ -621,7 +625,7 @@ describe("five-package phone sales", () => {
 
   it("reconciles one-time duration purchases through the same entitlement path", async () => {
     await respond({ isaacPackage: "4" });
-    const module = await respond({ isaacPayConfirm: "2" });
+    const module = await respond({ isaacPayConfirm: "1" });
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
       const action = new URLSearchParams(String(init.body)).get("Action");
       return Response.json(action === "GetHistoryJson" ? [{ Groupe: module.category, Amount: "690", Currency: "1", TransactionId: "987654", Confirmation: "approved" }] : []);
