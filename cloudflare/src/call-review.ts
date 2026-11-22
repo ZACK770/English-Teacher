@@ -68,7 +68,7 @@ export function sampleTutorTranscript(raw: string | null) {
   })).filter(t => t.tutor);
 }
 
-type Finding = { code: string; excerpt?: number };
+type Finding = { code: string; excerpt?: number; teaching_reviewed?: false };
 export async function reviewTutor(env: Env, raw: string | null) {
   const excerpts = sampleTutorTranscript(raw);
   if (!excerpts.length) return null;
@@ -89,8 +89,11 @@ export async function reviewTutor(env: Env, raw: string | null) {
   try {
     const result = judgment.parse(JSON.parse(response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""));
     const isExcerpt = (n: number) => n >= 1 && n <= excerpts.length;
-    if (result.issue !== "none" && isExcerpt(result.excerpt)) findings.push({ code: result.issue, excerpt: result.excerpt });
-    if (isExcerpt(result.content_drift_excerpt)) findings.push({ code: "content_drift", excerpt: result.content_drift_excerpt });
+    const teachingReviewed = result.issue === "none" ? result.excerpt === 0 : isExcerpt(result.excerpt);
+    if (result.issue !== "none" && teachingReviewed) findings.push({ code: result.issue, excerpt: result.excerpt });
+    if (isExcerpt(result.content_drift_excerpt)) findings.push({
+      code: "content_drift", excerpt: result.content_drift_excerpt, ...(teachingReviewed ? {} : { teaching_reviewed: false }),
+    });
     valid = findings.length > 0 || (result.issue === "none" && result.excerpt === 0 && result.content_drift_excerpt === 0);
   } catch { /* A billed malformed/blocked response is not counted as a clean review. */ }
   return { findings, valid, input: tokens.promptTokenCount, output, estimated_usd: reviewCost(tokens.promptTokenCount, output) };
@@ -223,7 +226,9 @@ export async function callReviewReport(env: Env, now = Date.now()) {
       FROM call_reviews r,json_each(r.findings) f WHERE r.ended_at>=? GROUP BY code ORDER BY logs DESC,code`).bind(since),
     env.DB.prepare(`WITH group_counts AS (
       SELECT profile_id,bot_version,COUNT(*) AS reviewed FROM call_reviews
-      WHERE ended_at>=?1 AND status='reviewed' GROUP BY profile_id,bot_version
+      WHERE ended_at>=?1 AND status='reviewed' AND NOT EXISTS (
+        SELECT 1 FROM json_each(call_reviews.findings) f WHERE json_type(f.value,'$.teaching_reviewed')='false'
+      ) GROUP BY profile_id,bot_version
     )
     SELECT r.profile_id,b.label AS profile_label,r.bot_version,json_extract(f.value,'$.code') AS code,COUNT(*) AS affected,g.reviewed,
       COUNT(DISTINCT s.student_id) AS learners,

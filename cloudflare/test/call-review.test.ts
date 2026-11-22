@@ -105,7 +105,25 @@ describe("finished-call review", () => {
     session("a");
     await runCallReviews(env, now);
     expect(sql.prepare("SELECT status,findings FROM call_reviews").get())
-      .toEqual({ status: "reviewed", findings: JSON.stringify([{ code, excerpt: 1 }]) });
+      .toEqual({ status: "reviewed", findings: JSON.stringify([{ code, excerpt: 1, ...(code === "content_drift" ? { teaching_reviewed: false } : {}) }]) });
+  });
+
+  it("keeps drift-only flags without letting invalid teaching judgments dilute recommendations", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (_url, init) => {
+      const body = String(init?.body);
+      if (body.includes("Practice discussing movies")) return judge("no_practice", 99, 1);
+      if (body.includes("Practice discussing songs")) return judge("none", 0, 1);
+      return judge("no_practice", 1);
+    });
+    vi.stubGlobal("fetch", fetch);
+    for (let i = 0; i < 3; i++) session("teaching-" + i);
+    const drift = JSON.stringify([{ role: "tutor", text: "Practice discussing movies." }]);
+    for (let i = 0; i < 12; i++) session("drift-" + i, drift);
+    session("drift-with-valid-teaching", JSON.stringify([{ role: "tutor", text: "Practice discussing songs." }]));
+    await runCallReviews(env, now);
+    const report = await callReviewReport(env, now);
+    expect(report.findings).toContainEqual({ code: "content_drift", logs: 13 });
+    expect(report.prompt_candidates).toEqual([expect.objectContaining({ code: "no_practice", affected: 3, reviewed: 4 })]);
   });
 
   it("persists content drift independently of the existing quality issue in the same review", async () => {
