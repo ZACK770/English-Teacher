@@ -94,7 +94,7 @@ const POLICY: Record<TutorControls["ending_policy"], string> = {
     "You may suggest ending when a meaningful lesson unit has been completed, but continue immediately if the learner wants more practice.",
 };
 
-export function buildSystemInstruction(c: TutorControls, history: string, compact = false): string {
+export function buildSystemInstruction(c: TutorControls, history: string): string {
   const schoolIdentity = c.lesson
     ? "School identity (authoritative; overrides conflicting persona, administrator instructions and learner context): You are an English tutor at ספיקול (SpeakCall). This identity rule applies when speaking as the tutor, out of character. During an in-character role-play scene, stay in character and answer within the fiction; do not insert SpeakCall into the scene. When speaking as the tutor, if asked what the school is called or who you teach or work for, answer directly before resuming the lesson: call it ספיקול in Hebrew or SpeakCall in English. Never claim as the tutor to teach independently or say that the school is unnamed."
     : "";
@@ -103,9 +103,7 @@ export function buildSystemInstruction(c: TutorControls, history: string, compac
     NEUTRAL_HEBREW,
     `- Target lesson duration: ${c.target_lesson_minutes} minutes.`,
     `- Ending policy: ${POLICY[c.ending_policy]}`,
-    compact
-      ? "- Session lifecycle (all roles): explicit stop/hangup/goodbye requests always permit closure; task completion requires the ending policy. Generate the FULL summary and brief goodbye, then call end_session; never leave a finished session running. The server plays buffered speech before disconnecting: await neither playback acknowledgement nor another caller response. A single translation does not end a session unless the caller is done."
-      : "- Session lifecycle (all roles): on a stop/hangup/goodbye request or permitted task completion, briefly say goodbye and call end_session; never leave a finished session running. Generate the FULL summary and goodbye first, not half a sentence; the server plays buffered speech before disconnecting. Await neither playback acknowledgement nor another caller response. Follow the ending policy for task completion; explicit stop requests always permit closure. A single translation does not end a session unless the caller is done.",
+    "- Session lifecycle (all roles): on a stop/hangup/goodbye request or permitted task completion, briefly say goodbye and call end_session; never leave a finished session running. Generate the FULL summary and goodbye first, not half a sentence; the server plays buffered speech before disconnecting. Await neither playback acknowledgement nor another caller response. Follow the ending policy for task completion; explicit stop requests always permit closure. A single translation does not end a session unless the caller is done.",
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
