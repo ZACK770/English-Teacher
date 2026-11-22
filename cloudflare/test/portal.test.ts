@@ -1029,21 +1029,91 @@ describe("call minute reservations", () => {
     expect(await reserve("legacy-free", 600)).toMatchObject({ seconds: 420 });
   });
 
-  it.each([[9, 0], [10, 10]])("requires at least ten of the %s remaining pool seconds", async (remaining, expected) => {
+  it.each([0, 0.788, 9, 10])("admits any positive remainder of %s trial seconds", async remaining => {
     await b.save("policies", { enabled: true, free_calls_month: 10, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
     expect(await reserve("used-pool", 600)).toMatchObject({ seconds: 420 });
     await b.settleCall("used-pool", 420 - remaining);
-    expect(await b.accessSummary("learner-a", [])).toMatchObject({ free_calls_left: expected ? 1 : 0, free_call_minutes: expected / 60 });
-    expect(await reserve("last-pool", 600)).toMatchObject({ seconds: expected, mode: expected ? "free" : "blocked" });
+    const summary = await b.accessSummary("learner-a", []);
+    expect(summary.free_calls_left).toBe(remaining > 0 ? 1 : 0);
+    expect(summary.free_call_minutes).toBeCloseTo(remaining / 60);
+    const allocation = await reserve("last-pool", 600);
+    expect(allocation.mode).toBe(remaining > 0 ? "free" : "blocked");
+    expect(allocation.seconds).toBeCloseTo(remaining);
   });
 
-  it("counts outstanding pool reservations atomically and respects the call cap", async () => {
+  it.each([0, 1])("carries fractional trial seconds to a third call with free_calls_month=%s", async free_calls_month => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month, free_call_seconds: 10, trial_total_seconds: 420 }, "student");
+    expect(await reserve("trial-opening", 600)).toEqual({ mode: "free", seconds: 240 });
+    await b.settleCall("trial-opening", 240);
+    expect(await reserve("trial-followup", 60)).toEqual({ mode: "free", seconds: 180 });
+    await b.settleCall("trial-followup", 169.212);
+    const summary = await b.accessSummary("learner-a", []);
+    expect(summary).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
+    expect(summary.free_call_minutes).toBeCloseTo(10.788 / 60);
+    const third = await reserve("trial-third", 5);
+    expect(third.mode).toBe("free");
+    expect(third.seconds).toBeCloseTo(10.788);
+    expect(await reserve("trial-overlap")).toEqual({ mode: "busy", seconds: 0 });
+    await b.settleCall("trial-third", 60);
+    expect(await reserve("trial-used")).toMatchObject({ mode: "blocked", seconds: 0 });
+  });
+
+  it("carries a fifty-second opening through short calls until the lifetime trial is exhausted", async () => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 1, free_call_seconds: 60, trial_total_seconds: 420 }, "student");
+    expect(await reserve("trial-hidden", 600, "anonymous-hidden")).toMatchObject({ mode: "blocked", seconds: 0 });
+    expect(await reserve("trial-short-opening", 600)).toEqual({ mode: "free", seconds: 240 });
+    await b.settleCall("trial-short-opening", 50);
+    let remaining = 370;
+    for (const [i, billed] of [20, 15, 0, 110, 50, 174.5, 0.5].entries()) {
+      const id = "trial-short-" + i;
+      const allocation = await reserve(id);
+      expect(allocation.mode).toBe("free");
+      expect(allocation.seconds).toBeCloseTo(remaining);
+      await b.settleCall(id, billed);
+      remaining -= billed;
+      const summary = await b.accessSummary("learner-a", []);
+      expect(summary.opening_minutes).toBe(0);
+      expect(summary.free_call_minutes).toBeCloseTo(remaining / 60);
+      expect(summary.free_calls_left).toBe(remaining > 0 ? 1 : 0);
+    }
+    expect(remaining).toBe(0);
+    expect(await reserve("trial-exhausted")).toMatchObject({ mode: "blocked", seconds: 0 });
+    db.sql.prepare("UPDATE usage_allocations SET created_at='2000-01-01'").run();
+    expect(await reserve("trial-next-month")).toMatchObject({ mode: "blocked", seconds: 0 });
+  });
+
+  it("preserves finite-trial opening eligibility after cancelled and zero-billed attempts", async () => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 0, trial_total_seconds: 420 }, "student");
+    expect(await reserve("trial-cancelled", 600)).toEqual({ mode: "free", seconds: 240 });
+    await b.cancelCallReservation("trial-cancelled");
+    expect(await reserve("trial-zero", 600)).toEqual({ mode: "free", seconds: 240 });
+    await b.settleCall("trial-zero", 0);
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 4, free_calls_left: 1, free_call_minutes: 7 });
+    expect(await reserve("trial-retry", 600)).toEqual({ mode: "free", seconds: 240 });
+  });
+
+  it.each([undefined, 0])("retains non-trial opening retries and monthly call limits with trial_total_seconds=%s", async trial_total_seconds => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 1, free_call_seconds: 420, trial_total_seconds }, "student");
+    expect(await reserve("monthly-opening", 600)).toMatchObject({ seconds: 240 });
+    await b.settleCall("monthly-opening", 50);
+    expect(await reserve("monthly-retry", 600)).toMatchObject({ seconds: 240 });
+    await b.settleCall("monthly-retry", 60);
+    expect(await reserve("monthly-followup", 60)).toMatchObject({ seconds: 60 });
+    await b.settleCall("monthly-followup", 1);
+    expect(await reserve("monthly-blocked")).toMatchObject({ mode: "blocked", seconds: 0 });
+    expect(await b.accessSummary("learner-a", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0 });
+    db.sql.prepare("UPDATE usage_allocations SET created_at='2000-01-01' WHERE product='school'").run();
+    expect(await reserve("monthly-renewed", 60)).toMatchObject({ mode: "free", seconds: 60 });
+  });
+
+  it("counts outstanding pool reservations atomically and allocates only the lifetime remainder", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-12-12T10:00:00Z"));
     await b.save("policies", { enabled: true, free_calls_month: 10, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
-    expect(await reserve("stale-pool", 300)).toMatchObject({ seconds: 300 });
+    await db.prepare("INSERT INTO usage_allocations VALUES (?,?,?,NULL,300,NULL,?)")
+      .bind("stale-pool", "learner-a", "school", "2026-12-12T10:00:00Z").run();
     vi.setSystemTime(new Date("2026-12-13T10:00:00Z"));
     const calls = await Promise.all([reserve("pool-one", 100), reserve("pool-two", 100)]);
-    expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 100]);
+    expect(calls.map(call => call.seconds).sort((a, b) => a - b)).toEqual([0, 120]);
     await b.settleCall(calls[0].seconds ? "pool-one" : "pool-two", 100);
     expect(await reserve("pool-last", 100)).toMatchObject({ seconds: 20 });
   });
