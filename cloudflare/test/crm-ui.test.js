@@ -2,6 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+vi.mock("lucide-react", () => ({ Megaphone: () => null }));
+
 let CrmPage, Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint, CallReviewsReport, CallReviewCosts;
 beforeAll(async () => {
   vi.stubGlobal("location", { pathname: "/dashboard/crm" });
