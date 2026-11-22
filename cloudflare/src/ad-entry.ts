@@ -234,7 +234,16 @@ export function wordsEmail(words: string[] = [], summary = "", teacher = DEFAULT
   return { text, html };
 }
 
-export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = "", teacher?: { name?: string; female?: boolean }): Promise<boolean> {
+export type SalesToolResult = boolean | {
+  saved: false;
+  reason: "outside_hours" | "outside_calling_window";
+  allowed_hours: string;
+  time_zone: string;
+  closed_period: string;
+  next_step: "explain_hours_and_offer_another_time";
+};
+
+export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = "", teacher?: { name?: string; female?: boolean }): Promise<SalesToolResult> {
   if (customerId.startsWith("anonymous-")) return false;
   const context = await b.loadContext(callId);
   const campaign = campaignName(context.campaign);
@@ -248,7 +257,18 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at)
       : parsed.data.time ? (parsed.data.day === "tomorrow" ? tomorrowAt(parsed.data.time, new Date(base.at)) : null)
         : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
-    if (!at) return false;
+    if (!at) {
+      if (!parsed.data.time || parsed.data.day !== "tomorrow") return false;
+      const hour = Number(parsed.data.time.slice(0, 2));
+      return {
+        saved: false,
+        reason: hour >= 8 && hour < 22 ? "outside_calling_window" : "outside_hours",
+        allowed_hours: "08:00–22:00",
+        time_zone: "Asia/Jerusalem",
+        closed_period: "Friday 14:00–Saturday 20:00",
+        next_step: "explain_hours_and_offer_another_time",
+      };
+    }
     if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at, callerPhone)) return false;
     await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at, scheduled_at: at.toISOString(), callback_id: id } });
     await b.save(SALES_FOLLOWUPS, { ...base, at: existing?.at ?? base.at, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);
