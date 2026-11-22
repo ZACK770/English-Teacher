@@ -1,4 +1,5 @@
 import { adCampaignReport } from "./ad-entry";
+import { practiceSummary } from "./practice";
 import { analyticsSummary } from "./analytics";
 import { checkoutRoutes } from "./checkout";
 import { z } from "zod";
@@ -370,6 +371,7 @@ export async function handlePortal(request: Request, env: Env, path: string): Pr
   if (path === "/v1/portal/voice-preview" && request.method === "POST") return renderVoicePreview(request, env, settings(env), customerId);
   if (path === "/v1/portal/me" && request.method === "GET") {
     const detail: Record<string, any> = await b.customerDetail(customerId);
+    detail.daily_practice = await practiceSummary(env.DB, customerId);
     const c = detail.customer;
     detail.customer = { id: c.id, name: c.name, phone: c.phone, preferred_bot: c.preferred_bot, has_email: !!c.email?.trim() };
     detail.bots = (await progress.listBots()).filter((x) => x.enabled && x.web_enabled && ["teacher", "translator"].includes(x.role)).map((x) => ({ id: x.id, label: x.label, role: x.role, phone_enabled: x.phone_enabled }));

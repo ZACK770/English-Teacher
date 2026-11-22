@@ -14,6 +14,7 @@ import { SessionMeter } from "./meter";
 import { CallRecorder } from "./recordings";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
+import { practiceSummary } from "./practice";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
@@ -212,6 +213,11 @@ export class TutorSession {
         this.controls = { ...this.controls, summary_callback: true, custom_instructions: this.controls.custom_instructions + "\n" + SUMMARY_CALLBACK_GUIDANCE };
       }
       if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson && !adCall ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
+      if (bot?.role === "teacher" && !this.customerId.startsWith("anonymous-")) {
+        const practice = await practiceSummary(this.env.DB, this.customerId);
+        const streak = practice.current_streak + (practice.today.practiced ? 0 : 1);
+        if (practice.package && streak >= 2 && practice.current_streak > 0) this.controls.opening_message += ` Open briefly in natural Hebrew with "יום ${streak} ברצף!", then continue normally; use gender-neutral language.`;
+      }
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId });
       if (this.abort.signal.aborted) return;

@@ -304,11 +304,11 @@ describe("phone monthly enrollment", () => {
     await b.save("packages", { ...await b.record("packages", "school-pace"), phone_enabled: false }, "school-pace");
     const menu = await respond();
     const text = JSON.stringify(menu.files);
-    expect(text).toContain("בקצב, 200 דקות בחודש, ב-119 שקלים לחודש");
+    expect(text).toContain("סמול טוק, 200 דקות בחודש, ב-119 שקלים לחודש");
     expect(text).toContain("באמצעות נציג");
-    expect(text).not.toContain("למנוי בקצב:");
-    expect(text).toContain("למנוי צעד:");
-    expect(text).toContain("למנוי שוטף:");
+    expect(text).not.toContain("למנוי סמול טוק:");
+    expect(text).toContain("למנוי סטארט:");
+    expect(text).toContain("למנוי פרו:");
     expect((await respond({ isaacPackage: "2" })).name).toBe("isaacPayExit");
     expect(counts()).toEqual([0, 0, 0]);
   });
