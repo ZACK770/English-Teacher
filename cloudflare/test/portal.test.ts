@@ -10,7 +10,7 @@ import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, markQuickIntro, quickOpening, runtimeContext, startSchool } from "../src/pbx";
-import { adCampaignReport, matchesEmailReadBack, recordSalesTool, wordsEmail } from "../src/ad-entry";
+import { adCampaignReport, matchesEmailReadBack, recordSalesTool, startAdEntry, wordsEmail } from "../src/ad-entry";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { transferCommand } from "../src/technoline";
@@ -375,6 +375,68 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); db.sql.close(); });
 
 describe("lesson callback scheduling", () => {
+  it.each(["00:00", "07:59", "22:00", "23:10"])("explains why the exact time %s cannot be scheduled", async time => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    expect(await recordSalesTool(b, "learner-a", "outside-hours", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening", time })).toEqual({
+      saved: false,
+      reason: "outside_hours",
+      allowed_hours: "08:00–22:00",
+      time_zone: "Asia/Jerusalem",
+      closed_period: "Friday 14:00–Saturday 20:00",
+      next_step: "explain_hours_and_offer_another_time",
+    });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([]);
+    expect(await b.list("sales-followups")).toEqual([]);
+    expect(await b.loadContext("preferences:learner-a")).not.toHaveProperty("next_lesson");
+  });
+  it.each(["08:00", "21:59"])("still accepts the exact time %s inside the calling hours", async time => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    expect(await recordSalesTool(b, "learner-a", "inside-hours", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning", time })).toBe(true);
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it.each(["2026-01-08T10:00:00Z", "2026-01-09T10:00:00Z"])("distinguishes the weekend restriction from the daily hours: %s", async now => {
+    vi.useFakeTimers().setSystemTime(new Date(now));
+    expect(await recordSalesTool(b, "learner-a", "weekend", "schedule_next_lesson", { day: "tomorrow", part_of_day: "afternoon", time: "15:00" })).toMatchObject({
+      saved: false, reason: "outside_calling_window", closed_period: "Friday 14:00–Saturday 20:00",
+    });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toEqual([]);
+  });
+  it("does not mislabel an unsupported exact-time day as outside hours", async () => {
+    expect(await recordSalesTool(b, "learner-a", "unsupported-day", "schedule_next_lesson", { day: "today", part_of_day: "morning", time: "10:00" })).toBe(false);
+  });
+  it("passes scheduling failures through recordTool into the Gemini function response", async () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
+    const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
+    session.profileId = "student"; session.customerId = "learner-a"; session.callId = "schedule-result";
+    session.controls = { ...controlsFromSettings(false), sales: true };
+    session.salesWindowOpen = true;
+    vi.spyOn(session.b, "loadContext").mockRejectedValueOnce(new Error("database unavailable"));
+    const args = { day: "tomorrow", part_of_day: "evening", time: "23:10" };
+    const calls = [
+      { id: "unavailable", name: "schedule_next_lesson", args },
+      { id: "outside", name: "schedule_next_lesson", args },
+      { id: "inside", name: "schedule_next_lesson", args: { ...args, time: "19:35" } },
+      { id: "invalid", name: "schedule_next_lesson", args: {} },
+    ];
+    const events: GeminiEvent[] = [{ type: "tool_call", calls }];
+    const ai = new GeminiLive("wss://example.test", "test", {});
+    const send = vi.fn();
+    (ai as any).socket = { send };
+    vi.spyOn(ai, "next").mockImplementation(async () => {
+      if (!events.length) session.abort.abort();
+      return events.shift()!;
+    });
+    session.ai = ai;
+    await session.aiToOutput();
+    const responses = send.mock.calls.map(([payload]) => JSON.parse(payload).toolResponse.functionResponses[0]);
+    expect(responses.map(response => response.id)).toEqual(calls.map(call => call.id));
+    expect(responses.every(response => response.name === "schedule_next_lesson")).toBe(true);
+    expect(responses[0].response).toEqual({ saved: false });
+    expect(responses[1].response).toMatchObject({ saved: false, reason: "outside_hours", allowed_hours: "08:00–22:00", next_step: "explain_hours_and_offer_another_time" });
+    expect(responses[2].response).toEqual({ saved: true });
+    expect(responses[3].response).toEqual({ saved: false });
+    expect(db.sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
   it.each(["021234567", "+97231234567", "048123456", "081234567", "091234567"])("queues the actual caller's landline %s ahead of the account phone", async phone => {
     expect(await recordSalesTool(b, "learner-a", "landline", "schedule_next_lesson", { day: "tomorrow", part_of_day: "morning" }, undefined, phone)).toBe(true);
     expect(db.sql.prepare("SELECT phone FROM callback_requests").get()?.phone).toBe(phone.startsWith("+972") ? "0" + phone.slice(4) : phone);
@@ -438,7 +500,7 @@ describe("lesson callback scheduling", () => {
   it.each([false, true])("skips an exact-time callback when all minutes are exhausted (has receipt: %s)", async paid => {
     vi.useFakeTimers().setSystemTime(new Date("2026-01-04T10:00:00Z"));
     const args = { day: "tomorrow", part_of_day: "evening", time: "19:35" };
-    expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", { ...args, time: "23:10" })).toBe(false);
+    expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", { ...args, time: "23:10" })).toMatchObject({ saved: false, reason: "outside_hours" });
     expect(await recordSalesTool(b, "learner-a", "exact-call", "schedule_next_lesson", args)).toBe(true);
     expect(db.sql.prepare("SELECT next_attempt_at FROM callback_requests").get()?.next_attempt_at).toBe("2026-01-05T17:35:00.000Z");
     for (const [id, product] of [["intro", "school-opening"], ["free-1", "school"], ["free-2", "school"]]) {
@@ -1580,7 +1642,10 @@ describe("real learner portal", () => {
       }
       await markQuickIntro(b, "pirsumfon-1", (await b.customerForCall("pirsumfon-1"))!);
       await dial("after-first-lesson", "school", "1");
-      expect(await b.loadContext("after-first-lesson")).not.toHaveProperty("entry");
+      expect(await b.loadContext("after-first-lesson")).toMatchObject({ entry: "ad", ad_new_caller: true });
+      expect(await saveIntake(b, (await b.customerForCall("pirsumfon-1"))!, null, { goal: "other", level: "beginner" })).toBe(true);
+      await dial("after-saved-intake", "school", "1");
+      expect(await b.loadContext("after-saved-intake")).not.toHaveProperty("entry");
       expect((await b.list("ad-entries")).filter(entry => entry.campaign === "pirsumfon")).toHaveLength(3);
 
       vi.spyOn(console, "warn").mockImplementationOnce(() => undefined);
@@ -1593,6 +1658,41 @@ describe("real learner portal", () => {
       vi.unstubAllGlobals();
     }
   });
+  it.each([undefined, {}])("keeps ad intake across calls until a valid plan is saved: %j", async plan => {
+    await b.savePreference("learner-a", { intro_school_seen: true, ad_campaign: "radio-news", plan });
+    await startAdEntry(b, progress, settings(env), "unfinished-ad", "learner-a", "radio-news");
+    expect(await b.loadContext("unfinished-ad")).toMatchObject({ entry: "ad", ad_new_caller: true });
+    await startSchool(b, progress, settings(env), "unfinished-redial", "learner-a");
+    expect(await b.loadContext("unfinished-redial")).toMatchObject({ entry: "ad", campaign: "radio-news", ad_new_caller: true });
+    expect(await runtimeContext(b, "unfinished-redial")).toContain("Ask nothing else before practice");
+    expect(await saveIntake(b, "learner-a", null, { goal: "other", level: "invalid" })).toBe(false);
+    await startSchool(b, progress, settings(env), "failed-intake-redial", "learner-a");
+    expect(await b.loadContext("failed-intake-redial")).toMatchObject({ entry: "ad", ad_new_caller: true });
+    expect(await saveIntake(b, "learner-a", null, { goal: "other", level: "beginner" })).toBe(true);
+    await startSchool(b, progress, settings(env), "saved-intake-redial", "learner-a");
+    expect(await b.loadContext("saved-intake-redial")).not.toHaveProperty("entry");
+    await startAdEntry(b, progress, settings(env), "returning-ad", "learner-a", "radio-news");
+    expect(await b.loadContext("returning-ad")).toMatchObject({ entry: "ad", ad_new_caller: false });
+  });
+
+  it.each([false, true])("compiles only the appropriate intake block for an ad override=%s", async ad => {
+    vi.useFakeTimers();
+    await progress.saveControls("student", { ...controlsFromSettings(false), custom_instructions: "Preserve this CRM administrator guidance." });
+    if (ad) await b.savePreference("learner-a", { intro_school_seen: true, ad_campaign: "radio-news" });
+    await startSchool(b, progress, settings(env), "intake-prompt", "learner-a");
+    vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
+    vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+    const tutor = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
+    for (const task of ["pbxToAi", "aiToOutput", "pacedOutput", "watchdog"]) vi.spyOn(tutor, task).mockResolvedValue(undefined);
+    await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "intake-prompt", caller: "0500000001" }), "student", false);
+    const system = tutor.artifact.system_instruction;
+    expect(system).toContain("Preserve this CRM administrator guidance.");
+    expect(system.includes("First call: before practising, run a short Hebrew intake")).toBe(!ad);
+    expect(system.match(/Ad caller flow \(authoritative/g) ?? []).toHaveLength(ad ? 1 : 0);
+    expect(tutor.controls.intake_pending).toBe(true);
+  });
+
   it("opens the lesson and translator without dictating a menu phrase", async () => {
     await b.saveContext("quick-school", { quick_entry: "school" });
     await b.saveContext("quick-translation", { quick_entry: "translation" });
@@ -1641,6 +1741,7 @@ describe("real learner portal", () => {
     expect(mail.send).toHaveBeenCalledTimes(2);
     expect(await b.loadContext("preferences:" + customerId)).toMatchObject({ email: "learner001@example42.com", next_lesson: { day: "tomorrow", part_of_day: "evening" }, ad_campaign: "radio-news" });
     await b.savePreference(customerId, { intro_school_seen: true });
+    expect(await saveIntake(b, customerId, null, { goal: "other", level: "beginner" })).toBe(true);
     await call("ad-2", "radio-news");
     await call("ad-2", "radio-news");
     expect((await b.loadContext("ad-2")).ad_new_caller).toBe(false);

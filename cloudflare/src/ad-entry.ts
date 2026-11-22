@@ -2,7 +2,7 @@ import { z } from "zod";
 import { BusinessStore } from "./business";
 import { type Env, nowIso, randomHex, sha256Hex, type Settings } from "./env";
 import { enqueueLessonCallback, followupLessonTime, SPEAKCALL_PHONE, tomorrowAt } from "./callbacks";
-import { DEFAULT_TEACHER_NAME, PHONE_SIGNUP_NAME } from "./learner";
+import { DEFAULT_TEACHER_NAME, PHONE_SIGNUP_NAME, PlanSchema } from "./learner";
 import { ProgressStore } from "./progress";
 import { startSchool, type IVRResponse } from "./pbx";
 
@@ -32,7 +32,7 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
   const name = campaignName(campaign);
   if (context.entry !== "ad") {
     const saved = await b.loadContext("preferences:" + customerId);
-    const newCaller = !saved.plan && !saved.intro_school_seen;
+    const newCaller = !PlanSchema.safeParse(saved.plan).success;
     await b.saveContext(callId, { entry: "ad", campaign: name, ad_new_caller: newCaller });
     if (!saved.ad_campaign) await b.savePreference(customerId, { ad_campaign: name });
     await b.save(AD_ENTRIES, { call_id: callId, customer_id: customerId, campaign: name, new_caller: newCaller, at: nowIso() }, randomHex(16));
@@ -43,7 +43,7 @@ export async function startAdEntry(b: BusinessStore, progress: ProgressStore, s:
 export async function registerPirsumfonEntry(b: BusinessStore, callId: string, customerId: string, campaign: unknown) {
   const name = campaignName(campaign || "pirsumfon");
   const saved = await b.loadContext("preferences:" + customerId);
-  const newCaller = !saved.plan && !saved.intro_school_seen;
+  const newCaller = !PlanSchema.safeParse(saved.plan).success;
   if (!saved.ad_campaign || (newCaller && !saved.pirsumfon_campaign)) {
     await b.savePreference(customerId, {
       ad_campaign: saved.ad_campaign || name,
@@ -234,7 +234,16 @@ export function wordsEmail(words: string[] = [], summary = "", teacher = DEFAULT
   return { text, html };
 }
 
-export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = "", teacher?: { name?: string; female?: boolean }): Promise<boolean> {
+export type SalesToolResult = boolean | {
+  saved: false;
+  reason: "outside_hours" | "outside_calling_window";
+  allowed_hours: string;
+  time_zone: string;
+  closed_period: string;
+  next_step: "explain_hours_and_offer_another_time";
+};
+
+export async function recordSalesTool(b: BusinessStore, customerId: string, callId: string, name: string, args: unknown, mail?: SendEmail, callerPhone = "", teacher?: { name?: string; female?: boolean }): Promise<SalesToolResult> {
   if (customerId.startsWith("anonymous-")) return false;
   const context = await b.loadContext(callId);
   const campaign = campaignName(context.campaign);
@@ -248,7 +257,18 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
     const at = unchanged && existing.scheduled_at ? new Date(existing.scheduled_at)
       : parsed.data.time ? (parsed.data.day === "tomorrow" ? tomorrowAt(parsed.data.time, new Date(base.at)) : null)
         : followupLessonTime(parsed.data.day, parsed.data.part_of_day, new Date(base.at));
-    if (!at) return false;
+    if (!at) {
+      if (!parsed.data.time || parsed.data.day !== "tomorrow") return false;
+      const hour = Number(parsed.data.time.slice(0, 2));
+      return {
+        saved: false,
+        reason: hour >= 8 && hour < 22 ? "outside_calling_window" : "outside_hours",
+        allowed_hours: "08:00–22:00",
+        time_zone: "Asia/Jerusalem",
+        closed_period: "Friday 14:00–Saturday 20:00",
+        next_step: "explain_hours_and_offer_another_time",
+      };
+    }
     if (!await enqueueLessonCallback(b, customerId, id, at, existing?.at ?? base.at, callerPhone)) return false;
     await b.savePreference(customerId, { next_lesson: { ...parsed.data, requested_at: base.at, scheduled_at: at.toISOString(), callback_id: id } });
     await b.save(SALES_FOLLOWUPS, { ...base, at: existing?.at ?? base.at, type: "lesson", ...parsed.data, scheduled_at: at.toISOString(), callback_id: id }, id);

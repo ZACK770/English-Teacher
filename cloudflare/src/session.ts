@@ -1,4 +1,4 @@
-import { hasEligibleSummaryCallResponse, isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, revokesSummaryCall, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
+import { hasEligibleSummaryCallResponse, isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, revokesSummaryCall, SALES_TOOL_NAMES, type SalesToolResult, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
@@ -228,10 +228,10 @@ export class TutorSession {
       await this.latency("session_started");
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
-      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone");
-      const opening = await quickOpening(this.b, this.callId);
       const callContext = await this.b.loadContext(this.callId);
       const adCall = callContext.entry === "ad";
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall);
+      const opening = await quickOpening(this.b, this.callId);
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
       if (this.controls.lesson && !this.portal) {
         const phonePayments = paymentsConfigured(this.env) && adCall
@@ -505,11 +505,12 @@ export class TutorSession {
       } else if (event.type === "usage") this.meter.recordUsage(event.usage);
       else if (event.type === "tool_call") {
         for (const call of event.calls) {
-          const saved = await this.recordTool(call);
+          const result = await this.recordTool(call);
+          const saved = typeof result === "boolean" ? result : result.saved;
           this.ai!.submitToolResult(call, saved, call.name === "prepare_email" ? {
             prepared: saved,
             next_step: saved ? "Read back the email and wait. After the caller confirms, call save_email." : "Ask the caller to clarify the address.",
-          } : undefined);
+          } : typeof result === "boolean" ? undefined : result);
           if (call.name === "end_session" && saved) return;
         }
       } else if (event.type === "go_away") {
@@ -577,7 +578,7 @@ export class TutorSession {
     }
   }
 
-  private async recordTool(call: ToolCall): Promise<boolean> {
+  private async recordTool(call: ToolCall): Promise<SalesToolResult> {
     const args = call.args ?? {};
     if (call.name === "save_mastery_domain") {
       if (!this.masteryDomain || !this.controls?.lesson) return false;
@@ -623,11 +624,11 @@ export class TutorSession {
     if (call.name && SALES_TOOL_NAMES.has(call.name)) {
       if (!this.controls?.sales || !this.customerId) return false;
       let allowed = true;
-      let saved = false;
+      let result: SalesToolResult = false;
       if (call.name === "prepare_email") {
         const email = normalizeSalesEmail(args.email);
         this.pendingEmail = email ? { email, phase: "readback", text: "", audio: false } : null;
-        saved = !!email;
+        result = !!email;
       } else {
         if (call.name === "save_email") {
           const pending = this.pendingEmail;
@@ -635,11 +636,11 @@ export class TutorSession {
           allowed = pending?.phase === "answer" && normalizeSalesEmail(args.email) === pending.email && isEmailConfirmation(pending.text);
         }
         if (call.name === "schedule_next_lesson" && !this.salesWindowOpen) allowed = false;
-        if (allowed) saved = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone,
+        if (allowed) result = await recordSalesTool(this.b, this.customerId, this.callId, call.name, args, this.env.PORTAL_EMAIL, this.callerPhone,
           { name: this.controls.teacher_name, female: this.controls.teacher_female }).catch(() => false);
       }
-      await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, saved }).catch(() => {});
-      return saved;
+      await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, ...(typeof result === "boolean" ? { saved: result } : result) }).catch(() => {});
+      return result;
     }
     if (call.name === "save_intake") {
       const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
