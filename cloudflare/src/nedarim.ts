@@ -8,6 +8,20 @@ export function providerDay(value: unknown) {
   return Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date.slice(0, 10) ? date : "";
 }
 
+const israelOffset = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", timeZoneName: "longOffset" });
+const offsetAt = (date: Date) => israelOffset.formatToParts(date).find(p => p.type === "timeZoneName")!.value.slice(3);
+
+export function providerTime(value: unknown) {
+  const match = /^(\S+)\s+((?:[01]\d|2[0-3]):[0-5]\d)(?::([0-5]\d))?$/.exec(String(value ?? "").trim());
+  if (!match) return "";
+  const day = providerDay(match[1]);
+  if (!day) return "";
+  const wall = day.slice(0, 10) + "T" + match[2] + ":" + (match[3] ?? "00");
+  const offset = offsetAt(new Date(wall + "Z"));
+  const date = new Date(wall + offset);
+  return offsetAt(date) === offset ? date.toISOString().replace("Z", "+00:00") : "";
+}
+
 export async function manageKeva(env: Env, fields: Record<string, string>) {
   try {
     if (!env.NEDARIM_MOSAD_ID || !env.NEDARIM_API_KEY) throw new Error("Missing billing configuration");

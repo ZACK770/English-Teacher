@@ -100,11 +100,20 @@ Signed refusal events are accepted at the same webhook URL; configure Type=Siruv
 as well as Type=Transaction in Nedarim. Provider messages are sanitized and long
 number strings removed. No card number or CVV is collected by the app.
 
-Admin POST /v1/admin/payments/reconcile reads GetHistoryJson and GetErrorLogsJson,
-advancing a persistent cursor for each source. Calls are limited to one per 3
-minutes per report, including failures. An unavailable provider appears in the
-panel and does not create a receipt. Mismatches/refunds/cancellations are flagged
-for review rather than silently altering income or customer entitlements.
+The ten-minute cron and admin POST /v1/admin/payments/reconcile read
+GetHistoryJson and GetErrorLogsJson with a persistent cursor per report.
+Refusals use the provider event time in Israel; an older refusal cannot block a
+newer verified payment. A current refusal holds the standing order's access and
+minutes, not other purchases. The notice appears in the portal and when calling
+the school without other usable minutes. A later verified charge clears the hold.
+An unseen charge whose timestamp cannot establish its place after the latest
+charge or refusal is flagged for billing review instead of granting another period.
+
+A full credit in GetHistoryJson is matched by the original transaction ID in
+`זיכוי עסקה:` and its amount. Its minutes stay reversed; only a reversal of the
+latest payment holds the standing order. Partial or unlinked credits do not
+block access. Bank Masav returns do not use the credit-card KevaId and are not
+automatically matched. Deployment requires migration 0022 before serving traffic.
 
 Package phone_enabled can hide a test package from callers independently of its
 active flag. Authenticated /v1/admin/payments/test-order creates a payment intent

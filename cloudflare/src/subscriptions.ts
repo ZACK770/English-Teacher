@@ -89,7 +89,7 @@ export class SubscriptionStore {
     const count = await this.db.prepare("SELECT COUNT(*) AS n FROM subscription_members WHERE subscription_id=? AND removed_at IS NULL").bind(id).first<{ n: number }>();
     return sub.price_agorot + sub.family_addon_agorot * (count?.n ?? 0);
   }
-  async recordRenewal(id: string, at: string, reference: string, charge?: { amountAgorot: number; vatRate: number; statements?: D1PreparedStatement[] }) {
+  async recordRenewal(id: string, at: string, reference: string, charge?: { amountAgorot: number; vatRate: number; keva?: { id: string; confirmedAt: string | null }; statements?: D1PreparedStatement[] }) {
     if (!reference.trim() || reference.length > 150) throw new Error("Invalid renewal reference");
     const existing = await this.db.prepare("SELECT subscription_id FROM subscription_renewals WHERE reference=?").bind(reference).first<{ subscription_id: string }>();
     if (existing) {
@@ -104,7 +104,11 @@ export class SubscriptionStore {
     if (sub.term_months && sub.period_number >= sub.term_months + sub.extension_months) throw new Error("Term has ended");
     try {
       const changes = await this.db.batch([
-        this.db.prepare("INSERT INTO subscription_renewals(reference,subscription_id,period_start,created_at) VALUES (?,(SELECT id FROM subscriptions WHERE id=? AND status=? AND current_period_end=?),?,?)").bind(reference, id, sub.status, sub.current_period_end, start, iso(at)),
+        this.db.prepare(`INSERT INTO subscription_renewals(reference,subscription_id,period_start,created_at)
+          VALUES (?1,(SELECT id FROM subscriptions WHERE id=?2 AND status=?3 AND current_period_end=?4
+          AND (?5 IS NULL OR EXISTS (SELECT 1 FROM standing_orders WHERE id=?5 AND state IN ('active','past_due')
+            AND (last_refusal_at IS NULL OR last_refusal_at<?6) AND (?6 IS NULL OR last_charge_at IS NULL OR last_charge_at<?6)))),?7,?8)`)
+          .bind(reference, id, sub.status, sub.current_period_end, charge?.keva?.id ?? null, charge?.keva?.confirmedAt ?? null, start, iso(at)),
         this.db.prepare("UPDATE subscriptions SET current_period_start=?,current_period_end=?,period_number=period_number+1,status=CASE WHEN status='past_due' THEN 'active' ELSE status END,resume_status='active',updated_at=? WHERE id=? AND status=? AND current_period_end=? RETURNING id").bind(start, end, iso(at), id, sub.status, sub.current_period_end),
         this.grantStatement({ ...sub, current_period_start: start, current_period_end: end, charge_agorot: charge?.amountAgorot, vat_rate: charge?.vatRate }, iso(at)),
         ...(charge?.statements ?? []),
@@ -267,7 +271,7 @@ export class SubscriptionStore {
   }
   async summary(customerId: string, at = new Date().toISOString()) {
     return Promise.all((await this.list(customerId)).map(async sub => {
-      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND COALESCE(r.valid_from,r.created_at)<? AND r.expires_at>? ORDER BY r.expires_at`)
+      const rollover = (await this.db.prepare(`SELECT r.expires_at,MAX(0,r.minutes*60-COALESCE((SELECT SUM(COALESCE(u.billed_seconds,u.reserved_seconds)) FROM usage_allocations u WHERE u.receipt_id=r.id),0))/60.0 AS minutes FROM sales_receipts r WHERE r.subscription_id=? AND r.payment_reversed_at IS NULL AND COALESCE(r.valid_from,r.created_at)<? AND r.expires_at>? ORDER BY r.expires_at`)
         .bind(sub.id, sub.current_period_start, sub.status === "paused" ? sub.paused_at : iso(at)).all<{ expires_at: string; minutes: number }>()).results.filter(r => r.minutes > 0);
       const plan = await this.db.prepare("SELECT name FROM plans WHERE id=?").bind(sub.plan_id).first<{ name: string }>();
       const members = (await this.db.prepare("SELECT m.customer_id,c.name,c.primary_phone AS phone FROM subscription_members m JOIN customers c ON c.id=m.customer_id WHERE m.subscription_id=? AND m.removed_at IS NULL").bind(sub.id).all()).results;

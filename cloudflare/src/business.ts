@@ -123,6 +123,11 @@ const RESERVATION_TTL_MS = 3 * 60 * 60 * 1000;
 const reservationCutoff = () => new Date(Date.now() - RESERVATION_TTL_MS).toISOString().replace("Z", "+00:00");
 export const UNMETERED_SESSION_PRODUCT = "unrestricted";
 
+const receiptOnHold = `(r.payment_reversed_at IS NOT NULL OR EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
+  OR EXISTS (SELECT 1 FROM standing_orders o WHERE (o.state='past_due' OR o.last_refusal_at IS NOT NULL)
+    AND (o.entitlement_id=r.subscription_id OR (o.entitlement_id IS NULL AND o.first_order_id IN
+      (SELECT id FROM payment_orders WHERE receipt_id=r.id)))))`;
+
 export interface Allowance { seconds: number; mode: string; extension?: string; intro?: string }
 
 export class BusinessStore {
@@ -256,7 +261,9 @@ export class BusinessStore {
     const activeSession = "SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL AND created_at>?";
     const busy = { seconds: 0, mode: "busy" };
     const blocked = { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
+    const paymentFailed = { seconds: 0, mode: "payment_failed", extension: "/8" };
     if (!policy.enabled) {
+      if ((teacher || policyRow) && policy.product === "school" && await this.schoolPaymentBlocked(customerId)) return paymentFailed;
       if ((teacher || policyRow) && policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
       const allocation = await this.db.prepare(`
         INSERT OR IGNORE INTO usage_allocations
@@ -278,7 +285,7 @@ export class BusinessStore {
           SELECT r.id,r.customer_id,r.product,r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS remaining
           FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
           WHERE r.id=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
-          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
+          AND NOT ${receiptOnHold}
           AND (r.customer_id=? OR r.subscription_id IN
             (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
              WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
@@ -288,6 +295,7 @@ export class BusinessStore {
       `).bind(callId, customerId, cap, now, receipt.id, now, now, customerId, customerId, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
     }
+    if (policy.product === "school" && await this.schoolPaymentFailed(customerId)) return paymentFailed;
     if (policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
     const anonymous = customerId.startsWith("anonymous-");
     if (!anonymous && channel === "voice" && policy.opening_seconds) {
@@ -372,7 +380,7 @@ export class BusinessStore {
     const body = await this.record("customers", customerId);
     if (!body) throw new Error("Customer not found");
     const [receipts, calls] = await this.db.batch<Record<string, any>>([
-      this.db.prepare(`SELECT r.*, COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS spent_seconds FROM sales_receipts r
+      this.db.prepare(`SELECT r.*, ${receiptOnHold} AS on_hold, COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS spent_seconds FROM sales_receipts r
         LEFT JOIN usage_allocations u ON u.receipt_id=r.id WHERE r.customer_id=? GROUP BY r.id ORDER BY r.created_at DESC`).bind(customerId),
       this.db.prepare(`SELECT c.call_id,c.bot_id,c.channel,c.created_at,sessions.duration_seconds,sessions.summary_he,sessions.points FROM call_customers c
         LEFT JOIN sessions ON c.call_id=sessions.call_id WHERE c.customer_id=? AND ${SCHOOL_CALL_FILTER} AND ${SCHOOL_SESSION_FILTER} ORDER BY c.created_at DESC LIMIT 50`).bind(customerId),
@@ -386,11 +394,12 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
+      AND NOT ${receiptOnHold}
       AND r.product='school' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       LIMIT 1`).bind(customerId, customerId, at, at).first();
     if (receipt) return true;
     return !!await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active' AND s.access_suspended_at IS NULL AND p.product='school'
+      AND NOT EXISTS (SELECT 1 FROM standing_orders o WHERE o.entitlement_id=s.id AND (o.state='past_due' OR o.last_refusal_at IS NOT NULL))
       AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
         (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
       .bind(at, at, customerId, customerId).first();
@@ -410,7 +419,7 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
+      AND NOT ${receiptOnHold}
       AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       GROUP BY r.id HAVING r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) >= 1
       ORDER BY r.expires_at`)
@@ -418,33 +427,46 @@ export class BusinessStore {
     return results;
   }
 
+  async schoolPaymentFailed(customerId: string) {
+    return !!await this.db.prepare(`SELECT 1 FROM standing_orders o JOIN plans p ON p.id=o.package_id
+      WHERE o.state='past_due' AND p.product='school' AND (o.customer_id=?1 OR EXISTS
+        (SELECT 1 FROM subscription_members m WHERE m.subscription_id=o.entitlement_id AND m.customer_id=?1 AND m.removed_at IS NULL)) LIMIT 1`)
+      .bind(customerId).first();
+  }
+
+  async schoolPaymentBlocked(customerId: string) {
+    return await this.schoolPaymentFailed(customerId) && !(await this.usableReceipts(customerId, "school")).length;
+  }
+
   async hasSchoolCallbackMinutes(customerId: string) {
     if (!await this.record("customers", customerId)) return false;
     const access = await this.accessSummary(customerId, []);
+    if (access.payment_failed) return (await this.usableReceipts(customerId, "school")).length > 0;
     return !access.limited || access.opening_minutes > 0 || access.free_calls_left > 0 ||
       (await this.usableReceipts(customerId, "school")).length > 0;
   }
 
   async accessSummary(customerId: string, receipts: Record<string, any>[]) {
     const paid = await this.hasPaidAccess(customerId);
+    const payment_failed = await this.schoolPaymentFailed(customerId);
     if (!paid && await this.isSchoolAccessSuspended(customerId)) {
-      return { paid: false, limited: true, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+      return { paid: false, payment_failed, limited: true, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
     }
     const policies = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).filter((p) => p.product === "school");
     const policy = policies.find((p) => p.enabled) ?? (policies.length ? undefined : AccessPolicySchema.parse(SCHOOL_FREE_POLICY));
-    if (!policy) return { paid, limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    if (!policy) return { paid, payment_failed, limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
     const used = await this.db
       .prepare(`SELECT COUNT(*) AS n FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)`)
       .bind(customerId, "school", month() + "%")
       .first<{ n: number }>();
     const now = nowIso();
-    const live = receipts.find((r) => r.product === "school" && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
+    const live = receipts.find((r) => r.product === "school" && !r.on_hold && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
     const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
     const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60)").bind(customerId).first();
     return {
-      paid, limited: true,
-      opening_minutes: !customerId.startsWith("anonymous-") && !opening ? policy.opening_seconds / 60 : 0,
-      free_calls_left: customerId.startsWith("anonymous-") ? 0 : Math.max(0, policy.free_calls_month - (used?.n ?? 0)),
+      paid, payment_failed, limited: true,
+      opening_minutes: !payment_failed && !customerId.startsWith("anonymous-") && !opening ? policy.opening_seconds / 60 : 0,
+      free_calls_left: payment_failed || customerId.startsWith("anonymous-") ? 0 : Math.max(0, policy.free_calls_month - (used?.n ?? 0)),
       free_call_minutes: Math.round(policy.free_call_seconds / 60),
       plan_name: pkg?.success ? pkg.data.name.split(" · ")[0] : "",
       max_call_minutes: pkg?.success ? pkg.data.max_call_minutes : 0,

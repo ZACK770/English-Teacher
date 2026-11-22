@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
+import { PAYMENT_FAILED_MESSAGE } from "../../paymentCopy";
 import { apiPrefix, PortalError, portalRequest } from "./portalApi";
 
 const connecting = "רגע, מחברים את השיחה…";
@@ -9,6 +10,7 @@ const micPermission = "כדי לדבר כאן צריך לאפשר גישה למ�
 const callErrors: Record<string, string> = {
   call_failed: connectionError,
   access_blocked: "שיחות הטעימה נוצלו ואין דקות בחבילה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3.",
+  payment_failed: PAYMENT_FAILED_MESSAGE,
   customer_busy: "כבר יש לך שיחה פעילה. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.",
   system_busy: "כל קווי השיחה תפוסים כרגע. אפשר לנסות שוב בעוד רגע.",
   gemini_budget_reached: "מכסת השימוש היומית של המערכת הסתיימה. אפשר לחזור מחר.",
