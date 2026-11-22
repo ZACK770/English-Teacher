@@ -37,13 +37,12 @@ Do not enable it until Isaac approves the following caller-facing drafts.
 
 First menu (`isaacSinglePackage`):
 
-> מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לביטול מנוי הקישו 8. לחזרה הקישו 0.
+> רוצים לדעת אנגלית?! מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. להנהלת חשבונות ושירות לקוחות הקישו 8. לחזרה הקישו 0.
 
 Key 1 uses the existing `school-step` purchase path. Key 9 opens the unchanged
 five-package menu, including its existing `SALES_MENU_AUDIO_*` recording. Key 9
 in that full menu still opens service at `/4`, relative to the project base.
-Key 8 in the first menu requests subscription cancellation and currently
-hands off to the same service destination; it does not cancel automatically.
+Key 8 in the first menu opens the accounting/customer-service submenu.
 Key 0 returns to the main menu. If Start's price/cadence/availability no longer
 matches the draft, entry falls back to the full catalog and the Start shortcut
 does not create an order. No catalog values are changed by this switch.
@@ -52,13 +51,26 @@ The first menu uses Technoline text TTS unless both `SALES_SINGLE_AUDIO_URL`
 and `SALES_SINGLE_AUDIO_VERSION` are set; then its file cache name is
 `sales-single-<version>`. These settings do not affect full-menu audio.
 
+Service submenu (`isaacSalesService`):
+
+> להנהלת חשבונות הקישו 1. לבירור חשבון הקישו 2. לביטול מנוי הקישו 3. לחזרה הקישו 0.
+
+Keys 1 and 2 currently hand off to `/4`, relative to the project base. Key 3
+is the dedicated `cancelSubscriptionRequested` hook, also handing off to `/4`
+until a real cancellation flow replaces it; it does not cancel automatically.
+The hook selection is `isaacSinglePackage=8` with `isaacSalesService=3`.
+Key 0 returns to the first menu and clears both chained selections.
+The submenu uses Technoline text TTS unless both `SALES_SERVICE_AUDIO_URL`
+and `SALES_SERVICE_AUDIO_VERSION` are set, with cache name
+`sales-service-<version>`. Single-menu and full-menu audio remain independent.
+
 Short terms step:
 
 > לאישור התקנון ולהמשך לתשלום הקישו 1. לשמיעת התקנון הקישו 2. לביטול הקישו 0.
 
 Short terms playback:
 
-> מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.
+> מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. לכל מנוי מכסת שימוש חודשית הוגנת. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.
 
 Both terms texts use Technoline text TTS, not an R2 or PBX recording. Key 2
 reads the terms and repeats the step; key 1 continues to card collection and

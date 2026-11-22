@@ -22,9 +22,10 @@ export const TERMS_TEXT = `תקנון המנוי, בקצרה.
 לשאלות, לעזרה או לביטול, צוות השירות שלנו תמיד כאן בשבילכם.
 `;
 
-export const SALES_SINGLE_TEXT = "מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. לביטול מנוי הקישו 8. לחזרה הקישו 0.";
+export const SALES_SINGLE_TEXT = "רוצים לדעת אנגלית?! מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. להנהלת חשבונות ושירות לקוחות הקישו 8. לחזרה הקישו 0.";
+export const SALES_SERVICE_TEXT = "להנהלת חשבונות הקישו 1. לבירור חשבון הקישו 2. לביטול מנוי הקישו 3. לחזרה הקישו 0.";
 export const SINGLE_TERMS_STEP_TEXT = "לאישור התקנון ולהמשך לתשלום הקישו 1. לשמיעת התקנון הקישו 2. לביטול הקישו 0.";
-export const SINGLE_TERMS_TEXT = "מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.";
+export const SINGLE_TERMS_TEXT = "מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. לכל מנוי מכסת שימוש חודשית הוגנת. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.";
 
 class ExistingMonthlyEnrollmentError extends Error {}
 
@@ -369,7 +370,7 @@ const selectionMenu = (name: string, text: string, keys = "0,9") => ({
 export async function paymentResponse(store: PaymentStore, env: Env, base: string, params: Record<string, string>, customerId: string, packageIds: string[]): Promise<Record<string, unknown>> {
   const callId = params.PBXcallId;
   const single = env.SALES_MENU_MODE === "single";
-  const singleParams = single ? ["isaacSinglePackage"] : [];
+  const singleParams = single ? ["isaacSinglePackage", "isaacSalesService"] : [];
   if (params.PBXcallStatus === "HANGUP") {
     await store.cancelSelection(callId);
     return { type: "hangup" };
@@ -434,9 +435,26 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   let choice = params.isaacPackage ?? "";
   if (single && !choice && params.isaacSinglePackage !== "9") {
     const singleChoice = params.isaacSinglePackage ?? "";
-    const cancelSubscriptionRequested = singleChoice === "8";
-    if (cancelSubscriptionRequested) {
-      return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
+    if (singleChoice === "8") {
+      const serviceChoice = params.isaacSalesService ?? "";
+      const cancelSubscriptionRequested = serviceChoice === "3";
+      if (cancelSubscriptionRequested) {
+        return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
+      }
+      if (["1", "2"].includes(serviceChoice)) {
+        return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
+      }
+      if (["0", "ERROR"].includes(serviceChoice)) {
+        const back = { ...params };
+        for (const name of singleParams) delete back[name];
+        return { ...await paymentResponse(store, env, base, back, customerId, packageIds), removeParams: singleParams };
+      }
+      return {
+        ...selectionMenu("isaacSalesService", SALES_SERVICE_TEXT, "0,1,2,3"),
+        files: env.SALES_SERVICE_AUDIO_URL && env.SALES_SERVICE_AUDIO_VERSION
+          ? [{ fileLink: env.SALES_SERVICE_AUDIO_URL, fileName: "sales-service-" + env.SALES_SERVICE_AUDIO_VERSION }]
+          : [{ text: SALES_SERVICE_TEXT }],
+      };
     }
     if (["0", "ERROR"].includes(singleChoice)) choice = singleChoice;
     else {

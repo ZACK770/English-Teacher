@@ -5,7 +5,7 @@ import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { type Env, settings } from "../src/env";
 import { handleCallback } from "../src/pbx";
-import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT, SALES_SINGLE_TEXT, SINGLE_TERMS_STEP_TEXT, SINGLE_TERMS_TEXT } from "../src/payments";
+import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT, SALES_SINGLE_TEXT, SALES_SERVICE_TEXT, SINGLE_TERMS_STEP_TEXT, SINGLE_TERMS_TEXT } from "../src/payments";
 import worker from "../src/index";
 import { reconcilePhoneKeva, syncKevas } from "../src/keva-sync";
 import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
@@ -598,6 +598,7 @@ describe("five-package phone sales", () => {
     env.SALES_SINGLE_AUDIO_VERSION = "draft1";
     expect(await respond()).toEqual(menu);
     expect(await respond({ isaacSinglePackage: "8" })).toEqual(menu);
+    expect(await respond({ isaacSinglePackage: "8", isaacSalesService: "3" })).toEqual(menu);
     expect(await respond({ isaacPackage: "9" })).toMatchObject({ goTo: "/4" });
     expect((await respond({ isaacPackage: "1" })).files).toEqual([{ text: TERMS_STEP_TEXT }]);
     expect((await respond({ isaacPayConfirm: "2" })).files).toEqual([{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }]);
@@ -623,13 +624,52 @@ describe("five-package phone sales", () => {
     expect((await store.orderForCall("phone-hk"))?.package_id).toBe(ids[Number(choice) - 1]);
   });
 
-  it.each(["/", "/99"])("hands single-menu cancellation to service under base %s without creating an order", async base => {
+  it("uses Isaac's exact first-menu and service-menu drafts", () => {
+    expect(SALES_SINGLE_TEXT).toBe("רוצים לדעת אנגלית?! מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. להנהלת חשבונות ושירות לקוחות הקישו 8. לחזרה הקישו 0.");
+    expect(SALES_SERVICE_TEXT).toBe("להנהלת חשבונות הקישו 1. לבירור חשבון הקישו 2. לביטול מנוי הקישו 3. לחזרה הקישו 0.");
+  });
+
+  it.each(["", "9"])("opens or repeats the service submenu on selection %s without creating an order", async selection => {
     env.SALES_MENU_MODE = "single";
-    expect(await paymentResponse(store, env, base, { PBXcallId: "phone-hk", isaacSinglePackage: "8" }, "c1", ids)).toEqual({
-      type: "goTo", goTo: base === "/" ? "/4" : "/99/4", removeParams: ["isaacPackage", "isaacSales", "isaacSinglePackage"],
+    expect(await respond({ isaacSinglePackage: "8", isaacSalesService: selection })).toMatchObject({
+      name: "isaacSalesService", enabledKeys: "0,1,2,3", files: [{ text: SALES_SERVICE_TEXT }],
     });
     expect(await store.orderForCall("phone-hk")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["/", "/99"].flatMap(base => ["1", "2", "3"].map(key => [base, key])))("hands service submenu base %s key %s to service without creating an order", async (base, key) => {
+    env.SALES_MENU_MODE = "single";
+    expect(await paymentResponse(store, env, base, { PBXcallId: "phone-hk", isaacSinglePackage: "8", isaacSalesService: key }, "c1", ids)).toEqual({
+      type: "goTo", goTo: base === "/" ? "/4" : "/99/4", removeParams: ["isaacPackage", "isaacSales", "isaacSinglePackage", "isaacSalesService"],
+    });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "ERROR"])("returns from the service submenu on %s and clears its chained selections", async key => {
+    env.SALES_MENU_MODE = "single";
+    const response = await respond({ isaacSinglePackage: "8", isaacSalesService: key });
+    expect(response).toMatchObject({ name: "isaacSinglePackage", files: [{ text: SALES_SINGLE_TEXT }], removeParams: ["isaacSinglePackage", "isaacSalesService"] });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect((await respond({ isaacSinglePackage: "1" })).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
+  });
+
+  it("uses independent versioned service audio only when both settings exist", async () => {
+    env.SALES_MENU_MODE = "single";
+    env.SALES_SINGLE_AUDIO_URL = "https://example.test/start.mp3";
+    env.SALES_SINGLE_AUDIO_VERSION = "start1";
+    const service = () => respond({ isaacSinglePackage: "8" });
+    expect((await service()).files).toEqual([{ text: SALES_SERVICE_TEXT }]);
+    env.SALES_SERVICE_AUDIO_URL = "https://example.test/service.mp3";
+    expect((await service()).files).toEqual([{ text: SALES_SERVICE_TEXT }]);
+    delete env.SALES_SERVICE_AUDIO_URL;
+    env.SALES_SERVICE_AUDIO_VERSION = "service1";
+    expect((await service()).files).toEqual([{ text: SALES_SERVICE_TEXT }]);
+    env.SALES_SERVICE_AUDIO_URL = "https://example.test/service.mp3";
+    expect((await service()).files).toEqual([{ fileLink: "https://example.test/service.mp3", fileName: "sales-service-service1" }]);
+    expect((await respond()).files).toEqual([{ fileLink: "https://example.test/start.mp3", fileName: "sales-single-start1" }]);
+    expect((await respond({ isaacSinglePackage: "8", isaacSalesService: "0" })).files).toEqual([{ fileLink: "https://example.test/start.mp3", fileName: "sales-single-start1" }]);
   });
 
   it("keeps service reachable through full-menu 9 under the configured base", async () => {
@@ -694,6 +734,7 @@ describe("five-package phone sales", () => {
     expect(SINGLE_TERMS_STEP_TEXT.length).toBeLessThan(TERMS_STEP_TEXT.length);
     expect(SINGLE_TERMS_TEXT.length).toBeLessThan(TERMS_TEXT.length);
     expect(SINGLE_TERMS_TEXT).not.toContain("דקות");
+    expect(SINGLE_TERMS_TEXT).toContain("בתשלום אחד או בתשלומים. לכל מנוי מכסת שימוש חודשית הוגנת. התשלום");
     expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 59 });
   });
 
