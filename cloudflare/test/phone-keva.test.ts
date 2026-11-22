@@ -153,6 +153,22 @@ describe("bound monthly sales offer billing", () => {
     db.sql.prepare("UPDATE standing_orders SET state='past_due'").run();
     expect(await b.reserveCall("c1", "isaac-basic", "held", 1200)).toMatchObject({ seconds: 0 });
   });
+  it.each([true, false])("allows separate top-up receipts after three offer practices with policy enabled=%s", async enabled => {
+    await activateOffer();
+    await b.save("policies", { product: "school", enabled }, "isaac-basic");
+    for (let i = 0; i < 3; i++) {
+      await b.reserveCall("c1", "isaac-basic", "short-" + i, 1200);
+      await b.settleCall("short-" + i, 15);
+    }
+    db.sql.prepare(`INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at)
+      VALUES ('topup','c1','school-topup','school','topup',29,0,30,'2026-12-22T13:00:00Z',?)`).run(new Date().toISOString());
+    expect(await b.reserveCall("c1", "isaac-basic", "topup-call", 600)).toMatchObject({ seconds: 600, mode: "paid" });
+    expect(db.sql.prepare("SELECT receipt_id FROM usage_allocations WHERE call_id='topup-call'").get()).toMatchObject({ receipt_id: "topup" });
+    expect(await b.reserveCall("c1", "isaac-basic", "overlap", 600)).toMatchObject({ seconds: 0, mode: "busy" });
+    await b.settleCall("topup-call", 600);
+    db.sql.prepare("UPDATE sales_receipts SET expires_at='2026-11-01T00:00:00Z' WHERE id='topup'").run();
+    expect(await b.reserveCall("c1", "isaac-basic", "expired-topup", 600)).toMatchObject({ seconds: 0, mode: "blocked" });
+  });
   it("renews at 59 into normal Start minutes and removes the three-practice cap", async () => {
     const module = await activateOffer();
     await b.save("policies", { product: "school", enabled: true, opening_seconds: 0, free_calls_month: 0, basic_enabled: false }, "isaac-basic");

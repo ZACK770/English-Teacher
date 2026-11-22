@@ -281,6 +281,7 @@ export class BusinessStore {
     const busy = { seconds: 0, mode: "busy" };
     const blocked = { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
     const paymentFailed = { seconds: 0, mode: "payment_failed", extension: QUOTA_EXTENSION_PATH };
+    let cappedOfferReceipt: string | undefined;
     if (policy.product === "school") {
       const offer = await this.db.prepare(`SELECT r.id, ${receiptOnHold} AS held FROM sales_receipts r
         JOIN subscriptions s ON s.id=r.subscription_id
@@ -298,10 +299,10 @@ export class BusinessStore {
           AND NOT EXISTS (${activeSession}) RETURNING reserved_seconds`)
           .bind(callId, customerId, offer.id, maxSeconds, now, offer.id, customerId, cutoff).first<{ reserved_seconds: number }>();
         if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
-        return await this.db.prepare(activeSession).bind(customerId, cutoff).first() ? busy : blocked;
+        cappedOfferReceipt = offer.id;
       }
     }
-    if (!policy.enabled) {
+    if (!policy.enabled && !cappedOfferReceipt) {
       if ((teacher || policyRow) && policy.product === "school" && await this.schoolPaymentBlocked(customerId)) return paymentFailed;
       if ((teacher || policyRow) && policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
       const allocation = await this.db.prepare(`
@@ -314,6 +315,7 @@ export class BusinessStore {
     }
     const receipts = await this.usableReceipts(customerId, policy.product, now);
     for (const receipt of receipts) {
+      if (receipt.id === cappedOfferReceipt) continue;
       const pkg = PackageSchema.safeParse(await this.record("packages", receipt.package_id));
       const cap = pkg.success ? Math.min(maxSeconds, pkg.data.max_call_minutes * 60) : maxSeconds;
       const allocation = await this.db.prepare(`
@@ -334,6 +336,7 @@ export class BusinessStore {
       `).bind(callId, customerId, cap, now, receipt.id, now, now, customerId, customerId, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
     }
+    if (cappedOfferReceipt) return await this.db.prepare(activeSession).bind(customerId, cutoff).first() ? busy : blocked;
     if (policy.product === "school" && await this.schoolPaymentFailed(customerId)) return paymentFailed;
     if (policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
     const anonymous = customerId.startsWith("anonymous-");
