@@ -114,6 +114,17 @@ describe("existing Nedarim subscribers", () => {
     expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
   });
 
+  it("records a refusal newer than a recovered charge even if both arrive later", async () => {
+    providerKeva(paidKeva, paidKevaDetail);
+    expect((await syncPaidKeva()).status).toBe(200);
+    vi.setSystemTime(new Date("2027-01-22T13:00:00Z"));
+    const store = new PaymentStore(b), common = { MosadNumber: "7019554", KevaId: "12345" };
+    expect(await store.settle({ ...common, TransactionId: "903", Confirmation: "10", Amount: "49", Currency: "1", TransactionTime: "19/12/2026 12:00:00" }, "7019554"))
+      .toMatchObject({ paid: true });
+    expect(await store.refusal({ ...common, Status: "Error", ErrorDate: "19/01/2027 12:00" }, "7019554")).toEqual({ recorded: true });
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
+  });
+
   it.each([
     ["declined", { ErrorText: "Card declined" }, {}],
     ["never paid", { Success: "0" }, {}],

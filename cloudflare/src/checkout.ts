@@ -210,9 +210,10 @@ export class CheckoutStore {
     const expected = await subscriptions.renewalAmount(sub.entitlement_id);
     const amount = agorot(data.Amount);
     const now = nowIso();
+    const chargedAt = providerDay(String(data.TransactionTime ?? "").trim().split(/\s/)[0]) || now;
     const renewed = await subscriptions.recordRenewal(sub.entitlement_id, now, reference, { amountAgorot: agorot(data.Amount), vatRate: (await this.business.economics()).vat_rate, statements: [
       ...(amount === expected ? [] : [this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("subscription_amount_difference:" + reference)).slice(0, 32), sub.first_order_id, "subscription_amount_difference", `הפרש גבייה במנוי: נדרש ${expected / 100} ₪, חויב ${amount / 100} ₪, יתרה להסדרה ${(expected - amount) / 100} ₪`, now)]),
-      this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(now, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
+      this.db.prepare("UPDATE standing_orders SET state=CASE WHEN state='cancelled' THEN state ELSE 'active' END,last_charge_at=?,next_date=?,updated_at=? WHERE id=?").bind(chargedAt, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:keva_charge", sub.id, now),
     ] });
     const receipt = await this.db.prepare("SELECT r.id FROM subscription_renewals n JOIN sales_receipts r ON r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=?").bind(reference).first<{ id: string }>();
