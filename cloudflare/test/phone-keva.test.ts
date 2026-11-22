@@ -13,7 +13,7 @@ import { TutorSession } from "../src/session";
 import { controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { salesOfferResponse } from "../src/sales-offer";
-import { SALES_OFFER_PACKAGE } from "../src/sales-offer-product";
+import { SALES_OFFER_PACKAGE, SALES_OFFER_TERMS_TEXT } from "../src/sales-offer-product";
 import { CheckoutStore } from "../src/checkout";
 
 class SqlD1 {
@@ -110,31 +110,35 @@ beforeEach(async () => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
 
-async function issueOffer() {
+async function selectOffer() {
   env.SALES_OFFER_MODE = "allowlist";
   env.SALES_OFFER_ALLOWLIST = "+972500000001";
   await b.save("sales-offers", { customer_id: "c1", phone: "0500000001", call_id: "phone-hk", status: "answered", expires_at: "2026-11-22T21:59:59Z" }, "offer");
   await b.saveContext("phone-hk", { offer_call: "offer" });
-  expect(await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1")).toMatchObject({ name: "isaacPayConfirm" });
+  return salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1");
+}
+async function issueOffer() {
+  expect(await selectOffer())
+    .toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1", files: [{ text: SALES_OFFER_TERMS_TEXT }] });
   return respond({ isaacPayConfirm: "1" });
 }
 async function activateOffer() {
   const module = await issueOffer();
-  immediateProvider(String(module.category), "59", { charge: { Status: "OK", TransactionId: "987654", Confirmation: "0012345", Amount: "10", Currency: "1", KevaId: "54321" } });
+  immediateProvider(String(module.category), "59", { charge: { Status: "OK", TransactionId: "987654", Confirmation: "0012345", Amount: "20", Currency: "1", KevaId: "54321" } });
   await respond({ isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" });
   expect((await store.orderForCall("phone-hk"))!.state).toBe("paid");
   return module;
 }
 
 describe("bound monthly sales offer billing", () => {
-  it("creates a 59 monthly keva, charges 10 now, and grants only the first calendar month", async () => {
+  it("creates a 59 monthly keva, charges 20 now, and grants only the first calendar month", async () => {
     const module = await activateOffer();
     expect(module).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", sum: 59 });
-    expect(Object.fromEntries(providerForms().find(f => f.get("Action") === "TashlumBodedNew")!)).toMatchObject({ Amount: "10", KevaId: "54321" });
-    expect(await store.orderForCall("phone-hk")).toMatchObject({ amount_agorot: 1000, package_id: SALES_OFFER_PACKAGE });
+    expect(Object.fromEntries(providerForms().find(f => f.get("Action") === "TashlumBodedNew")!)).toMatchObject({ Amount: "20", KevaId: "54321" });
+    expect(await store.orderForCall("phone-hk")).toMatchObject({ amount_agorot: 2000, package_id: SALES_OFFER_PACKAGE });
     expect(db.sql.prepare("SELECT monthly_agorot,package_id FROM standing_orders").get()).toMatchObject({ monthly_agorot: 5900, package_id: "school-step" });
     expect(db.sql.prepare("SELECT price_agorot,monthly_minutes,plan_id FROM subscriptions").get()).toMatchObject({ price_agorot: 5900, monthly_minutes: 60, plan_id: "school-step" });
-    expect(db.sql.prepare("SELECT amount_ils,minutes,package_id,expires_at FROM sales_receipts").get()).toMatchObject({ amount_ils: 10, minutes: 30, package_id: SALES_OFFER_PACKAGE, expires_at: "2026-12-22T13:00:00.000+00:00" });
+    expect(db.sql.prepare("SELECT amount_ils,minutes,package_id,expires_at FROM sales_receipts").get()).toMatchObject({ amount_ils: 20, minutes: 30, package_id: SALES_OFFER_PACKAGE, expires_at: "2026-12-22T13:00:00.000+00:00" });
   });
   it.each([600, 15])("caps the first month at three practices, even with %s seconds used per call", async billed => {
     await activateOffer();
@@ -181,15 +185,15 @@ describe("bound monthly sales offer billing", () => {
       await b.settleCall("renewed-" + i, 600);
     }
   });
-  it("recovers a verified first 10 charge from history without charging again", async () => {
+  it("recovers a verified first 20 charge from history without charging again", async () => {
     const module = await issueOffer();
     provider(String(module.category), "59");
     detail.CreatedDate = "22/11/2026";
-    detail.HistoryData[0].Amount = "10";
+    detail.HistoryData[0].Amount = "20";
     await respond({ isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" });
     expect((await store.orderForCall("phone-hk"))!.state).toBe("paid");
     expect(providerForms().some(f => f.get("Action") === "TashlumBodedNew")).toBe(false);
-    expect(db.sql.prepare("SELECT minutes,amount_ils FROM sales_receipts").get()).toMatchObject({ minutes: 30, amount_ils: 10 });
+    expect(db.sql.prepare("SELECT minutes,amount_ils FROM sales_receipts").get()).toMatchObject({ minutes: 30, amount_ils: 20 });
   });
   it("rejects public, unbound, expired and mode-off purchases", async () => {
     await expect(store.create("other", "c1", SALES_OFFER_PACKAGE)).rejects.toThrow("bound call");
@@ -202,6 +206,27 @@ describe("bound monthly sales offer billing", () => {
     await expect(store.create("phone-hk", "c1", SALES_OFFER_PACKAGE, false, env)).rejects.toThrow("bound call");
     const webEnv = { ...env, NEDARIM_API_VALID: "test" };
     await expect(new CheckoutStore(b).start(webEnv, "c1", SALES_OFFER_PACKAGE)).rejects.toThrow("לא פתוח");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["full", "single"])("requires the exact offer renewal disclosure before card in %s mode", async mode => {
+    env.SALES_MENU_MODE = mode;
+    env.SALES_OFFER_MODE = "on";
+    await b.save("sales-offers", { customer_id: "c1", phone: "0500000001", call_id: "phone-hk", status: "answered", expires_at: "2026-11-22T21:59:59Z" }, "offer");
+    await b.saveContext("phone-hk", { offer_call: "offer" });
+    const terms = await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1");
+    const text = "שימו לב: החודש הראשון בעשרים שקלים כולל שלושה אימונים של עשר דקות. בסוף החודש המנוי ממשיך אוטומטית כמנוי סטארט, בחמישים ותשעה שקלים לחודש, עד שתבטלו. אפשר לבטל בכל רגע בשלוחה 3, בהנהלת חשבונות ושירות לקוחות. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.";
+    expect(terms).toMatchObject({ type: "simpleMenu", name: "isaacPayConfirm", enabledKeys: "0,1", files: [{ text }] });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("selected");
+    for (const key of [undefined, "2", "9"]) {
+      expect(await respond(key ? { isaacPayConfirm: key } : {})).toMatchObject({ name: "isaacPayConfirm", files: [{ text }] });
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 59, paymentsMode: "kevaMonthly" });
+  });
+  it.each(["0", "ERROR"])("backs out of offer renewal terms on %s without issuing a card request", async key => {
+    await selectOffer();
+    expect(await respond({ isaacPayConfirm: key })).toMatchObject({ type: "goTo" });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
     expect(fetch).not.toHaveBeenCalled();
   });
   it("hides the offer from public and regular phone menus, including fallback catalogues", async () => {

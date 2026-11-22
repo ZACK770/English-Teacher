@@ -10,7 +10,7 @@ import { ProgressStore } from "../src/progress";
 import { TutorSession } from "../src/session";
 import { PaymentStore } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
-import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers } from "../src/sales-offer";
+import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT } from "../src/sales-offer";
 
 let sql: DatabaseSync, b: BusinessStore, env: Env;
 const now = new Date("2026-06-15T14:00:00Z");
@@ -56,6 +56,89 @@ async function tutorCalls(customerId = "learner", count = 3, seconds = 200, role
       VALUES (?,?,?,?,?,1,1,'[]')`).run(customerId, callId, "2026-01-01T12:00:00Z", "2026-01-01T12:05:00Z", seconds);
   }
 }
+
+function freeUsage(product: string, billed: number | null, reserved = billed ?? 300, date = now.toISOString()) {
+  const id = "free-" + sql.prepare("SELECT COUNT(*) AS n FROM usage_allocations").get()!.n;
+  sql.prepare("INSERT INTO usage_allocations(call_id,customer_id,product,reserved_seconds,billed_seconds,created_at) VALUES (?,'learner',?,?,?,?)")
+    .run(id, product, reserved, billed, date);
+}
+
+describe("quota-exhausted sales offer audience", () => {
+  beforeEach(() => {
+    env.SALES_OFFER_AUDIENCE = "quota_exhausted";
+    sql.prepare("DELETE FROM console_records WHERE kind IN ('ivr-events','policies')").run();
+  });
+  it("matches accessSummary for the default opening and monthly free calls, without sales entry", async () => {
+    freeUsage("school-opening", 420);
+    freeUsage("school", 20);
+    expect(await b.accessSummary("learner", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 1 });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    freeUsage("school", 30);
+    expect(await b.accessSummary("learner", [])).toMatchObject({ opening_minutes: 0, free_calls_left: 0, limited: true });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT next_attempt_at FROM callback_requests").get()).toMatchObject({ next_attempt_at: "2026-06-16T14:00:00.000Z" });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it("counts lifetime trial seconds, including reserved seconds, but never paid or gift allocations", async () => {
+    await b.save("policies", { enabled: true, trial_total_seconds: 420, opening_seconds: 240, free_calls_month: 10 }, "trial");
+    freeUsage("school-opening", 239, 240, "2026-05-01T12:00:00Z");
+    freeUsage("school", 180);
+    freeUsage("school-offer-gift", 240);
+    sql.prepare("INSERT INTO usage_allocations VALUES ('paid','learner','school','receipt',600,600,?)").run(now.toISOString());
+    await selectSalesOffers(env);
+    expect(await b.accessSummary("learner", [])).toMatchObject({ free_calls_left: 1 });
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    freeUsage("school", null, 1);
+    expect(await b.accessSummary("learner", [])).toMatchObject({ free_calls_left: 0, opening_minutes: 0 });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it("retains opening retries for short calls and monthly free-call resets", async () => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 1 }, "trial");
+    freeUsage("school-opening", 59);
+    freeUsage("school", 300);
+    await selectSalesOffers(env);
+    expect(await b.accessSummary("learner", [])).toMatchObject({ opening_minutes: 4, free_calls_left: 0 });
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    freeUsage("school-opening", 60);
+    sql.prepare("UPDATE usage_allocations SET created_at='2026-05-01T12:00:00Z' WHERE product='school'").run();
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    freeUsage("school", 0);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    freeUsage("school", null, 300);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(1);
+  });
+  it("does not treat an unlimited policy or a caller with no usage as quota exhaustion", async () => {
+    await selectSalesOffers(env);
+    await b.save("policies", { enabled: false, opening_seconds: 0, free_calls_month: 0 }, "disabled");
+    freeUsage("school-opening", 420);
+    freeUsage("school", 300);
+    freeUsage("school", 300);
+    expect(await b.accessSummary("learner", [])).toMatchObject({ limited: false });
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("retains the mode gate, buyer exclusions and dial-time recheck", async () => {
+    freeUsage("school-opening", 420);
+    freeUsage("school", 300);
+    freeUsage("school", 300);
+    env.SALES_OFFER_MODE = "off";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+    env.SALES_OFFER_MODE = "on";
+    await selectSalesOffers(env);
+    await new SubscriptionStore(b.db).create("learner", "school-step", now.toISOString());
+    vi.setSystemTime(new Date("2026-06-16T14:00:00Z"));
+    await dispatchCallbacks(env);
+    expect(sql.prepare("SELECT status FROM callback_requests").get()).toMatchObject({ status: "failed" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
 
 describe("high-interest sales offer audience", () => {
   beforeEach(() => {
@@ -231,6 +314,9 @@ describe("explicitly gated test offers", () => {
 });
 
 describe("sales offers", () => {
+  it("uses the exact twenty-shekel menu without moving renewal disclosure into the menu", () => {
+    expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.");
+  });
   it("fails closed and normalizes the allowlist", async () => {
     env.SALES_OFFER_MODE = "off";
     expect(salesOfferAllowed(env, "0501111111")).toBe(false);

@@ -6,7 +6,7 @@ import { providerTime } from "./nedarim";
 import { reconcilePhoneKeva } from "./keva-sync";
 import { claimPhoneKevaFirstCharge, completePhoneKevaFirstCharge } from "./phone-keva-charge";
 import { visiblePhone } from "./phone";
-import { boundSalesOffer, isSalesOfferPackage, phoneFirstPrice } from "./sales-offer-product";
+import { boundSalesOffer, isSalesOfferPackage, phoneFirstPrice, SALES_OFFER_TERMS_TEXT } from "./sales-offer-product";
 import { subscriptionCancellationResponse } from "./subscription-cancel";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { customerPackageName } from "../../src/paymentCopy";
@@ -432,6 +432,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
         noFailExit: "no", noSuccess: "yes", noConfirmation: "yes",
       };
     }
+    if (isSalesOfferPackage(order.package_id)) return selectionMenu("isaacPayConfirm", SALES_OFFER_TERMS_TEXT, "0,1");
     const stepText = single ? SINGLE_TERMS_STEP_TEXT : TERMS_STEP_TEXT;
     const terms = selectionMenu("isaacPayConfirm", stepText, "0,1,2");
     if (params.isaacPayConfirm === "2") terms.files = [{ text: single ? SINGLE_TERMS_TEXT : TERMS_TEXT }, { text: stepText }];

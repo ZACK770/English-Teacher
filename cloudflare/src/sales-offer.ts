@@ -2,9 +2,10 @@ import { BusinessStore } from "./business";
 import { fromLocal, localDate, nextCallingSlot, normalizePhone } from "./callbacks";
 import { type Env, HttpError, nowIso } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
+import { SCHOOL_FREE_POLICY } from "../../src/pricing";
 
 export const SALES_EXTENSION_PATH = "/3";
-export const SALES_OFFER_TEXT = "רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרה שקלים בלבד. כן, עשרה שקלים. אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. אחרי החודש הראשון המנוי ממשיך אוטומטית כמנוי סטארט, ב־59 שקלים לחודש, עד שתבטלו. אפשר לבטל בכל רגע בשלוחת המנויים. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.";
+export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.";
 export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call from SpeakCall after the learner’s trial. Speak Hebrew for guidance. Greet warmly by name if known: "שלום, כאן ספיקול, חזרנו לתרגול קצר". Do a short English practice. Close politely and warmly, not abruptly, and say a short special message follows. Never take card details or quote prices.';
 
 export function salesOfferAllowed(env: Env, phone: string): boolean {
@@ -33,6 +34,34 @@ const buyerSql = (customer: string, at: string) => `(
       AND (o.entitlement_id=r.subscription_id OR (o.entitlement_id IS NULL AND o.first_order_id IN (SELECT id FROM payment_orders WHERE receipt_id=r.id))))
     AND r.minutes*60-COALESCE((SELECT SUM(COALESCE(billed_seconds,reserved_seconds)) FROM usage_allocations WHERE receipt_id=r.id),0)>=1)
 )`;
+
+export const QUOTA_EXHAUSTED_CANDIDATES_SQL = `WITH
+  school_policies AS (
+    SELECT body,updated_at FROM console_records
+    WHERE kind='policies' AND COALESCE(json_extract(body,'$.product'),'school')='school'
+  ),
+  policy AS (
+    SELECT COALESCE(json_extract(body,'$.trial_total_seconds'),0) AS trial_seconds,
+      COALESCE(json_extract(body,'$.free_calls_month'),0) AS free_calls,
+      COALESCE(json_extract(body,'$.opening_seconds'),0) AS opening_seconds
+    FROM (SELECT body FROM school_policies WHERE json_extract(body,'$.enabled')=1 ORDER BY updated_at DESC LIMIT 1)
+    UNION ALL SELECT 0,${SCHOOL_FREE_POLICY.free_calls_month},${SCHOOL_FREE_POLICY.opening_seconds}
+      WHERE NOT EXISTS(SELECT 1 FROM school_policies)
+  ),
+  trial_usage AS (
+    SELECT customer_id,
+      SUM(COALESCE(billed_seconds,reserved_seconds)) AS trial_seconds,
+      SUM(CASE WHEN product='school' AND created_at LIKE substr(?1,1,7)||'%'
+        AND (billed_seconds IS NULL OR billed_seconds>0) THEN 1 ELSE 0 END) AS monthly_calls,
+      MAX(CASE WHEN product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60) THEN 1 ELSE 0 END) AS opening_used
+    FROM usage_allocations
+    WHERE (product='school-opening' OR (product='school' AND receipt_id IS NULL))
+      AND (billed_seconds IS NULL OR billed_seconds>0)
+    GROUP BY customer_id
+  )
+  SELECT u.customer_id,?1 AS dropped_at FROM trial_usage u CROSS JOIN policy p
+  WHERE (p.trial_seconds>0 AND u.trial_seconds>=p.trial_seconds)
+    OR (p.trial_seconds=0 AND u.monthly_calls>=p.free_calls AND (p.opening_seconds=0 OR u.opening_used=1))`;
 
 export function offerSchedule(drop: Date) {
   const local = localDate(drop);
@@ -85,13 +114,14 @@ export async function queueTestSalesOffer(env: Env, rawPhone: string, at: Date) 
 export async function selectSalesOffers(env: Env, now = new Date()) {
   if (!["on", "allowlist"].includes(env.SALES_OFFER_MODE ?? "")) return;
   const audience = env.SALES_OFFER_AUDIENCE ?? "dropoffs";
-  if (!["dropoffs", "high_interest"].includes(audience)) return;
+  if (!["dropoffs", "high_interest", "quota_exhausted"].includes(audience)) return;
   const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 3);
   const minMinutes = Number(env.SALES_OFFER_MIN_TUTOR_MINUTES ?? 0);
   if (audience === "high_interest" && (env.SALES_OFFER_MIN_TUTOR_CALLS?.trim() === "" || env.SALES_OFFER_MIN_TUTOR_MINUTES?.trim() === "" ||
     !Number.isInteger(minCalls) || minCalls < 0 || !Number.isFinite(minMinutes) || minMinutes < 0)) return;
   const b = new BusinessStore(env.DB);
-  const candidates = audience === "high_interest" ? `SELECT COALESCE(c.customer_id,s.student_id) AS customer_id, ?1 AS dropped_at
+  const candidates = audience === "quota_exhausted" ? QUOTA_EXHAUSTED_CANDIDATES_SQL
+    : audience === "high_interest" ? `SELECT COALESCE(c.customer_id,s.student_id) AS customer_id, ?1 AS dropped_at
     FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id
     LEFT JOIN prompt_snapshots p ON p.call_id=s.call_id
     JOIN bots b ON b.id=COALESCE(c.bot_id,p.profile_id) AND b.role='teacher'
