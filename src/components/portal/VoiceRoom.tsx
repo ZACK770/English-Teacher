@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
 import { PAYMENT_FAILED_MESSAGE } from "../../paymentCopy";
 import { apiPrefix, PortalError, portalRequest } from "./portalApi";
+import { RecordingNotice } from "./RecordingNotice";
 
 const connecting = "רגע, מחברים את השיחה…";
 const connectionError = "השיחה לא התחברה. אפשר לנסות שוב או להתקשר לקו.";
@@ -235,8 +236,9 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
   }, [connected]);
   const toggleMic = () => { streamRef.current?.getAudioTracks().forEach(t => { t.enabled = muted; }); setMuted(!muted); };
   const exit = <button className="sk-primary" onClick={() => closeRef.current()}><PhoneOff size={17} />{connected ? "נסיים כאן" : "חזרה לאזור האישי"}</button>;
-  if (needsGesture) return <div className="sk-call"><button className="sk-primary" onClick={() => startRef.current()}>התחל לדבר</button>{exit}</div>;
+  if (needsGesture) return <div className="sk-call"><RecordingNotice /><button className="sk-primary" onClick={() => startRef.current()}>התחל לדבר</button>{exit}</div>;
   return <div className="sk-call">
+    <RecordingNotice />
     <div className={"sk-voice-orb " + (connected ? "is-speaking" : "")}><span /><span /><span /><Mic size={38} strokeWidth={1.1} /></div>
     <p className="sk-eyebrow">שיחה עם {name}</p><h2>{error ? "רגע קטן." : "פשוט לדבר."}</h2>
     <p role={error ? "alert" : "status"}>{error || state}</p>

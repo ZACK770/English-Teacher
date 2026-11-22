@@ -1,5 +1,6 @@
 import { type Env, HttpError, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
+import { drainRecordingDeletions } from "./recordings";
 
 type Row = Record<string, any>;
 type Removal = { table: string; where: string; args: unknown[] };
@@ -103,6 +104,8 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
       .bind(JSON.stringify(removals.flatMap(r => r.args)), actor.username, id, new Date().toISOString()),
     ...detach,
     ...removals.map(r => env.DB.prepare(`DELETE FROM ${r.table} WHERE ${r.where}`).bind(...r.args)),
+    env.DB.prepare("INSERT OR IGNORE INTO recording_deletions(r2_key,created_at) SELECT value,? FROM json_each(?)")
+      .bind(new Date().toISOString(), JSON.stringify(recordings.map(r => r.r2_key))),
   ]);
   let r2Objects = 0;
   if (voicemails.length) {
@@ -113,11 +116,10 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
     } catch { console.warn(JSON.stringify({ event: "crm_reset_audio_cleanup_failed", customer_id: id, voicemail_ids: voicemails.map(v => v.id) })); }
   }
   if (recordings.length) {
-    try {
-      if (!env.VOICEMAIL_AUDIO) throw new Error("R2 unavailable");
-      await env.VOICEMAIL_AUDIO.delete(recordings.map(r => r.r2_key));
-      r2Objects += recordings.length;
-    } catch { console.warn(JSON.stringify({ event: "crm_reset_recording_cleanup_failed", customer_id: id, recordings: recordings.length })); }
+    r2Objects += await drainRecordingDeletions(env, recordings.map(r => r.r2_key)).catch(() => {
+      console.warn("Recording deletion deferred");
+      return 0;
+    });
   }
   const deleted: Record<string, number> = {};
   removals.forEach((r, i) => { deleted[r.table] = (deleted[r.table] || 0) + Number(result[1 + detach.length + i].meta.changes || 0); });

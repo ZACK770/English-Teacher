@@ -9,6 +9,7 @@ import { BusinessStore } from "../src/business";
 import { ProgressStore } from "../src/progress";
 import { startAdEntry } from "../src/ad-entry";
 import { sha256Hex } from "../src/env";
+import { cleanupRecordings } from "../src/recordings";
 
 let sql: DatabaseSync, env: Env;
 beforeEach(() => {
@@ -282,6 +283,55 @@ describe("CRM customer reset", () => {
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toMatchObject({ n: 1 });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
     expect(deleteAudio).not.toHaveBeenCalled();
+  });
+  it("persists recording deletion after a failed reset cleanup and cron retries without playback access", async () => {
+    customer(); session();
+    sql.exec("UPDATE sessions SET started_at='2000-01-01',ended_at='2000-01-01'; UPDATE call_customers SET created_at='2000-01-01'");
+    insert("call_recordings", { call_id: "call1", profile_id: "teacher1", customer_id: "person1", r2_key: "recordings/call1.ulaw", bytes: 8000, duration_ms: 1000, created_at: now });
+    const deleteAudio = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
+    env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await reset()).status).toBe(200);
+    expect(sql.prepare("SELECT * FROM call_recordings").all()).toHaveLength(0);
+    expect(sql.prepare("SELECT r2_key FROM recording_deletions").all()).toEqual([{ r2_key: "recordings/call1.ulaw" }]);
+    expect((await request("recordings/call1/audio")).status).toBe(404);
+    await cleanupRecordings(env);
+    expect(deleteAudio).toHaveBeenCalledTimes(2);
+    expect(sql.prepare("SELECT * FROM recording_deletions").all()).toHaveLength(0);
+  });
+  it("rolls back queued recording deletions with a failed reset transaction", async () => {
+    customer();
+    insert("call_recordings", { call_id: "old", profile_id: "teacher1", customer_id: "person1", r2_key: "recordings/old.ulaw", bytes: 8000, duration_ms: 1000, created_at: now });
+    sql.exec("CREATE TRIGGER prevent_queue BEFORE INSERT ON recording_deletions BEGIN SELECT RAISE(ABORT,'queue failure'); END");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await reset()).status).toBe(500);
+    expect(sql.prepare("SELECT * FROM call_recordings").all()).toHaveLength(1);
+    expect(sql.prepare("SELECT * FROM customers").all()).toHaveLength(1);
+  });
+  it("retention atomically revokes expired recordings and retains failed R2 deletions for cron retry", async () => {
+    insert("call_recordings", { call_id: "old", profile_id: "t", customer_id: "c", r2_key: "recordings/old.ulaw", bytes: 8000, duration_ms: 1000, created_at: "2000-01-01" });
+    const deleteAudio = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
+    env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await cleanupRecordings(env);
+    expect(sql.prepare("SELECT * FROM call_recordings").all()).toHaveLength(0);
+    expect(sql.prepare("SELECT * FROM recording_deletions").all()).toHaveLength(1);
+    expect((await request("recordings/old/audio")).status).toBe(404);
+    await cleanupRecordings(env);
+    expect(deleteAudio).toHaveBeenCalledWith("recordings/old.ulaw");
+    expect(sql.prepare("SELECT * FROM recording_deletions").all()).toHaveLength(0);
+  });
+  it("retains reset deletion targets when R2 is not bound until a later cleanup", async () => {
+    customer();
+    insert("call_recordings", { call_id: "old", profile_id: "t", customer_id: "person1", r2_key: "recordings/old.ulaw", bytes: 8000, duration_ms: 1000, created_at: now });
+    expect((await reset()).status).toBe(200);
+    expect((await request("recordings/old/audio")).status).toBe(404);
+    expect(sql.prepare("SELECT * FROM recording_deletions").all()).toHaveLength(1);
+    const deleteAudio = vi.fn().mockResolvedValue(undefined);
+    env.VOICEMAIL_AUDIO = { delete: deleteAudio } as any;
+    await cleanupRecordings(env);
+    expect(deleteAudio).toHaveBeenCalledWith("recordings/old.ulaw");
+    expect(sql.prepare("SELECT * FROM recording_deletions").all()).toHaveLength(0);
   });
   it.each([true, false])("succeeds and logs best-effort audio cleanup failure with R2 binding %s", async binding => {
     customer();
