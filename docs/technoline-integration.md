@@ -161,6 +161,26 @@ between website and phone. Hidden callers remain isolated.
 
 ## Copy, audio and logs
 
+### Approved quota-end recording (/88)
+
+The quota menu uses Technoline file ID `1486276` from extension `14279` (`/88`),
+display name `quota-charon2-49b7392d8dbf`, instead of TTS or a console narration
+binding. This is Isaac's approved `Charon2.wav`, resampled to PCM16, 8 kHz mono
+(12.651 seconds, 202494 bytes); the provider stores uploads as 24 kbps / 8 kHz
+mono Opus. It was uploaded with `uploadFile`, `extensionId=14279`,
+`checkDuplicate=STOP`, and verified with `filesList` and `fileDownload`.
+The upload did not change extension settings or the PBX tree.
+
+The recording says: "וואו, היה כיף! שיעורי הניסיון הסתיימו. כדי להמשיך ללמוד אנגלית כל יום, אפשר להצטרף עכשיו למנוי חודשי. למעבר לתפריט המנויים ולתשלום באשראי, מקישים 1."
+
+Key 1 still transfers to `/3` (Isaac's native card extensions). Keys 0/2,
+the support target 4, repeat count, timeout and error handling remain unchanged.
+The separate payment-failure support notice is unchanged. No new PBX routing
+setting is required: `/88` already calls `/v1/technoline/ivr/quota` with POST/chain
+and body callback authentication. Merging/deploying the Worker is a separate
+step; explicit D1 `blocked_extension` overrides still take precedence and must
+be reviewed separately for cutover.
+
 Telephone call recording is enabled in production by `RECORD_PHONE_CALLS="1"`
 in `cloudflare/wrangler.toml`; without it phone calls are not recorded. Portal
 lessons are always recorded and show a Hebrew notice before starting.

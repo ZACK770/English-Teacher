@@ -519,10 +519,15 @@ describe("lesson callback scheduling", () => {
 it("serves root options, mode and bots routes and the quota learning key", async () => {
   const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" } as Env;
   const call = (route: string, path: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/${route}?key=cb&PBXcallId=journeys&PBXnum=0765673575&PBXextensionPath=${encodeURIComponent(path)}&PBXphone=0500000001${extra}`), pbxEnv, settings(pbxEnv), route);
-  expect(await call("quota", QUOTA_EXTENSION_PATH)).toMatchObject({ type: "simpleMenu", enabledKeys: "0,1,2", files: [{ text: expect.stringContaining("ללמידה הקישו 2") }] });
+  expect(await call("quota", QUOTA_EXTENSION_PATH)).toMatchObject({ type: "simpleMenu", name: "isaacQuota", enabledKeys: "0,1,2",
+    times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ fileId: "1486276", extensionId: "14279" }] });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=1")).toMatchObject({ goTo: "/3" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=0")).toMatchObject({ goTo: "/" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=4")).toMatchObject({ goTo: "/4" });
   expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=2")).toMatchObject({ goTo: "/1" });
   expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=ERROR")).toEqual({ type: "hangup" });
-  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=7")).toMatchObject({ type: "simpleMenu" });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&isaacQuota=7")).toMatchObject({ type: "simpleMenu", files: [{ fileId: "1486276", extensionId: "14279" }] });
+  expect(await call("quota", QUOTA_EXTENSION_PATH, "&PBXcallStatus=HANGUP")).toEqual({ type: "hangup" });
   expect(await call("options", "/2", "&isaacOptions=1")).toMatchObject({ goTo: "/2/1" });
   expect(await call("options", "/2", "&isaacOptions=2")).toMatchObject({ goTo: "/2/2" });
   expect(await call("mode", "/2/2")).toMatchObject({ enabledKeys: "0,1,2" });

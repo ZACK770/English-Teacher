@@ -22,7 +22,7 @@ export const IVRCopySchema = z.object({
   sales: text("לחבילות ותשלום הקישו 1. לשירות לקוחות הקישו 4. לחזרה הקישו 0."),
   service: text("השאירו הודעה לאחר הצליל. לסיום הקישו סולמית."),
   thanks: text("הודעתכם נשמרה, תודה. לחזרה הקישו 0. לסיום הקישו 1."),
-  quota: text("הדקות לשיחות כבר נוצלו. לא נורא, ממשיכים: לבחירת מסלול הקישו 1. ללמידה הקישו 2. לתפריט הראשי הקישו 0."),
+  quota: text("וואו, היה כיף! שיעורי הניסיון הסתיימו. כדי להמשיך ללמוד אנגלית כל יום, אפשר להצטרף עכשיו למנוי חודשי. למעבר לתפריט המנויים ולתשלום באשראי, מקישים 1."),
   school_mode: text("להמשך הקורס הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0."),
   options: text("לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0."),
 });
@@ -61,6 +61,7 @@ export function ivrResponse(route: string, p: Record<string, string>, copy: IVRC
   const choice = p[name];
   if (choice === "ERROR") return { type: "hangup" };
   const response = Object.hasOwn(targets, choice) ? go(targets[choice]) : menu(name, content, keys);
+  if (route === "quota" && response.type === "simpleMenu") response.files = [{ fileId: "1486276", extensionId: "14279" }];
   if (route === "translator" && response.type === "simpleMenu") Object.assign(response, { times: 1, timeout: 2, errorReturn: "START" });
   return response;
 }
