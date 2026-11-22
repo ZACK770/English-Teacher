@@ -28,7 +28,6 @@ export class CallSession {
       this.session = session;
       clearTimeout(timeout);
       server.addEventListener("message", (event) => {
-        if (typeof event.data === "string") { session.receive(event.data); return; }
         incoming = incoming.then(async () => {
           const data = event.data as string | ArrayBuffer | Blob;
           session.receive(data instanceof Blob ? await data.arrayBuffer() : data);
@@ -44,7 +43,6 @@ export class CallSession {
     const shared = request.headers.get("X-Shared-Router") === "1";
     server.addEventListener("message", (event) => {
       if (started) {
-        if (typeof event.data === "string") { this.session?.receive(event.data); return; }
         incoming = incoming.then(async () => {
           const data = event.data as string | ArrayBuffer | Blob;
           this.session?.receive(data instanceof Blob ? await data.arrayBuffer() : data);

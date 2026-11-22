@@ -86,7 +86,7 @@ it.each(["hard_time_limit", "gemini_budget_reached", "pbx_transport_error"])("do
   expect(await closedDetails(tutor)).toEqual({ reason });
 });
 
-it.each([false, true])("forwards close events and preserves control arrival order (portal: %s)", async portal => {
+it.each([false, true])("records a synchronous close before queued controls (portal: %s)", async portal => {
   class Socket extends EventTarget { accept = vi.fn(); send = vi.fn(); close = vi.fn(); }
   const server = new Socket();
   vi.stubGlobal("WebSocketPair", class { 0 = new Socket(); 1 = server; });
@@ -109,5 +109,33 @@ it.each([false, true])("forwards close events and preserves control arrival orde
   server.dispatchEvent(close);
   expect(closed).toHaveBeenCalledWith(close);
   expect(tutor.reason).toBe("caller_disconnected");
+  expect(tutor.disconnectDetails).toEqual({ disconnect_source: "websocket_close", close_code: 1006, close_reason: "", was_clean: false });
+});
+
+it.each([false, true])("processes Blob audio before a queued hangup (portal: %s)", async portal => {
+  class Socket extends EventTarget { accept = vi.fn(); send = vi.fn(); close = vi.fn(); }
+  const server = new Socket();
+  vi.stubGlobal("WebSocketPair", class { 0 = new Socket(); 1 = server; });
+  const OriginalResponse = Response;
+  vi.stubGlobal("Response", class extends OriginalResponse {
+    constructor(body: any, init: any) { super(body, init?.status === 101 ? { status: 200 } : init); }
+  });
+  vi.spyOn(TutorSession.prototype, "run").mockImplementation(() => new Promise(() => {}));
+  const env = {} as Env;
+  const call = new CallSession({ id: { toString: () => "owner" }, waitUntil: () => {} } as unknown as DurableObjectState, env);
+  await call.fetch(new Request("https://example.test" + (portal ? "/v1/portal/voice" : "/"), { headers: {
+    Upgrade: "websocket", ...(portal ? { "X-Profile": "student", "X-Portal-Customer": "customer" } : {}),
+  } }));
+  if (!portal) server.dispatchEvent(new MessageEvent("message", { data: "{}" }));
+  const tutor = (call as any).session;
+  const received = vi.spyOn(tutor, "receive");
+  const record = vi.fn();
+  tutor.recorder = { receive: record };
+  const pcm = new ArrayBuffer(320);
+  server.dispatchEvent(new MessageEvent("message", { data: new Blob([pcm]) }));
+  server.dispatchEvent(new MessageEvent("message", { data: '{"type":"hangup"}' }));
+  await vi.waitFor(() => expect(tutor.reason).toBe("caller_disconnected"));
+  expect(received.mock.calls).toEqual([[pcm], ['{"type":"hangup"}']]);
+  expect(record).toHaveBeenCalledWith(new Uint8Array(pcm));
   expect(tutor.disconnectDetails).toEqual({ disconnect_source: "pbx_control", control_type: "hangup" });
 });
