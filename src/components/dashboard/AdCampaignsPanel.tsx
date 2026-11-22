@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Megaphone } from 'lucide-react';
-import { useApp } from '../../store/AppContext';
 import { portalRequest } from '../portal/portalApi';
 
 type CampaignRow = { campaign: string; calls: number; new_callers: number; returning_callers: number; lessons_booked: number; emails: number; payment_links: number };
@@ -21,24 +20,21 @@ export function followupText(f: Followup) {
 }
 
 export const AdCampaignsPanel: React.FC = () => {
-  const { adminToken } = useApp();
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!adminToken) return;
     let live = true;
-    portalRequest<Report>('/v1/admin/ad-campaigns', adminToken)
+    portalRequest<Report>('/v1/admin/ad-campaigns', '')
       .then(r => { if (live) { setReport(r); setError(''); } })
       .catch(() => { if (live) setError('לא הצלחנו לטעון את נתוני הפרסומות. יש לבדוק את מפתח הניהול.'); });
     return () => { live = false; };
-  }, [adminToken]);
+  }, []);
 
   return (
     <section className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4">
       <h2 className="text-lg font-black text-[#172b35] flex items-center gap-2"><Megaphone className="w-5 h-5 text-[#137c69]" />מתקשרים מפרסומת (הקישו 1)</h2>
       {error && <p className="text-sm text-red-700">{error}</p>}
-      {!adminToken && <p className="text-sm text-slate-500">יש להתחבר עם מפתח ניהול כדי לראות את הנתונים.</p>}
       {report && (report.campaigns.length === 0
         ? <p className="text-sm text-slate-500">עדיין אין שיחות מפרסומת.</p>
         : (

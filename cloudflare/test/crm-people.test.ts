@@ -57,6 +57,62 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
 }
 
 describe("CRM subscription access", () => {
+  it("includes current family memberships in summaries and access filters, preferring owned subscriptions", async () => {
+    customer(); customer("member", "0501234568");
+    planAndSubscription("person1", "active");
+    sql.exec("UPDATE subscriptions SET current_period_end='2099-01-01'");
+    const card = async () => await (await request("people/member")).json() as any;
+    expect((await card()).subscription.access).toBe("none");
+    insert("subscription_members", { subscription_id: "sub", customer_id: "member", added_at: now });
+    expect((await card()).subscription).toMatchObject({ id: "sub", access: "open" });
+    const list = await (await request("people?access=open")).json() as any;
+    expect(list.items.map((p: any) => p.id)).toContain("member");
+    await request("subscriptions/sub/suspend", true, "POST");
+    expect((await card()).subscription.access).toBe("suspended");
+    sql.prepare("UPDATE subscription_members SET removed_at=?").run(now);
+    expect((await card()).subscription.access).toBe("none");
+    sql.exec("UPDATE subscription_members SET removed_at=NULL");
+    planAndSubscription("member", "cancelled", "owned-sub");
+    expect((await card()).subscription).toMatchObject({ id: "owned-sub", access: "inactive" });
+  });
+  it("summarizes access, payment holds and read-only standing orders on lists and cards", async () => {
+    customer();
+    expect((await (await request("people/person1")).json() as any).subscription.access).toBe("none");
+    planAndSubscription("person1", "active");
+    sql.exec("UPDATE subscriptions SET current_period_end='2099-01-01'");
+    expect((await (await request("people/person1")).json() as any).subscription).toMatchObject({ id: "sub", plan_name: "תכנית", status: "active", access: "open" });
+    insert("standing_orders", { id: "order", customer_id: "person1", package_id: "plan", snapshot: "{}", monthly_agorot: 100, first_order_id: "first", state: "active", entitlement_id: "sub", last_refusal_at: now, keva_id: "private-provider-id", created_at: now, updated_at: now });
+    const before = sql.prepare("SELECT * FROM standing_orders").all();
+    const held: any = await (await request("people?access=payment_hold")).json();
+    expect(held.items[0]).toMatchObject({ subscription: { access: "payment_hold" }, nedarim: { state: "active", amount: 1, last_refusal_at: now, keva_id_present: true } });
+    expect(JSON.stringify(held)).not.toContain("private-provider-id");
+    await request("subscriptions/sub/suspend", true, "POST");
+    expect((await (await request("people/person1")).json() as any).subscription.access).toBe("suspended");
+    await request("subscriptions/sub/restore", true, "POST");
+    expect((await (await request("people/person1")).json() as any).subscription.access).toBe("payment_hold");
+    expect(sql.prepare("SELECT * FROM standing_orders").all()).toEqual(before);
+    sql.exec("UPDATE standing_orders SET last_refusal_at=NULL,state='past_due'");
+    expect((await (await request("people/person1")).json() as any).subscription.access).toBe("payment_hold");
+    sql.exec("UPDATE standing_orders SET state='active'; UPDATE subscriptions SET status='cancelled'");
+    expect((await (await request("people/person1")).json() as any).subscription.access).toBe("inactive");
+    expect((await request("people?access=invalid")).status).toBe(422);
+  });
+  it("reports dated school call costs, insights, empty ranges and validation errors", async () => {
+    customer(); session(); session("short"); session("translator");
+    sql.exec("UPDATE sessions SET duration_seconds=30 WHERE call_id='short'; UPDATE call_customers SET bot_id='voice-navigator-live' WHERE call_id='translator'");
+    const day = now.slice(0, 10);
+    const report: any = await (await request(`calls?from=${day}&to=${day}`)).json();
+    expect(report.items).toHaveLength(2);
+    expect(report.items[0]).toMatchObject({ customer_id: "person1", customer_name: "יעל כהן", teacher: "teacher1", ai_cost_ils: 0.37 });
+    expect(report.totals).toMatchObject({ calls: 2, minutes: 2.5, ai_cost_ils: 0.74 });
+    expect(report.insights).toMatchObject({ short_call_share: 0.5, top_customers: [{ id: "person1", calls: 2 }], by_teacher: [{ id: "teacher1", calls: 2 }] });
+    const empty: any = await (await request("calls?from=2000-01-01&to=2000-01-02")).json();
+    expect(empty.items).toEqual([]); expect(empty.insights.cost_per_minute).toBe(0);
+    expect((await request("calls?from=2026-02-30")).status).toBe(422);
+    expect((await request("calls?from=2026-02-01&to=2026-01-01")).status).toBe(422);
+    expect((await request("calls", false)).status).toBe(401);
+    expect((await request("calls", true, "POST")).status).toBe(405);
+  });
   it("requires an owner and keeps the billing status and minutes unchanged when suspending or restoring", async () => {
     customer();
     customer("member", "0501234568");
@@ -453,12 +509,14 @@ describe("CRM read-only endpoints", () => {
     for (const query of ["limit=0", "limit=201", "limit=no", "status=invalid", "cursor=missing"]) expect((await request("people?" + query)).status).toBe(422);
     expect((await request("people", true, "POST")).status).toBe(405);
   });
-  it("removes external font links only for CRM HTML", async () => {
+  it("serves both unified CRM routes without external fonts and preserves legacy HTML", async () => {
     env.ASSETS = { fetch: async () => new Response('<html><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><div>שלום</div></html>', { headers: { 'Content-Type': 'text/html' } }) } as unknown as Fetcher;
     const crm = await worker.fetch(new Request('https://speakcall.app/dashboard/crm'), env);
     expect(await crm.text()).not.toContain('fonts.google');
     const old = await worker.fetch(new Request('https://speakcall.app/dashboard'), env);
-    expect(await old.text()).toContain('fonts.googleapis.com');
+    expect(await old.text()).not.toContain('fonts.googleapis.com');
+    const legacy = await worker.fetch(new Request('https://speakcall.app/dashboard/legacy'), env);
+    expect(await legacy.text()).toContain('fonts.googleapis.com');
   });
   it("matches scheduled callbacks by normalized phone and includes typed-only/JSON-only people", async () => {
     customer();

@@ -56,9 +56,6 @@ async function staticHtml(env: Env, request: Request, file: string, csp: string)
 }
 
 export async function handleStatic(request: Request, env: Env, path: string): Promise<Response | null> {
-  if (path === "/dashboard") {
-    return staticHtml(env, request, "console.html", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; base-uri 'none'; form-action 'none'");
-  }
   if (path === "/learn") {
     return staticHtml(env, request, "portal.html", "default-src 'self'; media-src blob:; script-src 'self'; style-src 'self'; frame-ancestors 'none'");
   }
