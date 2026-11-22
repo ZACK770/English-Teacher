@@ -1,9 +1,53 @@
 import { type Env, HttpError, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
 import { drainRecordingDeletions } from "./recordings";
+import { BusinessStore } from "./business";
 
 type Row = Record<string, any>;
 type Removal = { table: string; where: string; args: unknown[] };
+
+async function requireIdleTrialCustomer(db: D1Database, id: string, calls: string) {
+  const checks: [string, unknown[], string][] = [
+    ["SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", [id], "לא ניתן לאפס לקוח עם תשלום הממתין לסליקה."],
+    ["SELECT 1 FROM active_calls WHERE call_id IN (SELECT value FROM json_each(?)) AND lease_expires_at>? LIMIT 1", [calls, Date.now() / 1000], "לא ניתן לאפס לקוח במהלך שיחה פעילה."],
+    ["SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL LIMIT 1", [id], "לא ניתן לאפס לקוח עם שיחה פעילה או ממתינה."],
+  ];
+  for (const [query, args, message] of checks) if (await db.prepare(query).bind(...args).first()) throw new HttpError(409, message);
+}
+
+export const TRIAL_USAGE_FILTER = "customer_id=? AND receipt_id IS NULL AND billed_seconds IS NOT NULL AND product IN ('school-opening','school')";
+
+export function trialResetStatements(db: D1Database, id: string, actor: string, at: string) {
+  const filter = TRIAL_USAGE_FILTER;
+  return [
+    db.prepare(`INSERT INTO console_audit(action,entity_id,created_at) SELECT json_object('action','crm_trial_reset','actor',?,'deleted_rows',COUNT(*),'freed_seconds',COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)),?,? FROM usage_allocations WHERE ${filter}`).bind(actor, id, at, id),
+    db.prepare(`DELETE FROM usage_allocations WHERE ${filter} RETURNING COALESCE(billed_seconds,reserved_seconds) AS seconds`).bind(id),
+  ];
+}
+
+export async function resetTrial(db: D1Database, id: string, actor: string, apply = true) {
+  const exists = await db.prepare("SELECT id FROM customers WHERE id=? UNION SELECT id FROM console_records WHERE kind='customers' AND id=?").bind(id, id).first();
+  if (!exists) throw new HttpError(404, "הלקוח לא נמצא");
+  const queries = [
+    "SELECT call_id FROM call_customers WHERE customer_id=?",
+    "SELECT call_id FROM usage_allocations WHERE customer_id=?",
+    "SELECT call_id FROM sessions WHERE student_id=?",
+    "SELECT call_id FROM payment_orders WHERE customer_id=?",
+    "SELECT call_id FROM learning_lessons WHERE customer_id=?",
+    "SELECT last_call_id AS call_id FROM navigation_trips WHERE customer_id=? AND last_call_id IS NOT NULL",
+    "SELECT json_extract(body,'$.call_id') AS call_id FROM console_records WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=? AND json_extract(body,'$.call_id') IS NOT NULL",
+  ];
+  const calls = await Promise.all(queries.map(query => db.prepare(query).bind(id).all<{ call_id: string }>()));
+  const ids = [...new Set(calls.flatMap(result => result.results.flatMap(r => r.call_id ? [r.call_id, r.call_id.split('~')[0]] : [])))];
+  await requireIdleTrialCustomer(db, id, JSON.stringify(ids));
+  if (!apply) {
+    const totals = await db.prepare(`SELECT COUNT(*) AS deleted_rows, COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0) AS freed_seconds FROM usage_allocations WHERE ${TRIAL_USAGE_FILTER}`).bind(id).first();
+    return { dry_run: true, ...totals };
+  }
+  const result = await db.batch<{ seconds: number }>(trialResetStatements(db, id, actor, new Date().toISOString()));
+  const rows = result[1].results;
+  return { deleted_rows: rows.length, freed_seconds: rows.reduce((sum, row) => sum + Number(row.seconds), 0), allowance: await new BusinessStore(db).accessSummary(id) };
+}
 
 export async function resetCustomer(request: Request, env: Env, person: Row, actor?: { role: string; username: string }) {
   try { return await performReset(request, env, person, actor); }

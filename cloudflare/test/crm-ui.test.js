@@ -4,16 +4,35 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("lucide-react", () => ({ Megaphone: () => null }));
 
-let CrmPage, Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint, CallReviewsReport, CallReviewCosts;
+let CrmPage, Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint, CallReviewsReport, CallReviewCosts, TeacherSettingsPanel, parseTeacherSettings, ResetTrialButton;
 beforeAll(async () => {
   vi.stubGlobal("location", { pathname: "/dashboard/crm" });
   ({ CrmPage, Journey, CustomerCount, DeleteCustomer, resetErrorMessage, ResetConfirmationHint } = await import("../../src/components/dashboard/CrmPage"));
   ({ CallReviewsReport, CallReviewCosts } = await import("../../src/components/dashboard/CallReviewsPanel"));
   ({ AdminIdentityContext } = await import("../../src/components/dashboard/AdminAuthGate"));
+  ({ TeacherSettingsPanel, parseTeacherSettings } = await import("../../src/components/dashboard/TeacherSettingsPanel"));
+  ({ ResetTrialButton } = await import("../../src/components/dashboard/ResetTrialButton"));
 });
 afterAll(() => vi.unstubAllGlobals());
 const step = (id, kind, call_id) => ({ id, kind, call_id, at: "2026-11-19T10:00:00Z", label: id });
 const renderJourney = steps => renderToStaticMarkup(createElement(Journey, { steps }));
+
+describe("CRM teacher settings and trial reset", () => {
+  it("links the teacher section from CRM and renders Hebrew RTL controls", () => {
+    const page = renderToStaticMarkup(createElement(CrmPage));
+    expect(page).toContain('/dashboard/crm?view=teachers');
+    expect(page).toContain('הנחיות המורה');
+    const html = renderToStaticMarkup(createElement(TeacherSettingsPanel, { request: vi.fn() }));
+    expect(html).toContain('dir="rtl"'); expect(html).toContain('בחירת בוט'); expect(html).toContain('טוענים הגדרות');
+    const reset = renderToStaticMarkup(createElement(ResetTrialButton, { customerId: 'person1', request: vi.fn(), onReset: vi.fn() }));
+    expect(reset).toContain('אפס ניסיון'); expect(reset).toContain('אישור איפוס ניסיון'); expect(reset).toContain('מנויים, תשלומים ופרטי הלקוח לא ישתנו');
+  });
+  it("accepts advanced JSON objects and rejects invalid, empty and array input with Hebrew errors", () => {
+    expect(parseTeacherSettings('{"voice":"Puck","temperature":0.5}')).toEqual({ voice: 'Puck', temperature: 0.5 });
+    expect(parseTeacherSettings('{}')).toEqual({});
+    for (const input of ['', '{', 'null', '[]', '1']) expect(() => parseTeacherSettings(input)).toThrow(/[\u0590-\u05ff]/);
+  });
+});
 
 describe("CRM physical call grouping", () => {
   it("groups multiple suffixed bot sessions with their IVR/ad call under a single heading", () => {

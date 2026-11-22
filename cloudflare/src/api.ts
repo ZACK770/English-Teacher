@@ -154,6 +154,7 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   if (path === "/v1/admin/callbacks/dial-test" && method === "POST") return ok(await testCallbackDial(request, env));
 
   if (path === "/v1/admin/profiles" && method === "GET") return ok({ profiles: await progress.listBots() });
+  if (path === "/v1/admin/bots" && method === "GET") return ok({ bots: await progress.listBots() });
 
   if (path === "/v1/admin/active-ai-sessions" && method === "GET") {
     const { results } = await env.DB.prepare("SELECT call_id, profile_id, owner_id, acquired_at FROM active_calls WHERE lease_expires_at > ?").bind(Date.now() / 1000).all<Record<string, any>>();

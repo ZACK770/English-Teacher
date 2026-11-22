@@ -490,7 +490,12 @@ export class BusinessStore {
       (await this.usableReceipts(customerId, "school")).length > 0;
   }
 
-  async accessSummary(customerId: string, receipts: Record<string, any>[]) {
+  async accessSummary(customerId: string, receipts?: Record<string, any>[]) {
+    if (!receipts) {
+      receipts = (await this.db.prepare(`SELECT r.*, ${receiptOnHold} AS on_hold, COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS spent_seconds
+        FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
+        WHERE r.customer_id=? GROUP BY r.id ORDER BY r.created_at DESC`).bind(customerId).all<Record<string, any>>()).results;
+    }
     const paid = await this.hasPaidAccess(customerId);
     const payment_failed = await this.schoolPaymentFailed(customerId);
     if (!paid && await this.isSchoolAccessSuspended(customerId)) {

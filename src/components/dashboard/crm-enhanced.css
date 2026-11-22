@@ -1,5 +1,8 @@
 .crm-root { --paper:#f5f8f7; --card:#fff; --line:#d8e5df; --ink:#172b35; --quiet:#61756e; --accent:#176d56; color-scheme:light; }
 .crm-root .crm-primary { color:white; }
+.crm-teacher-settings select { max-width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
+.crm-form.crm-teacher-form { width:100%; max-height:none; box-shadow:none; margin:22px 0; }
+.crm-teacher-form fieldset { display:grid; gap:18px; border:0; min-width:0; padding:0; }
 .crm-root :is(.crm-tools input,.crm-form input,.crm-form textarea,.crm-transcript>div,.crm-choices code) { background:white; }
 .crm-root th { background:#edf4f0; }
 .crm-root td { border-color:var(--line); }
