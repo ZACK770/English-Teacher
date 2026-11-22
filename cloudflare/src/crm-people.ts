@@ -190,8 +190,16 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
       const metrics = data.practice.get(p.id);
       if (!metrics || metrics.practice_days_total < 2) return [];
       const subs = data.subscriptions.get(p.id) || data.familySubscriptions.get(p.id) || [];
-      const sub = subs.filter(s => s.status === "active").at(-1) || subs.at(-1);
-      const pkg = data.packages.get(sub?.package_id || sub?.plan_id);
+      const now = new Date().toISOString();
+      const available = (s: Row) => !s.access_suspended_at && !(s.standing_orders || []).some((o: Row) => o.state === "past_due" || o.last_refusal_at);
+      const sub = subs.filter(s => s.status === "active" && available(s) && s.started_at <= now && s.current_period_end > now).at(-1);
+      const ownReceipts = data.receipts.get(p.id) || [];
+      const familyReceipts = (data.familySubscriptions.get(p.id) || []).filter(s => ["active", "cancelled", "past_due"].includes(s.status)).flatMap(s => (data.receipts.get(s.customer_id) || []).filter(r => r.subscription_id === s.id));
+      const receipt = [...ownReceipts, ...familyReceipts].filter(r => {
+        const ownerSub = (data.subscriptions.get(r.customer_id) || []).find(s => s.id === r.subscription_id);
+        return !r.payment_reversed_at && r.expires_at > now && (!r.valid_from || r.valid_from <= now) && (!ownerSub || ownerSub.status !== "paused" && available(ownerSub));
+      }).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      const pkg = data.packages.get(receipt?.package_id || sub?.plan_id);
       return [{ id: p.id, name: p.name || "ללא שם", phone: p.phone || "", ...metrics, package: pkg ? { id: pkg.id, name: pkg.name } : null, monthly_minutes: pkg?.monthly_minutes ?? null }];
     });
     const sent = items.reduce((n, p) => n + p.reminders_sent, 0), responded = items.reduce((n, p) => n + p.reminders_responded, 0);
