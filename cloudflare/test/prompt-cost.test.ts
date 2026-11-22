@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { adRuntimeContext, SALES_TOOLS } from "../src/ad-entry";
-import { buildSystemInstruction, controlsFromSettings, type TutorControls } from "../src/controls";
+import { adultControls, buildSystemInstruction, controlsFromSettings, type TutorControls } from "../src/controls";
 import { settings, type Env } from "../src/env";
 import { lessonInstruction, type LessonPlan } from "../src/learning";
 import { buildSetupPayload, compilePrompt } from "../src/prompt";
@@ -12,6 +12,50 @@ const lesson: LessonPlan = {
 };
 const controls = { ...controlsFromSettings(true), lesson };
 const names = (c: TutorControls = controls, customerId?: string) => buildSetupPayload(c, "test", "teacher", s, { customerId }).setup.tools[0].functionDeclarations.map(t => t.name);
+
+describe("free Live tuning", () => {
+  it.each([controlsFromSettings(false), adultControls(false), controls])("keeps paid setup byte-for-byte identical to the original builder", async c => {
+    const history = "Prior learner notes";
+    const originalSystem = buildSystemInstruction(c, history);
+    const original = buildSetupPayload(c, originalSystem, "teacher", s, { customerId: "customer-1" });
+    const paid = await compilePrompt(c, history, "teacher", s, { customerId: "customer-1", freeTuning: false });
+    expect(JSON.stringify(paid.setup_message)).toBe(JSON.stringify(original));
+    expect(paid.system_instruction).toBe(originalSystem);
+    expect(paid.controls).toBe(c);
+  });
+
+  it("caps free compression, preserves every other setup field and leaves thinking and model unchanged", async () => {
+    const history = "Prior learner notes\n\nPreserve these verbatim.";
+    const c = { ...controls, sales: true, summary_callback: true, custom_instructions: "Keep all safety rules intact." };
+    const paid = await compilePrompt(c, history, "teacher", s, { customerId: "anonymous-1" });
+    const free = await compilePrompt(c, history, "teacher", s, { customerId: "anonymous-1", freeTuning: true });
+    const setup = free.setup_message as ReturnType<typeof buildSetupPayload>;
+    const original = paid.setup_message as ReturnType<typeof buildSetupPayload>;
+    expect(setup.setup.contextWindowCompression).toEqual({ triggerTokens: 5000, slidingWindow: { targetTokens: 3000 } });
+    expect({ ...setup.setup, systemInstruction: original.setup.systemInstruction, contextWindowCompression: original.setup.contextWindowCompression }).toEqual(original.setup);
+    expect(setup.setup.generationConfig).not.toHaveProperty("thinkingConfig");
+    for (const text of [c.base_prompt, c.custom_instructions, history, lessonInstruction(lesson), "stop/hangup/goodbye", "FULL summary", "brief goodbye", "end_session", "ending policy", "buffered speech", "neither playback acknowledgement nor another caller response", "A single translation does not end a session unless the caller is done"]) expect(free.system_instruction).toContain(text);
+    expect(free.system_instruction.length).toBeLessThan(paid.system_instruction.length);
+    expect(free.fingerprint).not.toBe(paid.fingerprint);
+    expect(c.context_trigger_tokens).toBe(12000);
+    console.log(`Free lesson system chars: ${paid.system_instruction.length} -> ${free.system_instruction.length}`);
+  });
+
+  it.each([[4000, 2000, 4000, 2000], [1000, 900, 1000, 600], [12000, 500, 5000, 500]])("respects tighter profile controls (%i/%i)", async (trigger, target, expectedTrigger, expectedTarget) => {
+    const c = { ...controls, context_trigger_tokens: trigger, context_target_tokens: target };
+    const free = await compilePrompt(c, "", "teacher", s, { freeTuning: true });
+    expect(free.controls.context_trigger_tokens).toBe(expectedTrigger);
+    expect(free.controls.context_target_tokens).toBe(expectedTarget);
+    expect(free.controls.context_target_tokens).toBeLessThan(free.controls.context_trigger_tokens);
+  });
+
+  it.each([controlsFromSettings(false), adultControls(false)])("measures free default prompt trimming without learner history", async c => {
+    const paid = await compilePrompt(c, "", "teacher", s);
+    const free = await compilePrompt(c, "", "teacher", s, { freeTuning: true });
+    console.log(`Free ${c.language_code} system chars: ${paid.system_instruction.length} -> ${free.system_instruction.length}`);
+    expect(free.system_instruction).toContain(c.base_prompt.trim());
+  });
+});
 
 describe("call-scoped tool availability", () => {
   it("omits assessment, sales and callback tools when unavailable, but keeps direction changes after intake", () => {
