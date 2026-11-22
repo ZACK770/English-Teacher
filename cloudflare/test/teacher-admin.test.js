@@ -74,6 +74,22 @@ describe("teacher admin D1 backend and SQL builders", () => {
     expect(bodies.find(b => b.batch).batch).toHaveLength(2);
     expect(await run(["reset-trial", "customer", "--apply"], backend)).toMatchObject({ deleted_rows: 0, freed_seconds: 0 });
   });
+  it("preserves usage reserved between the safety checks and reset batch", async () => {
+    sql.prepare("INSERT INTO customers(id,name,created_at,updated_at) VALUES ('customer','שם',?,?)").run(at, at);
+    sql.prepare("INSERT INTO usage_allocations VALUES ('settled','customer','school',NULL,120,60,?)").run(at);
+    const batch = db.batch.bind(db);
+    const spy = vi.spyOn(db, "batch").mockImplementation(async statements => {
+      for (const product of ["school", "school-opening"]) sql.prepare("INSERT INTO usage_allocations VALUES (?,'customer',?,NULL,120,NULL,?)").run(product, product, at);
+      return batch(statements);
+    });
+    try {
+      expect(await run(["reset-trial", "customer", "--apply"], backend)).toMatchObject({ deleted_rows: 1, freed_seconds: 60 });
+      expect(sql.prepare("SELECT call_id,billed_seconds FROM usage_allocations ORDER BY call_id").all()).toEqual([
+        { call_id: "school", billed_seconds: null }, { call_id: "school-opening", billed_seconds: null },
+      ]);
+      expect(JSON.parse(sql.prepare("SELECT action FROM console_audit").get().action)).toMatchObject({ deleted_rows: 1, freed_seconds: 60 });
+    } finally { spy.mockRestore(); }
+  });
   it("allows D1 dry-run and apply immediately after recent activity", async () => {
     const recent = new Date().toISOString();
     sql.prepare("INSERT INTO customers(id,name,created_at,updated_at) VALUES ('customer','שם',?,?)").run(recent, recent);

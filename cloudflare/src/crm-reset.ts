@@ -15,7 +15,7 @@ async function requireIdleTrialCustomer(db: D1Database, id: string, calls: strin
   for (const [query, args, message] of checks) if (await db.prepare(query).bind(...args).first()) throw new HttpError(409, message);
 }
 
-export const TRIAL_USAGE_FILTER = "customer_id=? AND receipt_id IS NULL AND product IN ('school-opening','school')";
+export const TRIAL_USAGE_FILTER = "customer_id=? AND receipt_id IS NULL AND billed_seconds IS NOT NULL AND product IN ('school-opening','school')";
 
 export function trialResetStatements(db: D1Database, id: string, actor: string, at: string) {
   const filter = TRIAL_USAGE_FILTER;
