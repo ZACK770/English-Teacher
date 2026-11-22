@@ -51,6 +51,27 @@ beforeEach(async () => {
 afterEach(() => { db.sql.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("subscription promises against production SQL", () => {
+  it("repairs persisted package durations without changing cadence, prices or existing subscriptions", async () => {
+    const migration = readFileSync(new FileURL("../migrations/0032_package_duration.sql", import.meta.url), "utf8");
+    await store.create("owner", "school-mastery", at, undefined, { id: "old-duration", priceAgorot: 149000, monthlyMinutes: 150, termMonths: 6 });
+    const existing = await store.get("old-duration");
+    const before = await b.list("packages");
+    db.sql.exec("UPDATE console_records SET body=json_set(body,'$.duration_months',CASE id WHEN 'school-foundations' THEN 4 ELSE 6 END) WHERE kind='packages' AND id IN ('school-foundations','school-mastery')");
+    db.sql.exec(migration);
+    db.sql.exec(migration);
+    expect(await b.list("packages")).toEqual(before);
+    expect(await store.get("old-duration")).toEqual(existing);
+    const max = await store.create("owner", "school-foundations", at);
+    const master = await store.create("owner", "school-mastery", at, [{ domain: "everyday" }, { domain: "travel" }]);
+    expect(max).toMatchObject({ term_months: 6, term_end: "2026-07-01T00:00:00.000+00:00" });
+    expect(master).toMatchObject({ term_months: 12, term_end: "2027-01-01T00:00:00.000+00:00" });
+  });
+  it("does not invent missing package rows when repairing durations", async () => {
+    db.sql.exec("DELETE FROM console_records WHERE kind='packages' AND id IN ('school-foundations','school-mastery')");
+    db.sql.exec(readFileSync(new FileURL("../migrations/0032_package_duration.sql", import.meta.url), "utf8"));
+    expect(await b.record("packages", "school-foundations")).toBeNull();
+    expect(await b.record("packages", "school-mastery")).toBeNull();
+  });
   it("locks plan price, family price and minutes and grants the first period atomically", async () => {
     const sub = await store.create("owner", "school-step", at);
     expect(sub.price_agorot).toBe(5900);
