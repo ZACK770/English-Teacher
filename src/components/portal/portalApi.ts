@@ -7,7 +7,17 @@ export type Teacher = LessonSettings & { id: string; name: string; base_bot: str
 export type Material = { id: string; name: string; words: string[]; target_count?: number };
 export type Preferences = LessonSettings & { personality?: string; trial_setup?: "selected" | "skipped"; learner_name?: string; selected_bot?: string; active_teacher?: string; pace?: string; corrections?: string; minutes?: number; language?: string; track?: string; topic?: string; material_id?: string; store_transcripts?: boolean; plan?: Plan; mode?: string; grammar_targets?: string[] };
 export type Lesson = { call_id: string; started_at: string; duration_seconds: number; summary_he: string; success_he: string; next_step_he: string; points: number; observations: { skill: string; result: string; correction: string; score: number }[] };
+// Read-only DTO from practiceSummary (phone/server); never infer streaks or package goals here.
+export type DailyPractice = {
+  current_streak: number; best_streak: number;
+  today: { day: string; practiced: boolean; seconds: number };
+  dates: string[];
+  week: { start: string; target: number; done: number };
+  package: { id: string; name: string; sessions_per_week: number } | null;
+  reminder: { time_local: string; weekdays: number[]; active: boolean } | null;
+};
 export type Account = {
+  daily_practice?: DailyPractice;
   subscriptions?: SubscriptionSummary[];
   customer: { id: string; name: string; phone: string; preferred_bot: string; has_email?: boolean };
   bots: { id: string; label: string; role: string; phone_enabled: boolean }[];

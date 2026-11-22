@@ -264,7 +264,7 @@ export class ProgressStore {
 
   async practiceReport(studentId: string, now = new Date()) {
     // One extra day covers the full first Israeli calendar day, including DST.
-    const since = new Date(now.getTime() - 31 * 86400000).toISOString();
+    const since = new Date(now.getTime() - 121 * 86400000).toISOString();
     const until = now.toISOString();
     const { results } = await this.db.prepare(`SELECT call_id, started_at, duration_seconds, summary_he, success_he, next_step_he
       FROM sessions WHERE student_id = ? AND julianday(started_at) >= julianday(?) AND julianday(started_at) <= julianday(?) AND ${SCHOOL_SESSION_FILTER}
