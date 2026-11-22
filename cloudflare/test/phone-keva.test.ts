@@ -749,7 +749,7 @@ describe("five-package phone sales", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each(["/", "/99"].flatMap(base => ["1", "2", "3"].map(key => [base, key])))("hands service submenu base %s key %s to service without creating an order", async (base, key) => {
+  it.each(["/", "/99"].flatMap(base => ["1", "2"].map(key => [base, key])))("hands service submenu base %s key %s to service without creating an order", async (base, key) => {
     env.SALES_MENU_MODE = "single";
     expect(await paymentResponse(store, env, base, { PBXcallId: "phone-hk", isaacSinglePackage: "8", isaacSalesService: key }, "c1", ids)).toEqual({
       type: "goTo", goTo: base === "/" ? "/4" : "/99/4", removeParams: ["isaacPackage", "isaacSales", "isaacSinglePackage", "isaacSalesService"],

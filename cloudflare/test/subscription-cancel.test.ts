@@ -6,6 +6,7 @@ import { BusinessStore } from "../src/business";
 import type { Env } from "../src/env";
 import { SubscriptionStore } from "../src/subscriptions";
 import { subscriptionCancellationResponse } from "../src/subscription-cancel";
+import { PaymentStore, paymentResponse } from "../src/payments";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -72,6 +73,20 @@ async function subscribe(letter = "a", customerId = "owner", standing = true, pl
 }
 
 describe("phone subscription cancellation", () => {
+  it("routes paymentResponse 8→3 through confirmation, cancellation and back to the service submenu", async () => {
+    const sub = await subscribe();
+    const configured = { ...env, SALES_MENU_MODE: "single", NEDARIM_PHONE_ENABLED: "true", NEDARIM_PHONE_TERMINAL: "test", NEDARIM_WEBHOOK_SECRET: "test" } as Env;
+    const params = { PBXcallId: "menu-call", PBXphone: "0501111111", isaacSinglePackage: "8", isaacSalesService: "3" };
+    const pay = new PaymentStore(b);
+    expect(await paymentResponse(pay, configured, "/", params, "owner", ["school-step"]))
+      .toMatchObject({ name: "isaacCancelSubscription", enabledKeys: "0,1" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(messages(await paymentResponse(pay, configured, "/", { ...params, isaacCancelSubscription: "1" }, "owner", ["school-step"])))
+      .toContain("ביטול המנוי הושלם");
+    expect((await store.get(sub.id)).status).toBe("cancelled");
+    expect(await paymentResponse(pay, configured, "/", { ...params, isaacCancelSubscription: "0" }, "owner", ["school-step"]))
+      .toMatchObject({ type: "goTo", goTo: "/3", removeParams: ["isaacSalesService", "isaacCancelSubscription"] });
+  });
   it("speaks Hebrew when no subscription exists, then returns to the service submenu", async () => {
     const response = await respond();
     expect(response).toMatchObject({ type: "simpleMenu", name: "isaacCancelSubscription", enabledKeys: "0" });

@@ -7,6 +7,7 @@ import { reconcilePhoneKeva } from "./keva-sync";
 import { claimPhoneKevaFirstCharge, completePhoneKevaFirstCharge } from "./phone-keva-charge";
 import { visiblePhone } from "./phone";
 import { boundSalesOffer, isSalesOfferPackage, phoneFirstPrice } from "./sales-offer-product";
+import { subscriptionCancellationResponse } from "./subscription-cancel";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { customerPackageName } from "../../src/paymentCopy";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
@@ -443,7 +444,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       const serviceChoice = params.isaacSalesService ?? "";
       const cancelSubscriptionRequested = serviceChoice === "3";
       if (cancelSubscriptionRequested) {
-        return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
+        return subscriptionCancellationResponse(store.business, env, base, params, customerId);
       }
       if (["1", "2"].includes(serviceChoice)) {
         return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
