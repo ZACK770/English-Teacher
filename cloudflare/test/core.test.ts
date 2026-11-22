@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { concat, downsample24kTo8k, upsample8kTo16k, wav, wavToPcm } from "../src/audio";
 import { parseStartFrame, transferCommand } from "../src/technoline";
-import { controlsFromSettings, TutorControlsSchema } from "../src/controls";
+import { adultControls, controlsFromSettings, TutorControlsSchema } from "../src/controls";
 import { buildSystemInstruction } from "../src/controls";
-import { buildSetupPayload } from "../src/prompt";
+import { buildSetupPayload, compilePrompt } from "../src/prompt";
+import { HAREDI_CONTENT_RULE } from "../src/content-rules";
 import { settings, extensionPath, withinBase } from "../src/env";
 import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
@@ -15,6 +16,12 @@ import { INITIAL_CONTROLS } from "../../src/store/initialData";
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
 const values = (data: Uint8Array) => [...new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2)];
 const start = { type: "start", callId: "test-call", caller: "private", token: "test-channel", format: "pcm16;rate=8000;ch=1" };
+
+it("uses male defaults for Worker bot settings and frontend persona seeds", () => {
+  expect(controlsFromSettings(false).voice).toBe("Puck");
+  expect(adultControls(false).voice).toBe("Puck");
+  expect(Object.values(INITIAL_CONTROLS).map(c => c.voice)).toEqual(["Puck", "Puck", "Puck", "Charon"]);
+});
 
 it("introduces the seeded Shochi teacher as SpeakCall", () => {
   const shochi = INITIAL_CONTROLS["shochi-robot"];
@@ -71,6 +78,17 @@ it("preserves configured lesson controls and includes terminal tools and resumab
   expect(setup.tools[0].functionDeclarations.map((t) => t.name)).toContain("end_session");
   expect(setup.sessionResumption).toEqual({});
   expect(setup.systemInstruction.parts[0].text).toContain(c.base_prompt.trim());
+});
+
+it.each(["isaac-basic", "sales", "isaac-translator"])("injects the internal rule after loading the %s profile", async profile => {
+  const base_prompt = "This stored prompt deliberately asks the model to teach using movies.";
+  const db = { prepare: () => ({ bind: () => ({ first: async () => ({ settings_json: JSON.stringify({ base_prompt }) }) }) }) } as unknown as D1Database;
+  const controls = await new ProgressStore(db).loadControls(profile, controlsFromSettings(false));
+  const prompt = await compilePrompt(controls, "Conflicting lesson history", profile, settings({} as Env));
+  expect(prompt.system_instruction).toContain(`${HAREDI_CONTENT_RULE}\n\n${base_prompt}`);
+  expect(prompt.system_instruction.split(HAREDI_CONTENT_RULE)).toHaveLength(2);
+  expect(prompt.setup_message).toMatchObject({ setup: { systemInstruction: { parts: [{ text: prompt.system_instruction }] } } });
+  expect(controls.base_prompt).toBe(base_prompt);
 });
 
 it("keeps learner progress and usage independently of bot identity", () => {

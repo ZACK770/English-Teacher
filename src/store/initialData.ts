@@ -151,7 +151,7 @@ Teach through tiny steps: say one useful English phrase, explain it in Hebrew, a
     idle_audio_threshold: 400,
     session_end_action: 'return_to_menu',
     model: 'models/gemini-2.0-flash-exp',
-    voice: 'Aoede',
+    voice: 'Puck',
     language_code: 'he-IL',
     temperature: 0.7,
     vad_start_sensitivity: 'START_SENSITIVITY_LOW',

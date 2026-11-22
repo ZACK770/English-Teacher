@@ -119,10 +119,13 @@ describe("CRM call review tab", () => {
       }],
       recent: [{ source: "ai", status: "reviewed", call_id: "review-1", ended_at: "2026-11-22T12:00:00Z", findings: [{ code: "wrong_language" }] }],
     };
+    report.findings.push({ code: "content_drift", logs: 1 });
+    report.recent[0].findings.push({ code: "content_drift" });
     const request = vi.fn();
     const html = renderToStaticMarkup(createElement(CallReviewsReport, { report, request }));
     expect(html).toContain("קלט לא תקין בתפריט אפשרויות");
     expect(html).toContain("שפה לא מתאימה");
+    expect(html.match(/המורה גלש לנושא שאינו מתאים לשיעור/g)).toHaveLength(2);
     expect(html).toContain("0.0002");
     expect(html).toContain("פירוט עלות");
     expect(html).toContain("המורה שוחי");

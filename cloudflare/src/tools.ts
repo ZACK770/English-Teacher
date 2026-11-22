@@ -86,8 +86,7 @@ export const INTAKE_TOOL = {
       "topic": { "type": "string", "description": "Use recommended when the learner has no specific topic preference", "enum": ["recommended", "everyday", "business", "travel", "flights", "medicine", "academic", "property", "cars", "career", "school"] },
       "personality": { "type": "string", "enum": ["warm", "focused", "playful"] },
       "pace": { "type": "string", "enum": ["slow", "normal", "fast"], "description": "Speaking pace" },
-      "conversation_mode": { "type": "string", "enum": ["guided", "conversation", "roleplay"], "description": "guided: learn together with Hebrew help; conversation: learn through conversation; roleplay: just talk" },
-      "teacher_gender": { "type": "string", "enum": ["male", "female"] }
+      "conversation_mode": { "type": "string", "enum": ["guided", "conversation", "roleplay"], "description": "guided: learn together with Hebrew help; conversation: learn through conversation; roleplay: just talk" }
     },
     "required": ["goal"]
   }

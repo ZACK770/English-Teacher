@@ -3,6 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import type { Env } from "../src/env";
+import { HAREDI_CONTENT_RULE, RESTRICTED_CONTENT } from "../src/content-rules";
 import { callCostReport, callReviewReport, runCallReviews, sampleTutorTranscript, syncCallReviewPhone } from "../src/call-review";
 import worker from "../src/index";
 
@@ -44,9 +45,9 @@ function session(id: string, text: string | null = transcript, learner = "learne
     system_instruction,opening_message,history_context,setup_json) VALUES (?,'coach',?,1,'abc','','','','{}')`).run(time, id);
 }
 
-function judge(issue: string, excerpt: number) {
+function judge(issue: string, excerpt: number, content_drift_excerpt = 0) {
   return Response.json({ usageMetadata: { promptTokenCount: 500, candidatesTokenCount: 30, thoughtsTokenCount: 5 },
-    candidates: [{ content: { parts: [{ text: JSON.stringify({ issue, excerpt }) }] } }] });
+    candidates: [{ content: { parts: [{ text: JSON.stringify({ issue, excerpt, content_drift_excerpt }) }] } }] });
 }
 
 describe("finished-call review", () => {
@@ -94,6 +95,55 @@ describe("finished-call review", () => {
     await runCallReviews(env, now);
     expect(sql.prepare("SELECT status,input_tokens,output_tokens,findings FROM call_reviews").get())
       .toEqual({ status: "failed", input_tokens: 500, output_tokens: 35, findings: "[]" });
+  });
+
+  it.each([
+    { excerpt: 99, drift: 1, code: "content_drift" },
+    { excerpt: 1, drift: 99, code: "no_practice" },
+  ])("keeps the valid $code finding when the other excerpt is out of range", async ({ excerpt, drift, code }) => {
+    vi.stubGlobal("fetch", vi.fn(async () => judge("no_practice", excerpt, drift)));
+    session("a");
+    await runCallReviews(env, now);
+    expect(sql.prepare("SELECT status,findings FROM call_reviews").get())
+      .toEqual({ status: "reviewed", findings: JSON.stringify([{ code, excerpt: 1, ...(code === "content_drift" ? { teaching_reviewed: false } : {}) }]) });
+  });
+
+  it("keeps drift-only flags without letting invalid teaching judgments dilute recommendations", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (_url, init) => {
+      const body = String(init?.body);
+      if (body.includes("Practice discussing movies")) return judge("no_practice", 99, 1);
+      if (body.includes("Practice discussing songs")) return judge("none", 0, 1);
+      return judge("no_practice", 1);
+    });
+    vi.stubGlobal("fetch", fetch);
+    for (let i = 0; i < 3; i++) session("teaching-" + i);
+    const drift = JSON.stringify([{ role: "tutor", text: "Practice discussing movies." }]);
+    for (let i = 0; i < 12; i++) session("drift-" + i, drift);
+    session("drift-with-valid-teaching", JSON.stringify([{ role: "tutor", text: "Practice discussing songs." }]));
+    await runCallReviews(env, now);
+    const report = await callReviewReport(env, now);
+    expect(report.findings).toContainEqual({ code: "content_drift", logs: 13 });
+    expect(report.prompt_candidates).toEqual([expect.objectContaining({ code: "no_practice", affected: 3, reviewed: 4 })]);
+  });
+
+  it("persists content drift independently of the existing quality issue in the same review", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => judge("no_practice", 1, 1));
+    vi.stubGlobal("fetch", fetch);
+    const drift = JSON.stringify([{ role: "tutor", text: "Let's practice discussing movies." }]);
+    session("drift", drift);
+    await runCallReviews(env, now);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
+    expect(body.systemInstruction.parts[0].text.split(RESTRICTED_CONTENT)).toHaveLength(2);
+    for (const behavior of HAREDI_CONTENT_RULE.split("\n").slice(1)) {
+      expect(body.systemInstruction.parts[0].text).not.toContain(behavior);
+    }
+    expect(body.generationConfig.responseSchema.required).toContain("content_drift_excerpt");
+    const report = await callReviewReport(env, now);
+    expect(report.findings).toContainEqual({ code: "content_drift", logs: 1 });
+    expect(report.recent).toContainEqual(expect.objectContaining({ call_id: "drift", findings: [
+      { code: "no_practice", excerpt: 1 }, { code: "content_drift", excerpt: 1 },
+    ] }));
   });
 
   it("does not double-send concurrent jobs and bounds transient retries", async () => {

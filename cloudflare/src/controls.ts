@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HAREDI_CONTENT_RULE } from "./content-rules";
 import { lessonInstruction, type LessonPlan } from "./learning";
 import {
   DEFAULT_ADULT_OPENING_MESSAGE,
@@ -13,6 +14,7 @@ export const VOICE_OPTIONS = [
   "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima",
   "Achird", "Zubenelgenubi", "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
 ] as const;
+export const DEFAULT_TEACHER_VOICE = "Puck";
 
 const compact = z.array(z.string()).transform((values) => {
   const out: string[] = [];
@@ -33,7 +35,7 @@ export const TutorControlsSchema = z
     ending_policy: z
       .enum(["learner_only", "after_target_with_permission", "model_discretion"])
       .default("learner_only"),
-    voice: z.string().transform((v) => v.trim()).refine((v) => (VOICE_OPTIONS as readonly string[]).includes(v), "unsupported voice").default("Aoede"),
+    voice: z.string().transform((v) => v.trim()).refine((v) => (VOICE_OPTIONS as readonly string[]).includes(v), "unsupported voice").default(DEFAULT_TEACHER_VOICE),
     model: z.string().min(3).max(200).default("models/gemini-3.8-live"),
     language_code: z.string().min(2).max(20).default("he-IL"),
     temperature: z.number().min(0).max(2).nullable().default(null),
@@ -103,5 +105,5 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [schoolIdentity, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
+  return [schoolIdentity, HAREDI_CONTENT_RULE, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
 }
