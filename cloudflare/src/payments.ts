@@ -450,20 +450,21 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
         : [{ text: SALES_MENU_TEXT }],
     };
   }
+  const term = (p: Record<string, any>) => p.duration_months === 6 ? "לחצי שנה" : p.duration_months === 12 ? "לשנה" : p.duration_months ? `ל-${p.duration_months} חודשים` : `ל-${p.validity_days} ימים`;
   const lines: string[] = [];
   packageIds.forEach((id, index) => {
     const p = packages[id];
     if (p && p.active && canPurchaseByPhone(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
       lines.push(p.billing === "monthly"
         ? `למנוי ${customerPackageName(p.name)}: ${p.price_ils} שקלים לחודש בהוראת קבע באשראי, הקישו ${index + 1}.`
-        : `לרכישה מיידית של ${customerPackageName(p.name)}: תוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים ${p.duration_months && p.max_payments > 1 ? `עד ${p.max_payments} תשלומים באשראי` : "בתשלום אחד באשראי"}, הקישו ${index + 1}.`);
+        : `לרכישה מיידית של ${customerPackageName(p.name)}: תוקף ${term(p)}, ב-${p.price_ils} שקלים ${p.duration_months && p.max_payments > 1 ? `עד ${p.max_payments} תשלומים באשראי` : "בתשלום אחד באשראי"}, הקישו ${index + 1}.`);
     }
   });
   const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 &&
     (!canPurchaseByPhone(p) || p.phone_enabled === false)).sort((a, b) => a.price_ils - b.price_ils);
   const describe = (p: Record<string, any>) => p.billing === "monthly"
     ? `${customerPackageName(p.name)}, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
-    : `${customerPackageName(p.name)}, למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
+    : `${customerPackageName(p.name)}, ${term(p)}, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
   const monthly = plans.filter((p) => p.billing === "monthly").map(describe);
   const courses = plans.filter((p) => p.billing !== "monthly").map(describe);
   const intro = [

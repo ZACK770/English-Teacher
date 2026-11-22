@@ -54,7 +54,7 @@ name = "PORTAL_EMAIL"
 allowed_sender_addresses = ["noreply@speakcall.app"]
 
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/10 * * * *", "*/5 * * * *"]
 
 [observability]
 enabled = true
