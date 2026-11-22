@@ -20,6 +20,7 @@ const endpoint = '/v1/admin/call-reviews';
 const sourceLabels: Record<Source, string> = { ai: 'שיחת AI', ivr: 'תפריט טלפוני' };
 const statusLabels: Record<Status, string> = { reviewed: 'התמליל נבדק', rules_only: 'נבדק לפי כללים', no_transcript: 'אין תמליל', pending: 'ממתין לבדיקה', failed: 'הבדיקה נכשלה' };
 const findingLabels = new Map(Object.entries({
+  content_drift: 'המורה גלש לנושא שאינו מתאים לשיעור',
   long_reply: 'תשובה ארוכה מדי', no_practice: 'חסר תרגול בדיבור', missed_correction: 'תיקון חסר',
   wrong_level: 'רמה לא מתאימה', wrong_language: 'שפה לא מתאימה', missed_request: 'בקשת תלמיד לא נענתה',
   menu_confusion: 'הנחיית תפריט שגויה', call_failed: 'שיחה נכשלה', call_lease_lost: 'הקצאת שיחה אבדה',

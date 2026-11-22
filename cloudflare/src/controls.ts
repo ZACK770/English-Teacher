@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HAREDI_CONTENT_RULE } from "./content-rules";
 import { lessonInstruction, type LessonPlan } from "./learning";
 import {
   DEFAULT_ADULT_OPENING_MESSAGE,
@@ -103,5 +104,5 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [schoolIdentity, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
+  return [schoolIdentity, HAREDI_CONTENT_RULE, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson) : ""].filter(Boolean).join("\n\n");
 }

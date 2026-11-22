@@ -3,7 +3,8 @@ import { concat, downsample24kTo8k, upsample8kTo16k, wav, wavToPcm } from "../sr
 import { parseStartFrame, transferCommand } from "../src/technoline";
 import { controlsFromSettings, TutorControlsSchema } from "../src/controls";
 import { buildSystemInstruction } from "../src/controls";
-import { buildSetupPayload } from "../src/prompt";
+import { buildSetupPayload, compilePrompt } from "../src/prompt";
+import { HAREDI_CONTENT_RULE } from "../src/content-rules";
 import { settings, extensionPath, withinBase } from "../src/env";
 import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
@@ -71,6 +72,16 @@ it("preserves configured lesson controls and includes terminal tools and resumab
   expect(setup.tools[0].functionDeclarations.map((t) => t.name)).toContain("end_session");
   expect(setup.sessionResumption).toEqual({});
   expect(setup.systemInstruction.parts[0].text).toContain(c.base_prompt.trim());
+});
+
+it.each(["isaac-basic", "sales", "isaac-translator"])("injects the internal rule after loading the %s profile", async profile => {
+  const base_prompt = "This stored prompt deliberately asks the model to teach using movies.";
+  const db = { prepare: () => ({ bind: () => ({ first: async () => ({ settings_json: JSON.stringify({ base_prompt }) }) }) }) } as unknown as D1Database;
+  const controls = await new ProgressStore(db).loadControls(profile, controlsFromSettings(false));
+  const prompt = await compilePrompt(controls, "Conflicting lesson history", profile, settings({} as Env));
+  expect(prompt.system_instruction).toContain(`${HAREDI_CONTENT_RULE}\n\n${base_prompt}`);
+  expect(prompt.setup_message).toMatchObject({ setup: { systemInstruction: { parts: [{ text: prompt.system_instruction }] } } });
+  expect(controls.base_prompt).toBe(base_prompt);
 });
 
 it("keeps learner progress and usage independently of bot identity", () => {

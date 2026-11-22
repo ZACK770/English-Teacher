@@ -5,6 +5,7 @@ import { normalizePhone, submitCallback } from "../src/callbacks";
 import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
 import { BasicTranslator } from "../src/basic";
+import { HAREDI_CONTENT_RULE } from "../src/content-rules";
 import { settings, type Env } from "../src/env";
 import { handleCallback } from "../src/pbx";
 
@@ -30,6 +31,20 @@ it("rejects hidden IVR callers before any database or teacher access and hangs u
   const response = await handleCallback(new Request(url), env, s, "school");
   expect(response).toMatchObject({ type: "simpleMenu", files: [{ text: HIDDEN_CALLER_MESSAGE }], times: 1 });
   expect(await handleCallback(new Request(url + "&hiddenCallerEnd=END"), env, s, "school")).toEqual({ type: "hangup" });
+});
+
+it("uses a system instruction for basic translation and returns the spoken refusal without a transcript", async () => {
+  const refusal = "אפשר לומר משפט אחר לתרגום.";
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+    candidates: [{ content: { parts: [{ text: JSON.stringify({ heard: "", translation: refusal, language: "he-IL" }) }] } }],
+  }));
+  const env = {} as Env;
+  const result = await new BasicTranslator(env, settings(env), "English").translate(new Uint8Array(320), new AbortController().signal);
+  const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
+  expect(body.systemInstruction.parts[0].text).toBe(HAREDI_CONTENT_RULE);
+  expect(body.systemInstruction.parts[1].text).toContain("selected English");
+  expect(body.contents).toEqual([{ role: "user", parts: [{ inline_data: { mime_type: "audio/wav", data: expect.any(String) } }] }]);
+  expect(result).toMatchObject({ heard: "", text: refusal, language: "he-IL" });
 });
 
 function session() {
