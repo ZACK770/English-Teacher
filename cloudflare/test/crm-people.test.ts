@@ -48,6 +48,21 @@ function session(id = "call1", transcript: string | null = JSON.stringify([{ rol
 const request = (path: string, auth = true, method = "GET") => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/" + path, { method, headers: auth ? { Authorization: "Bearer crm-test-secret" } : {} }), env);
 const reset = (confirm: unknown = "0501234567", id = "person1", headers: Record<string, string> = { Authorization: "Bearer crm-test-secret" }) => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/people/" + id, { method: "DELETE", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ confirm }) }), env);
 describe('returning practice customers', () => {
+  it('prefers the active subscription and ignores newer top-up receipts', async () => {
+    customer();
+    planAndSubscription('person1', 'active');
+    sql.exec("UPDATE subscriptions SET plan_id='school-step', current_period_end='2099-01-01'");
+    for (const day of ['2026-01-01', '2026-01-02']) insert('practice_days', { customer_id: 'person1', day, seconds: 120, calls: 1, first_at: now, last_at: now });
+    const receipt = (id: string, packageId: string, at: string) => insert('sales_receipts', { id, customer_id: 'person1', package_id: packageId, product: 'school', reference: id, amount_ils: 39, vat_rate: 0, minutes: 60, expires_at: '2099-01-01', created_at: at });
+    receipt('regular', 'school-pace', '2026-01-01');
+    receipt('addon', 'school-topup', '2026-01-02');
+    const result = async () => (await (await request('returning')).json() as any).items[0];
+    expect(await result()).toMatchObject({ package: { id: 'school-step' }, monthly_minutes: 60 });
+    sql.exec("UPDATE subscriptions SET status='cancelled'");
+    expect(await result()).toMatchObject({ package: { id: 'school-pace' }, monthly_minutes: 200 });
+    sql.exec("DELETE FROM sales_receipts WHERE id='regular'");
+    expect(await result()).toMatchObject({ package: null, monthly_minutes: null });
+  });
   it('returns an empty summary when practice tables are empty', async () => {
     const response = await request('returning');
     expect(response.status).toBe(200);

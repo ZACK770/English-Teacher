@@ -197,9 +197,9 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
       const familyReceipts = (data.familySubscriptions.get(p.id) || []).filter(s => ["active", "cancelled", "past_due"].includes(s.status)).flatMap(s => (data.receipts.get(s.customer_id) || []).filter(r => r.subscription_id === s.id));
       const receipt = [...ownReceipts, ...familyReceipts].filter(r => {
         const ownerSub = (data.subscriptions.get(r.customer_id) || []).find(s => s.id === r.subscription_id);
-        return !r.payment_reversed_at && r.expires_at > now && (!r.valid_from || r.valid_from <= now) && (!ownerSub || ownerSub.status !== "paused" && available(ownerSub));
+        return r.package_id !== "school-topup" && !r.payment_reversed_at && r.expires_at > now && (!r.valid_from || r.valid_from <= now) && (!ownerSub || ownerSub.status !== "paused" && available(ownerSub));
       }).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-      const pkg = data.packages.get(receipt?.package_id || sub?.plan_id);
+      const pkg = data.packages.get(sub?.plan_id) || data.packages.get(receipt?.package_id);
       return [{ id: p.id, name: p.name || "ללא שם", phone: p.phone || "", ...metrics, package: pkg ? { id: pkg.id, name: pkg.name } : null, monthly_minutes: pkg?.monthly_minutes ?? null }];
     });
     const sent = items.reduce((n, p) => n + p.reminders_sent, 0), responded = items.reduce((n, p) => n + p.reminders_responded, 0);
