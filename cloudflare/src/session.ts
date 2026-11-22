@@ -642,7 +642,7 @@ export class TutorSession {
       return saved;
     }
     if (call.name === "end_session") {
-      if (this.controls?.intake_pending && !this.intakeReminded && args.reason !== "caller_requested" && args.reason !== "no_response" && !args.destination) {
+      if (this.controls?.intake_pending && !this.finalSent && !this.intakeReminded && args.reason !== "caller_requested" && args.reason !== "no_response" && !args.destination) {
         this.intakeReminded = true;
         await this.progress.logDiagnostic(this.profileId, this.callId, "intake_missing_at_end").catch(() => {});
         this.ai?.addContext("APPLICATION NOTE: the first-call intake was not saved. Do not hang up yet: call save_intake now with the goal and level the learner gave (omit unknown answers), then say goodbye and call end_session again.");
@@ -683,19 +683,19 @@ export class TutorSession {
   private async watchdog() {
     while (!this.abort.signal.aborted) {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
-      if (!this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
+      if (!this.finalSent && !this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
       this.maybeOpenSalesWindow(Date.now());
       this.maybeNudgeSilence(Date.now());
-      if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
+      if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.finalSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
           this.ai?.addContext("APPLICATION CLOCK: closing stage reached. At the next natural pause, begin the configured closing " + (this.controls?.lesson?.closing_activity ?? "short recap") + ", then save the results and the lesson summary (record_lesson_summary) before saying goodbye. Report only demonstrated results. This is not permission to hang up; respect the ending policy and explicit requests to stop.");
           this.closingSent = true;
         }
       }
-      if (this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
-        this.ai?.addContext("APPLICATION CLOCK: about 20 seconds remain before the line closes. If not done yet, save the results and lesson summary now, then say one short warm goodbye in Hebrew.");
+      if (this.ai && this.allowanceMs && this.meteredAt !== null && !this.finalSent && !this.reconnecting && Date.now() - this.meteredAt >= this.allowanceMs - 25000) {
         this.finalSent = true;
+        this.ai.prompt("APPLICATION CLOCK: the hard call allowance is ending in at most 25 seconds. This overrides the normal ending policy and unfinished intake. Stop asking questions and speak now: give a brief summary and a warm invitation to call again, in one or two short Hebrew sentences. Finish speaking within the remaining time, then call end_session with reason task_completed. Do not wait for another answer or delay the goodbye for other tools.");
       }
       await sleep(500, this.abort.signal);
     }
@@ -712,7 +712,7 @@ export class TutorSession {
   }
 
   private maybeOpenSalesWindow(now: number) {
-    if (this.practiceStarted && !this.salesWindowOpen && !this.reconnecting && !this.output.length &&
+    if (this.practiceStarted && !this.salesWindowOpen && !this.finalSent && !this.reconnecting && !this.output.length &&
       now - this.practiceStarted.at - (this.failureGapMs - this.practiceStarted.failureGapMs) >= 90000) {
       this.ai?.addContext("APPLICATION CLOCK: the 90-second practice milestone has passed. At a natural pause, offer tomorrow's lesson only if the learner shows interest in continuing.");
       this.salesWindowOpen = true;
@@ -726,6 +726,7 @@ export class TutorSession {
 
   private async drainFinalAudio() {
     if (this.disconnected || !(this.reason.startsWith("model:") || (this.reason === "customer_busy" && !this.portal))) return;
+    const deadline = this.meteredAt !== null && this.allowanceMs ? this.meteredAt + this.allowanceMs : Infinity;
     if (this.partial.length) {
       const padded = new Uint8Array(FRAME_BYTES);
       padded.set(this.partial);
@@ -733,11 +734,15 @@ export class TutorSession {
       this.partial = new Uint8Array();
     }
     for (const frame of this.output.splice(0)) {
-      if (this.disconnected) break;
+      if (this.disconnected || Date.now() + FRAME_MS > deadline) return;
       this.sendAudio(frame);
       await sleep(FRAME_MS);
     }
-    for (let i = 0; i < 10 && !this.disconnected; i++) { this.sendAudio(SILENCE_FRAME); await sleep(FRAME_MS); }
+    for (let i = 0; i < 10 && !this.disconnected; i++) {
+      if (Date.now() + FRAME_MS > deadline) return;
+      this.sendAudio(SILENCE_FRAME);
+      await sleep(FRAME_MS);
+    }
   }
 
   private async basicListen(intro: string) {
