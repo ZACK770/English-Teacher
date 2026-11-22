@@ -1,4 +1,4 @@
-import { isEmailConfirmation, isSummaryCallConsent, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
+import { hasEligibleSummaryCallResponse, isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, revokesSummaryCall, SALES_TOOL_NAMES, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
@@ -15,6 +15,7 @@ import { CallRecorder } from "./recordings";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
 import { ProgressStore } from "./progress";
 import { practiceSummary } from "./practice";
+import { reminderGuidance, savePracticeReminder } from "./practice-reminders";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
@@ -23,7 +24,7 @@ import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./pho
 
 export const SILENCE_NUDGE_MS = 7000;
 export const MAX_SILENCE_NUDGES = 2;
-export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"שומע אותי? אפשר לענות גם בעברית\"), then ask your last question again more simply; if it had options, name them briefly.";
+export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"יש קליטה? גם עברית זה מצוין.\"), then ask your last question again more simply; if it had options, name them briefly.";
 
 export function silenceNudgeDue(now: number, lastHuman: number, lastTutorAudio: number, nudges: number): boolean {
   return nudges < MAX_SILENCE_NUDGES && now - Math.max(lastHuman, lastTutorAudio) >= SILENCE_NUDGE_MS;
@@ -61,6 +62,8 @@ export class TutorSession {
   private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
   private summaryCallbackRequested = false;
   private summaryCallbackSpeech = "";
+  private practiceReminders = false;
+  private reminderSpeech = "";
   private salesWindowOpen = false;
   private practiceStarted: { at: number; failureGapMs: number } | null = null;
   private returnPath: string | null = null;
@@ -215,11 +218,13 @@ export class TutorSession {
       if (opening) this.controls = { ...this.controls, opening_message: opening + (this.controls.lesson && !adCall ? " Follow the active SpeakCall lesson configuration for ability, mode, targets and help; it overrides generic suggestions in this greeting." : "") };
       if (bot?.role === "teacher" && !this.customerId.startsWith("anonymous-")) {
         const practice = await practiceSummary(this.env.DB, this.customerId);
+        this.practiceReminders = !!practice.package && !!this.controls.lesson;
+        if (this.practiceReminders) this.controls.custom_instructions += "\n" + reminderGuidance(!!practice.reminder?.active);
         const streak = practice.current_streak + (practice.today.practiced ? 0 : 1);
         if (practice.package && streak >= 2 && practice.current_streak > 0) this.controls.opening_message += ` Open briefly in natural Hebrew with "יום ${streak} ברצף!", then continue normally; use gender-neutral language.`;
       }
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
-      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId });
+      this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders });
       if (this.abort.signal.aborted) return;
       const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
       reserved = allowance.seconds > 0;
@@ -425,6 +430,7 @@ export class TutorSession {
       } else if (event.type === "interrupted") {
         this.pendingEmail = null;
         this.summaryCallbackSpeech = "";
+        this.reminderSpeech = "";
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
@@ -440,9 +446,10 @@ export class TutorSession {
         this.meter.transcript.push({ role: event.role, text: event.text });
         if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
         if (event.role === "learner") {
+          if (this.practiceReminders) this.reminderSpeech = (this.reminderSpeech + " " + (event.rawText ?? event.text)).trim().slice(-512);
           if (this.controls?.summary_callback) {
             this.summaryCallbackSpeech = (this.summaryCallbackSpeech + (event.rawText ?? event.text)).slice(0, 512);
-            if (/(?:אל תתקשר|אל תשלח|לא רוצה שיחת סיכום|בלי שיחת סיכום|בטל את שיחת הסיכום)/.test(this.summaryCallbackSpeech)) this.summaryCallbackRequested = false;
+            if (revokesSummaryCall(this.summaryCallbackSpeech)) this.summaryCallbackRequested = false;
           }
           this.lastHuman = Date.now();
           if (!this.learnerSeen) this.meter.learnerTurns++;
@@ -450,6 +457,7 @@ export class TutorSession {
         }
       } else if (event.type === "turn_complete") {
         this.summaryCallbackSpeech = "";
+        this.reminderSpeech = "";
         const pending = this.pendingEmail;
         // Gemini can finish a tool-only turn before speaking the read-back.
         if (pending?.phase !== "readback" || pending.audio || pending.text) {
@@ -485,6 +493,7 @@ export class TutorSession {
   private async reconnectGemini(preservePlayback = false) {
     this.pendingEmail = null;
     this.summaryCallbackSpeech = "";
+    this.reminderSpeech = "";
     this.failureStarted ??= Date.now();
     const handle = this.ai?.resumeHandle;
     this.ai?.close();
@@ -539,8 +548,17 @@ export class TutorSession {
 
   private async recordTool(call: ToolCall): Promise<boolean> {
     const args = call.args ?? {};
+    if (call.name === "save_practice_reminder") {
+      if (!this.practiceReminders || !this.controls?.lesson) return false;
+      const saved = await savePracticeReminder(this.env.DB, this.customerId, this.reminderSpeech).catch(() => false);
+      if (saved) {
+        this.reminderSpeech = "";
+        this.ai?.addContext("APPLICATION NOTE: reminder preference saved from the learner's answer. Do not ask about reminders again in this call unless the learner requests a change.");
+      }
+      return saved;
+    }
     if (call.name === "request_summary_callback") {
-      if (!this.controls?.summary_callback || !isSummaryCallConsent(this.summaryCallbackSpeech) ||
+      if (!this.controls?.summary_callback || !hasEligibleSummaryCallResponse(this.summaryCallbackSpeech) ||
         !canCallWithLessonSummary(this.env, this.callerPhone)) return false;
       this.summaryCallbackRequested = true;
       return true;

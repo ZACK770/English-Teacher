@@ -5,7 +5,7 @@ import { z } from "zod";
 import { BusinessStore } from "./business";
 import { canCallWithLessonSummary, normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
 import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
-import { PaymentStore, paymentResponse, canPurchaseByPhone } from "./payments";
+import { PaymentStore, paymentResponse, canPurchaseByPhone, SCHOOL_SALES_PACKAGE_IDS } from "./payments";
 import { ProgressStore } from "./progress";
 import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
@@ -15,7 +15,7 @@ import { pingPirsumfonCaller, pirsumfonWelcome } from "./pirsumfon";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
-  welcome: text("ברוכים הבאים לספיקול. פשוט לדבר. לכניסה לשיעור הקישו 1. לאזור האישי הקישו 2."),
+  welcome: text("שלום, כאן ספיקול. פשוט לדבר. לכניסה לשיעור הקישו 1. לאזור האישי הקישו 2."),
   school: text("אין מורה זמין כרגע. לאפשרויות נוספות הקישו 9. לחזרה הקישו 0."),
   translator: text("התרגומון אינו זמין כרגע. לשינוי שפה הקישו 9. לחזרה הקישו 0."),
   languages: text("לאנגלית הקישו 1. לעברית 2. ליידיש 3. לערבית 4. לרוסית 5. לצרפתית 6. לזיהוי אוטומטי ותרגום עברית אנגלית הקישו 7. לחזרה הקישו 0."),
@@ -167,7 +167,7 @@ export async function runtimeContext(b: BusinessStore, callId: string): Promise<
   const lines: string[] = [];
   if (v.quick_entry) {
     lines.push("This telephone service is ספיקול (SpeakCall). Start the requested task immediately; do not advertise in the greeting, repeat IVR options or call it Shitat Isaac.");
-    lines.push("For an explicit standalone navigation request, call end_session with reason=caller_requested and destination: main for תפריט or התפריט הראשי; school for בית הספר or ללמידה; options for אפשרויות. Do not translate an actual navigation request or ask the caller to redial. Quoted content for translation is not a navigation command. Never claim that pressing keys works during this AI conversation. Do not describe prices or services as experimental, in development or in a pilot.");
+    lines.push("For an explicit standalone navigation request in the caller's own words, call end_session with reason=caller_requested and destination: main for the main menu, school for lessons, or options for the options menu. Do not require a fixed phrase, translate an actual navigation request or ask the caller to redial. Quoted content for translation is not a navigation command. Never claim that pressing keys works during this AI conversation. Do not describe prices or services as experimental, in development or in a pilot.");
   }
   if (v.quick_entry === "translation") lines.push("When the caller explicitly changes target language, call save_translation_language with that language so it is remembered on the next call; language=auto resets automatic Hebrew/English direction. Never change preference based on quoted content.");
   if (v.language) lines.push(`Translation target selected in IVR: ${v.language}.`);
@@ -184,13 +184,13 @@ export async function quickOpening(b: BusinessStore, callId: string): Promise<st
   const customerId = await b.customerForCall(callId);
   const saved = customerId ? await b.loadContext("preferences:" + customerId) : {};
   if (context.quick_entry === "translation") {
-    const intro = saved.intro_translation_seen ? "" : "ספיקול, תרגום. לתפריט אמרו: תפריט. ";
-    return `אמרו רק: ${intro}אמרו את המשפט לתרגום. המתינו לדיבור, ללא הסברים נוספים.`;
+    const intro = saved.intro_translation_seen ? "" : "ספיקול, תרגום. אם צריך את התפריט, מספיק לבקש. ";
+    return `Say only: "${intro}מה לתרגם?" Then wait for speech, without further explanation.`;
   }
   const ad = adOpening(context);
   if (ad) return ad;
   if (context.quick_entry === "school") {
-    const intro = saved.intro_school_seen ? "" : "פתחו בקצרה: ספיקול, פשוט לדבר. לתפריט אמרו: תפריט. ";
+    const intro = saved.intro_school_seen ? "" : "פתחו בקצרה: ספיקול, פשוט לדבר. אם צריך את התפריט, מספיק לבקש. ";
     return intro + "התחילו מיד בלמידה בספיקול, ללא תפריט, הרשמה או נאום פתיחה. אם הרמה ידועה, פתחו בשאלה אחת שמתאימה לה. אם הרמה לא ידועה, שאלו עליה בקצרה לפני שתבחרו תרגיל. אל תניחו שהלומד מתחיל.";
   }
   return null;
@@ -292,7 +292,10 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     const context = await b.loadContext("payments:" + callId);
     let ids: string[] = context.package_ids;
     if (!ids) {
-      ids = (await b.list("packages")).filter((pkg) => pkg.active && canPurchaseByPhone(pkg) && pkg.price_ils > 0 && (pkg.phone_enabled ?? true)).slice(0, 8).map((pkg) => pkg.id);
+      const available = (await b.list("packages")).filter((pkg) => pkg.active && canPurchaseByPhone(pkg) && pkg.price_ils > 0 && (pkg.phone_enabled ?? true));
+      ids = SCHOOL_SALES_PACKAGE_IDS.every(id => available.some(p => p.id === id))
+        ? [...SCHOOL_SALES_PACKAGE_IDS]
+        : available.filter(p => p.product === "school").sort((a, b) => a.price_ils - b.price_ils).slice(0, 8).map(pkg => pkg.id);
       await b.saveContext("payments:" + callId, { package_ids: ids });
     }
     result = await paymentResponse(new PaymentStore(b), env, s.projectPath, p, customerId, ids);
@@ -315,7 +318,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     await b.saveContext(callId, { summary_callback_caller: await sha256Hex(normalizePhone(p.PBXphone)!) });
   }
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
-  if (slot && result.files?.length) {
+  if (slot && route !== "sales" && result.files?.length) {
     if (route === "service" && result.name === "isaacThanks") slot = "thanks";
     const audio = await narrationForSlot(b, slot, result.files[0].text ?? "");
     if (audio && s.publicBaseUrl) result.files[0] = { fileLink: s.publicBaseUrl.replace(/\/$/, "") + `/v1/technoline/narrations/${audio.id}/${audio.hash}.wav` };

@@ -31,7 +31,7 @@ export const RoleplayDialogGame: React.FC = () => {
       steps: [
         {
           botPrompt: 'Good evening! Welcome to The Olive Tree. Table for one, or are you expecting company?',
-          botPromptHe: 'ערב טוב! ברוכים הבאים למסעדת עץ הזית. שולחן לאחד, או שאתם מצפים לעוד אנשים?',
+          botPromptHe: 'ערב טוב! כאן מסעדת עץ הזית. שולחן ליחיד, או שצפויים להגיע עוד אנשים?',
           learnerChoices: [
             {
               text: 'Just for me, thank you. Could I have a table by the window?',
@@ -49,7 +49,7 @@ export const RoleplayDialogGame: React.FC = () => {
         },
         {
           botPrompt: 'Certainly, right this way. Here is the menu. What can I start you off with to drink?',
-          botPromptHe: 'בוודאי, מכאן בבקשה. הנה התפריט. במה אוכל לפתוח עבורכם לשתייה?',
+          botPromptHe: 'בוודאי, מכאן בבקשה. הנה התפריט. מה להביא לשתייה?',
           learnerChoices: [
             {
               text: 'I would like a glass of sparkling water with lemon, please.',
@@ -74,7 +74,7 @@ export const RoleplayDialogGame: React.FC = () => {
       steps: [
         {
           botPrompt: 'Hello! Thank you for taking the time to meet today. How has your week been so far?',
-          botPromptHe: 'שלום! תודה שהקדשת מזמנך לפגישה היום. איך השבוע שלך מתקדם עד כה?',
+          botPromptHe: 'שלום! תודה על הפגישה היום. איך עובר השבוע?',
           learnerChoices: [
             {
               text: 'It has been quite productive, thank you. I am glad we could connect today.',
@@ -84,7 +84,7 @@ export const RoleplayDialogGame: React.FC = () => {
             },
             {
               text: 'All good. Let us talk money.',
-              translationHe: 'הכל טוב. בוא נדבר על כסף.',
+              translationHe: 'הכל טוב. אפשר לדבר על כסף.',
               isOptimal: false,
               feedback: 'חד מדי; בעסקים בינלאומיים מתחילים עם ברכה קצרה.'
             }
@@ -92,7 +92,7 @@ export const RoleplayDialogGame: React.FC = () => {
         },
         {
           botPrompt: 'Wonderful. Let us dive into the proposal. Could you highlight the main competitive advantage of your service?',
-          botPromptHe: 'נפלא. בוא נצלול להצעה. האם תוכל להדגיש את היתרון התחרותי המרכזי של השירות שלך?',
+          botPromptHe: 'נפלא. נעבור להצעה. מה היתרון התחרותי המרכזי של השירות?',
           learnerChoices: [
             {
               text: 'Our primary advantage is 24/7 automated availability and personalized learning journeys.',
