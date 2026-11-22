@@ -67,6 +67,7 @@ export function SubscriptionPanel({ token, customerId, subscriptions, onRefresh,
       const result = await portalRequest<Pick<SubscriptionSummary, 'id' | 'access_suspended_at'>>(
         "/v1/admin/crm/subscriptions/" + encodeURIComponent(sub.id) + (restore ? "/restore" : "/suspend"), token, {});
       setItems(current => current.map(item => item.id === result.id ? { ...item, access_suspended_at: result.access_suspended_at } : item));
+      await onRefresh?.();
       setNote(restore ? "ההשעיה הידנית הוסרה." : "הגישה דרך המנוי הושעתה.");
     } catch (e) {
       if (e instanceof PortalError && e.status === 401) window.dispatchEvent(new Event('admin-session-expired'));
