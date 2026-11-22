@@ -143,7 +143,7 @@ export const WordMatchGame: React.FC = () => {
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#e3e8eb] hover:bg-[#f5f6f8] text-[#172b35] transition"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            התחל מחדש
+            להתחיל מחדש
           </button>
         </div>
       </div>
@@ -153,9 +153,9 @@ export const WordMatchGame: React.FC = () => {
           <div className="w-16 h-16 bg-[#e9f5f0] text-[#137c69] rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
             <Trophy className="w-8 h-8" />
           </div>
-          <h3 className="text-2xl font-extrabold text-[#172b35] mb-2">כל הכבוד! סיימת את המשחק</h3>
+          <h3 className="text-2xl font-extrabold text-[#172b35] mb-2">כל הכבוד! המשחק הושלם</h3>
           <p className="text-sm text-[#718087] max-w-md mx-auto mb-6">
-            השלמת את כל {sourcePairs.length} ההתאמות ב-{attempts} ניסיונות. צברת {score * 10} נקודות שנוספו לחשבון שלך!
+            כל {sourcePairs.length} ההתאמות הושלמו ב-{attempts} ניסיונות. לחשבון נוספו {score * 10} נקודות!
           </p>
           <button
             onClick={initGame}

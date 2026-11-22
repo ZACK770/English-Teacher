@@ -6,6 +6,7 @@ import { providerTime } from "./nedarim";
 import { reconcilePhoneKeva } from "./keva-sync";
 import { visiblePhone } from "./phone";
 import { canPurchaseAutomatically } from "../../src/pricing";
+import { customerPackageName } from "../../src/paymentCopy";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
 export const PREFIX = "dibura-";
@@ -373,7 +374,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   if (customerId.startsWith("anonymous-")) return selectionMenu("isaacPayExit", "לרכישת חבילה יש להתקשר ממספר גלוי. לשירות הקישו 9. לחזרה הקישו 0.");
   if (order) {
     const state = order.state;
-    if (state === "paid") return selectionMenu("isaacPayExit", "התשלום אושר והחבילה נפתחה עבורכם. לחזרה הקישו 0. לשירות הקישו 9.");
+    if (state === "paid") return selectionMenu("isaacPayExit", "התשלום אושר והחבילה נפתחה. לחזרה הקישו 0. לשירות הקישו 9.");
     if (state !== "selected") {
       const message = state === "failed" || state === "cancelled"
         ? "התשלום לא אושר או שהרכישה בוטלה."
@@ -404,8 +405,8 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       };
     }
     const text = pkg.billing === "monthly"
-      ? `בחרתם ${pkg.name}. המנוי כולל ${pkg.minutes} דקות בחודש, במחיר ${order.amount_agorot / 100} שקלים לחודש. להצטרפות בהוראת קבע באשראי הקישו 1. לביטול הקישו 0.`
-      : `בחרתם ${pkg.name}. החבילה כוללת ${pkg.minutes} דקות, בתוקף ל-${pkg.validity_days} ימים, במחיר ${order.amount_agorot / 100} שקלים. לתשלום חד פעמי באשראי הקישו 1. לביטול הקישו 0.`;
+      ? `מנוי ${customerPackageName(pkg.name)}, במחיר ${order.amount_agorot / 100} שקלים לחודש. להצטרפות בהוראת קבע באשראי הקישו 1. לביטול הקישו 0.`
+      : `${customerPackageName(pkg.name)}, בתוקף ל-${pkg.validity_days} ימים, במחיר ${order.amount_agorot / 100} שקלים. לתשלום חד פעמי באשראי הקישו 1. לביטול הקישו 0.`;
     return selectionMenu("isaacPayConfirm", text, "0,1");
   }
   const choice = params.isaacPackage ?? "";
@@ -416,7 +417,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     try {
       await store.create(callId, customerId, packageIds[Number(choice) - 1]);
     } catch (error) {
-      const message = error instanceof ExistingMonthlyEnrollmentError ? "כבר יש לך מנוי פעיל." : "החבילה אינה זמינה לרכישה.";
+      const message = error instanceof ExistingMonthlyEnrollmentError ? "כבר קיים מנוי פעיל בחשבון." : "החבילה אינה זמינה לרכישה.";
       return selectionMenu("isaacPayExit", message + " לחזרה הקישו 0. לשירות הקישו 9.");
     }
     return paymentResponse(store, env, base, params, customerId, packageIds);
@@ -428,15 +429,15 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     const p = packages[id];
     if (p && p.active && canPurchaseByPhone(p) && p.price_ils > 0 && (p.phone_enabled ?? true)) {
       lines.push(p.billing === "monthly"
-        ? `למנוי ${p.name}: ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש בהוראת קבע באשראי, הקישו ${index + 1}.`
-        : `לרכישה מיידית של ${p.name}: ${p.minutes} דקות, בתוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
+        ? `למנוי ${customerPackageName(p.name)}: ${p.price_ils} שקלים לחודש בהוראת קבע באשראי, הקישו ${index + 1}.`
+        : `לרכישה מיידית של ${customerPackageName(p.name)}: תוקף ל-${p.validity_days} ימים, ב-${p.price_ils} שקלים בתשלום אחד באשראי, הקישו ${index + 1}.`);
     }
   });
   const plans = all.filter((p) => p.active && p.product === "school" && p.price_ils > 0 &&
     (!canPurchaseByPhone(p) || p.phone_enabled === false)).sort((a, b) => a.price_ils - b.price_ils);
   const describe = (p: Record<string, any>) => p.billing === "monthly"
-    ? `${p.name}, ${p.minutes} דקות בחודש, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
-    : `${p.name}, ${p.minutes} דקות בכל חודש למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
+    ? `${customerPackageName(p.name)}, ב-${p.price_ils} שקלים לחודש${p.recommended ? ", המנוי המומלץ" : ""}.`
+    : `${customerPackageName(p.name)}, למשך ${p.duration_months ?? Math.round(p.validity_days / 30)} חודשים, ב-${p.price_ils} שקלים${p.recommended ? ", המסלול המומלץ" : ""}.`;
   const monthly = plans.filter((p) => p.billing === "monthly").map(describe);
   const courses = plans.filter((p) => p.billing !== "monthly").map(describe);
   const intro = [

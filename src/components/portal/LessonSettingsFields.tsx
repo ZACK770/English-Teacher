@@ -1,7 +1,7 @@
 import { LessonSettings } from "./portalApi";
 import { ProChoices } from "./ProBadge";
 
-export const levelNames = { beginner: "צעדים ראשונים", intermediate: "מסתדר בשיחה", fluent: "מדבר ורוצה לדייק" };
+export const levelNames = { beginner: "צעדים ראשונים", intermediate: "שיחה ברמת ביניים", fluent: "שיחה שוטפת עם דגש על דיוק" };
 export const modeNames = { guided: "לומדים יחד", conversation: "לומדים דרך שיחה", roleplay: "פשוט מדברים" };
 export const loadNames = { light: "קל — עד 3 פריטי יעד", normal: "רגיל — עד 5 פריטי יעד", intensive: "מוגבר — עד 8 פריטי יעד" };
 export const correctionPolicies = { on_request: "רק כשאבקש", after_answer: "תיקון קצר אחרי תשובה", after_activity: "משוב בסוף הפעילות" };

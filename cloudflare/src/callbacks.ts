@@ -233,9 +233,9 @@ export function canCallWithLessonSummary(env: Env, phone: string, now = new Date
 
 export function lessonSummaryAudioText(points: number | undefined, learnerTurns: number) {
   const result = points === undefined
-    ? `השתתפת היום ב-${learnerTurns} תורות דיבור. תודה שתרגלת איתנו.`
-    : `צברת ${points} נקודות מתוך מאה בתרגול. תודה שתרגלת איתנו.`;
-  return `שלום, כאן ספיקול עם סיכום קצר של השיעור. ${result} אפשר לשמור את המספר שמופיע אצלך ולחייג אלינו להמשך האימון. להתראות!`;
+    ? `היום היו ${learnerTurns} תורות דיבור בשיעור. תודה על התרגול המשותף.`
+    : `בתרגול נצברו ${points} נקודות מתוך מאה. תודה על התרגול המשותף.`;
+  return `שלום, כאן ספיקול עם סיכום קצר של השיעור. ${result} רוצים להמשיך להתאמן? שמרו את המספר שעל המסך. להתראות!`;
 }
 
 export async function callWithLessonSummary(env: Env, phone: string, callId: string, makeAudio: () => Promise<Uint8Array>, now = new Date()) {
