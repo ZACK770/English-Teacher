@@ -4,6 +4,7 @@ import { CheckoutStore } from "./checkout";
 import { SubscriptionStore } from "./subscriptions";
 import { providerTime } from "./nedarim";
 import { reconcilePhoneKeva } from "./keva-sync";
+import { claimPhoneKevaFirstCharge, completePhoneKevaFirstCharge } from "./phone-keva-charge";
 import { visiblePhone } from "./phone";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { customerPackageName } from "../../src/paymentCopy";
@@ -374,11 +375,16 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   let order = await store.orderForCall(callId);
   if (order && order.customer_id !== customerId) throw new HttpError(403, "Customer mismatch");
   if (order && params.isaacPayStatus) {
+    const firstCharge = params.isaacPayStatus === "OK" && JSON.parse(order.snapshot).billing === "monthly"
+      ? await claimPhoneKevaFirstCharge(env, order.id, params.CONFIRM_isaacPayStatus ?? "") : false;
     await store.recordPbxResult(callId, params.isaacPayStatus, params.CONFIRM_isaacPayStatus ?? "");
     order = await store.orderForCall(callId);
     if (order?.state === "awaiting_settlement" && JSON.parse(order.snapshot).billing === "monthly") {
-      await reconcilePhoneKeva(env, order.id).catch(() => undefined);
+      const outcome = firstCharge
+        ? await completePhoneKevaFirstCharge(env, order.id).catch(() => undefined)
+        : await reconcilePhoneKeva(env, order.id).catch(() => undefined);
       order = await store.orderForCall(callId);
+      if (outcome === "declined") return selectionMenu("isaacPayExit", "הכרטיס לא אושר והמנוי לא נפתח. לחזרה הקישו 0. לשירות הקישו 9.");
     }
   }
   if (customerId.startsWith("anonymous-")) return selectionMenu("isaacPayExit", "לרכישת חבילה יש להתקשר ממספר גלוי. לשירות הקישו 9. לחזרה הקישו 0.");

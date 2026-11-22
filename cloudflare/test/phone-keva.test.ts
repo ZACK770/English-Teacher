@@ -7,7 +7,7 @@ import { type Env, settings } from "../src/env";
 import { handleCallback } from "../src/pbx";
 import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT } from "../src/payments";
 import worker from "../src/index";
-import { syncKevas } from "../src/keva-sync";
+import { reconcilePhoneKeva, syncKevas } from "../src/keva-sync";
 import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
 import { TutorSession } from "../src/session";
 import { controlsFromSettings } from "../src/controls";
@@ -67,6 +67,24 @@ async function hook(data: Record<string, unknown>, signed = true) {
     headers: signed ? { "X-Nedarim-Timestamp": timestamp, "X-Nedarim-Signature": "v1=" + hex } : {} }), env);
 }
 const counts = () => ["subscriptions", "sales_receipts", "standing_orders"].map(table => db.sql.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n);
+const providerForms = () => vi.mocked(fetch).mock.calls.map(([, init]) => new URLSearchParams(String(init!.body)));
+function immediateProvider(category: string, amount = "59", options: { charge?: unknown; update?: unknown; deletion?: string; network?: string } = {}) {
+  provider(category, amount);
+  rows[0].Success = "0";
+  Object.assign(detail, { CreatedDate: "22/11/2026", KevaSuccess: "0", KevaNextDate: "22/11/2026", HistoryData: [] });
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+    const form = new URLSearchParams(String(init.body)), action = form.get("Action");
+    expect(form.get("MosadId")).toBe("7019554");
+    expect(form.get("ApiPassword")).toBe("test-key");
+    if (options.network === action) throw new Error("Provider unavailable");
+    if (action === "GetKevaJson") return Response.json(rows);
+    if (action === "GetKevaId") return Response.json(detail);
+    if (action === "TashlumBodedNew") return Response.json(options.charge ?? { Status: "OK", TransactionId: "987654", ID: "987654", Confirmation: "0012345", Amount: amount, Currency: "1", KevaId: "54321" });
+    if (action === "UpdateKevaNew") return Response.json(options.update ?? { Result: "OK" });
+    if (action === "DeleteKeva") return new Response(options.deletion ?? "OK");
+    throw new Error("Unexpected provider operation");
+  }));
+}
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -88,6 +106,141 @@ beforeEach(async () => {
   }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
+
+describe("in-call first monthly charge", () => {
+  const result = { isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" };
+  const actions = () => providerForms().map(form => form.get("Action"));
+
+  it.each([["1", "59", 60], ["2", "119", 200], ["3", "199", 400]])("charges and activates plan %s during the same callback", async (choice, amount, minutes) => {
+    const module = await issue(String(choice));
+    immediateProvider(String(module.category), String(amount));
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר והחבילה נפתחה");
+    expect(actions()).toEqual(["GetKevaId", "TashlumBodedNew", "UpdateKevaNew"]);
+    const order = (await store.orderForCall("phone-hk"))!;
+    expect(Object.fromEntries(providerForms()[1])).toMatchObject({ Action: "TashlumBodedNew", MosadNumber: "7019554", MosadId: "7019554", ApiPassword: "test-key",
+      KevaId: "54321", Amount: String(amount), Currency: "1", Tashloumim: "1", Tashlumim: "1", JoinToKevaId: "Join", Groupe: "dibura-" + order.id, AjaxId: "dibura-first-" + order.id });
+    expect(Object.fromEntries(providerForms()[2])).toMatchObject({ Action: "UpdateKevaNew", KevaId: "54321", NextDate: "22/12/2026" });
+    expect(order).toMatchObject({ state: "paid", transaction_id: "987654", confirmation: "0012345", amount_agorot: Number(amount) * 100 });
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(db.sql.prepare("SELECT monthly_minutes,current_period_end FROM subscriptions").get()).toEqual({ monthly_minutes: minutes, current_period_end: "2026-12-22T13:00:00.000+00:00" });
+    expect(db.sql.prepare("SELECT keva_id,next_date FROM standing_orders").get()).toEqual({ keva_id: "54321", next_date: "22/12/2026" });
+    expect(db.sql.prepare("SELECT keva_id FROM phone_keva_enrollments").get()).toEqual({ keva_id: "54321" });
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues WHERE status='open'").get()!.n).toBe(0);
+    expect(await b.hasPaidAccess("c1")).toBe(true);
+  });
+
+  it("deletes a declined Keva, fails the order and retains back/service navigation", async () => {
+    const module = await issue();
+    immediateProvider(String(module.category), "59", { charge: { Status: "Error", ErrorCode: "033" } });
+    expect(await respond(result)).toMatchObject({ name: "isaacPayExit", enabledKeys: "0,9",
+      files: [{ text: "הכרטיס לא אושר והמנוי לא נפתח. לחזרה הקישו 0. לשירות הקישו 9." }] });
+    expect(actions()).toEqual(["GetKevaId", "TashlumBodedNew", "DeleteKeva"]);
+    expect(providerForms()[2].get("KevaId")).toBe("54321");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("failed");
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(await respond({ isaacPayExit: "0" })).toMatchObject({ goTo: "/" });
+    expect(await respond({ isaacPayExit: "9" })).toMatchObject({ goTo: "/4" });
+  });
+
+  it("records a visible issue when decline cleanup fails", async () => {
+    const module = await issue();
+    immediateProvider(String(module.category), "59", { charge: { Status: "Error" }, deletion: "Unable to delete" });
+    expect(JSON.stringify(await respond(result))).toContain("הכרטיס לא אושר");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("failed");
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE kind='phone_keva_delete_failed' AND status='open'").get()).toBeTruthy();
+    await syncKevas(env, true);
+    expect(counts()).toEqual([0, 0, 0]);
+  });
+
+  it("charges exactly once across concurrent and repeated PBX callbacks", async () => {
+    const module = await issue(); immediateProvider(String(module.category));
+    await Promise.all([respond(result), respond(result), respond(result)]);
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+    expect(actions().filter(action => action === "UpdateKevaNew")).toHaveLength(1);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(db.sql.prepare("SELECT state,transaction_id,confirmation FROM phone_keva_first_charges").get()).toEqual({ state: "charged", transaction_id: "987654", confirmation: "0012345" });
+  });
+
+  it("activates an already-charged Keva without charging or changing its billing date", async () => {
+    const module = await issue(); immediateProvider(String(module.category));
+    Object.assign(detail, { KevaNextDate: "22/12/2026", HistoryData: [{ ID: "1", Amount: "59", Date: "22/11/2026", TransactionId: "987654" }] });
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect(actions()).toEqual(["GetKevaId"]);
+    expect(counts()).toEqual([1, 1, 1]);
+  });
+
+  it.each(["refused", "network", "empty"])("activates but leaves an open issue for a %s NextDate update", async failure => {
+    const module = await issue();
+    immediateProvider(String(module.category), "59", failure === "network" ? { network: "UpdateKevaNew" } : { update: failure === "empty" ? {} : { Result: "Error" } });
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("paid");
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(db.sql.prepare("SELECT kind,status FROM payment_issues WHERE kind='phone_keva_next_date'").get()).toEqual({ kind: "phone_keva_next_date", status: "open" });
+    await respond(result);
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+  });
+
+  it.each(["network", "empty", "unknown", "missing transaction", "amount mismatch"])("holds a %s charge result without deleting or retrying", async failure => {
+    const module = await issue();
+    const charge = failure === "empty" ? {} : failure === "unknown" ? { Status: "Pending" } : failure === "missing transaction" ? { Status: "OK", Confirmation: "123" }
+      : { Status: "OK", TransactionId: "987654", Confirmation: "123", Amount: "119" };
+    immediateProvider(String(module.category), "59", failure === "network" ? { network: "TashlumBodedNew" } : { charge });
+    expect(JSON.stringify(await respond(result))).toContain("בתוך דקות");
+    await respond(result);
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
+    expect(counts()).toEqual([0, 0, 0]);
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+    expect(actions()).not.toContain("DeleteKeva");
+    expect(actions()).not.toContain("UpdateKevaNew");
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE kind='phone_keva_charge_unknown' AND status='open'").get()).toBeTruthy();
+    provider(String(module.category));
+    await syncKevas(env, true);
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(actions().filter(action => action === "TashlumBodedNew")).toHaveLength(1);
+  });
+
+  it.each(["group", "phone", "amount", "status", "currency", "frequency", "institution", "old", "missing creation", "unknown history", "existing attempt", "success without history"])("does not charge an unverified %s Keva", async mismatch => {
+    const module = await issue(); immediateProvider(String(module.category));
+    if (mismatch === "group") detail.KevaGroupe = "dibura-other";
+    if (mismatch === "phone") detail.KevaPhone = "0500000002";
+    if (mismatch === "amount") detail.KevaAmount = "119";
+    if (mismatch === "status") detail.KevaStatus = "2";
+    if (mismatch === "currency") detail.KevaCurrency = "2";
+    if (mismatch === "frequency") detail.KevaFrequency = "2";
+    if (mismatch === "institution") detail.MosadNumber = "7000000";
+    if (mismatch === "old") detail.CreatedDate = "20/10/2026";
+    if (mismatch === "missing creation") delete detail.CreatedDate;
+    if (mismatch === "unknown history") delete detail.HistoryData;
+    if (mismatch === "existing attempt") detail.HistoryData = [{ ID: "2", Date: "22/11/2026" }];
+    if (mismatch === "success without history") detail.KevaSuccess = "1";
+    expect(JSON.stringify(await respond(result))).toContain("בתוך דקות");
+    expect(actions()).toEqual(["GetKevaId"]);
+    expect(counts()).toEqual([0, 0, 0]);
+  });
+
+  it("keeps existing awaiting orders and scheduled reconciliation strictly read-only at the provider", async () => {
+    const module = await issue(); immediateProvider(String(module.category));
+    await store.recordPbxResult("phone-hk", "OK", "54321");
+    await respond(result);
+    const order = (await store.orderForCall("phone-hk"))!;
+    await reconcilePhoneKeva(env, order.id, "54321");
+    await syncKevas(env, true);
+    expect(actions()).not.toContain("TashlumBodedNew");
+    expect(actions()).not.toContain("UpdateKevaNew");
+    expect(actions()).not.toContain("DeleteKeva");
+    expect(db.sql.prepare("SELECT COUNT(*) AS n FROM phone_keva_first_charges").get()!.n).toBe(0);
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
+    expect(counts()).toEqual([0, 0, 0]);
+  });
+
+  it("uses the returned ID alias when no separate confirmation is present", async () => {
+    const module = await issue(); immediateProvider(String(module.category), "59", { charge: { Status: "OK", ID: "987654" } });
+    expect(JSON.stringify(await respond(result))).toContain("התשלום אושר");
+    expect((await store.orderForCall("phone-hk"))!.transaction_id).toBe("987654");
+    expect(counts()).toEqual([1, 1, 1]);
+  });
+});
 
 describe("phone monthly enrollment", () => {
   it("offers phone-enabled monthly packages with server-derived keys and prices on the sales route", async () => {

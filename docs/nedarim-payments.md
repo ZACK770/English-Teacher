@@ -38,6 +38,34 @@ and `regular` as “חיוב רגיל (תפיסת מסגרת אשראי)”. Mon
 purchases create the same subscription entitlements as web purchases.
 No provider routing changes are made by this flow.
 
+Monthly phone enrollment uses `kevaMonthly`. Only a fresh in-call PBX OK can
+claim a first charge (migration `0028_phone_keva_first_charge.sql`): its confirmation
+is the KevaId, checked through `GetKevaId` against the saved order, primary phone,
+institution, active monthly ILS status, creation date and empty history. A previously
+successful history activates through the ordinary verification path instead.
+`TashlumBodedNew` charges the saved order amount with `JoinToKevaId=Join` and a stable
+`AjaxId=dibura-first-<orderId>`. The permanent DB claim is never expired or retried:
+provider AjaxId duplicate errors do not return the original transaction result.
+Existing awaiting orders and scheduled reconciliation never initiate this charge.
+
+On verified success, the returned TransactionId (or ID alias) activates the saved
+subscription and receipt; Confirmation is retained when supplied. `UpdateKevaNew`
+then moves NextDate one calendar month forward, in `dd/MM/yyyy` format. An open
+`phone_keva_next_date` payment issue is recorded before activation and remains open
+unless the provider confirms that update (`Result=OK`). Inspect unresolved issues
+in the customer's CRM before any manual collection. Declines (`Status=Error`)
+fail the order and delete the Keva; deletion failures have a separate issue.
+Unknown/network results leave the order awaiting settlement and never delete or
+retry the Keva. Scheduled verification can still recover a later successful charge.
+
+The API documentation has two spellings for the charge installment count:
+`Tashloumim` and `Tashlumim`; both are sent as 1. The Manage3 adapter's `MosadId`
+and the documented `MosadNumber` are both sent for the charge. Update responses
+use `Result`, immediate-charge responses use `Status`, and DeleteKeva returns
+plain text `OK`. No raw provider response or card fields are stored.
+
+### One-time phone purchases
+
 1. The authenticated PBX callback identifies the customer from the caller number.
 2. Menu positions are snapshotted for the call. Selecting a package freezes its
    price, product, minutes, validity and VAT rate in a persistent payment order.
