@@ -114,6 +114,68 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
   insert("subscriptions", { id, customer_id: owner, plan_id: "plan", status, price_agorot: 100, started_at: now, created_at: now, updated_at: now });
 }
 
+describe("CRM free trial reset", () => {
+  const trial = (id = "person1", auth = true) => request("people/" + id + "/reset-trial", auth, "POST");
+  function usage(call: string, product: string, receipt: string | null, billed: number | null = 60) {
+    insert("usage_allocations", { call_id: call, customer_id: "person1", product, receipt_id: receipt, reserved_seconds: 120, billed_seconds: billed, created_at: "2020-01-01T00:00:00Z" });
+  }
+  it("deletes only free school usage, audits totals, refreshes allowance and preserves all paid/identity state", async () => {
+    customer(); planAndSubscription();
+    usage("opening", "school-opening", null, 180); usage("free", "school", null, 60);
+    usage("paid", "school", "receipt"); usage("paid-opening", "school-opening", "receipt"); usage("other", "translator", null);
+    const before = await new BusinessStore(env.DB).accessSummary("person1");
+    const response = await trial(); expect(response.status).toBe(200);
+    const result = await response.json() as any;
+    expect(result).toMatchObject({ deleted_rows: 2, freed_seconds: 240 });
+    expect(result.allowance).toEqual(await new BusinessStore(env.DB).accessSummary("person1"));
+    expect(result.allowance.free_calls_left).toBeGreaterThanOrEqual(before.free_calls_left);
+    expect(sql.prepare("SELECT call_id FROM usage_allocations ORDER BY call_id").all().map(r => r.call_id)).toEqual(["other", "paid", "paid-opening"]);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM subscriptions").get()).toMatchObject({ n: 1 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM customers").get()).toMatchObject({ n: 1 });
+    const audit = sql.prepare("SELECT action,entity_id FROM console_audit").get() as any;
+    expect(audit.entity_id).toBe("person1");
+    expect(JSON.parse(audit.action)).toMatchObject({ action: "crm_trial_reset", actor: "bearer", deleted_rows: 2, freed_seconds: 240 });
+  });
+  it("handles an empty trial and enforces auth, existence and method", async () => {
+    customer();
+    expect((await trial("person1", false)).status).toBe(401);
+    expect((await trial("missing")).status).toBe(404);
+    expect((await request("people/person1/reset-trial")).status).toBe(405);
+    expect(await (await trial()).json()).toMatchObject({ deleted_rows: 0, freed_seconds: 0, allowance: { limited: true } });
+  });
+  it.each(["active", "pending", "settlement", "recent-session", "recent-menu"])("refuses %s activity without changing usage or auditing", async state => {
+    customer(); usage("free", "school", null);
+    if (state === "active") insert("active_calls", { call_id: "free", profile_id: "teacher", owner_id: "do", acquired_at: 0, lease_expires_at: Date.now() / 1000 + 60 });
+    if (state === "pending") usage("pending", "school-opening", null, null);
+    if (state === "settlement") insert("payment_orders", { id: "order", call_id: "payment", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 100, vat_rate: 0, state: "awaiting_settlement", created_at: now, updated_at: now });
+    if (state === "recent-session") session();
+    if (state === "recent-menu") event("ivr-events", { call_id: "menu", route: "main" });
+    const response = await trial(); expect(response.status).toBe(409);
+    expect((await response.json() as any).detail).toMatch(/[\u0590-\u05ff]/);
+    expect(sql.prepare("SELECT call_id FROM usage_allocations WHERE call_id='free'").get()).toBeTruthy();
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM console_audit").get()).toMatchObject({ n: 0 });
+  });
+});
+
+describe("CRM teacher admin routes", () => {
+  it("lists bots, publishes validated settings and restores history as a new version for the next load", async () => {
+    const progress = new ProgressStore(env.DB);
+    const { controlsFromSettings } = await import("../src/controls");
+    const original = controlsFromSettings(true);
+    await progress.saveControls("teacher", original);
+    const api = (path: string, method = "GET", body?: unknown) => worker.fetch(new Request("https://speakcall.app/v1/admin/" + path, { method, headers: { Authorization: "Bearer crm-test-secret", "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), env);
+    expect(await (await api("bots")).json()).toMatchObject({ bots: [{ id: "teacher", active_version: 1 }] });
+    expect((await api("config/teacher", "PUT", { ...original, voice: "Kore" })).status).toBe(200);
+    expect((await progress.loadControls("teacher", original)).voice).toBe("Kore");
+    expect(await (await api("bots/teacher/versions")).json()).toMatchObject({ versions: [{ version: 2 }, { version: 1 }] });
+    expect((await api("config/teacher", "PUT", { ...original, context_target_tokens: 20000 })).status).toBe(422);
+    expect((await progress.getBot("teacher"))?.active_version).toBe(2);
+    expect((await api("bots/teacher/restore/1", "POST")).status).toBe(200);
+    expect((await progress.getBot("teacher"))?.active_version).toBe(3);
+    expect((await progress.loadControls("teacher", original)).voice).toBe(original.voice);
+  });
+});
+
 describe("CRM subscription access", () => {
   it("includes current family memberships in summaries and access filters, preferring owned subscriptions", async () => {
     customer(); customer("member", "0501234568");

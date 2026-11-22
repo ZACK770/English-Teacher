@@ -1,9 +1,55 @@
 import { type Env, HttpError, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
 import { drainRecordingDeletions } from "./recordings";
+import { BusinessStore } from "./business";
 
 type Row = Record<string, any>;
 type Removal = { table: string; where: string; args: unknown[] };
+
+export async function requireIdleCustomer(db: D1Database, id: string, calls: string, pendingUsage = false) {
+  const recent = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const checks: [string, unknown[], string][] = [
+    ["SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", [id], "לא ניתן לאפס לקוח עם תשלום הממתין לסליקה."],
+    ["SELECT 1 FROM sessions WHERE student_id=? AND (julianday(started_at)>=julianday(?) OR julianday(ended_at)>=julianday(?)) LIMIT 1", [id, recent, recent], "יש להמתין עשר דקות מסיום הפעילות לפני האיפוס."],
+    ["SELECT 1 FROM call_customers WHERE customer_id=? AND julianday(created_at)>=julianday(?) LIMIT 1", [id, recent], "יש להמתין עשר דקות מסיום הפעילות לפני האיפוס."],
+    ["SELECT 1 FROM console_records WHERE kind IN ('ivr-events','ad-entries') AND (json_extract(body,'$.customer_id')=? OR json_extract(body,'$.call_id') IN (SELECT value FROM json_each(?))) AND (julianday(json_extract(body,'$.at'))>=julianday(?) OR julianday(created_at)>=julianday(?)) LIMIT 1", [id, calls, recent, recent], "יש להמתין עשר דקות מסיום הפעילות לפני האיפוס."],
+    ["SELECT 1 FROM active_calls WHERE call_id IN (SELECT value FROM json_each(?)) AND lease_expires_at>? LIMIT 1", [calls, Date.now() / 1000], "לא ניתן לאפס לקוח במהלך שיחה פעילה."],
+  ];
+  if (pendingUsage) checks.push(["SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL LIMIT 1", [id], "לא ניתן לאפס לקוח עם שיחה פעילה או ממתינה."]);
+  for (const [query, args, message] of checks) if (await db.prepare(query).bind(...args).first()) throw new HttpError(409, message);
+}
+
+export const TRIAL_USAGE_FILTER = "customer_id=? AND receipt_id IS NULL AND product IN ('school-opening','school')";
+
+export function trialResetStatements(db: D1Database, id: string, actor: string, at: string) {
+  const filter = TRIAL_USAGE_FILTER;
+  return [
+    db.prepare(`INSERT INTO console_audit(action,entity_id,created_at) SELECT json_object('action','crm_trial_reset','actor',?,'deleted_rows',COUNT(*),'freed_seconds',COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)),?,? FROM usage_allocations WHERE ${filter}`).bind(actor, id, at, id),
+    db.prepare(`DELETE FROM usage_allocations WHERE ${filter} RETURNING COALESCE(billed_seconds,reserved_seconds) AS seconds`).bind(id),
+  ];
+}
+
+export async function resetTrial(db: D1Database, id: string, actor: string, apply = true) {
+  const exists = await db.prepare("SELECT id FROM customers WHERE id=? UNION SELECT id FROM console_records WHERE kind='customers' AND id=?").bind(id, id).first();
+  if (!exists) throw new HttpError(404, "הלקוח לא נמצא");
+  const calls = await db.prepare(`SELECT call_id FROM call_customers WHERE customer_id=?1
+    UNION SELECT call_id FROM usage_allocations WHERE customer_id=?1
+    UNION SELECT call_id FROM sessions WHERE student_id=?1
+    UNION SELECT call_id FROM payment_orders WHERE customer_id=?1
+    UNION SELECT call_id FROM learning_lessons WHERE customer_id=?1
+    UNION SELECT last_call_id AS call_id FROM navigation_trips WHERE customer_id=?1 AND last_call_id IS NOT NULL
+    UNION SELECT json_extract(body,'$.call_id') AS call_id FROM console_records
+      WHERE kind IN ('ivr-events','ad-entries','sales-followups') AND json_extract(body,'$.customer_id')=?1 AND json_extract(body,'$.call_id') IS NOT NULL`).bind(id).all<{ call_id: string }>();
+  const ids = [...new Set(calls.results.flatMap(r => [r.call_id, r.call_id.split('~')[0]]))];
+  await requireIdleCustomer(db, id, JSON.stringify(ids), true);
+  if (!apply) {
+    const totals = await db.prepare(`SELECT COUNT(*) AS deleted_rows, COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0) AS freed_seconds FROM usage_allocations WHERE ${TRIAL_USAGE_FILTER}`).bind(id).first();
+    return { dry_run: true, ...totals };
+  }
+  const result = await db.batch<{ seconds: number }>(trialResetStatements(db, id, actor, new Date().toISOString()));
+  const rows = result[1].results;
+  return { deleted_rows: rows.length, freed_seconds: rows.reduce((sum, row) => sum + Number(row.seconds), 0), allowance: await new BusinessStore(db).accessSummary(id) };
+}
 
 export async function resetCustomer(request: Request, env: Env, person: Row, actor?: { role: string; username: string }) {
   try { return await performReset(request, env, person, actor); }
@@ -22,7 +68,6 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   const rows = async (query: string, ...args: unknown[]) => (await env.DB.prepare(query).bind(...args).all<Row>()).results;
   const combine = async (queries: [string, ...unknown[]][]) => (await Promise.all(queries.map(([query, ...args]) => rows(query, ...args)))).flat();
   if ((await rows("SELECT 1 FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id WHERE m.customer_id=? AND m.removed_at IS NULL AND s.customer_id<>? LIMIT 1", id, id)).length) throw new HttpError(409, "יש להסיר את הלקוח מהמנוי המשפחתי תחילה");
-  if ((await rows("SELECT 1 FROM payment_orders WHERE customer_id=? AND state IN ('issued','awaiting_settlement') LIMIT 1", id)).length) throw new HttpError(409, "לא ניתן למחוק לקוח עם תשלום הממתין לסליקה. יש להמתין להשלמת התשלום או לביטולו.");
   const callRows = await combine([
     ["SELECT call_id FROM call_customers WHERE customer_id=?", id],
     ["SELECT call_id FROM sessions WHERE student_id=?", id],
@@ -34,13 +79,7 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   ]);
   const callIds = [...new Set(callRows.flatMap(r => r.call_id ? [r.call_id, r.call_id.split("~")[0]] : []))];
   const calls = JSON.stringify(callIds);
-  const recent = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  if ((await combine([
-    ["SELECT 1 FROM sessions WHERE student_id=? AND (julianday(started_at)>=julianday(?) OR julianday(ended_at)>=julianday(?)) LIMIT 1", id, recent, recent],
-    ["SELECT 1 FROM call_customers WHERE customer_id=? AND julianday(created_at)>=julianday(?) LIMIT 1", id, recent],
-    ["SELECT 1 FROM console_records WHERE kind IN ('ivr-events','ad-entries') AND (json_extract(body,'$.customer_id')=? OR json_extract(body,'$.call_id') IN (SELECT value FROM json_each(?))) AND (julianday(json_extract(body,'$.at'))>=julianday(?) OR julianday(created_at)>=julianday(?)) LIMIT 1", id, calls, recent, recent],
-  ])).length) throw new HttpError(409, "לא ניתן למחוק לקוח שהייתה לו פעילות בעשר הדקות האחרונות. יש להמתין ולנסות שוב.");
-  if ((await rows("SELECT 1 FROM active_calls WHERE call_id IN (SELECT value FROM json_each(?)) AND lease_expires_at>? LIMIT 1", calls, Date.now() / 1000)).length) throw new HttpError(409, "לא ניתן למחוק לקוח במהלך שיחה פעילה. יש לסיים את השיחה ולנסות שוב.");
+  await requireIdleCustomer(env.DB, id, calls);
   const subs = JSON.stringify((await rows("SELECT id FROM subscriptions WHERE customer_id=?", id)).map(r => r.id));
   const inSubs = "IN (SELECT value FROM json_each(?))";
   if ((await combine([

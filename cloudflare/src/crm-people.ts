@@ -2,7 +2,7 @@ import { ACTIVE_SCHOOL_PACKAGE_ID_SQL, BusinessStore } from "./business";
 import { practiceInternal } from "./practice";
 import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
-import { resetCustomer } from "./crm-reset";
+import { resetCustomer, resetTrial } from "./crm-reset";
 import { practiceMetrics } from "./crm-practice";
 
 export const SHORT_SESSION_SECONDS = 60;
@@ -164,6 +164,11 @@ function journey(data: Data, id: string) {
   return rows.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 }
 export async function crmPeople(request: Request, env: Env, path: string, actor?: { role: string; username: string }): Promise<Response | null> {
+  const trial = path.match(/^\/v1\/admin\/crm\/people\/([^/]+)\/reset-trial$/);
+  if (trial) {
+    if (request.method !== "POST") throw new HttpError(405, "פעולה לא נתמכת");
+    return Response.json(await resetTrial(env.DB, decodeURIComponent(trial[1]), actor?.username || "admin"), { headers: { "Cache-Control": "no-store" } });
+  }
   const access = path.match(/^\/v1\/admin\/crm\/subscriptions\/([^/]+)\/(suspend|restore)$/);
   if (access) {
     if (request.method !== "POST") throw new HttpError(405, "פעולה לא נתמכת");
