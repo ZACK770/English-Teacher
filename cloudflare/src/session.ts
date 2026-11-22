@@ -59,6 +59,7 @@ export class TutorSession {
   private basicGeminiCost = 0;
   private disconnected = false;
   private reason = "";
+  private disconnectDetails: Record<string, unknown> = {};
   private intakeReminded = false;
   private pendingEmail: { email: string; phase: "readback" | "answer"; text: string; audio: boolean } | null = null;
   private summaryCallbackRequested = false;
@@ -114,7 +115,13 @@ export class TutorSession {
     if (typeof data === "string") {
       try {
         const p = JSON.parse(data);
-        if (["stop", "hangup", "end"].includes(String(p.type ?? "").toLowerCase())) this.stop("caller_disconnected", true);
+        const type = String(p.type ?? "").toLowerCase();
+        if (["stop", "hangup", "end"].includes(type)) this.stop("caller_disconnected", true, {
+          disconnect_source: "pbx_control", control_type: type,
+          ...(Number.isSafeInteger(p.code) ? { control_code: p.code } : {}),
+          ...(typeof p.reason === "string" ? { control_reason: this.disconnectReason(p.reason) } : {}),
+          ...(typeof p.wasClean === "boolean" ? { was_clean: p.wasClean } : {}),
+        });
       } catch { /* Invalid optional controls do not affect the audio stream. */ }
       return;
     }
@@ -127,9 +134,27 @@ export class TutorSession {
     this.input.push(new Uint8Array(data));
   }
 
-  stop(reason = "admin_requested", disconnected = false) {
+  pbxClosed(event: Pick<CloseEvent, "code" | "reason" | "wasClean">) {
+    this.stop("caller_disconnected", true, {
+      disconnect_source: "websocket_close", close_code: event.code,
+      close_reason: this.disconnectReason(event.reason), was_clean: event.wasClean,
+    });
+  }
+
+  private disconnectReason(value: string) {
+    let text = value;
+    for (const secret of [this.s.geminiKey, ...Object.values(this.env)]) {
+      if (typeof secret === "string" && secret.length >= 8) text = text.split(secret).join("[redacted]");
+    }
+    return text.replace(/(?:https?|wss?):\/\/\S+/gi, "[redacted URL]")
+      .replace(/\b(?:bearer\s+\S+|(?:token|key|secret|password|authorization)\s*[:=]\s*\S+)/gi, "[redacted]")
+      .replace(/[\r\n\x00-\x1f]/g, " ").slice(0, 123);
+  }
+
+  stop(reason = "admin_requested", disconnected = false, details?: Record<string, unknown>) {
     this.disconnected ||= disconnected;
     if (this.settling) return;
+    if (!this.reason && details) this.disconnectDetails = details;
     this.reason ||= reason;
     this.abort.abort(new Error(this.reason));
     this.input.end();
@@ -325,7 +350,7 @@ export class TutorSession {
         if (reserved && this.meteredAt === null) await this.b.cancelCallReservation(this.callId);
         if (this.callId && this.customerId && this.controls) {
           try {
-            await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended" });
+            await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended", ...this.disconnectDetails });
             await this.drainFinalAudio();
           } finally {
             if (reserved && this.meteredAt !== null) {

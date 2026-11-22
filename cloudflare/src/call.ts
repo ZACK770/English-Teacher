@@ -28,12 +28,13 @@ export class CallSession {
       this.session = session;
       clearTimeout(timeout);
       server.addEventListener("message", (event) => {
+        if (typeof event.data === "string") { session.receive(event.data); return; }
         incoming = incoming.then(async () => {
           const data = event.data as string | ArrayBuffer | Blob;
           session.receive(data instanceof Blob ? await data.arrayBuffer() : data);
         }).catch(() => session.stop("invalid_audio_frame"));
       });
-      server.addEventListener("close", () => session.stop("caller_disconnected", true));
+      server.addEventListener("close", event => session.pbxClosed(event));
       server.addEventListener("error", () => session.stop("web_transport_error", true));
       this.ctx.waitUntil(session.run(JSON.stringify({ type: "start", token: "portal", callId: "web-" + randomHex(12), format: "pcm16;rate=8000;ch=1" }), profile, false)
         .catch(() => { try { server.close(1011, "Call failed"); } catch { /* Peer closed. */ } })
@@ -43,6 +44,7 @@ export class CallSession {
     const shared = request.headers.get("X-Shared-Router") === "1";
     server.addEventListener("message", (event) => {
       if (started) {
+        if (typeof event.data === "string") { this.session?.receive(event.data); return; }
         incoming = incoming.then(async () => {
           const data = event.data as string | ArrayBuffer | Blob;
           this.session?.receive(data instanceof Blob ? await data.arrayBuffer() : data);
@@ -58,7 +60,7 @@ export class CallSession {
         try { server.close(1011, "Call failed"); } catch { /* peer closed */ }
       }).finally(() => { this.session = null; }));
     });
-    server.addEventListener("close", () => { clearTimeout(timeout); this.session?.stop("caller_disconnected", true); });
+    server.addEventListener("close", event => { clearTimeout(timeout); this.session?.pbxClosed(event); });
     server.addEventListener("error", () => { clearTimeout(timeout); this.session?.stop("pbx_transport_error", true); });
     return new Response(null, { status: 101, webSocket: client });
   }
