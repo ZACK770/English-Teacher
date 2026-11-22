@@ -30,6 +30,19 @@ afterEach(() => sql.close());
 const record = (day: string, seconds = 120) => recordPractice(db, "learner", seconds, new Date(day + "T12:00:00Z"));
 
 describe("daily practice", () => {
+  it.each([["school-step", 60], ["school-pace", 200], ["school-fluent", 300], ["school-foundations", 150], ["school-mastery", 150]])("grants the catalog quota for new %s purchases", async (id, minutes) => {
+    const b = new BusinessStore(db);
+    await b.save("customers", { name: "Learner", phone: "0501111111" }, "learner");
+    await new SubscriptionStore(db).create("learner", String(id), "2026-06-01T00:00:00Z", id === "school-mastery" ? [{ domain: "everyday" }, { domain: "career" }] : undefined);
+    expect(sql.prepare("SELECT monthly_minutes FROM subscriptions").get()).toEqual({ monthly_minutes: minutes });
+    expect(sql.prepare("SELECT minutes FROM sales_receipts").get()).toEqual({ minutes });
+    expect(sql.prepare("SELECT included_minutes FROM plans WHERE id=?").get(id)).toEqual({ included_minutes: minutes });
+    const receipts = sql.prepare("SELECT * FROM sales_receipts").all();
+    const subscriptions = sql.prepare("SELECT * FROM subscriptions").all();
+    sql.exec(readFileSync(new FileURL("../migrations/0029_phone_sales_catalog.sql", import.meta.url), "utf8"));
+    expect(sql.prepare("SELECT * FROM sales_receipts").all()).toEqual(receipts);
+    expect(sql.prepare("SELECT * FROM subscriptions").all()).toEqual(subscriptions);
+  });
   it("returns an empty, minutes-free summary", async () => {
     const summary = await practiceSummary(db, "learner", now);
     expect(summary).toEqual({ current_streak: 0, best_streak: 0, today: { day: "2026-06-14", practiced: false, seconds: 0 }, dates: [], week: { start: "2026-06-14", target: 0, done: 0 }, package: null, reminder: null });

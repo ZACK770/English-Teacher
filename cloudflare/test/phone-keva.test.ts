@@ -355,7 +355,7 @@ describe("five-package phone sales", () => {
     expect(await hook(event)).toMatchObject({ paid: true });
     expect(await hook(event)).toMatchObject({ paid: true, duplicate: true });
     expect(counts()).toEqual([1, 1, 0]);
-    expect(db.sql.prepare("SELECT term_months,monthly_minutes,period_number FROM subscriptions").get()).toMatchObject({ term_months: months, monthly_minutes: 300, period_number: 1 });
+    expect(db.sql.prepare("SELECT term_months,monthly_minutes,period_number FROM subscriptions").get()).toMatchObject({ term_months: months, monthly_minutes: 150, period_number: 1 });
     expect(await b.hasPaidAccess("c1")).toBe(true);
   });
 
