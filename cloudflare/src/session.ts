@@ -316,11 +316,11 @@ export class TutorSession {
         }
         willCallWithSummary = this.summaryCallbackRequested && !target && ["model:task_completed", "model:caller_requested", "caller_disconnected"].includes(this.reason);
       } finally {
-        await this.recorder?.finish(this.callId, this.profileId, this.customerId);
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
         this.output = [];
         try { this.pbx.close(1000, "session ended"); } catch { /* peer already closed */ }
+        await this.recorder?.finish(this.callId, this.profileId, this.customerId);
       }
       if (willCallWithSummary) {
         const text = lessonSummaryAudioText(this.meter.lessonSummary?.points, this.meter.learnerTurns);
