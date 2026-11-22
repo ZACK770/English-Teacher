@@ -130,11 +130,28 @@ export async function recordingAudio(env: Env, callId: string, request: Request)
   } });
 }
 export async function cleanupRecordings(env: Env) {
-  if (!env.VOICEMAIL_AUDIO) return;
   const { results } = await env.DB.prepare("SELECT call_id,r2_key FROM call_recordings WHERE created_at<? ORDER BY created_at LIMIT 100")
     .bind(new Date(Date.now() - 90 * 86400000).toISOString()).all<{ call_id: string; r2_key: string }>();
+  if (results.length) await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO recording_deletions(r2_key,created_at) SELECT json_extract(value,'$.r2_key'),? FROM json_each(?)")
+      .bind(new Date().toISOString(), JSON.stringify(results)),
+    env.DB.prepare("DELETE FROM call_recordings WHERE call_id IN (SELECT json_extract(value,'$.call_id') FROM json_each(?))").bind(JSON.stringify(results)),
+  ]);
+  await drainRecordingDeletions(env);
+}
+
+export async function drainRecordingDeletions(env: Env, keys: string[] | null = null) {
+  if (!env.VOICEMAIL_AUDIO) return 0;
+  const { results } = await env.DB.prepare(`SELECT r2_key FROM recording_deletions
+    WHERE (? IS NULL OR r2_key IN (SELECT value FROM json_each(?))) ORDER BY created_at,r2_key LIMIT 100`)
+    .bind(keys === null ? null : JSON.stringify(keys), keys === null ? null : JSON.stringify(keys)).all<{ r2_key: string }>();
+  let deleted = 0;
   for (const row of results) {
-    await env.VOICEMAIL_AUDIO.delete(row.r2_key);
-    await env.DB.prepare("DELETE FROM call_recordings WHERE call_id=?").bind(row.call_id).run();
+    try {
+      await env.VOICEMAIL_AUDIO.delete(row.r2_key);
+      await env.DB.prepare("DELETE FROM recording_deletions WHERE r2_key=?").bind(row.r2_key).run();
+      deleted++;
+    } catch { console.warn("Recording deletion deferred"); }
   }
+  return deleted;
 }

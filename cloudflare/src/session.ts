@@ -87,7 +87,7 @@ export class TutorSession {
   constructor(private pbx: WebSocket, private env: Env, private s: Settings, private ownerId: string, private authorization: string | null = null, private portal?: { customerId: string; teacherId: string }) {
     this.b = new BusinessStore(env.DB);
     this.progress = new ProgressStore(env.DB);
-    this.recorder = new CallRecorder(env, () => `recordings/${this.callId}.ulaw`);
+    if (portal || env.RECORD_PHONE_CALLS === "1") this.recorder = new CallRecorder(env, () => `recordings/${this.callId}.ulaw`);
   }
 
   receive(data: string | ArrayBuffer) {

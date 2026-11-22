@@ -6,6 +6,7 @@ export interface Env {
   ASSETS: Fetcher;
   AI?: Ai;
   VOICEMAIL_AUDIO?: R2Bucket;
+  RECORD_PHONE_CALLS?: string;
   GEMINI_API_KEY: string;
   CALL_REVIEW_ENABLED?: string;
   CALL_REVIEW_GEMINI_API_KEY?: string;
