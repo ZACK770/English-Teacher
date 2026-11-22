@@ -88,7 +88,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, logoHre
         </div>
 
         {/* Right Info: Streak, Balance, Phone Hotline */}
-        {currentView === 'dashboard' && <a href={`${typeof window !== 'undefined' && window.location.pathname.startsWith('/english/') ? '/english' : ''}/dashboard/crm`} className="text-sm text-[#c0f67d]">מרכז קשרי לקוחות ←</a>}
         <div className="flex items-center gap-3">
           {/* User Habit / Streak */}
           <div

@@ -171,13 +171,13 @@ export async function dispatchVoicemails(env: Env) {
   await Promise.all(results.map(({ id }) => processVoicemail(env, id)));
 }
 
-export async function listVoicemails(env: Env, before: string | null) {
+export async function listVoicemails(env: Env, before: string | null, customerId: string | null = null) {
   if (before && !/^[a-f0-9]{64}$/.test(before)) throw new HttpError(400, "בקשה לא תקינה");
-  const { results } = await env.DB.prepare(`SELECT v.id,v.customer_id,v.created_at,v.duration_seconds,v.audio_ready,v.status,v.transcript,
+  const { results } = await env.DB.prepare(`SELECT v.id,c.id AS customer_id,v.created_at,v.duration_seconds,v.audio_ready,v.status,v.transcript,
     c.name AS customer_name,c.primary_phone AS phone
     FROM ivr_voicemails v LEFT JOIN customers c ON c.id=v.customer_id
-    WHERE (? IS NULL OR (v.created_at,v.id) < (SELECT created_at,id FROM ivr_voicemails WHERE id=?))
-    ORDER BY v.created_at DESC,v.id DESC LIMIT 51`).bind(before, before).all<{ id: string }>();
+    WHERE (? IS NULL OR v.customer_id=?) AND (? IS NULL OR (v.created_at,v.id) < (SELECT created_at,id FROM ivr_voicemails WHERE id=?))
+    ORDER BY v.created_at DESC,v.id DESC LIMIT 51`).bind(customerId, customerId, before, before).all<{ id: string }>();
   const items = results.slice(0, 50);
   return { items, next: results.length > items.length ? items.at(-1)?.id : null };
 }

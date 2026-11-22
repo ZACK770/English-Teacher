@@ -17,6 +17,9 @@ import './components/dashboard/dashboard.css';
 import './components/portal/portal-polish.css';
 
 type View = 'dashboard' | 'learn' | 'join' | 'legacy' | 'home';
+const sitePath = location.pathname.slice(legalBasePath(location.pathname).length);
+const crmPath = `${legalBasePath(location.pathname)}/dashboard/crm`;
+const isCrm = /^\/dashboard\/crm(\/|$)/.test(sitePath);
 
 function viewForPath(pathname: string): View {
   const path = pathname.slice(legalBasePath(pathname).length);
@@ -29,18 +32,19 @@ function viewForPath(pathname: string): View {
 
 export const AppContent: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>(() => viewForPath(location.pathname));
-  const [dashboardTab, setDashboardTab] = useState('overview');
+  const [dashboardTab, setDashboardTab] = useState(isCrm || (/^\/dashboard\/?$/.test(sitePath) && !location.hash) ? 'customers' : 'overview');
 
   // Sync hash routing
   useEffect(() => {
     const handleHash = () => {
+      if (isCrm) return;
       const fallback = viewForPath(location.pathname);
       const hash = window.location.hash.replace('#', '') || fallback;
       if (hash === 'learn' || hash === 'join' || hash === 'legacy' || hash === 'home') {
         setCurrentView(hash);
       } else if (hash === 'dashboard') {
         setCurrentView('dashboard');
-        setDashboardTab('overview');
+        setDashboardTab('customers');
       } else if (
         [
           'overview',
@@ -58,7 +62,7 @@ export const AppContent: React.FC = () => {
         ].includes(hash)
       ) {
         if (hash === 'customers') {
-          window.location.replace(`${legalBasePath(window.location.pathname)}/dashboard/crm`);
+          window.location.replace(crmPath);
           return;
         }
         setCurrentView('dashboard');
@@ -78,9 +82,14 @@ export const AppContent: React.FC = () => {
   }, []);
 
   const navigateTo = (view: View) => {
+    if (isCrm && view !== 'dashboard') {
+      const prefix = legalBasePath(location.pathname);
+      window.location.href = prefix + (view === 'legacy' ? '/dashboard/legacy' : view === 'home' ? '/' : '/' + view);
+      return;
+    }
     setCurrentView(view);
     if (view === 'dashboard') {
-      window.location.hash = dashboardTab;
+      handleSelectDashboardTab(dashboardTab);
     } else {
       window.location.hash = view;
     }
@@ -88,7 +97,11 @@ export const AppContent: React.FC = () => {
 
   const handleSelectDashboardTab = (tab: string) => {
     if (tab === 'customers') {
-      window.location.href = `${legalBasePath(window.location.pathname)}/dashboard/crm`;
+      window.location.href = crmPath;
+      return;
+    }
+    if (isCrm) {
+      window.location.href = `${legalBasePath(location.pathname)}/dashboard#${tab}`;
       return;
     }
     setDashboardTab(tab);
@@ -101,7 +114,9 @@ export const AppContent: React.FC = () => {
 
       <div className="flex-1">
         {currentView === 'dashboard' && (
-          <DashboardLayout currentTab={dashboardTab} onSelectTab={handleSelectDashboardTab} />
+          <DashboardLayout currentTab={dashboardTab} onSelectTab={handleSelectDashboardTab}>
+            {dashboardTab === 'customers' && <CrmPage />}
+          </DashboardLayout>
         )}
         {currentView === 'learn' && (
           <>
@@ -119,7 +134,6 @@ export const AppContent: React.FC = () => {
 };
 
 export const App: React.FC = () => {
-  if (/^\/(english\/)?dashboard\/crm(\/|$)/.test(window.location.pathname)) return <AdminAuthGate><CrmPage /></AdminAuthGate>;
   if (isBlogPath(window.location.pathname)) return <BlogPage />;
   const legalPage = legalPageForPath(window.location.pathname);
   if (legalPage) {

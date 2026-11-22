@@ -32,12 +32,14 @@ import { ConnectionsView } from './ConnectionsView';
 interface DashboardLayoutProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
+  children?: React.ReactNode;
 }
 
-export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, onSelectTab }) => {
+export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, onSelectTab, children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const navItems = [
+    { id: 'customers', label: 'לקוחות ו־CRM', icon: Users },
     { id: 'overview', label: 'סקירה כללית', icon: LayoutDashboard },
     { id: 'analytics', label: 'אנליטיקס', icon: Activity },
     { id: 'campaigns', label: 'קמפיינים ואינטייק', icon: Mail, badge: 'A/B' },
@@ -141,8 +143,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ currentTab, on
       </aside>
 
       {/* Main Content Area */}
-      <main className="dashboard-main flex-1 p-6 bg-[#0b0f17]">
+      <main className={`dashboard-main flex-1 bg-[#0b0f17] ${currentTab === 'customers' ? '' : 'p-6'}`}>
         <div className="max-w-7xl mx-auto">
+          {children}
           {currentTab === 'overview' && <OverviewView onNavigate={onSelectTab} />}
           {currentTab === 'analytics' && <AnalyticsView />}
           {currentTab === 'campaigns' && <CampaignsView />}

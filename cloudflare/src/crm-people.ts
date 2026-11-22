@@ -132,6 +132,19 @@ function journey(data: Data, id: string) {
   return rows.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 }
 export async function crmPeople(request: Request, env: Env, path: string, actor?: { role: string; username: string }): Promise<Response | null> {
+  const access = path.match(/^\/v1\/admin\/crm\/subscriptions\/([^/]+)\/(suspend|restore)$/);
+  if (access) {
+    if (request.method !== "POST") throw new HttpError(405, "פעולה לא נתמכת");
+    if (actor?.role !== "owner") throw new HttpError(403, "רק מנהל יכול לשנות את גישת המנוי");
+    const suspended = access[2] === "suspend";
+    const sub = await env.DB.prepare(`UPDATE subscriptions
+      SET access_suspended_at=CASE WHEN ? THEN COALESCE(access_suspended_at,?) ELSE NULL END
+      WHERE id=? AND EXISTS (SELECT 1 FROM plans WHERE id=subscriptions.plan_id AND product='school')
+      RETURNING id,access_suspended_at`)
+      .bind(Number(suspended), new Date().toISOString(), decodeURIComponent(access[1])).first();
+    if (!sub) throw new HttpError(404, "המנוי לא נמצא");
+    return Response.json(sub, { headers: { "Cache-Control": "no-store" } });
+  }
   const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript|analytics)$/);
   if (!match) return null;
   if (request.method !== "GET" && !(request.method === "DELETE" && match[2])) throw new HttpError(405, "פעולה לא נתמכת");

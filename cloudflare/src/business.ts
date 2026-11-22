@@ -255,7 +255,9 @@ export class BusinessStore {
     const cutoff = reservationCutoff();
     const activeSession = "SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL AND created_at>?";
     const busy = { seconds: 0, mode: "busy" };
+    const blocked = { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
     if (!policy.enabled) {
+      if ((teacher || policyRow) && policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
       const allocation = await this.db.prepare(`
         INSERT OR IGNORE INTO usage_allocations
           (call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
@@ -276,7 +278,7 @@ export class BusinessStore {
           SELECT r.id,r.customer_id,r.product,r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) AS remaining
           FROM sales_receipts r LEFT JOIN usage_allocations u ON u.receipt_id=r.id
           WHERE r.id=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
-          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
           AND (r.customer_id=? OR r.subscription_id IN
             (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
              WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
@@ -286,6 +288,7 @@ export class BusinessStore {
       `).bind(callId, customerId, cap, now, receipt.id, now, now, customerId, customerId, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
     }
+    if (policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
     const anonymous = customerId.startsWith("anonymous-");
     if (!anonymous && channel === "voice" && policy.opening_seconds) {
       const openingProduct = policy.product + "-opening";
@@ -334,7 +337,7 @@ export class BusinessStore {
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "basic", intro: policy.basic_intro_text };
     }
     if (await this.db.prepare(activeSession).bind(customerId, cutoff).first()) return busy;
-    return { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
+    return blocked;
   }
 
   async cancelCallReservation(callId: string) {
@@ -383,14 +386,22 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
       AND r.product='school' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       LIMIT 1`).bind(customerId, customerId, at, at).first();
     if (receipt) return true;
-    return !!await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active' AND p.product='school'
+    return !!await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status='active' AND s.access_suspended_at IS NULL AND p.product='school'
       AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
         (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
       .bind(at, at, customerId, customerId).first();
+  }
+
+  private async isSchoolAccessSuspended(customerId: string, at = nowIso()) {
+    const suspension = await this.db.prepare(`SELECT s.id FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+      WHERE s.access_suspended_at IS NOT NULL AND p.product='school' AND (s.customer_id=? OR EXISTS
+        (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
+      .bind(customerId, customerId).first();
+    return !!suspension && !await this.hasPaidAccess(customerId, at);
   }
 
   private async usableReceipts(customerId: string, product: string, now = nowIso()) {
@@ -399,7 +410,7 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND s.status='paused')
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=r.subscription_id AND (s.status='paused' OR s.access_suspended_at IS NOT NULL))
       AND r.product=? AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       GROUP BY r.id HAVING r.minutes * 60 - COALESCE(SUM(COALESCE(u.billed_seconds,u.reserved_seconds)),0) >= 1
       ORDER BY r.expires_at`)
@@ -416,6 +427,9 @@ export class BusinessStore {
 
   async accessSummary(customerId: string, receipts: Record<string, any>[]) {
     const paid = await this.hasPaidAccess(customerId);
+    if (!paid && await this.isSchoolAccessSuspended(customerId)) {
+      return { paid: false, limited: true, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };
+    }
     const policies = (await this.list("policies")).map((p) => AccessPolicySchema.parse(p)).filter((p) => p.product === "school");
     const policy = policies.find((p) => p.enabled) ?? (policies.length ? undefined : AccessPolicySchema.parse(SCHOOL_FREE_POLICY));
     if (!policy) return { paid, limited: false, opening_minutes: 0, free_calls_left: 0, free_call_minutes: 0, plan_name: "", max_call_minutes: 0 };

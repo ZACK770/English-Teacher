@@ -55,6 +55,71 @@ function planAndSubscription(owner = "person1", status = "cancelled", id = "sub"
   insert("subscriptions", { id, customer_id: owner, plan_id: "plan", status, price_agorot: 100, started_at: now, created_at: now, updated_at: now });
 }
 
+describe("CRM subscription access", () => {
+  it("requires an owner and keeps the billing status and minutes unchanged when suspending or restoring", async () => {
+    customer();
+    customer("member", "0501234568");
+    planAndSubscription("person1", "active");
+    insert("subscription_members", { subscription_id: "sub", customer_id: "member", added_at: now });
+    const end = "2099-01-01T00:00:00+00:00";
+    sql.prepare("UPDATE subscriptions SET current_period_end=? WHERE id='sub'").run(end);
+    insert("sales_receipts", { id: "r", customer_id: "person1", package_id: "plan", product: "school", reference: "receipt", amount_ils: 100, vat_rate: 0, minutes: 20, expires_at: end, created_at: now, subscription_id: "sub" });
+    const stampBefore = sql.prepare("SELECT status,current_period_end,updated_at FROM subscriptions").get();
+    const receiptsBefore = sql.prepare("SELECT * FROM sales_receipts").all();
+    const store = new BusinessStore(env.DB);
+    await store.save("policies", { product: "school", enabled: true, opening_seconds: 420, free_calls_month: 2 }, "teacher1");
+    expect(await store.hasPaidAccess("member")).toBe(true);
+    expect((await request("subscriptions/sub/suspend", false, "POST")).status).toBe(401);
+    expect((await request("subscriptions/sub/suspend")).status).toBe(405);
+    insert("admin_users", { id: "staff", username: "staff", display_name: "staff", role: "staff", created_at: now });
+    insert("admin_sessions", { token_hash: await sha256Hex("a".repeat(64)), user_id: "staff", created_at: now, expires_at: "2099-01-01" });
+    const asStaff = new Request("https://speakcall.app/v1/admin/crm/subscriptions/sub/suspend", {
+      method: "POST", headers: { Cookie: "admin_session=" + "a".repeat(64), Origin: "https://speakcall.app" },
+    });
+    expect((await worker.fetch(asStaff, env)).status).toBe(403);
+    expect((await request("subscriptions/not-found/suspend", true, "POST")).status).toBe(404);
+    const stopped = await (await request("subscriptions/sub/suspend", true, "POST")).json();
+    expect(stopped).toMatchObject({ id: "sub", access_suspended_at: expect.any(String) });
+    expect(await (await request("subscriptions/sub/suspend", true, "POST")).json()).toEqual(stopped);
+    expect(await store.hasPaidAccess("person1")).toBe(false);
+    expect(await store.hasPaidAccess("member")).toBe(false);
+    expect(await store.hasSchoolCallbackMinutes("member")).toBe(false);
+    expect(await store.reserveCall("person1", "teacher1", "phone", 60)).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(await store.reserveCall("member", "teacher1", "web", 60, "text")).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(await store.reserveCall("member", "translator1", "translator", 60)).toMatchObject({ seconds: 60, mode: "unrestricted" });
+    expect(await (await request("subscriptions/sub/restore", true, "POST")).json()).toEqual({ id: "sub", access_suspended_at: null });
+    expect(await store.hasPaidAccess("person1")).toBe(true);
+    expect(await store.hasPaidAccess("member")).toBe(true);
+    expect(await store.reserveCall("person1", "teacher1", "restored", 60)).toMatchObject({ seconds: 60, mode: "paid" });
+    expect(sql.prepare("SELECT status,current_period_end,updated_at FROM subscriptions").get()).toEqual(stampBefore);
+    expect(sql.prepare("SELECT * FROM sales_receipts").all()).toEqual(receiptsBefore);
+    expect(sql.prepare("SELECT actor,path,status FROM admin_audit_log WHERE path LIKE '%/restore'").get())
+      .toMatchObject({ actor: "bearer", path: "/v1/admin/crm/subscriptions/sub/restore", status: 200 });
+  });
+});
+
+describe("CRM voicemail inbox", () => {
+  it("lists transcripts for admins only and filters precisely by customer", async () => {
+    customer();
+    customer("other", "0501234568");
+    for (const [index, customerId] of ["person1", "other", "unknown"].entries()) {
+      insert("ivr_voicemails", { id: String(index).repeat(64), system_phone: "system", file_id: "file" + index, customer_id: customerId,
+        caller_key: "hash", created_at: now, intake_day: now.slice(0, 10), status: "ready", transcript: "test message " + index, audio_ready: 1 });
+    }
+    const path = "voicemails?customer_id=person1";
+    expect((await request(path, false)).status).toBe(401);
+    expect((await request("voicemails/" + "0".repeat(64) + "/audio", false)).status).toBe(401);
+    const result = await request(path);
+    expect(result.headers.get("Cache-Control")).toBe("no-store");
+    const { items, next } = await result.json() as { items: unknown[]; next: string | null };
+    expect(items).toEqual([expect.objectContaining({ customer_id: "person1", transcript: "test message 0", audio_ready: 1 })]);
+    expect(next).toBeNull();
+    expect(await (await request("voicemails")).json()).toMatchObject({ items: [
+      { customer_id: null }, { customer_id: "other" }, { customer_id: "person1" },
+    ] });
+  });
+});
+
 describe("CRM customer reset", () => {
   it.each([false, true])("prepares no compound SQL during reset with linked history %s", async history => {
     customer();
