@@ -1,3 +1,4 @@
+import { QUOTA_EXTENSION_PATH } from '../pbx-paths';
 import {
   BotProfile,
   TutorControls,
@@ -360,7 +361,7 @@ export const INITIAL_NARRATIONS: Narration[] = [
     text: 'יתרת השימוש בחבילה שלך הסתיימה. לרכישת חבילת דקות נוספת הקישו 1. למעבר לשירות לקוחות הקישו 2.',
     language: 'he-IL',
     bot_id: 'sales-rep',
-    technoline_extension: '/99/8',
+    technoline_extension: QUOTA_EXTENSION_PATH,
     status: 'approved'
   }
 ];
@@ -375,7 +376,7 @@ export const INITIAL_ACCESS_POLICIES: Record<string, AccessPolicy> = {
     product: 'translator',
     free_calls_month: 3,
     free_call_seconds: 60,
-    blocked_extension: '/99/8',
+    blocked_extension: QUOTA_EXTENSION_PATH,
     basic_enabled: true,
     basic_calls_day: 3,
     basic_call_seconds: 90,
