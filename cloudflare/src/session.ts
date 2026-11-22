@@ -21,7 +21,7 @@ import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./pho
 
 export const SILENCE_NUDGE_MS = 7000;
 export const MAX_SILENCE_NUDGES = 2;
-export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"שומע אותי? אפשר לענות גם בעברית\"), then ask your last question again more simply; if it had options, name them briefly.";
+export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"יש קליטה? אפשר לענות גם בעברית\"), then ask your last question again more simply; if it had options, name them briefly.";
 
 export function silenceNudgeDue(now: number, lastHuman: number, lastTutorAudio: number, nudges: number): boolean {
   return nudges < MAX_SILENCE_NUDGES && now - Math.max(lastHuman, lastTutorAudio) >= SILENCE_NUDGE_MS;

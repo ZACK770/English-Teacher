@@ -50,7 +50,7 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     const input = await learnerBody(request, z.object({ phone: z.string().max(30), purpose: z.enum(["login", "link_phone"]).default("login") }));
     const linkCustomer = input.purpose === "link_phone" ? await requireLearner(request, env) : null;
     let phone: string;
-    try { phone = normalizedPhone(input.phone); } catch { throw new HttpError(422, "מה מספר הטלפון שלך? כדאי לבדוק שלא חסרה ספרה."); }
+    try { phone = normalizedPhone(input.phone); } catch { throw new HttpError(422, "מה מספר הטלפון? כדאי לבדוק שלא חסרה ספרה."); }
     if (!/^0[2-9]\d{7,8}$/.test(phone)) throw new HttpError(422, "כרגע אפשר להתחבר עם מספר טלפון ישראלי.");
     const phoneHash = (await sha256Hex(phone)).slice(0, 24);
     const ipHash = (await sha256Hex(request.headers.get("CF-Connecting-IP") || "local")).slice(0, 24);
@@ -72,7 +72,7 @@ export async function portalAuth(request: Request, env: Env, path: string): Prom
     if (!sent) {
       await Promise.all(quotas.slice(1).map(([key]) => b.refundMonthlyQuota(key, hour.slice(0, 7))));
       await env.DB.prepare("DELETE FROM console_settings WHERE id=?").bind("portal-auth:" + challenge).run();
-      throw new HttpError(503, "הכניסה בצלצול לא זמינה כרגע. אפשר להיכנס עם הקישור האישי שקיבלת.");
+      throw new HttpError(503, "הכניסה בצלצול לא זמינה כרגע. אפשר להיכנס עם קישור אישי.");
     }
     return Response.json({ challenge, expires_in: 300 }, { headers: noCache });
   }

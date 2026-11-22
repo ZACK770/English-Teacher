@@ -17,7 +17,7 @@ describe("learner vocabulary options", () => {
 
   it("offers personal creation as a library card before the catalog finishes loading", () => {
     const html = render([]);
-    expect(html).toMatch(/class="sk-domain-grid"><button[^>]*aria-expanded="false"[^>]*>.*יצירת אוצר מילים משלך/);
+    expect(html).toMatch(/class="sk-domain-grid"><button[^>]*aria-expanded="false"[^>]*>.*יצירת אוצר מילים אישי/);
     expect(html).not.toContain("<form");
   });
 
@@ -26,7 +26,7 @@ describe("learner vocabulary options", () => {
       { id: "first", name: "ראשונה", words: ["garden"] },
       { id: "second", name: "שנייה", words: ["פגישה"], target_count: 0 },
     ], { active_teacher: "teacher", material_id: "first" }, [{ id: "teacher", material_id: "second" }]);
-    expect(html).toMatch(/class="sk-domain-grid">.*יצירת אוצר מילים משלך.*<article.*ראשונה.*לקחת לשיחה הבאה.*<article.*שנייה.*ללא ציוני מילים.*aria-pressed="true".*ברשימת השיחה הבאה/);
+    expect(html).toMatch(/class="sk-domain-grid">.*יצירת אוצר מילים אישי.*<article.*ראשונה.*לקחת לשיחה הבאה.*<article.*שנייה.*ללא ציוני מילים.*aria-pressed="true".*ברשימת השיחה הבאה/);
     expect(html).not.toContain("sk-pro-badge");
   });
 });

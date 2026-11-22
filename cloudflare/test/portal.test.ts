@@ -1326,8 +1326,8 @@ describe("real learner portal", () => {
     expect(runtime).toContain("Ask nothing else before practice");
     expect(runtime).not.toContain("הפעם האחרונה שהבנת שאתה חייב לדעת אנגלית");
     expect(runtime).toContain("after the application signals 90 seconds of practice");
-    expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בקצב שלך");
-    expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited free minutes");
+    expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בלי לחץ");
+    expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited access");
     const customerId = (await b.customerForCall("ad-1"))!;
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "school-pace", channel: "email" })).toBe(false);
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "not an email" })).toBe(false);
@@ -1336,8 +1336,8 @@ describe("real learner portal", () => {
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner001@Example42.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner001@example42.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("שלום <יצחק>, זה דוד המורה שלך מספיקול."),
-      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה דוד המורה שלך מספיקול."),
+      text: expect.stringContaining("שלום <יצחק>, זה דוד מצוות ההוראה של ספיקול."),
+      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה דוד מצוות ההוראה של ספיקול."),
     }));
     expect(await recordSalesTool(b, customerId, "ad-1", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "trial-29", channel: "sms" })).toBe(false);
@@ -1358,8 +1358,8 @@ describe("real learner portal", () => {
     expect(report.followups.find((f) => f.type === "payment_link")).toMatchObject({ channel: "sms", link: "https://speakool.net/learn?plan=school-step&src=ad-radio-news", status: "pending" });
   });
   it("uses the active teacher's name without inventing a learner name", () => {
-    expect(wordsEmail([], "", "יוסף").text[0]).toBe("שלום, זה יוסף המורה שלך מספיקול.");
-    expect(wordsEmail([], "", "אסתי", "יצחק", true).text[0]).toBe("שלום יצחק, זו אסתי המורה שלך מספיקול.");
+    expect(wordsEmail([], "", "יוסף").text[0]).toBe("שלום, זה יוסף מצוות ההוראה של ספיקול.");
+    expect(wordsEmail([], "", "אסתי", "יצחק", true).text[0]).toBe("שלום יצחק, זו אסתי מצוות ההוראה של ספיקול.");
   });
   it("starts the sales timer after intake and the first practice response, not at connection", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -1841,7 +1841,7 @@ describe("monthly voice preview quota", () => {
     env.GEMINI_DAILY_BUDGET_USD = "0.01";
     const response = await request("/v1/portal/voice-preview", tokenA, { voice: "Puck" });
     expect(response.status).toBe(429);
-    expect(await response.text()).toContain("מכסת השימוש היומית");
+    expect(await response.text()).toContain("השיחות אינן זמינות כרגע");
     expect(db.sql.prepare("SELECT api FROM api_quota WHERE api LIKE 'portal-voice-preview%'").all()).toEqual([]);
   });
 

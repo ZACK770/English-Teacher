@@ -14,14 +14,14 @@ import { pingPirsumfonCaller, pirsumfonWelcome } from "./pirsumfon";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
-  welcome: text("ברוכים הבאים לספיקול. פשוט לדבר. לכניסה לשיעור הקישו 1. לאזור האישי הקישו 2."),
+  welcome: text("שלום, כאן ספיקול. פשוט לדבר. לכניסה לשיעור הקישו 1. לאזור האישי הקישו 2."),
   school: text("אין מורה זמין כרגע. לאפשרויות נוספות הקישו 9. לחזרה הקישו 0."),
   translator: text("התרגומון אינו זמין כרגע. לשינוי שפה הקישו 9. לחזרה הקישו 0."),
   languages: text("לאנגלית הקישו 1. לעברית 2. ליידיש 3. לערבית 4. לרוסית 5. לצרפתית 6. לזיהוי אוטומטי ותרגום עברית אנגלית הקישו 7. לחזרה הקישו 0."),
   sales: text("לחבילות ותשלום הקישו 1. לשירות לקוחות הקישו 4. לחזרה הקישו 0."),
   service: text("השאירו הודעה לאחר הצליל. לסיום הקישו סולמית."),
   thanks: text("הודעתכם נשמרה, תודה. לחזרה הקישו 0. לסיום הקישו 1."),
-  quota: text("הדקות לשיחות כבר נוצלו. לא נורא, ממשיכים: לבחירת מסלול הקישו 1. ללמידה הקישו 2. לתפריט הראשי הקישו 0."),
+  quota: text("כדי להמשיך ללמוד אנגלית, אפשר לבחור מסלול. לבחירת מסלול הקישו 1. ללמידה הקישו 2. לתפריט הראשי הקישו 0."),
   school_mode: text("להמשך הקורס הקישו 1. לשיחה חופשית הקישו 2. לחזרה הקישו 0."),
   options: text("לבחירת מורה הקישו 1. לבחירת סוג השיעור 2. לחבילות ותשלום 3. להשארת הודעה 4. לחזרה 0."),
 });
@@ -182,13 +182,13 @@ export async function quickOpening(b: BusinessStore, callId: string): Promise<st
   const customerId = await b.customerForCall(callId);
   const saved = customerId ? await b.loadContext("preferences:" + customerId) : {};
   if (context.quick_entry === "translation") {
-    const intro = saved.intro_translation_seen ? "" : "ספיקול, תרגום. לתפריט אמרו: תפריט. ";
-    return `אמרו רק: ${intro}אמרו את המשפט לתרגום. המתינו לדיבור, ללא הסברים נוספים.`;
+    const intro = saved.intro_translation_seen ? "" : "ספיקול, תרגום. כדי לחזור לתפריט, אפשר לומר: תפריט. ";
+    return `Say only: "${intro}אפשר לומר את המשפט לתרגום." Then wait for speech, without further explanation.`;
   }
   const ad = adOpening(context);
   if (ad) return ad;
   if (context.quick_entry === "school") {
-    const intro = saved.intro_school_seen ? "" : "פתחו בקצרה: ספיקול, פשוט לדבר. לתפריט אמרו: תפריט. ";
+    const intro = saved.intro_school_seen ? "" : "פתחו בקצרה: ספיקול, פשוט לדבר. כדי לחזור לתפריט, אפשר לומר: תפריט. ";
     return intro + "התחילו מיד בלמידה בספיקול, ללא תפריט, הרשמה או נאום פתיחה. אם הרמה ידועה, פתחו בשאלה אחת שמתאימה לה. אם הרמה לא ידועה, שאלו עליה בקצרה לפני שתבחרו תרגיל. אל תניחו שהלומד מתחיל.";
   }
   return null;

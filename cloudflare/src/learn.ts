@@ -108,7 +108,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const controls = await applyLearnerControls(b, customerId, bot, await progress.loadControls(botId, defaults(s, botId)));
   const callId = "web-" + randomHex(12);
   const allowance = await b.reserveCall(customerId, botId, callId, 120, "text");
-  if (allowance.mode === "busy") throw new HttpError(409, "כבר יש לך שיחה פעילה. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.");
+  if (allowance.mode === "busy") throw new HttpError(409, "כבר יש שיחה פעילה בחשבון. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.");
   if (allowance.mode === "payment_failed") throw new HttpError(402, PAYMENT_FAILED_MESSAGE);
   if (!allowance.seconds) throw new HttpError(402, "אין יתרת שימוש זמינה. פנה לשירות לרכישת חבילה");
   let startedAt: Date | null = null;

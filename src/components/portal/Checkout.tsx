@@ -74,9 +74,9 @@ export function Checkout({ token, packageId, onDone }: { token: string; packageI
   if (!order) return <section className="sk-step-card"><h2>{packageId === "school-mastery" && !domain ? "תחום נוסף לשליטה מלאה" : "מכינים את התשלום…"}</h2>{packageId === "school-mastery" && !domain && <ProChoices kind="domain" label="באיזה תחום נתרגל?" value={domain} onChange={setDomain} values={Object.fromEntries(Object.entries(topics).filter(([id]) => !["recommended", "everyday"].includes(id)))} />}{error && <p role="alert">{error}</p>}</section>;
   const sub = order.subscription;
   return <section className="sk-step-card sk-checkout" dir="rtl">
-    <h2>{done ? "ברוך הבא למסלול " + order.package_name + "." : "מסלול " + order.package_name}</h2>
-    {done ? <><p>התשלום אושר. {order.minutes} דקות שיחה מחכות לך{sub ? ", והחיוב החודשי יתחדש אוטומטית." : "."}</p><button className="sk-primary" onClick={onDone}>בוא נדבר</button></> : <>
-      <p>{sub ? <>₪{sub.monthly_ils} לחודש בהוראת קבע: החודש הראשון עכשיו, והחיוב הבא ב-{sub.next_date}. אפשר לבטל בכל עת.</> : order.installments > 1 ? <>₪{order.amount_ils}, עד {order.installments} תשלומים בכרטיס אשראי.</> : <>₪{order.amount_ils}, תשלום אחד.</>} {order.minutes} דקות שיחה, בתוקף ל-{order.validity_days} ימים.</p>
+    <h2>{done ? "ההצטרפות הושלמה · " + order.package_name : "מסלול " + order.package_name}</h2>
+    {done ? <><p>התשלום אושר והמסלול זמין.{sub ? " החיוב החודשי יתחדש אוטומטית." : ""}</p><button className="sk-primary" onClick={onDone}>להתחיל לדבר</button></> : <>
+      <p>{sub ? <>₪{sub.monthly_ils} לחודש בהוראת קבע: החודש הראשון עכשיו, והחיוב הבא ב-{sub.next_date}. אפשר לבטל בכל עת.</> : order.installments > 1 ? <>₪{order.amount_ils}, עד {order.installments} תשלומים בכרטיס אשראי.</> : <>₪{order.amount_ils}, תשלום אחד.</>} תוקף המסלול: {order.validity_days} ימים.</p>
       <div className="sk-card-frame"><iframe ref={frame} id="NedarimFrame" title="פרטי כרטיס אשראי" src={order.iframe_url} scrolling="no" style={{ width: "100%", height, border: 0, display: "block" }} onLoad={() => post({ Name: "GetHeight" })} /></div>
       {error && <p role="alert" className="sk-access is-empty">{error}</p>}
       <button className="sk-primary" disabled={busy || !order.steps.length} onClick={pay}><CreditCard size={18} />{busy ? "מאשרים מול חברת האשראי…" : "לתשלום ₪" + order.amount_ils}</button>
@@ -97,7 +97,7 @@ export function Billing({ token }: { token: string }) {
     {subs.map(s => <div key={s.id} className="sk-billing-row">
       <p><strong>{s.package_name}</strong> · ₪{s.monthly_ils} לחודש בהוראת קבע{s.next_date ? " · החיוב הבא ב-" + s.next_date : ""}{s.state === "past_due" ? " · החיוב האחרון לא עבר" : ""}</p>
       <button className="sk-link" onClick={() => {
-        if (!confirm("לבטל את הוראת הקבע? הדקות שכבר שולמו יישארו עד סוף התקופה.")) return;
+        if (!confirm("לבטל את הוראת הקבע? הגישה תישאר עד סוף התקופה.")) return;
         portalRequest("/v1/portal/subscriptions/" + s.id + "/cancel", token, {}).then(() => { setNote("הוראת הקבע בוטלה. לא יהיו חיובים נוספים."); void load(); }, e => setNote(e.message));
       }}>ביטול הוראת הקבע</button>
     </div>)}

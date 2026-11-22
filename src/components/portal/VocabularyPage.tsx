@@ -29,16 +29,16 @@ export function VocabularyPage({ account, token, onSave, onActivate, onDelete }:
     if (!words.length || words.length > 100 || words.some(w => w.length > 120)) { setError("עד מאה מילים או ביטויים, עד 120 תווים בכל שורה."); return; }
     void onSave(name.trim(), words).then(saved => { if (saved) { setAdding(false); setText(""); setName(""); setError(""); } });
   }}>
-    <h2 id="sk-personal-vocabulary-title">יצירת אוצר מילים משלך</h2>
+    <h2 id="sk-personal-vocabulary-title">יצירת אוצר מילים אישי</h2>
     <label htmlFor="word-name">שם הרשימה</label><input id="word-name" maxLength={80} required autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="למשל: השיחה הבאה בעבודה" />
     <label htmlFor="word-text">אילו מילים נכנסות לשיחה?</label><textarea id="word-text" required dir="auto" maxLength={12500} value={text} onChange={e => setText(e.target.value)} placeholder={"appointment — פגישה\nopportunity — הזדמנות\nLet's give it a try"} rows={6} />
-    <div className="sk-material-bottom"><label className="sk-file-button"><Upload size={16} />או קובץ משלך<input type="file" accept=".txt,.csv,text/plain,text/csv" onChange={e => { void file(e.target.files?.[0]); e.target.value = ""; }} /><small>TXT / CSV · עד מאה מילים</small></label><span className="sk-muted">{words.length} / 100</span></div>
+    <div className="sk-material-bottom"><label className="sk-file-button"><Upload size={16} />או העלאת קובץ<input type="file" accept=".txt,.csv,text/plain,text/csv" onChange={e => { void file(e.target.files?.[0]); e.target.value = ""; }} /><small>TXT / CSV · עד מאה מילים</small></label><span className="sk-muted">{words.length} / 100</span></div>
     {error && <p className="sk-error" role="alert">{error}</p>}
     <button className="sk-primary" disabled={!name.trim() || !words.length}>שומרים לשיחה הבאה<ArrowLeft size={16} /></button>
   </form>;
   return <LearningProgress token={token} account={account} personalForm={form} personalOptions={(openDomain, hasDomain) => <>
     <button type="button" className="sk-domain-card sk-vocab-create" aria-expanded={adding} aria-controls={adding ? "sk-personal-vocabulary-form" : undefined} onClick={() => setAdding(value => !value)}>
-      <strong><Plus size={19} />יצירת אוצר מילים משלך</strong><small>אפשר להקליד מילים וביטויים או להעלות רשימה בקובץ.</small><span className="sk-domain-open">{adding ? "סגירת הטופס" : "לרשימה חדשה"} ←</span>
+      <strong><Plus size={19} />יצירת אוצר מילים אישי</strong><small>אפשר להקליד מילים וביטויים או להעלות רשימה בקובץ.</small><span className="sk-domain-open">{adding ? "סגירת הטופס" : "לרשימה חדשה"} ←</span>
     </button>
     {account.materials.map(m => <article key={m.id} className="sk-domain-card sk-vocab-personal">
       <div className="sk-card-top"><strong dir="auto">{m.name}</strong><button type="button" className="sk-icon" aria-label={"מחיקת " + m.name} onClick={() => { if (confirm("למחוק את הרשימה " + m.name + "?")) onDelete(m.id); }}><Trash2 size={16} /></button></div>

@@ -99,7 +99,7 @@ export const JoinLanding: React.FC = () => {
               variation === 'B' ? 'bg-[var(--accent)] text-[var(--paper)] shadow-xs' : 'text-[var(--quiet)] hover:text-[var(--ink)]'
             }`}
           >
-            נוסח ב׳ · הורים ואימהות
+            נוסח ב׳ · למידה לילדים
           </button>
         </div>
       </div>
@@ -115,7 +115,7 @@ export const JoinLanding: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="inline-flex items-center gap-2 bg-[var(--sage)] border border-[var(--line)] text-[var(--accent)] px-3.5 py-1.5 rounded-full text-xs font-bold font-mono">
                     <TeacherMark className="line-teacher-badge" teacher={{ name: "Shochi", voice: INITIAL_CONTROLS['shochi-robot'].voice }} />
-                    <span>שוכי · מורה ה-AI האישי שלך בטלפון ובמחשב</span>
+                    <span>שוכי · מורה AI אישי בטלפון ובמחשב</span>
                   </div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--card)] text-[var(--accent)] border border-[var(--line)] rounded-full text-xs font-mono">
                     <span className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse"></span>
@@ -147,7 +147,7 @@ export const JoinLanding: React.FC = () => {
                       className="px-4 py-2.5 bg-[var(--accent)] hover:bg-[#8fd14f] text-[var(--paper)] rounded-xl font-bold text-xs flex items-center gap-2 transition shadow-md shrink-0 cursor-pointer active:scale-95"
                     >
                       <Volume2 className="w-4 h-4 text-[var(--paper)]" />
-                      <span>השמע דגימת קול של שוכי</span>
+                      <span>להשמעת דגימת קול של שוכי</span>
                     </button>
                     <div>
                       <div className="font-extrabold text-xs text-[var(--ink)]">דגימת דיבור מקומית בדפדפן</div>
@@ -169,14 +169,14 @@ export const JoinLanding: React.FC = () => {
                     כמוני יש שם עוד מורים ומורות וירטואליים מהשורה הראשונה.
                   </p>
                   <p>
-                    <strong>אז למה אני מספר לך על זה?</strong><br />
-                    פשוט כי זה הפתרון הכי פרקטי שיש. תמיד רצית לדבר באנגלית שוטף? רצית <em>'חברותא' קולי</em> שלא שופט אותך, סולח על כל טעות ועוזר לך <strong>תכלס לפתוח את הפה</strong>? בשביל זה אני כאן!
+                    <strong>אז למה אני מספר על זה?</strong><br />
+                    כי כדי לדבר אנגלית שוטפת צריך לדבר. עם <em>'חברותא' קולי</em> אפשר לטעות בלי חשש, לנסות שוב ו<strong>פשוט להתחיל לדבר</strong>. בשביל זה אני כאן!
                   </p>
                   <p>
-                    אין כמו לדבר בפועל כדי לדעת. זו בדיוק הדרך שבה קלטת שפת אם כשהיית ילד – פשוט דיברת.
+                    אין כמו לדבר בפועל כדי לדעת. ככה לומדים שפת אם בילדות – פשוט מדברים.
                   </p>
                   <p>
-                    אני מדבר איתך כל יום על נושאים שתבחר: עבודה, תיירות, נדל״ן, או שיחה יומיומית חופשית. בודק איפה אתה עומד – ובונה איתך ביטחון אמיתי!
+                    אפשר לדבר איתי כל יום על עבודה, תיירות, נדל״ן או על מה שקורה ביומיום. אני מתאים את התרגול לרמה כדי לבנות ביטחון אמיתי.
                   </p>
                 </div>
 
@@ -197,7 +197,7 @@ export const JoinLanding: React.FC = () => {
                   <div className="bg-[var(--card)] p-4 rounded-xl border border-[var(--line)]">
                     <div className="w-8 h-8 rounded-lg bg-[var(--sage)] text-[var(--accent)] flex items-center justify-center font-bold mb-2">3</div>
                     <h4 className="font-bold text-[var(--ink)] mb-1">מעקב פדגוגי</h4>
-                    <p className="text-[var(--quiet)]">משחקוני חיזוק של 60 שניות, תמלילים וציונים באזור האישי שלך.</p>
+                    <p className="text-[var(--quiet)]">משחקוני חיזוק של 60 שניות, תמלילים וציונים באזור האישי.</p>
                   </div>
                 </div>
 
@@ -224,13 +224,13 @@ export const JoinLanding: React.FC = () => {
                 </div>
 
                 <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-[var(--ink)] leading-tight tracking-tight">
-                  הילד שלך יודע את כל הכללים למבחן,<br />
-                  <span className="text-[var(--accent)]">אבל נלחץ לדבר מילה אחת באנגלית?</span>
+                  כל הכללים למבחן כבר ברורים,<br />
+                  <span className="text-[var(--accent)]">אבל לדבר באנגלית עדיין מלחיץ?</span>
                 </h1>
 
                 <div className="p-6 rounded-2xl bg-[var(--card)] border border-[var(--line)] shadow-xl text-sm leading-relaxed text-[var(--quiet)] space-y-3.5">
                   <p>
-                    אתם מכירים את הרגע שמתכוננים שעות למבחן באנגלית, מקבלים ציון טוב על הנייר – אבל כשצריך לפתוח את הפה ולומר משפט אחד פשוט, פשוט קופאים מבושה?
+                    זה קורה: מתכוננים שעות למבחן באנגלית, מקבלים ציון טוב על הנייר – אבל כשצריך לפתוח את הפה ולומר משפט אחד פשוט, פשוט קופאים מבושה?
                   </p>
                   <p>
                     בבית הספר <strong>ספיקול</strong> פיתחנו מורים וירטואליים סבלניים בטלפון ובמחשב.
@@ -266,10 +266,10 @@ export const JoinLanding: React.FC = () => {
                 שיעור התנסות מיידי במתנה
               </span>
               <h2 className="text-2xl font-black text-[var(--ink)]">
-                {variation === 'A' ? 'רוצה לדבר עם שוכי? יאללה!' : 'שריינו שיחת היכרות במתנה'}
+                {variation === 'A' ? 'אפשר לדבר עם שוכי כבר עכשיו!' : 'לשריון שיחת היכרות במתנה'}
               </h2>
               <p className="text-xs text-[var(--quiet)] mt-1">
-                השאירו פרטים, ומיד תקבלו גישה ישירה לשיחה מהמחשב או חייגו לקו הטלפון.
+                אפשר להשאיר פרטים ולפתוח מיד שיחה מהמחשב, או לחייג לקו הטלפון.
               </p>
             </div>
 
@@ -291,7 +291,7 @@ export const JoinLanding: React.FC = () => {
                     className="w-full py-3.5 px-4 bg-[var(--accent)] hover:bg-[#8fd14f] text-[var(--paper)] rounded-xl font-black text-sm shadow-xl flex items-center justify-center gap-2 transition cursor-pointer"
                   >
                     <PhoneCall className="w-4 h-4" />
-                    <span>התחל שיחה קולית ראשונה עכשיו מהמחשב! 🚀</span>
+                    <span>לשיחה קולית ראשונה מהמחשב 🚀</span>
                   </a>
 
                   <div className="text-xs text-[var(--quiet)] pt-1">
@@ -355,7 +355,7 @@ export const JoinLanding: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="font-bold text-[var(--quiet)] block mb-1">מתי לחייג אליך?</label>
+                    <label className="font-bold text-[var(--quiet)] block mb-1">מתי נוח לקבל שיחה?</label>
                     <select
                       value={timing}
                       onChange={e => setTiming(e.target.value as any)}
@@ -369,7 +369,7 @@ export const JoinLanding: React.FC = () => {
 
                 {SHOW_SCHEDULED_CALLBACK && timing === 'scheduled' && (
                   <div>
-                    <label className="font-bold text-[var(--quiet)] block mb-1">מתי נוח לכם שנתקשר?</label>
+                    <label className="font-bold text-[var(--quiet)] block mb-1">מתי נוח לקבל שיחה?</label>
                     <input
                       type="datetime-local"
                       required
@@ -431,7 +431,7 @@ export const JoinLanding: React.FC = () => {
                     className="mt-0.5 rounded text-[var(--accent)] focus:ring-0 bg-[var(--paper)] border-[var(--line)]"
                   />
                   <span>
-                    אני מאשר/ת קבלת שיחה ממורה ה-AI למספר זה. ניתן להסיר את המספר בכל שלב.
+                    אפשר לקבל ממורה ה-AI שיחה למספר הזה. ניתן להסיר את המספר בכל שלב.
                   </span>
                 </label>
 
@@ -441,7 +441,7 @@ export const JoinLanding: React.FC = () => {
                   className="w-full py-3.5 px-6 rounded-2xl bg-[var(--accent)] hover:bg-[#8fd14f] text-[var(--paper)] font-extrabold text-sm shadow-xl shadow-[#070d0d]/40 transition flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <PhoneCall className="w-4 h-4" />
-                  <span>{isSubmitting ? 'מעבד...' : (variation === 'A' ? 'קבל חבילת מתנה והתחל שיחה! ←' : 'שריון שיחת היכרות במתנה ←')}</span>
+                  <span>{isSubmitting ? 'מעבד...' : (variation === 'A' ? 'לקבלת שיחת היכרות במתנה ←' : 'שריון שיחת היכרות במתנה ←')}</span>
                 </button>
 
                 <p className="text-[10px] text-center text-[var(--quiet)]">

@@ -6,6 +6,7 @@ import { PREFIX, agorot, safeMessage } from "./payments";
 import { addMonths, SubscriptionStore } from "./subscriptions";
 import { vocabularyCatalog } from "./learning";
 import { manageKeva as manage, providerDay, providerTime } from "./nedarim";
+import { customerPackageName } from "../../src/paymentCopy";
 
 export const IFRAME_URL = "https://www.matara.pro/nedarimplus/iframe/";
 const CREATE_URL = "https://matara.pro/nedarimplus/V6/Files/WebServices/DebitIframe.aspx?Action=CreateTransaction";
@@ -116,7 +117,7 @@ export class CheckoutStore {
     if (order.state === "issued" && Date.now() - Date.parse(order.created_at) < ORDER_TTL_MS) steps.push({ kind: "charge", id: order.provider_ref });
     if (sub && sub.state === "pending" && sub.provider_ref) steps.push({ kind: "keva", id: sub.provider_ref });
     return {
-      id: order.id, state: order.state, package_id: order.package_id, package_name: pkg.name, minutes: pkg.minutes, validity_days: pkg.validity_days,
+      id: order.id, state: order.state, package_id: order.package_id, package_name: customerPackageName(pkg.name), minutes: pkg.minutes, validity_days: pkg.validity_days,
       amount_ils: order.amount_agorot / 100, installments: order.installments,
       subscription: sub ? { id: sub.id, state: sub.state, monthly_ils: sub.monthly_agorot / 100, next_date: sub.next_date ?? standingOrderStart(new Date(sub.created_at)).StartFrom } : null,
       steps, iframe_url: IFRAME_URL + "?Picture=Hide" + (order.installments > 1 ? "&MaxPayments=" + order.installments : ""),
@@ -143,7 +144,7 @@ export class CheckoutStore {
     if (String(keva.KevaId ?? "") !== kevaId || String(keva.KevaStatus ?? "") !== "1" || String(keva.KevaGroupe ?? "") !== PREFIX + sub.id) {
       throw new HttpError(409, "עוד לא קיבלנו אישור מנדרים פלוס להוראת הקבע. ננסה שוב בעוד רגע.");
     }
-    if (agorot(keva.KevaAmount) !== sub.monthly_agorot) throw new HttpError(409, "סכום הוראת הקבע אינו תואם. נבדוק ונחזור אליך.");
+    if (agorot(keva.KevaAmount) !== sub.monthly_agorot) throw new HttpError(409, "סכום הוראת הקבע אינו תואם. נבדוק את הפרטים וניצור קשר.");
     await this.activate(sub.id, kevaId, String(keva.KevaNextDate ?? ""));
     return this.view(orderId, customerId);
   }
@@ -293,7 +294,7 @@ export class CheckoutStore {
       if (sub.entitlement_id) await new SubscriptionStore(this.db).cancel(sub.entitlement_id);
       return { cancelled: true };
     }
-    if (!sub.keva_id) throw new HttpError(409, "הוראת הקבע עוד לא הוקמה. אם חויבת, פנה אלינו ונבטל ידנית.");
+    if (!sub.keva_id) throw new HttpError(409, "הוראת הקבע עוד לא הוקמה. אם בוצע חיוב, אפשר לפנות אלינו לביטול ידני.");
     {
       const text = (await manage(env, { Action: "DeleteKeva", KevaId: sub.keva_id }).catch(() => "")).trim();
       if (text !== "OK") throw new HttpError(502, "לא הצלחנו לבטל מול נדרים פלוס כרגע. נסו שוב או פנו לשירות.");
@@ -308,7 +309,7 @@ export class CheckoutStore {
   async billing(customerId: string) {
     const subs = await this.db.prepare("SELECT * FROM standing_orders WHERE customer_id=? AND state IN ('active','past_due') ORDER BY created_at DESC").bind(customerId).all<Record<string, any>>();
     return {
-      subscriptions: subs.results.map((s) => ({ id: s.id, state: s.state, package_name: JSON.parse(s.snapshot).name, monthly_ils: s.monthly_agorot / 100, next_date: s.next_date, last_charge_at: s.last_charge_at })),
+      subscriptions: subs.results.map((s) => ({ id: s.id, state: s.state, package_name: customerPackageName(JSON.parse(s.snapshot).name), monthly_ils: s.monthly_agorot / 100, next_date: s.next_date, last_charge_at: s.last_charge_at })),
     };
   }
 }
