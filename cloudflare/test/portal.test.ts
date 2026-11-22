@@ -10,7 +10,7 @@ import { type Env, settings } from "../src/env";
 import { applyLearnerControls, materialsKind, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
 import { ProgressStore } from "../src/progress";
 import { handleCallback, markQuickIntro, quickOpening, runtimeContext, startSchool } from "../src/pbx";
-import { adCampaignReport, matchesEmailReadBack, recordSalesTool, wordsEmail } from "../src/ad-entry";
+import { adCampaignReport, matchesEmailReadBack, recordSalesTool, startAdEntry, wordsEmail } from "../src/ad-entry";
 import { CallSession } from "../src/call";
 import { TutorSession } from "../src/session";
 import { transferCommand } from "../src/technoline";
@@ -1580,7 +1580,10 @@ describe("real learner portal", () => {
       }
       await markQuickIntro(b, "pirsumfon-1", (await b.customerForCall("pirsumfon-1"))!);
       await dial("after-first-lesson", "school", "1");
-      expect(await b.loadContext("after-first-lesson")).not.toHaveProperty("entry");
+      expect(await b.loadContext("after-first-lesson")).toMatchObject({ entry: "ad", ad_new_caller: true });
+      expect(await saveIntake(b, (await b.customerForCall("pirsumfon-1"))!, null, { goal: "other", level: "beginner" })).toBe(true);
+      await dial("after-saved-intake", "school", "1");
+      expect(await b.loadContext("after-saved-intake")).not.toHaveProperty("entry");
       expect((await b.list("ad-entries")).filter(entry => entry.campaign === "pirsumfon")).toHaveLength(3);
 
       vi.spyOn(console, "warn").mockImplementationOnce(() => undefined);
@@ -1593,6 +1596,41 @@ describe("real learner portal", () => {
       vi.unstubAllGlobals();
     }
   });
+  it.each([undefined, {}])("keeps ad intake across calls until a valid plan is saved: %j", async plan => {
+    await b.savePreference("learner-a", { intro_school_seen: true, ad_campaign: "radio-news", plan });
+    await startAdEntry(b, progress, settings(env), "unfinished-ad", "learner-a", "radio-news");
+    expect(await b.loadContext("unfinished-ad")).toMatchObject({ entry: "ad", ad_new_caller: true });
+    await startSchool(b, progress, settings(env), "unfinished-redial", "learner-a");
+    expect(await b.loadContext("unfinished-redial")).toMatchObject({ entry: "ad", campaign: "radio-news", ad_new_caller: true });
+    expect(await runtimeContext(b, "unfinished-redial")).toContain("Ask nothing else before practice");
+    expect(await saveIntake(b, "learner-a", null, { goal: "other", level: "invalid" })).toBe(false);
+    await startSchool(b, progress, settings(env), "failed-intake-redial", "learner-a");
+    expect(await b.loadContext("failed-intake-redial")).toMatchObject({ entry: "ad", ad_new_caller: true });
+    expect(await saveIntake(b, "learner-a", null, { goal: "other", level: "beginner" })).toBe(true);
+    await startSchool(b, progress, settings(env), "saved-intake-redial", "learner-a");
+    expect(await b.loadContext("saved-intake-redial")).not.toHaveProperty("entry");
+    await startAdEntry(b, progress, settings(env), "returning-ad", "learner-a", "radio-news");
+    expect(await b.loadContext("returning-ad")).toMatchObject({ entry: "ad", ad_new_caller: false });
+  });
+
+  it.each([false, true])("compiles only the appropriate intake block for an ad override=%s", async ad => {
+    vi.useFakeTimers();
+    await progress.saveControls("student", { ...controlsFromSettings(false), custom_instructions: "Preserve this CRM administrator guidance." });
+    if (ad) await b.savePreference("learner-a", { intro_school_seen: true, ad_campaign: "radio-news" });
+    await startSchool(b, progress, settings(env), "intake-prompt", "learner-a");
+    vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
+    vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+    vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+    const tutor = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
+    for (const task of ["pbxToAi", "aiToOutput", "pacedOutput", "watchdog"]) vi.spyOn(tutor, task).mockResolvedValue(undefined);
+    await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "intake-prompt", caller: "0500000001" }), "student", false);
+    const system = tutor.artifact.system_instruction;
+    expect(system).toContain("Preserve this CRM administrator guidance.");
+    expect(system.includes("First call: before practising, run a short Hebrew intake")).toBe(!ad);
+    expect(system.match(/Ad caller flow \(authoritative/g) ?? []).toHaveLength(ad ? 1 : 0);
+    expect(tutor.controls.intake_pending).toBe(true);
+  });
+
   it("opens the lesson and translator without dictating a menu phrase", async () => {
     await b.saveContext("quick-school", { quick_entry: "school" });
     await b.saveContext("quick-translation", { quick_entry: "translation" });
@@ -1641,6 +1679,7 @@ describe("real learner portal", () => {
     expect(mail.send).toHaveBeenCalledTimes(2);
     expect(await b.loadContext("preferences:" + customerId)).toMatchObject({ email: "learner001@example42.com", next_lesson: { day: "tomorrow", part_of_day: "evening" }, ad_campaign: "radio-news" });
     await b.savePreference(customerId, { intro_school_seen: true });
+    expect(await saveIntake(b, customerId, null, { goal: "other", level: "beginner" })).toBe(true);
     await call("ad-2", "radio-news");
     await call("ad-2", "radio-news");
     expect((await b.loadContext("ad-2")).ad_new_caller).toBe(false);

@@ -203,10 +203,10 @@ export class TutorSession {
       await this.latency("session_started");
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
-      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone");
-      const opening = await quickOpening(this.b, this.callId);
       const callContext = await this.b.loadContext(this.callId);
       const adCall = callContext.entry === "ad";
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall);
+      const opening = await quickOpening(this.b, this.callId);
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
       if (this.controls.lesson && !this.portal) {
         const phonePayments = paymentsConfigured(this.env) && adCall

@@ -7,7 +7,7 @@ import { canCallWithLessonSummary, normalizePhone, SPEAKCALL_PHONE } from "./cal
 import { type Env, type Settings, HttpError, extensionPath, nowIso, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { PaymentStore, paymentResponse, canPurchaseByPhone, SCHOOL_SALES_PACKAGE_IDS } from "./payments";
 import { ProgressStore } from "./progress";
-import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
+import { DEFAULT_TEACHER_NAME, PlanSchema, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 import { enqueueVoicemail, processVoicemail } from "./voicemails";
 import { withRecordedAudio } from "./phone-audio";
@@ -86,9 +86,10 @@ export async function startSchool(b: BusinessStore, progress: ProgressStore, s: 
   if (!["course", "free"].includes(mode)) mode = enrolled ? "course" : "free";
   const candidates = [selected, mode === "course" ? enrolled : null, customer.preferred_bot, saved.teacher_bot, saved.selected_bot, "isaac-basic", ...bots.map((bot) => bot.id)];
   const botId = candidates.find((candidate) => bots.some((bot) => bot.id === candidate));
-  const pirsumfon = saved.pirsumfon_campaign && !saved.plan && !saved.intro_school_seen && (await b.loadContext(callId)).entry !== "ad"
-    ? { entry: "ad", campaign: saved.pirsumfon_campaign, ad_new_caller: true, pirsumfon_sales: true } : {};
-  await b.saveContext(callId, { ...pirsumfon, selected_bot: botId, mode, quick_entry: "school" });
+  const campaign = saved.pirsumfon_campaign || saved.ad_campaign;
+  const ad = campaign && !PlanSchema.safeParse(saved.plan).success && (await b.loadContext(callId)).entry !== "ad"
+    ? { entry: "ad", campaign, ad_new_caller: true, pirsumfon_sales: !!saved.pirsumfon_campaign } : {};
+  await b.saveContext(callId, { ...ad, selected_bot: botId, mode, quick_entry: "school" });
   if (selected) await b.savePreference(customerId, { selected_bot: selected });
   return streamTarget(s.projectPath);
 }
