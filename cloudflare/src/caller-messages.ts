@@ -38,9 +38,13 @@ export async function callerMessageAdmin(request: Request, env: Env, path: strin
     }
     const duration = (audio.wav.byteLength - 44) / 16000;
     if (duration < 1 || duration > 60) throw new HttpError(422, "Caller message must be between 1 and 60 seconds");
-    const result = await db.prepare(`INSERT OR IGNORE INTO caller_messages(phone,narration_id,audio_hash,duration_seconds,inbound_enabled)
-      VALUES (?,?,?,?,?)`).bind(phone, id, await sha256Hex(audio.wav), duration, Number(enabled)).run();
-    if (!result.meta.changes) throw new HttpError(409, "This number already has a caller message");
+    const result = await db.prepare(`INSERT INTO caller_messages(phone,narration_id,audio_hash,duration_seconds,inbound_enabled)
+      VALUES (?,?,?,?,?)
+      ON CONFLICT(phone) DO UPDATE SET narration_id=excluded.narration_id,audio_hash=excluded.audio_hash,
+        duration_seconds=excluded.duration_seconds,inbound_enabled=excluded.inbound_enabled,
+        outbound_extension=NULL,outbound_until=0,playback_call_id=NULL,playback_token=NULL,playback_until=0,played_at=NULL
+      WHERE caller_messages.played_at IS NOT NULL`).bind(phone, id, await sha256Hex(audio.wav), duration, Number(enabled)).run();
+    if (!result.meta.changes) throw new HttpError(409, "This number already has a pending caller message");
     return Response.json({ phone, inbound_enabled: enabled }, { status: 201 });
   }
   const parsed = dialOptions.safeParse(body);

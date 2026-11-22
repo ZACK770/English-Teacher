@@ -588,6 +588,18 @@ describe("one-time caller messages", () => {
     expect(await callback("next", { [key]: "1" }, route)).toMatchObject({ goTo: "/7" });
   });
 
+  it("can replace a played message but not a pending one", async () => {
+    expect((await create(true)).status).toBe(201);
+    expect((await create()).status).toBe(409);
+    expect(await callback("original")).toMatchObject({ type: "audioPlayer" });
+    expect(await callback("original", done)).toMatchObject({ goTo: "/7" });
+    expect((await create(true)).status).toBe(201);
+    expect(await callback("original", done)).toMatchObject({ goTo: "/7" });
+    expect(await (await request(path, "test-admin")).json()).toMatchObject({ played_at: null });
+    expect(await callback("replacement")).toMatchObject({ type: "audioPlayer" });
+    expect(await callback("replacement", done)).toMatchObject({ goTo: "/7" });
+  });
+
   it.each([false, true])("dispatches an authenticated outbound campaign with inbound fallback set to %s", async fallback => {
     expect((await create()).status).toBe(201);
     expect(await callback("before-activation")).toMatchObject({ goTo: "/7" });
