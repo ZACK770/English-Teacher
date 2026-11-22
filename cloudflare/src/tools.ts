@@ -74,7 +74,7 @@ export const LESSON_SUMMARY_TOOL = {
 
 export const INTAKE_TOOL = {
   "name": "save_intake",
-  "description": "Save the learner's lesson direction. For first-call intake send goal and level. After intake, send the goal and only the fields the learner asked to change.",
+  "description": "Save lesson direction: first intake needs goal/level; later send goal plus only requested changes.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -94,7 +94,7 @@ export const INTAKE_TOOL = {
 
 export const END_SESSION_TOOL = {
   "name": "end_session",
-  "description": "Finish generating the entire spoken summary and final goodbye BEFORE calling. Then end this AI session when the caller asks to stop or the permitted task is done. The server will play all buffered speech before hanging up or transferring. Do not leave a finished conversation running. The server controls phone disposition.",
+  "description": "After generating the FULL spoken summary/goodbye, end on caller request or permitted task completion; never leave a finished session running. Server plays buffered speech and controls hangup/transfer.",
   "parameters": {
     "type": "object",
     "properties": {
