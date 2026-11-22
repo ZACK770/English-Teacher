@@ -8,7 +8,7 @@ interface Env {
   LAB_PASSCODE?: string;
 }
 type Message = { role: "user" | "assistant"; content: string };
-const SYSTEM = buildSystemInstruction(adultControls(false), "");
+const SYSTEM = buildSystemInstruction(adultControls(false), "") + "\n\nLab-only spoken turn limit: Reply with only 1–3 short spoken sentences per turn. Be concise and ask at most one short question.";
 const TTS_MODEL = "gemini-3.8-flash-lite-tts";
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 
@@ -38,6 +38,7 @@ function base64(bytes: Uint8Array): string {
 
 async function chain(request: Request, env: Env) {
   if (!env.GEMINI_API_KEY) return json({ error: "GEMINI_API_KEY not configured yet" }, 503);
+  const geminiKey = env.GEMINI_API_KEY;
   const start = Date.now();
   const form = await request.formData();
   const audio = form.get("audio");
@@ -55,34 +56,62 @@ async function chain(request: Request, env: Env) {
   if (!transcript) return json({ error: "No speech detected", cost: { whisper: seconds / 60 * 0.000513 }, latency_ms: { stt: sttMs } }, 422);
   const llmStart = Date.now();
   const llm: any = await env.AI.run("@cf/google/gemma-4-26b-a4b-it" as any, {
-    messages: [{ role: "system", content: SYSTEM }, ...history, { role: "user", content: transcript }], max_tokens: 160, chat_template_kwargs: { enable_thinking: false },
+    messages: [{ role: "system", content: SYSTEM }, ...history, { role: "user", content: transcript }], max_tokens: 150, chat_template_kwargs: { enable_thinking: false },
   });
   const llmMs = Date.now() - llmStart;
   const reply = llm.choices?.[0]?.message?.content?.trim();
   if (!reply) throw new Error("LLM returned no reply");
-  const ttsStart = Date.now();
-  const tts = await upstream(`https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent`, {
-    method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-    body: JSON.stringify({ contents: [{ parts: [{ text: reply }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } } } }),
-  });
-  const part = tts.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData;
-  if (!part?.data) throw new Error("TTS returned no audio");
-  const pcm = Uint8Array.from(atob(part.data), c => c.charCodeAt(0));
-  const rate = Number(/rate=(\d+)/.exec(part.mimeType)?.[1] || 24000);
-  const outputSeconds = pcm.length / (rate * 2);
   const inputTokens = llm.usage?.prompt_tokens;
   const outputTokens = llm.usage?.completion_tokens;
-  if (typeof inputTokens !== "number" || typeof outputTokens !== "number" || typeof tts.usageMetadata?.promptTokenCount !== "number") throw new Error("Provider omitted billing usage");
-  const audioTokens = tts.usageMetadata.candidatesTokensDetails?.find((d: any) => d.modality === "AUDIO")?.tokenCount ?? outputSeconds * 25;
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") throw new Error("Provider omitted billing usage");
+  const sentences = Array.from(new Intl.Segmenter("he", { granularity: "sentence" }).segment(reply as string), s => s.segment.trim()).filter(Boolean);
+  const ttsStart = Date.now();
+  const pending = sentences.map(async (sentence) => {
+    const partStart = Date.now();
+    try {
+      const tts = await upstream(`https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent`, {
+        method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
+        body: JSON.stringify({ contents: [{ parts: [{ text: sentence }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } } } }),
+      });
+      const part = tts.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData;
+      if (!part?.data) throw new Error("TTS returned no audio");
+      const pcm = Uint8Array.from(atob(part.data), c => c.charCodeAt(0));
+      const rate = Number(/rate=(\d+)/.exec(part.mimeType)?.[1] || 24000);
+      const outputSeconds = pcm.length / (rate * 2);
+      if (typeof tts.usageMetadata?.promptTokenCount !== "number") throw new Error("Provider omitted billing usage");
+      const audioTokens = tts.usageMetadata.candidatesTokensDetails?.find((d: any) => d.modality === "AUDIO")?.tokenCount ?? outputSeconds * 25;
+      return { audio: base64(wav(pcm, rate)), outputSeconds, usage: tts.usageMetadata,
+        inputCost: tts.usageMetadata.promptTokenCount * 0.50 / 1e6, audioCost: audioTokens * 6 / 1e6, latency: Date.now() - partStart };
+    } catch (error) { return { error: error instanceof Error ? error.message : "TTS failed" }; }
+  });
   const cost = {
     whisper: seconds / 60 * 0.000513,
     llm_input: inputTokens * 0.10 / 1e6, llm_output: outputTokens * 0.30 / 1e6,
-    tts_input: tts.usageMetadata.promptTokenCount * 0.50 / 1e6, tts_audio: audioTokens * 6 / 1e6,
+    tts_input: 0, tts_audio: 0,
   };
-  return json({ transcript, reply, audio: base64(wav(pcm, rate)), mime: "audio/wav", model: TTS_MODEL, voice: "Charon",
-    cost: { ...cost, total: Object.values(cost).reduce((a, b) => a + b, 0) },
-    usage: { inputTokens, outputTokens, tts: tts.usageMetadata, input_seconds: seconds, output_seconds: outputSeconds },
-    latency_ms: { stt: sttMs, llm: llmMs, tts: Date.now() - ttsStart, total: Date.now() - start } });
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    async start(controller) {
+      let connected = true;
+      const send = (value: unknown) => { if (connected) { try { controller.enqueue(encoder.encode(JSON.stringify(value) + "\n")); } catch { connected = false; } } };
+      send({ type: "reply", transcript, reply, parts: sentences.length, model: TTS_MODEL, voice: "Charon" });
+      let outputSeconds = 0, firstAudioMs = 0;
+      const usage = [], timings = [], errors = [];
+      for (let index = 0; index < pending.length; index++) {
+        const part = await pending[index];
+        if ("error" in part) { errors.push({ index, error: part.error }); continue; }
+        cost.tts_input += part.inputCost; cost.tts_audio += part.audioCost;
+        outputSeconds += part.outputSeconds; usage.push(part.usage); timings.push(part.latency);
+        if (!firstAudioMs) firstAudioMs = Date.now() - start;
+        send({ type: "audio", index, audio: part.audio, mime: "audio/wav" });
+      }
+      send({ type: "done", errors, cost: { ...cost, total: Object.values(cost).reduce((a, b) => a + b, 0) },
+        usage: { inputTokens, outputTokens, tts: usage, input_seconds: seconds, output_seconds: outputSeconds },
+        latency_ms: { stt: sttMs, llm: llmMs, tts: Date.now() - ttsStart, tts_parts: timings, first_audio: firstAudioMs, total: Date.now() - start } });
+      if (connected) controller.close();
+    },
+  });
+  return new Response(body, { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
 }
 
 export default {

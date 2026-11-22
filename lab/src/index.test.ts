@@ -30,13 +30,46 @@ it("returns shared persona reply, WAV, usage costs and stage timing", async () =
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ candidates: [{ content: { parts: [{ inlineData: { data: btoa("\0\0"), mimeType: "audio/L16;rate=24000" } }] } }], usageMetadata: { promptTokenCount: 1, candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 1 }] } })));
   const response = await worker.fetch(turn(), env(run));
   expect(response.status).toBe(200);
-  const body: any = await response.json();
-  expect(body.transcript).toBe("שלום");
-  expect(body.reply).toBe("Hello");
-  expect(atob(body.audio).slice(0, 4)).toBe("RIFF");
+  const [reply, audio, body] = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  expect(reply.transcript).toBe("שלום");
+  expect(reply.reply).toBe("Hello");
+  expect(atob(audio.audio).slice(0, 4)).toBe("RIFF");
   expect(body.cost.total).toBeCloseTo(2 / 60 * .000513 + 10 * .1 / 1e6 + 2 * .3 / 1e6 + .5 / 1e6 + 6 / 1e6);
   expect(body.latency_ms.total).toBeGreaterThanOrEqual(0);
   expect(run.mock.calls[1][1].messages[0].content).toContain("You are Alex");
+  expect(run.mock.calls[1][1].messages[0].content).toContain("1–3 short spoken sentences");
+  expect(run.mock.calls[1][1].max_tokens).toBe(150);
+});
+
+it("starts sentence synthesis in parallel but streams audio in sentence order", async () => {
+  let finishFirst!: (r: Response) => void;
+  const tts = () => Response.json({ candidates: [{ content: { parts: [{ inlineData: { data: btoa("\0\0"), mimeType: "audio/L16;rate=24000" } }] } }], usageMetadata: { promptTokenCount: 2, candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 3 }] } });
+  const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { finishFirst = resolve; })).mockResolvedValueOnce(tts());
+  vi.stubGlobal("fetch", fetch);
+  const run = vi.fn().mockResolvedValueOnce({ text: "שלום" }).mockResolvedValueOnce({ choices: [{ message: { content: "Hello! How are you?" } }], usage: { prompt_tokens: 10, completion_tokens: 8 } });
+  const response = await worker.fetch(turn(), env(run));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const reader = response.body!.getReader();
+  expect(new TextDecoder().decode((await reader.read()).value)).toContain('"type":"reply"');
+  finishFirst(tts());
+  const first = JSON.parse(new TextDecoder().decode((await reader.read()).value));
+  expect(first.index).toBe(0);
+  const second = JSON.parse(new TextDecoder().decode((await reader.read()).value));
+  expect(second.index).toBe(1);
+  const done = JSON.parse(new TextDecoder().decode((await reader.read()).value));
+  expect(done.cost.tts_input).toBe(4 * .5 / 1e6);
+  expect(done.cost.tts_audio).toBe(6 * 6 / 1e6);
+  expect(done.errors).toEqual([]);
+});
+
+it("reports failed TTS parts while retaining successful part costs", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unavailable", { status: 503 })));
+  const run = vi.fn().mockResolvedValueOnce({ text: "שלום" }).mockResolvedValueOnce({ choices: [{ message: { content: "Hello." } }], usage: { prompt_tokens: 10, completion_tokens: 2 } });
+  const response = await worker.fetch(turn(), env(run));
+  const events = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  expect(events[1].errors).toEqual([{ index: 0, error: "Provider returned HTTP 503" }]);
+  expect(events[1].cost.tts_audio).toBe(0);
+  expect(events[1].cost.llm_input).toBeGreaterThan(0);
 });
 
 it("reports provider failures without exposing provider body", async () => {

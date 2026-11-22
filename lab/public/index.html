@@ -43,9 +43,25 @@ $('record').onclick=async()=>{
       if(!active){busy=false;controls();return;}
       status('מתמלל וחושב…');try{
         const form=new FormData();form.set('audio',new Blob(chunks,{type:recorder.mimeType}),'turn.webm');form.set('seconds',String(seconds));form.set('history',JSON.stringify(history.slice(-40)));
-        const d=await api('chain',form);total+=d.cost.total;turns++;history.push({role:'user',content:d.transcript},{role:'assistant',content:d.reply});line('אתם',d.transcript);line('Alex',d.reply);
-        const {audio,...detail}=d;$('detail').textContent=JSON.stringify(detail,null,2);if(audioUrl)URL.revokeObjectURL(audioUrl);audioUrl=URL.createObjectURL(new Blob([Uint8Array.from(atob(audio),c=>c.charCodeAt(0))],{type:d.mime}));
-        if(active){$('player').src=audioUrl;await $('player').play();}status('התור הושלם');
+        const response=await fetch('/api/chain',{method:'POST',headers:{Authorization:'Bearer '+pass},body:form});
+        if(!response.ok)throw Error((await response.json()).error);
+        const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',playback=Promise.resolve(),summary=false;
+        const play=d=>new Promise((resolve,reject)=>{
+          if(!active){resolve();return;}
+          if(audioUrl)URL.revokeObjectURL(audioUrl);audioUrl=URL.createObjectURL(new Blob([Uint8Array.from(atob(d.audio),c=>c.charCodeAt(0))],{type:d.mime}));
+          const player=$('player');const clean=()=>{player.removeEventListener('ended',done);player.removeEventListener('pause',paused);player.removeEventListener('error',failed);};
+          const done=()=>{clean();resolve();},paused=()=>{if(!active)done();},failed=()=>{clean();reject(Error('Audio playback failed'));};
+          player.src=audioUrl;player.addEventListener('ended',done);player.addEventListener('pause',paused);player.addEventListener('error',failed);player.play().catch(e=>{clean();reject(e);});
+        });
+        while(true){const {value,done}=await reader.read();buffer+=decoder.decode(value,{stream:!done});let newline;
+          while((newline=buffer.indexOf('\n'))>=0){const d=JSON.parse(buffer.slice(0,newline));buffer=buffer.slice(newline+1);
+            if(d.type==='reply'){history.push({role:'user',content:d.transcript},{role:'assistant',content:d.reply});line('אתם',d.transcript);line('Alex',d.reply);}
+            if(d.type==='audio')playback=playback.then(()=>play(d)).catch(e=>status(e.message));
+            if(d.type==='done'){summary=true;total+=d.cost.total;turns++;$('detail').textContent=JSON.stringify(d,null,2);status(d.errors.length?'שגיאת קול חלקית — ראו פירוט':'התור הושלם');totals();}
+          }if(done)break;
+        }
+        if(!summary)throw Error('Stream interrupted — partial charges possible');
+        await playback;
       }catch(e){status(e.message+' — ייתכן חיוב חלקי');}finally{busy=false;controls();totals();}
     };
     recorder.start();controls();status('מקליט…');timer=setInterval(()=>{analyser.getFloatTimeDomainData(data);const rms=Math.sqrt(data.reduce((a,b)=>a+b*b,0)/data.length);if(rms>.018){lastVoice=Date.now();heard=true;}if((heard&&Date.now()-lastVoice>1000)||Date.now()-began>60000||(!heard&&Date.now()-began>8000))recorder.stop();},100);

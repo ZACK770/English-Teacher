@@ -29,6 +29,13 @@ The lab reuses `buildSystemInstruction(adultControls(false), "")`, the Alex prof
 used by `session.ts` and `compilePrompt` in the real tutor. Production per-customer
 overrides and lesson persistence tools are intentionally absent: this is a voice/model
 comparison, not a school session. Tool requests in the shared persona cannot save progress.
+Both engines append a lab-only 1–3 short spoken sentence limit; chain generation is
+capped at 150 tokens. The shared persona files are unchanged.
+Chain responses use streaming NDJSON: `reply`, ordered `audio` events, then `done`.
+Sentence TTS requests start in parallel; playback starts when sentence one arrives,
+without waiting for the remaining sentences. `done` sums usage costs from all successful
+parts and reports failed part indices (failed requests may still incur provider charges).
+Latency includes per-part TTS durations and request-to-first-audio time.
 Male voices: Gemini Charon, OpenAI cedar. B uses server VAD and has no separate
 input transcription service (to avoid extra transcription charges); output transcripts
 are shown. A keeps up to 40 history messages and limits each recording to 60 seconds.
