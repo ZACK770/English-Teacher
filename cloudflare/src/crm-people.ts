@@ -105,7 +105,7 @@ function personDetails(data: Data, p: Row) {
   const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback, offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
   const lastPayment = paymentOrders.at(-1);
   const summary = { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", notes: p.notes || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status], card_payment: { available: data.cardPaymentAvailable, orders: paymentOrders.length, paid: paymentOrders.filter(o => o.state === "paid").length, latest_state: lastPayment?.state || "none", latest_at: lastPayment?.updated_at || null } };
-  return { summary, times };
+  return { summary, times, callback };
 }
 function person(data: Data, p: Row) {
   return personDetails(data, p).summary;
@@ -180,7 +180,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     }
     for (const rows of data.sessions.values()) for (const s of rows) { const date = String(s.started_at).slice(0, 10); if (days.has(date)) days.get(date)!.calls++; }
     const cardOrders = [...data.paymentOrders.values()].flat();
-    return ok({ generated_at: new Date().toISOString(), totals: { leads: people.length, customers_with_calls: people.filter(p => p.calls_count).length, calls: people.reduce((a, p) => a + p.calls_count, 0), minutes: safe(people.reduce((a, p) => a + p.minutes_used, 0)), revenue_ils: safe(people.reduce((a, p) => a + p.revenue_ils, 0)), estimated_cost_ils: safe(people.reduce((a, p) => a + p.total_cost_ils, 0)), callbacks_waiting: statuses.callback_pending, card_orders: cardOrders.length, card_paid: cardOrders.filter(o => o.state === "paid").length }, statuses, sources: [...sources.values()].map(s => ({ ...s, conversion_pct: s.leads ? safe(s.paying / s.leads * 100) : 0 })).sort((a, b) => b.leads - a.leads), days: [...days.values()] });
+    return ok({ generated_at: new Date().toISOString(), totals: { leads: people.length, customers_with_calls: people.filter(p => p.calls_count).length, calls: people.reduce((a, p) => a + p.calls_count, 0), minutes: safe(people.reduce((a, p) => a + p.minutes_used, 0)), revenue_ils: safe(people.reduce((a, p) => a + p.revenue_ils, 0)), estimated_cost_ils: safe(people.reduce((a, p) => a + p.total_cost_ils, 0)), callbacks_waiting: details.filter(p => p.callback).length, card_orders: cardOrders.length, card_paid: cardOrders.filter(o => o.state === "paid").length }, statuses, sources: [...sources.values()].map(s => ({ ...s, conversion_pct: s.leads ? safe(s.paying / s.leads * 100) : 0 })).sort((a, b) => b.leads - a.leads), days: [...days.values()] });
   }
   if (match[2]) {
     const id = decodeURIComponent(match[2]), p = data.people.get(id);
