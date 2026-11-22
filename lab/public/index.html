@@ -29,7 +29,7 @@ $('login').onsubmit=async e=>{e.preventDefault();pass=$('pass').value;try{await 
 if(pass)login().catch(()=>{localStorage.removeItem('lab-pass');});
 function controls(){const chain=$('engine').value==='chain';$('start').disabled=active||busy;$('engine').disabled=active||busy;$('record').disabled=!active||busy||!chain;$('end').disabled=!active;$('stop').disabled=recorder?.state!=='recording';}
 function release(){stream?.getTracks().forEach(t=>t.stop());stream=null;if(context){context.close();context=null;}clearInterval(timer);}
-function finish(){active=false;if(started){elapsed+=(Date.now()-started)/1000;started=0;}if(recorder?.state==='recording')recorder.stop();release();channel?.close();pc?.close();pc=null;$('player').pause();$('player').srcObject=null;controls();totals();}
+function finish(){active=false;if(started){elapsed+=(Date.now()-started)/1000;started=0;}if(recorder?.state==='recording')recorder.stop();release();channel?.close();pc?.close();pc=null;$('player').pause();$('player').dispatchEvent(new Event('ended'));$('player').srcObject=null;controls();totals();}
 $('end').onclick=finish;
 $('start').onclick=async()=>{history=[];total=0;turns=0;elapsed=0;seen.clear();$('transcript').replaceChildren();$('detail').textContent='';active=true;started=Date.now();controls();try{if($('engine').value==='openai')await realtime();status('מוכנים לדבר');}catch(e){status(e.message);finish();}};
 $('record').onclick=async()=>{
