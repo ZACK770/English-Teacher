@@ -304,11 +304,21 @@ export class BusinessStore {
       const openingProduct = policy.product + "-opening";
       const seconds = Math.min(maxSeconds, policy.opening_seconds);
       const opening = await this.db.prepare(`INSERT OR IGNORE INTO usage_allocations
-        SELECT ?,?,?,NULL,?,NULL,? WHERE NOT EXISTS (${activeSession}) AND NOT EXISTS
-        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND billed_seconds>=60)`)
-        .bind(callId, customerId, openingProduct, seconds, now, customerId, cutoff, customerId, openingProduct).run();
-      if (opening.meta.changes) {
-        return { seconds, mode: "free" };
+        SELECT ?,?,?,NULL,MIN(?,remaining),NULL,?
+        FROM (
+          SELECT CASE WHEN ?>0 THEN ? - COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)
+            ELSE ? END AS remaining
+          FROM usage_allocations WHERE customer_id=?
+            AND (product=? OR (product=? AND receipt_id IS NULL))
+        )
+        WHERE (?=0 OR remaining>=10) AND NOT EXISTS (${activeSession}) AND NOT EXISTS
+        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND billed_seconds>=60)
+        RETURNING reserved_seconds`)
+        .bind(callId, customerId, openingProduct, seconds, now,
+          policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId, openingProduct, policy.product,
+          policy.trial_total_seconds, customerId, cutoff, customerId, openingProduct).first<{ reserved_seconds: number }>();
+      if (opening) {
+        return { seconds: opening.reserved_seconds, mode: "free" };
       }
     }
     const monthPrefix = now.slice(0, 7) + "%";

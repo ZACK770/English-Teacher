@@ -985,6 +985,13 @@ describe("call minute reservations", () => {
     expect(await reserve("pool-exhausted", 600)).toMatchObject({ mode: "blocked", seconds: 0 });
   });
 
+  it("caps the voice opening by trial time already used in text", async () => {
+    await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 2, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
+    expect(await b.reserveCall("learner-a", "student", "pool-text", 600, "text")).toMatchObject({ mode: "free", seconds: 420 });
+    await b.settleCall("pool-text", 300);
+    expect(await reserve("pool-voice-opening", 600)).toMatchObject({ mode: "free", seconds: 120 });
+  });
+
   it.each([undefined, 0])("preserves separate opening and free allowances with trial_total_seconds=%s", async trial_total_seconds => {
     await b.save("policies", { enabled: true, opening_seconds: 240, free_calls_month: 2, free_call_seconds: 420, trial_total_seconds }, "student");
     expect(await reserve("legacy-opening", 600)).toMatchObject({ seconds: 240 });
