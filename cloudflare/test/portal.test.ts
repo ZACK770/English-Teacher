@@ -653,6 +653,29 @@ it.each([240, 10.788])("keeps the hard cut at a %s-second allowance if Gemini ne
   expect(socket.send).toHaveBeenCalledWith(transferCommand("/88"));
 });
 
+it.each(["/", "/99"])("routes a quota-closing model goodbye to the purchase menu under %s", async projectPath => {
+  const controls = { ...controlsFromSettings(false), store_transcripts: false };
+  await progress.createBot({ id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general", channel_id: "isaac-channel", phone_enabled: true, web_enabled: true, enabled: true }, controls);
+  vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ seconds: 240, mode: "free" });
+  vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
+  vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  const socket = { send: vi.fn(), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, { ...settings(env), projectPath }, crypto.randomUUID()) as any;
+  vi.spyOn(tutor, "pbxToAi").mockResolvedValue(undefined);
+  vi.spyOn(tutor, "aiToOutput").mockImplementation(async () => {
+    tutor.finalSent = true;
+    tutor.controls.intake_pending = true;
+    expect(await tutor.recordTool({ name: "end_session", args: { reason: "task_completed" } })).toBe(true);
+  });
+  vi.spyOn(tutor, "pacedOutput").mockResolvedValue(undefined);
+  vi.spyOn(tutor, "watchdog").mockResolvedValue(undefined);
+  vi.spyOn(tutor, "drainFinalAudio").mockResolvedValue(undefined);
+  await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "isaac-channel", callId: "quota-goodbye", caller: "0500000002" }), "isaac-basic", false);
+  expect(tutor.reason).toBe("model:task_completed");
+  expect(socket.send).toHaveBeenCalledWith(transferCommand(projectPath === "/" ? "/88" : "/99/88"));
+});
+
 it("routes a caller out of minutes to the quota menu even when Gemini is unavailable", async () => {
   env.GEMINI_BUDGET = { getByName: vi.fn() } as unknown as DurableObjectNamespace;
   await b.save("policies", { enabled: true, blocked_extension: "/99/3" }, "student");
