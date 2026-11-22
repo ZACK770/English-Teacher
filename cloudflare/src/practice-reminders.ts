@@ -33,10 +33,11 @@ export function parseReminderAnswer(answer: string): { active: boolean; time_loc
   const afternoon = /בערב|אחר הצהריים|אחרי הצהריים|בצהריים/.test(text);
   const morning = /בבוקר/.test(text);
   const night = /בלילה/.test(text);
+  const explicitClock = !!numeric && (numeric[2] !== undefined || numeric[1].startsWith("0"));
   if (afternoon && hour < 12) hour += 12;
   else if (night && hour >= 6 && hour < 12) hour += 12;
   else if ((morning || night) && hour === 12) hour = 0;
-  else if (!morning && !night && !afternoon && hour >= 1 && hour <= 6) hour += 12;
+  else if (!explicitClock && !morning && !night && !afternoon && hour >= 1 && hour <= 6) hour += 12;
   return { active: true, time_local: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
 

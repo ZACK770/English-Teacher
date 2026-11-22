@@ -44,6 +44,7 @@ describe("practice reminder preferences", () => {
     ["בעשר בלילה", "22:00"], ["בשתיים בלילה", "02:00"], ["בשלוש אחרי הצהריים", "15:00"], ["באחת בצהריים", "13:00"], ["בשתים עשרה בצהריים", "12:00"],
     ["שמונה עשרה", "18:00"], ["תשע עשרה", "19:00"], ["עשרים ואחת", "21:00"], ["18:30", "18:30"],
     ["1", "13:00"], ["2", "14:00"], ["3", "15:00"], ["4", "16:00"], ["5", "17:00"], ["6", "18:00"], ["בשש בבוקר", "06:00"],
+    ["06:00", "06:00"], ["6:00", "06:00"], ["06", "06:00"], ["01:30", "01:30"], ["01", "01:00"],
   ])("parses %s", (answer, time) => expect(parseReminderAnswer(answer)).toEqual({ active: true, time_local: time }));
   it.each(["לא תודה", "לא", "בלי תזכורת", "לבטל את התזכורת"])("recognizes refusal: %s", answer => expect(parseReminderAnswer(answer)).toEqual({ active: false }));
   it.each(["", "כן", "מחר", "25:00", "7:90", "רבע לשמונה", "לא בשבע בשמונה"])("requires clarification: %s", answer => expect(parseReminderAnswer(answer)).toBeNull());
