@@ -662,7 +662,7 @@ export class TutorSession {
   }
 
   private maybeNudgeSilence(now: number) {
-    if (!this.ai || !this.firstSent || this.reconnecting || this.closingSent || this.finalSent || this.output.length) return;
+    if (!this.ai || !this.controls?.lesson || this.pendingEmail || !this.firstSent || this.reconnecting || this.closingSent || this.finalSent || this.output.length) return;
     if (this.lastHuman > this.nudgedAt) this.silenceNudges = 0;
     if (!silenceNudgeDue(now, this.lastHuman, this.lastTutorAudio, this.silenceNudges)) return;
     this.silenceNudges++;
