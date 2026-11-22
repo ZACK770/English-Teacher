@@ -1,6 +1,27 @@
 import { BusinessStore } from "./business";
 
 export const PRACTICE_DAY_MIN_SECONDS = 120;
+export function reminderWeekdays(sessionsPerWeek: number): number[] {
+  return sessionsPerWeek === 3 ? [0, 2, 4] : sessionsPerWeek === 5 ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5];
+}
+
+export async function refreshReminderWeekdays(db: D1Database, customerId: string, reminder: { weekdays: string; source: string }, sessionsPerWeek: number, now: Date): Promise<number[]> {
+  const weekdays: number[] = JSON.parse(reminder.weekdays);
+  const same = (a: number[], b: number[]) => a.length === b.length && a.every(day => b.includes(day)) && b.every(day => a.includes(day));
+  const business = new BusinessStore(db);
+  const preferences = await business.loadContext("preferences:" + customerId);
+  const saved = preferences.practice_reminder_default_weekdays;
+  const previous = Array.isArray(saved) ? saved : reminder.source === "lesson" && [3, 5, 7].some(cadence => same(weekdays, reminderWeekdays(cadence))) ? weekdays : null;
+  if (!previous || !same(weekdays, previous)) return weekdays;
+  const next = reminderWeekdays(sessionsPerWeek);
+  if (!same(weekdays, next)) {
+    const updated = await db.prepare("UPDATE practice_reminders SET weekdays=?,updated_at=? WHERE customer_id=? AND weekdays=?")
+      .bind(JSON.stringify(next), now.toISOString(), customerId, reminder.weekdays).run();
+    if (updated.meta.changes !== 1) return weekdays;
+  }
+  if (!Array.isArray(saved) || !same(saved, next)) await business.saveContext("preferences:" + customerId, { practice_reminder_default_weekdays: next });
+  return next;
+}
 export type PracticeSummary = {
   current_streak: number;
   best_streak: number;
@@ -38,7 +59,7 @@ async function load(db: D1Database, customerId: string, now: Date) {
   const [days, pkg, reminder] = await Promise.all([
     db.prepare("SELECT day,seconds FROM practice_days WHERE customer_id=? AND day<=? ORDER BY day").bind(customerId, day).all<{ day: string; seconds: number }>(),
     new BusinessStore(db).activeSchoolPackage(customerId, now.toISOString()),
-    db.prepare("SELECT time_local,weekdays,active FROM practice_reminders WHERE customer_id=?").bind(customerId).first<{ time_local: string; weekdays: string; active: number }>(),
+    db.prepare("SELECT time_local,weekdays,active,source FROM practice_reminders WHERE customer_id=?").bind(customerId).first<{ time_local: string; weekdays: string; active: number; source: string }>(),
   ]);
   const dates = days.results.filter(d => d.seconds >= PRACTICE_DAY_MIN_SECONDS).map(d => d.day);
   const practiced = new Set(dates);
@@ -53,7 +74,7 @@ async function load(db: D1Database, customerId: string, now: Date) {
     dates: dates.filter(d => d >= shift(day, -119)),
     week: { start, target: pkg ? cadence : 0, done: dates.filter(d => d >= start).length },
     package: pkg ? { id: pkg.id, name: String(pkg.name), sessions_per_week: cadence } : null,
-    reminder: reminder ? { time_local: reminder.time_local, weekdays: JSON.parse(reminder.weekdays), active: !!reminder.active } : null,
+    reminder: reminder ? { time_local: reminder.time_local, weekdays: pkg ? await refreshReminderWeekdays(db, customerId, reminder, pkg.sessions_per_week, now) : JSON.parse(reminder.weekdays), active: !!reminder.active } : null,
   };
   return { summary, days: days.results, pkg };
 }

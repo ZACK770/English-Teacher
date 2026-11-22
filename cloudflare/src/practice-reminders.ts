@@ -1,17 +1,15 @@
 import { BusinessStore } from "./business";
 import { normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
 import { type Env, sha256Hex } from "./env";
-import { PRACTICE_DAY_MIN_SECONDS } from "./practice";
+import { PRACTICE_DAY_MIN_SECONDS, refreshReminderWeekdays, reminderWeekdays } from "./practice";
+
+export { reminderWeekdays } from "./practice";
 
 export const PRACTICE_REMINDER_TOOL = {
   name: "save_practice_reminder",
   description: "Save or change the practice reminder after the learner answers the reminder question or explicitly requests a change. Use their latest spoken answer; do not invent consent or a time. If they decline, disable the reminder.",
   parameters: { type: "object", properties: {} },
 };
-
-export function reminderWeekdays(sessionsPerWeek: number): number[] {
-  return sessionsPerWeek === 3 ? [0, 2, 4] : sessionsPerWeek === 5 ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5];
-}
 
 export function parseReminderAnswer(answer: string): { active: boolean; time_local?: string } | null {
   const text = answer.trim().replace(/[.,!?״"']/g, "").replace(/\s+/g, " ");
@@ -56,6 +54,7 @@ export async function savePracticeReminder(db: D1Database, customerId: string, a
     VALUES (?,?,?,1,'lesson',?,?) ON CONFLICT(customer_id) DO UPDATE SET
     time_local=excluded.time_local,weekdays=excluded.weekdays,active=1,source=excluded.source,updated_at=excluded.updated_at`)
     .bind(customerId, parsed.time_local!, JSON.stringify(reminderWeekdays(pkg.sessions_per_week)), at, at).run();
+  await new BusinessStore(db).saveContext("preferences:" + customerId, { practice_reminder_default_weekdays: reminderWeekdays(pkg.sessions_per_week) });
   return true;
 }
 
@@ -82,13 +81,14 @@ export async function dispatchPracticeReminders(env: Env, now = new Date()): Pro
     const at = new Date(Math.floor(now.getTime() / 60000) * 60000 - minute * 60000);
     return { ...localParts(at), at: at.toISOString() };
   });
-  const rows = await env.DB.prepare(`SELECT r.customer_id,r.time_local,r.weekdays,c.primary_phone AS phone
+  const rows = await env.DB.prepare(`SELECT r.customer_id,r.time_local,r.weekdays,r.source,c.primary_phone AS phone
     FROM practice_reminders r JOIN customers c ON c.id=r.customer_id WHERE r.active=1`)
-    .all<{ customer_id: string; time_local: string; weekdays: string; phone: string }>();
+    .all<{ customer_id: string; time_local: string; weekdays: string; source: string; phone: string }>();
   for (const row of rows.results) {
     try {
-      const weekdays: unknown = JSON.parse(row.weekdays);
-      if (!Array.isArray(weekdays)) continue;
+      const pkg = await new BusinessStore(env.DB).activeSchoolPackage(row.customer_id, now.toISOString());
+      if (!pkg) continue;
+      const weekdays = await refreshReminderWeekdays(env.DB, row.customer_id, row, pkg.sessions_per_week, now);
       const due = slots.find(s => s.weekday !== 6 && s.time === row.time_local && weekdays.includes(s.weekday));
       if (!due) continue;
       const business = new BusinessStore(env.DB);
@@ -96,7 +96,6 @@ export async function dispatchPracticeReminders(env: Env, now = new Date()): Pro
       const lastCaller = typeof preferences.last_verified_caller === "string" ? normalizePhone(preferences.last_verified_caller) : null;
       const phone = lastCaller && await business.customerForPhone(lastCaller) === row.customer_id ? lastCaller : normalizePhone(row.phone);
       if (!phone || (mode === "live" && allowlist && !allowlist.has(phone))) continue;
-      if (!await new BusinessStore(env.DB).hasPaidAccess(row.customer_id, now.toISOString())) continue;
       const id = await sha256Hex("practice-reminder:" + row.customer_id + ":" + due.day);
       const claim = await env.DB.prepare(`INSERT OR IGNORE INTO practice_reminder_events(id,customer_id,day,scheduled_for,status)
         SELECT ?,?,?,?,CASE WHEN COALESCE((SELECT seconds FROM practice_days WHERE customer_id=? AND day=?),0)>=?
