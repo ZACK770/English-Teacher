@@ -1012,11 +1012,10 @@ describe("call minute reservations", () => {
     expect(await reserve("pool-last", 100)).toMatchObject({ seconds: 20 });
   });
 
-  it("excludes other months, customers, products and paid allocations from the trial pool", async () => {
+  it("excludes other customers, products and paid allocations from the trial pool", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-12-12T10:00:00Z"));
     await b.save("policies", { enabled: true, free_calls_month: 2, free_call_seconds: 420, trial_total_seconds: 420 }, "student");
     for (const [id, customer, product, receipt, created] of [
-      ["old", "learner-a", "school", null, "2026-11-12T10:00:00Z"],
       ["other", "learner-b", "school", null, "2026-12-12T09:00:00Z"],
       ["basic", "learner-a", "school-basic", null, "2026-12-12T09:00:00Z"],
       ["paid", "learner-a", "school", "paid-receipt", "2026-12-12T09:00:00Z"],

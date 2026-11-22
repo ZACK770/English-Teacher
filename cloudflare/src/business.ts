@@ -321,7 +321,7 @@ export class BusinessStore {
         FROM (
           SELECT CASE WHEN ?>0 THEN ? - COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0)
             ELSE ? END AS remaining
-          FROM usage_allocations WHERE customer_id=? AND created_at LIKE ?
+          FROM usage_allocations WHERE customer_id=?
             AND (product=? OR (product=? AND receipt_id IS NULL))
         )
         WHERE (?=0 OR remaining>=10) AND (
@@ -330,7 +330,7 @@ export class BusinessStore {
         ) < ? AND NOT EXISTS (${activeSession})
         RETURNING reserved_seconds
       `).bind(callId, customerId, policy.product, seconds, now,
-        policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId, monthPrefix,
+        policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId,
         policy.product + "-opening", policy.product, policy.trial_total_seconds,
         customerId, policy.product, monthPrefix, policy.free_calls_month, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "free" };
@@ -476,9 +476,9 @@ export class BusinessStore {
     const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60)").bind(customerId).first();
     const trialUsed = policy.trial_total_seconds > 0 ? await this.db.prepare(`
       SELECT COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0) AS seconds
-      FROM usage_allocations WHERE customer_id=? AND created_at LIKE ?
+      FROM usage_allocations WHERE customer_id=?
         AND (product='school-opening' OR (product='school' AND receipt_id IS NULL))
-    `).bind(customerId, month() + "%").first<{ seconds: number }>() : null;
+    `).bind(customerId).first<{ seconds: number }>() : null;
     const trialRemaining = Math.max(0, policy.trial_total_seconds - (trialUsed?.seconds ?? 0));
     const freeCallsLeft = Math.max(0, policy.free_calls_month - (used?.n ?? 0));
     return {
