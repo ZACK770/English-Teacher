@@ -8,6 +8,10 @@ import { handleCallback } from "../src/pbx";
 import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT } from "../src/payments";
 import worker from "../src/index";
 import { syncKevas } from "../src/keva-sync";
+import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
+import { TutorSession } from "../src/session";
+import { controlsFromSettings } from "../src/controls";
+import { buildSetupPayload } from "../src/prompt";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -44,6 +48,10 @@ const respond = (params: Record<string, string> = {}, callId = "phone-hk") => pa
 async function issue(choice = "1") {
   expect(await respond({ isaacPackage: choice })).toMatchObject({ name: "isaacPayConfirm" });
   return respond({ isaacPayConfirm: "2" });
+}
+async function purchaseMaster() {
+  const module = await issue("5");
+  await hook({ MosadNumber: "7019554", Groupe: module.category, Amount: "1490", Currency: "1", TransactionId: "987654", Confirmation: "approved" });
 }
 function provider(category: string, amount = "59") {
   rows = [{ KevaId: "54321", Groupe: category, Phone: "0500000001", Amount: amount, Currency: "1", Enabled: "1", Success: "1", ErrorText: "", CreationDate: "22/11/2026" }];
@@ -318,6 +326,68 @@ describe("phone monthly enrollment", () => {
 });
 
 describe("five-package phone sales", () => {
+  it("keeps the phone Master default, then saves the first-lesson choice through the tutor tool", async () => {
+    await purchaseMaster();
+    const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get()!;
+    expect(JSON.parse(String(original.domains_json)).every((d: any) => d.domain === "everyday")).toBe(true);
+    expect(await masteryDomainGuidance(env.DB, "c1")).toContain("באיזה תחום הכי חשוב לך להתחזק?");
+    const session = new TutorSession({} as WebSocket, env, settings(env), "owner") as any;
+    session.customerId = "c1";
+    session.controls = { lesson: {} };
+    session.masteryDomain = true;
+    session.ai = { addContext: vi.fn() };
+    expect(await session.recordTool({ name: "save_mastery_domain", args: { domain: "travel" } })).toBe(true);
+    expect(JSON.parse(String(db.sql.prepare("SELECT domains_json FROM subscriptions").get()!.domains_json))).toEqual([...JSON.parse(String(original.domains_json)), { domain: "travel" }]);
+    expect(JSON.parse(String(db.sql.prepare("SELECT snapshot FROM payment_orders").get()!.snapshot)).guarantee_domain).toBe("travel");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await session.recordTool({ name: "save_mastery_domain", args: { domain: "business" } })).toBe(false);
+  });
+  it("does not offer or save a domain for missing, unpaid, anonymous or other customers", async () => {
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    const module = await issue("5");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await saveMasteryDomain(env.DB, "c1", "travel")).toBe(false);
+    await hook({ MosadNumber: "7019554", Groupe: module.category, Amount: "1490", Currency: "1", TransactionId: "987654", Confirmation: "approved" });
+    for (const id of ["anonymous-1", "other", ""]) {
+      expect(await masteryDomainGuidance(env.DB, id)).toBeNull();
+      expect(await saveMasteryDomain(env.DB, id, "travel")).toBe(false);
+    }
+    for (const domain of [undefined, "", "everyday", "invented"]) expect(await saveMasteryDomain(env.DB, "c1", domain)).toBe(false);
+    expect(await masteryDomainGuidance(env.DB, "c1")).not.toBeNull();
+  });
+  it("does not offer the phone choice for a web subscription or suspended access", async () => {
+    await purchaseMaster();
+    db.sql.exec("UPDATE payment_orders SET channel='web'");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+    expect(await saveMasteryDomain(env.DB, "c1", "travel")).toBe(false);
+    db.sql.exec("UPDATE payment_orders SET channel='phone'; UPDATE subscriptions SET access_suspended_at='2026-11-22T13:00:00Z'");
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+  });
+  it("offers only in the first school lesson after purchase, not on subsequent lessons", async () => {
+    await purchaseMaster();
+    db.sql.exec(`INSERT INTO bots(id,label,role,created_at,updated_at) VALUES('master-teacher','Teacher','teacher','2026-11-01','2026-11-01');
+      INSERT INTO call_customers(call_id,customer_id,bot_id,channel,created_at) VALUES('past-lesson','c1','master-teacher','phone','2026-11-22');
+      INSERT INTO sessions(student_id,call_id,started_at,ended_at,duration_seconds,learner_turns,tutor_turns,observations_json)
+      VALUES('c1','past-lesson','2026-11-22T12:00:00Z','2026-11-22T12:05:00Z',300,1,1,'[]')`);
+    expect(await masteryDomainGuidance(env.DB, "c1")).not.toBeNull();
+    db.sql.exec("UPDATE sessions SET started_at='2026-11-22T13:01:00Z',ended_at='2026-11-22T13:06:00Z'");
+    vi.setSystemTime(new Date("2026-11-22T13:10:00Z"));
+    expect(await masteryDomainGuidance(env.DB, "c1")).toBeNull();
+  });
+  it("rolls back the domain choice if updating the purchase snapshot fails", async () => {
+    await purchaseMaster();
+    const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get();
+    db.sql.exec("CREATE TRIGGER domain_failure BEFORE UPDATE OF snapshot ON payment_orders BEGIN SELECT RAISE(ABORT,'snapshot update failed'); END");
+    await expect(saveMasteryDomain(env.DB, "c1", "travel")).rejects.toThrow("snapshot update failed");
+    expect(db.sql.prepare("SELECT domains_json FROM subscriptions").get()).toEqual(original);
+  });
+  it("exposes the domain tool only for eligible identified lessons", () => {
+    const controls: Parameters<typeof buildSetupPayload>[0] = { ...controlsFromSettings(true), lesson: { level: "beginner", topic: "everyday", conversation_mode: "guided", learning_load: "light", correction_policy: "after_answer", closing_activity: "roleplay", vocabulary: [], grammar: [] } };
+    for (const [customerId, masteryDomain, expected] of [["c1", true, true], ["c1", false, false], ["anonymous-1", true, false], [undefined, true, false]] as const) {
+      expect(buildSetupPayload(controls, "test", "teacher", settings(env), { customerId, masteryDomain }).setup.tools[0].functionDeclarations.some(t => t.name === "save_mastery_domain")).toBe(expected);
+    }
+    expect(buildSetupPayload(controlsFromSettings(true), "test", "translator", settings(env), { customerId: "c1", masteryDomain: true }).setup.tools[0].functionDeclarations.some(t => t.name === "save_mastery_domain")).toBe(false);
+  });
   it.each(SCHOOL_SALES_PACKAGE_IDS)("quotes the current price instead of stale text or recording for %s", async id => {
     env.SALES_MENU_AUDIO_URL = "https://example.test/menu.wav";
     env.SALES_MENU_AUDIO_VERSION = "v1";

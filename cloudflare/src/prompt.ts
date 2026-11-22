@@ -4,6 +4,7 @@ import { sha256Hex } from "./env";
 import { buildSystemInstruction, type TutorControls } from "./controls";
 import { learningTool } from "./learning";
 import { PRACTICE_REMINDER_TOOL } from "./practice-reminders";
+import { MASTERY_DOMAIN_TOOL } from "./mastery-domain";
 import {
   END_SESSION_TOOL,
   INTAKE_TOOL,
@@ -24,7 +25,12 @@ export interface PromptArtifact {
 export interface PromptCallContext {
   customerId?: string;
   practiceReminders?: boolean;
+  masteryDomain?: boolean;
+  freeTuning?: boolean;
 }
+
+const FREE_CONTEXT_TRIGGER_TOKENS = 5000;
+const FREE_CONTEXT_TARGET_TOKENS = 3000;
 
 export function buildSetupPayload(c: TutorControls, systemInstruction: string, profileId: string, s: Settings, call: PromptCallContext = {}) {
   const generationConfig: Record<string, unknown> = {
@@ -44,6 +50,7 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
   const tools: Record<string, unknown>[] = c.lesson
     ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : []), ...(call.practiceReminders && call.customerId && !call.customerId.startsWith("anonymous-") ? [PRACTICE_REMINDER_TOOL] : [])]
     : [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL, TRANSLATION_LANGUAGE_TOOL];
+  if (c.lesson && call.masteryDomain && call.customerId && !call.customerId.startsWith("anonymous-")) tools.push(MASTERY_DOMAIN_TOOL);
   return {
     setup: {
       model: c.model,
@@ -87,7 +94,12 @@ export async function compilePrompt(
   s: Settings,
   call: PromptCallContext = {},
 ): Promise<PromptArtifact> {
-  const system = buildSystemInstruction(controls, history);
+  if (call.freeTuning) {
+    const trigger = Math.min(controls.context_trigger_tokens, FREE_CONTEXT_TRIGGER_TOKENS);
+    controls = { ...controls, context_trigger_tokens: trigger,
+      context_target_tokens: Math.min(controls.context_target_tokens, FREE_CONTEXT_TARGET_TOKENS, Math.floor(trigger * 0.6)) };
+  }
+  const system = buildSystemInstruction(controls, history, call.freeTuning);
   const setup = buildSetupPayload(controls, system, profileId, s, call);
   const fingerprint = await sha256Hex(
     canonical({ profile_id: profileId, setup, opening_message: controls.opening_message, history_context: history }),

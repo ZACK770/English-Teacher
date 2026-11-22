@@ -4,11 +4,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { SubscriptionStore } from "../src/subscriptions";
-import { settings, type Env } from "../src/env";
+import { settings, sha256Hex, type Env } from "../src/env";
 import { controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { TutorSession } from "../src/session";
-import { recordPractice } from "../src/practice";
+import { practiceSummary, recordPractice } from "../src/practice";
 import { dispatchPracticeReminders, parseReminderAnswer, reminderGuidance, reminderWeekdays, savePracticeReminder } from "../src/practice-reminders";
 
 let sql: DatabaseSync, db: D1Database, env: Env;
@@ -61,6 +61,26 @@ describe("practice reminder preferences", () => {
     expect(await savePracticeReminder(db, "learner", "לא תודה", now)).toBe(true);
     expect(sql.prepare("SELECT active FROM practice_reminders").get()).toEqual({ active: 0 });
     expect(await savePracticeReminder(db, "learner", "כן", now)).toBe(false);
+  });
+  it("refreshes old package-default weekdays on upgrade and downgrade without changing the reminder time", async () => {
+    await savePracticeReminder(db, "learner", "בשמונה בערב", now);
+    sql.exec("UPDATE sales_receipts SET package_id='school-pace'; UPDATE subscriptions SET plan_id='school-pace'");
+    expect((await practiceSummary(db, "learner", now)).reminder).toEqual({ time_local: "20:00", active: true, weekdays: [0, 1, 2, 3, 4, 5] });
+    sql.exec("UPDATE sales_receipts SET package_id='school-step'; UPDATE subscriptions SET plan_id='school-step'");
+    expect((await practiceSummary(db, "learner", now)).reminder?.weekdays).toEqual([0, 2, 4]);
+  });
+  it("preserves custom weekdays when a package changes", async () => {
+    await savePracticeReminder(db, "learner", "בשמונה בערב", now);
+    sql.exec("UPDATE practice_reminders SET weekdays='[1,3]'; UPDATE sales_receipts SET package_id='school-pace'");
+    expect((await practiceSummary(db, "learner", now)).reminder?.weekdays).toEqual([1, 3]);
+    expect(sql.prepare("SELECT weekdays FROM practice_reminders").get()).toEqual({ weekdays: "[1,3]" });
+  });
+  it("refreshes legacy lesson defaults without changing legacy custom schedules", async () => {
+    await savePracticeReminder(db, "learner", "בשמונה בערב", now);
+    sql.exec("DELETE FROM console_settings WHERE id='ivr:preferences:learner'; UPDATE sales_receipts SET package_id='school-pace'");
+    expect((await practiceSummary(db, "learner", now)).reminder?.weekdays).toEqual([0, 1, 2, 3, 4, 5]);
+    sql.exec("DELETE FROM console_settings WHERE id='ivr:preferences:learner'; UPDATE practice_reminders SET weekdays='[1,3]'");
+    expect((await practiceSummary(db, "learner", now)).reminder?.weekdays).toEqual([1, 3]);
   });
   it("rejects anonymous, unpaid and translator-only customers", async () => {
     for (const id of ["anonymous-123", "missing", "translator"]) expect(await savePracticeReminder(db, id, "7", now)).toBe(false);
@@ -115,6 +135,38 @@ describe("practice reminder preferences", () => {
 
 describe("scheduled practice pings", () => {
   beforeEach(async () => { await savePracticeReminder(db, "learner", "בשמונה בערב", now); });
+  it("dispatches on a newly added practice weekday after the package changes", async () => {
+    sql.exec("UPDATE sales_receipts SET package_id='school-pace'; UPDATE subscriptions SET plan_id='school-pace'");
+    await dispatchPracticeReminders(env, new Date("2026-06-15T17:04:00Z"));
+    expect(events()).toEqual([{ day: "2026-06-15", status: "dry_run", sent_at: null }]);
+    expect(sql.prepare("SELECT weekdays FROM practice_reminders").get()).toEqual({ weekdays: "[0,1,2,3,4,5]" });
+  });
+  it("pings the last verified calling number once, including a linked phone without a primary", async () => {
+    const business = new BusinessStore(db);
+    const phone = "0502222222";
+    await business.save("learner-phone-links", { customer_id: "learner", phone }, (await sha256Hex(phone)).slice(0, 24));
+    expect(await business.identifyCall(phone, "linked-call", "teacher")).toBe("learner");
+    sql.exec("UPDATE customers SET primary_phone=NULL WHERE id='learner'");
+    env.REMINDERS_MODE = "live";
+    await dispatchPracticeReminders(env, now);
+    await dispatchPracticeReminders(env, now);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).phones).toEqual([phone]);
+  });
+  it("uses the most recent calling number and falls back when its verification is removed", async () => {
+    const business = new BusinessStore(db);
+    const phone = "0502222222";
+    const linkId = (await sha256Hex(phone)).slice(0, 24);
+    await business.save("learner-phone-links", { customer_id: "learner", phone }, linkId);
+    await business.identifyCall(phone, "linked-first", "teacher");
+    await business.identifyCall("0501111111", "primary-latest", "teacher");
+    expect((await business.loadContext("preferences:learner")).last_verified_caller).toBe("0501111111");
+    await business.identifyCall(phone, "linked-latest", "teacher");
+    sql.prepare("DELETE FROM console_records WHERE kind='learner-phone-links' AND id=?").run(linkId);
+    env.REMINDERS_MODE = "live";
+    await dispatchPracticeReminders(env, now);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).phones).toEqual(["0501111111"]);
+  });
   it("defaults off and does not claim events or call the provider", async () => {
     delete env.REMINDERS_MODE;
     await dispatchPracticeReminders(env, now);

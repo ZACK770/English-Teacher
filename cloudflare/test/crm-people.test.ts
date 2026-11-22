@@ -358,7 +358,7 @@ describe("CRM customer reset", () => {
     expect((await reset("0501234567", oldId)).status).toBe(200);
     const freshId = await b.identifyCall("0501234567", "fresh-call", "ivr");
     expect(freshId).toBe(oldId);
-    expect(await b.loadContext("preferences:" + freshId)).toEqual({});
+    expect(await b.loadContext("preferences:" + freshId)).toEqual({ last_verified_caller: "0501234567" });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions WHERE student_id=?").get(freshId)).toMatchObject({ n: 0 });
     await startAdEntry(b, new ProgressStore(env.DB), {} as any, "fresh-call", freshId, "test");
     expect(await b.loadContext("fresh-call")).toMatchObject({ ad_new_caller: true });
@@ -507,7 +507,7 @@ describe("CRM customer reset", () => {
     expect(await b.loadContext("preferences:other")).toEqual({ intro_school_seen: true });
     expect(sql.prepare("SELECT used FROM api_quota").get()).toMatchObject({ used: 10 });
     const freshId = await b.identifyCall("+972501234567", "fresh-call", "ivr");
-    expect(await b.loadContext("preferences:" + freshId)).toEqual({});
+    expect(await b.loadContext("preferences:" + freshId)).toEqual({ last_verified_caller: "0501234567" });
     expect(sql.prepare("SELECT COUNT(*) AS n FROM sessions WHERE student_id=?").get(freshId)).toMatchObject({ n: 0 });
     await startAdEntry(b, new ProgressStore(env.DB), {} as any, "fresh-call", freshId, "test");
     expect(await b.loadContext("fresh-call")).toMatchObject({ ad_new_caller: true });
