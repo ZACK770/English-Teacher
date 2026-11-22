@@ -13,7 +13,7 @@ import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomH
 export const PREFIX = "dibura-";
 export const SCHOOL_SALES_PACKAGE_IDS = ["school-step", "school-pace", "school-fluent", "school-foundations", "school-mastery"];
 export const SALES_MENU_TEXT = "למנוי סטארט, 3 אימונים בשבוע, צעד ראשון לדיבור, ב־59 שקלים לחודש, הקישו 1. למנוי סמול טוק, אימון בכל יום, מתחילים לדבר באמת, ב־119 שקלים לחודש, הקישו 2. למנוי פרו, הבחירה המומלצת, אימון יומי ארוך לקצב מהיר ותוצאות, ב־199 שקלים לחודש, הקישו 3. למסלול מקס לחצי שנה, אימון בכל יום לבניית בסיס חזק, ב־690 שקלים ועד 6 תשלומים, הקישו 4. ולמסלול מאסטר לשנה שלמה, אימון בכל יום עם אוצר מילים מתקדם ותחום לבחירה, עד שליטה וביטחון, ב־1,490 שקלים ועד 12 תשלומים, הקישו 5.";
-export const TERMS_STEP_TEXT = "המשך התהליך מהווה הסכמה לתנאי השימוש ולתקנון. להאזנה לתקנון המנוי והחבילה מקישים 1. לאישור והמשך מקישים 2.";
+export const TERMS_STEP_TEXT = "המשך התהליך מהווה הסכמה לתנאי השימוש ולתקנון. לאישור התקנון והמשך הקישו 1. לשמיעת התקנון הקישו 2.";
 export const TERMS_TEXT = `תקנון המנוי, בקצרה.
 המנויים החודשיים, סטארט, סמול טוק ופרו, מתחדשים מדי חודש בהוראת קבע באשראי, ואפשר לבטל בכל עת, בלי התחייבות.
 מסלול מקס לחצי שנה ומסלול מאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים.
@@ -404,7 +404,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       return { type: "goTo", goTo: extensionPath(base), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales"] };
     }
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
-    if (params.isaacPayConfirm === "2") {
+    if (params.isaacPayConfirm === "1") {
       const current = PackageSchema.safeParse(await store.business.record("packages", order.package_id));
       if (!current.success || !current.data.active || !current.data.phone_enabled || !canPurchaseByPhone(current.data) ||
         agorot(current.data.price_ils) !== order.amount_agorot) {
@@ -421,7 +421,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       };
     }
     const terms = selectionMenu("isaacPayConfirm", TERMS_STEP_TEXT, "0,1,2");
-    if (params.isaacPayConfirm === "1") terms.files = [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }];
+    if (params.isaacPayConfirm === "2") terms.files = [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }];
     return terms;
   }
   const choice = params.isaacPackage ?? "";

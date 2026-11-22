@@ -26,7 +26,7 @@ The five school phone sales keys are fixed: 1 Start, 2 Small Talk, 3 Pro,
 `SALES_MENU_AUDIO_URL` and `SALES_MENU_AUDIO_VERSION` select one combined
 Technoline `fileLink` with the cache key `sales-menu-<version>`. Set both to
 use the recording; otherwise the approved menu text is spoken with TTS.
-Terms key 1 reads the terms and returns to the terms menu; key 2 authorizes
+Terms key 2 reads the terms and returns to the terms menu; key 1 authorizes
 continuing to the provider's card collection, and 0 cancels.
 
 For fixed-term packages the provider receives `paymentsMode: "regular"` and
