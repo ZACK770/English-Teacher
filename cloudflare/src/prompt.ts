@@ -24,7 +24,11 @@ export interface PromptArtifact {
 export interface PromptCallContext {
   customerId?: string;
   practiceReminders?: boolean;
+  freeTuning?: boolean;
 }
+
+const FREE_CONTEXT_TRIGGER_TOKENS = 5000;
+const FREE_CONTEXT_TARGET_TOKENS = 3000;
 
 export function buildSetupPayload(c: TutorControls, systemInstruction: string, profileId: string, s: Settings, call: PromptCallContext = {}) {
   const generationConfig: Record<string, unknown> = {
@@ -87,7 +91,12 @@ export async function compilePrompt(
   s: Settings,
   call: PromptCallContext = {},
 ): Promise<PromptArtifact> {
-  const system = buildSystemInstruction(controls, history);
+  if (call.freeTuning) {
+    const trigger = Math.min(controls.context_trigger_tokens, FREE_CONTEXT_TRIGGER_TOKENS);
+    controls = { ...controls, context_trigger_tokens: trigger,
+      context_target_tokens: Math.min(controls.context_target_tokens, FREE_CONTEXT_TARGET_TOKENS, Math.floor(trigger * 0.6)) };
+  }
+  const system = buildSystemInstruction(controls, history, call.freeTuning);
   const setup = buildSetupPayload(controls, system, profileId, s, call);
   const fingerprint = await sha256Hex(
     canonical({ profile_id: profileId, setup, opening_message: controls.opening_message, history_context: history }),
