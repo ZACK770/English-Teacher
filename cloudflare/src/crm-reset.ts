@@ -69,6 +69,7 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   const recordings = await rows("SELECT r2_key FROM call_recordings WHERE customer_id=? OR call_id IN (SELECT value FROM json_each(?))", id, calls);
   const remove = (table: string, where: string, ...args: unknown[]) => removals.push({ table, where, args });
   for (const table of ["learning_results", "learning_exposures", "learning_batches", "learning_lessons", "learning_targets"]) remove(table, "customer_id=?", id);
+  for (const table of ["practice_reminder_events", "practice_reminders", "practice_days"]) remove(table, "customer_id=?", id);
   remove("payment_issues", "order_id IN (SELECT value FROM json_each(?))", orders);
   remove("installment_grants", "order_id IN (SELECT value FROM json_each(?)) OR receipt_id IN (SELECT value FROM json_each(?))", orders, receipts);
   for (const table of ["subscription_renewals", "subscription_billing_locks"]) remove(table, `subscription_id ${inSubs}`, subs);
