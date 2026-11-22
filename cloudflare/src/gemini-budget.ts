@@ -12,7 +12,7 @@ export const BUDGET_GUARD_NAME = "speakcall-v2";
 export type BudgetDenial = "system_busy" | "gemini_budget_reached" | "gemini_guard_unavailable";
 export const budgetMessage: Record<BudgetDenial, string> = {
   system_busy: "כל קווי השיחה תפוסים כרגע. אפשר לנסות שוב בעוד רגע.",
-  gemini_budget_reached: "מכסת השימוש היומית של המערכת הסתיימה. אפשר לחזור מחר.",
+  gemini_budget_reached: "השיחות אינן זמינות כרגע. אפשר לחזור מחר.",
   gemini_guard_unavailable: "שירות השיחות אינו זמין כרגע. אפשר לנסות שוב בעוד רגע.",
 };
 

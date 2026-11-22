@@ -182,7 +182,7 @@ describe("voice socket closure", () => {
     const socket = await connect();
     socket.onmessage({ data: JSON.stringify({ type: "hangup", reason: "access_blocked" }) });
     socket.onclose({ code: 1000, reason: "session ended", wasClean: true });
-    expect(render()).toContain("שיחות הטעימה נוצלו ואין כרגע חבילת תרגול זמינה");
+    expect(render()).toContain("הגישה לשיחה אינה זמינה כרגע");
     expect(render()).not.toContain("דקות");
     expect(render()).not.toContain("החיבור לשיחה נסגר לפני");
   });
@@ -208,7 +208,7 @@ describe("voice entry recovery", () => {
     await vi.waitFor(() => expect(render()).toContain("כדי לדבר כאן צריך לאפשר גישה למיקרופון בדפדפן."));
     expect(render()).toContain("לנסות שוב");
     expect(render()).toContain("חזרה לאזור האישי");
-    expect(render()).not.toContain("התחל לדבר");
+    expect(render()).not.toContain("להתחיל לדבר");
     hooks.refs[0].current();
     await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
     hooks.refs[1].current();
@@ -217,7 +217,7 @@ describe("voice entry recovery", () => {
   it("reserves the gesture state for audio autoplay rejection and keeps exit reachable", async () => {
     resume.mockRejectedValueOnce(new DOMException("Gesture required", "NotAllowedError"));
     cleanup = hooks.effects[0]();
-    await vi.waitFor(() => expect(render()).toContain("התחל לדבר"));
+    await vi.waitFor(() => expect(render()).toContain("להתחיל לדבר"));
     expect(render()).toContain("חזרה לאזור האישי");
     expect(getUserMedia).not.toHaveBeenCalled();
     hooks.refs[1].current();
@@ -234,7 +234,7 @@ describe("voice entry recovery", () => {
     resume.mockImplementationOnce(() => new Promise(() => {}));
     cleanup = hooks.effects[0]();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(render()).toContain("התחל לדבר");
+    expect(render()).toContain("להתחיל לדבר");
     expect(getUserMedia).not.toHaveBeenCalled();
   });
   it("bounds a pending microphone permission without reopening it and disposes a late stream", async () => {

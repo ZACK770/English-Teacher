@@ -10,11 +10,11 @@ const earlyClose = "החיבור לשיחה נסגר לפני שהמורה הת�
 const micPermission = "כדי לדבר כאן צריך לאפשר גישה למיקרופון בדפדפן.";
 const callErrors: Record<string, string> = {
   call_failed: connectionError,
-  access_blocked: "שיחות הטעימה נוצלו ואין כרגע חבילת תרגול זמינה. כל מה שלמדת שמור. להמשך: חייגו 076-5673575 והקישו 3.",
+  access_blocked: "הגישה לשיחה אינה זמינה כרגע. ההתקדמות נשמרה. לבחירת מסלול: אפשר לחייג 076-5673575 ולהקיש 3.",
   payment_failed: PAYMENT_FAILED_MESSAGE,
-  customer_busy: "כבר יש לך שיחה פעילה. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.",
+  customer_busy: "כבר יש שיחה פעילה בחשבון. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.",
   system_busy: "כל קווי השיחה תפוסים כרגע. אפשר לנסות שוב בעוד רגע.",
-  gemini_budget_reached: "מכסת השימוש היומית של המערכת הסתיימה. אפשר לחזור מחר.",
+  gemini_budget_reached: "השיחות אינן זמינות כרגע. אפשר לחזור מחר.",
   gemini_guard_unavailable: "שירות השיחות אינו זמין כרגע. אפשר לנסות שוב בעוד רגע.",
 };
 
@@ -236,7 +236,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
   }, [connected]);
   const toggleMic = () => { streamRef.current?.getAudioTracks().forEach(t => { t.enabled = muted; }); setMuted(!muted); };
   const exit = <button className="sk-primary" onClick={() => closeRef.current()}><PhoneOff size={17} />{connected ? "נסיים כאן" : "חזרה לאזור האישי"}</button>;
-  if (needsGesture) return <div className="sk-call"><RecordingNotice /><button className="sk-primary" onClick={() => startRef.current()}>התחל לדבר</button>{exit}</div>;
+  if (needsGesture) return <div className="sk-call"><RecordingNotice /><button className="sk-primary" onClick={() => startRef.current()}>להתחיל לדבר</button>{exit}</div>;
   return <div className="sk-call">
     <RecordingNotice />
     <div className={"sk-voice-orb " + (connected ? "is-speaking" : "")}><span /><span /><span /><Mic size={38} strokeWidth={1.1} /></div>
@@ -247,6 +247,6 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
       {connected && <button className="sk-icon" title={muted ? "פתיחת מיקרופון" : "השתקת מיקרופון"} aria-label={muted ? "פתיחת מיקרופון" : "השתקת מיקרופון"} aria-pressed={muted} onClick={toggleMic}>{muted ? <MicOff /> : <Mic />}</button>}
       {error && !connected && <button className="sk-secondary" onClick={() => startRef.current()}>לנסות שוב</button>}
       {exit}
-    </div><small>כמו בטלפון, גם כאן השיחה היא חלק מחבילת התרגול שלך.</small>
+    </div>
   </div>;
 }

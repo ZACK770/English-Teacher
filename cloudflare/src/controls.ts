@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HAREDI_CONTENT_RULE } from "./content-rules";
+import { NEUTRAL_HEBREW } from "./customer-language";
 import { lessonInstruction, type LessonPlan } from "./learning";
 import {
   DEFAULT_ADULT_OPENING_MESSAGE,
@@ -99,6 +100,7 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
     : "";
   const controls = [
     "Runtime lesson controls (authoritative):",
+    NEUTRAL_HEBREW,
     `- Target lesson duration: ${c.target_lesson_minutes} minutes.`,
     `- Ending policy: ${POLICY[c.ending_policy]}`,
     "- Session lifecycle (all roles): on a stop/hangup/goodbye request or permitted task completion, briefly say goodbye and call end_session; never leave a finished session running. Generate the FULL summary and goodbye first, not half a sentence; the server plays buffered speech before disconnecting. Await neither playback acknowledgement nor another caller response. Follow the ending policy for task completion; explicit stop requests always permit closure. A single translation does not end a session unless the caller is done.",

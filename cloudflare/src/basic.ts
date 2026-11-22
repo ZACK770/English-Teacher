@@ -1,5 +1,6 @@
 import { b64decode, b64encode, wav, wavToPcm } from "./audio";
 import { HAREDI_CONTENT_RULE } from "./content-rules";
+import { NEUTRAL_HEBREW } from "./customer-language";
 import type { Env, Settings } from "./env";
 import { googleToken, postJson } from "./google";
 
@@ -26,7 +27,7 @@ export class BasicTranslator {
     const result = await postJson(
       url,
       {
-        systemInstruction: { parts: [{ text: HAREDI_CONTENT_RULE }, { text: PROMPT.replace("{target}", target) }] },
+        systemInstruction: { parts: [{ text: HAREDI_CONTENT_RULE }, { text: PROMPT.replace("{target}", target) + " " + NEUTRAL_HEBREW }] },
         contents: [{ role: "user", parts: [{ inline_data: { mime_type: "audio/wav", data: b64encode(wav(pcm8k, 8000)) } }] }],
         generationConfig: { temperature: 0, maxOutputTokens: 2048, responseMimeType: "application/json", responseSchema: SCHEMA, thinkingConfig: { thinkingLevel: "minimal" } },
       },

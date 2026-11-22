@@ -1,8 +1,8 @@
 import { QUOTA_EXTENSION_PATH } from "./pbx-paths";
 
-export const FREE_TIER_TEXT = "שיעור פתיחה חד־פעמי של 7 דקות, ולאחריו 2 שיחות של עד 5 דקות בחודש";
-export const MONTHLY_TERMS = "מנוי שנתי במחיר של 10 חודשים. המחיר נעול כל עוד המנוי פעיל. דקות שלא נוצלו נצברות לחודש אחד בלבד. אפשר להקפיא עד חודשיים בשנה ולבטל בכל עת.";
-export const MASTERY_GUARANTEE = "לא הגעת ל־70% שליטה באוצר המילים של המסלול לפי המדידה במערכת? מקבלים 3 חודשים נוספים ללא עלות.";
+export const FREE_TIER_TEXT = "שיעור פתיחה חד־פעמי ושיחות היכרות נוספות מדי חודש";
+export const MONTHLY_TERMS = "מנוי שנתי במחיר של 10 חודשים. המחיר נעול כל עוד המנוי פעיל. אפשר להקפיא עד חודשיים בשנה ולבטל בכל עת.";
+export const MASTERY_GUARANTEE = "אם המדידה במערכת מראה פחות מ־70% שליטה באוצר המילים של המסלול, מקבלים 3 חודשים נוספים ללא עלות.";
 export const SCHOOL_FREE_POLICY = {
   enabled: true, product: "school" as const, opening_seconds: 420,
   free_calls_month: 2, free_call_seconds: 300, basic_enabled: false,

@@ -27,10 +27,10 @@ export type Account = {
   access?: { paid?: boolean; payment_failed?: boolean; limited: boolean; opening_minutes?: number; free_calls_left: number; free_call_minutes: number; plan_name: string; max_call_minutes: number };
   progress: { session_count: number; total_minutes: number; total_points: number; average_score: number | null; skill_averages: Record<string, number>; sessions: Lesson[] };
 };
-export const topics: Record<string, string> = { recommended: "המומלץ בשבילך", everyday: "חיי היום־יום", travel: "טיולים בחו״ל", business: "עבודה ועסקים", flights: "טיסות", medicine: "רפואה", academic: "לימודים", property: "נדל״ן", cars: "רכב",
+export const topics: Record<string, string> = { recommended: "המסלול המומלץ", everyday: "חיי היום־יום", travel: "טיולים בחו״ל", business: "עבודה ועסקים", flights: "טיסות", medicine: "רפואה", academic: "לימודים", property: "נדל״ן", cars: "רכב",
   career: "קריירה ועבודה",
   school: "בית ספר ונוער" };
-export const tracks: Record<string, string> = { recommended: "המומלץ בשבילך", conversation: "שיחה", spelling: "איות", grammar: "דקדוק" };
+export const tracks: Record<string, string> = { recommended: "המסלול המומלץ", conversation: "שיחה", spelling: "איות", grammar: "דקדוק" };
 export const apiPrefix = location.pathname === "/english" || location.pathname.startsWith("/english/") ? "/english" : "";
 export class PortalError extends Error { constructor(message: string, public status: number) { super(message); } }
 export async function portalRequest<T>(path: string, token: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {

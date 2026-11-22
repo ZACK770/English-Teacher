@@ -1,16 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { visiblePhone, CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE } from "../src/phone";
 import { normalizedPhone } from "../src/business";
-import { normalizePhone, submitCallback } from "../src/callbacks";
+import { lessonSummaryAudioText, normalizePhone, submitCallback } from "../src/callbacks";
 import { TutorSession } from "../src/session";
 import { GeminiLive } from "../src/gemini";
 import { BasicTranslator } from "../src/basic";
 import { HAREDI_CONTENT_RULE } from "../src/content-rules";
+import { NEUTRAL_HEBREW } from "../src/customer-language";
 import * as google from "../src/google";
 import { settings, type Env } from "../src/env";
 import { handleCallback } from "../src/pbx";
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it("reads the measured outcome of a lesson without gendered address", () => {
+  expect(lessonSummaryAudioText(24, 8)).toContain("בתרגול נצברו 24 נקודות");
+  expect(lessonSummaryAudioText(undefined, 8)).toContain("היום היו 8 תורות דיבור");
+});
 
 it.each(["", "anonymous", "unknown", "private", "restricted", "blocked", "מספר חסוי", "0000000000", "12345", "abc0501234567", "+", "0501234567ext1"])("rejects hidden or invalid identity %s", async (phone) => {
   expect(visiblePhone(phone)).toBeNull();
@@ -43,6 +49,7 @@ it("uses a system instruction for basic translation and returns the spoken refus
   const result = await new BasicTranslator(env, settings(env), "English").translate(new Uint8Array(320), new AbortController().signal);
   const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
   expect(body.systemInstruction.parts[0].text).toBe(HAREDI_CONTENT_RULE);
+  expect(body.systemInstruction.parts[1].text).toContain(NEUTRAL_HEBREW);
   expect(body.systemInstruction.parts[0].text).toContain("Translation: politely decline inappropriate input without transcribing or translating.");
   expect(body.systemInstruction.parts.map((part: { text: string }) => part.text).join("").split(HAREDI_CONTENT_RULE)).toHaveLength(2);
   expect(body.systemInstruction.parts[1].text).toContain("selected English");

@@ -107,7 +107,7 @@ function SubscriptionCard({ sub, admin, act, changeAccess }: { sub: Subscription
       <button type="button" onClick={() => void changeAccess(sub)}>{sub.access_suspended_at ? "פתיחת גישה מחדש" : "השעיית גישה"}</button>
       <small>גישה לתרגול בלבד, ללא שינוי בחיוב.</small>
     </div>}
-    {!admin && !sub.owner && <p className="subscription-note">זהו מנוי משפחתי. החבילה משותפת, ההתקדמות אישית. ניהול המנוי בחשבון הראשי.</p>}
+    {!admin && !sub.owner && <p className="subscription-note">הגישה משויכת למנוי משפחתי. ההתקדמות אישית. ניהול המנוי דרך החשבון הראשי.</p>}
     <dl>
       <div><dt>{sub.term_months ? "מחיר המסלול הנעול" : "מחיר חודשי נעול"}</dt><dd>{money(sub.price_agorot)}{sub.term_months ? ` ל־${sub.term_months} חודשים` : " לחודש"}</dd></div>
       {admin && <div><dt>סכום חידוש כולל משפחה</dt><dd>{money(sub.renewal_amount_agorot)}</dd></div>}

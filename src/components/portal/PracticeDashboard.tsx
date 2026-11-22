@@ -48,7 +48,7 @@ function SessionDetails({ session, token }: { session: PracticeSession; token: s
     catch { setError(true); } finally { setBusy(false); }
   };
   return <details className="pd-session"><summary><span className="pd-session-icon"><MessageCircle size={20} aria-hidden="true" /></span><span><strong>{session.summary_he || "עוד צעד באנגלית שלך"}</strong><small>{new Date(session.started_at).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit" })}</small></span><ChevronDown size={19} aria-hidden="true" /></summary>
-    <div className="pd-session-body"><div className="pd-session-notes"><div><span>מה לקחת מהשיחה</span><p>{session.success_he || "כל שיחה באנגלית היא צעד בדרך."}</p></div><div><span>לשיחה הבאה</span><p>{session.next_step_he || "עוד שיחה קצרה, בקצב שלך."}</p></div></div>
+    <div className="pd-session-body"><div className="pd-session-notes"><div><span>מה הצליח בשיחה</span><p>{session.success_he || "כל שיחה באנגלית היא צעד בדרך."}</p></div><div><span>לשיחה הבאה</span><p>{session.next_step_he || "עוד שיחה קצרה, בקצב שלך."}</p></div></div>
       {transcript === undefined ? <button className="sk-secondary" disabled={busy} onClick={() => void load()}>{busy ? "טוענים את התמלול…" : error ? "לנסות שוב לטעון תמלול" : "לפתוח את תמלול השיחה"}<ArrowLeft size={16} /></button> : transcript?.length ? <div className="sk-transcript">{transcript.map((line, i) => <p key={i}><strong>{line.role === "learner" ? "אני" : "המורה"}</strong><span dir="auto">{line.text}</span></p>)}</div> : <p className="pd-muted">לא נשמר תמלול לשיחה הזאת. לשמירת השיחות הבאות אפשר להפעיל שמירת שיחות בהעדפות.</p>}
       {error && <p role="alert">התמלול לא נטען כרגע. אפשר לנסות שוב.</p>}
     </div>
