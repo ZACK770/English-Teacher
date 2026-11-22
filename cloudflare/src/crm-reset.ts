@@ -66,10 +66,6 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   const voicemails = await rows("SELECT id,audio_ready FROM ivr_voicemails WHERE customer_id=? OR caller_key IN (SELECT value FROM json_each(?))", id, hashJson);
   const removals: Removal[] = [];
   const recordings = await rows("SELECT r2_key FROM call_recordings WHERE customer_id=? OR call_id IN (SELECT value FROM json_each(?))", id, calls);
-  if (recordings.length) {
-    if (!env.VOICEMAIL_AUDIO) throw new Error("R2 unavailable");
-    await env.VOICEMAIL_AUDIO.delete(recordings.map(r => r.r2_key));
-  }
   const remove = (table: string, where: string, ...args: unknown[]) => removals.push({ table, where, args });
   for (const table of ["learning_results", "learning_exposures", "learning_batches", "learning_lessons", "learning_targets"]) remove(table, "customer_id=?", id);
   remove("payment_issues", "order_id IN (SELECT value FROM json_each(?))", orders);
@@ -115,6 +111,13 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
       await env.VOICEMAIL_AUDIO.delete(voicemails.map(v => `voicemails/${v.id}.mp3`));
       r2Objects = voicemails.length;
     } catch { console.warn(JSON.stringify({ event: "crm_reset_audio_cleanup_failed", customer_id: id, voicemail_ids: voicemails.map(v => v.id) })); }
+  }
+  if (recordings.length) {
+    try {
+      if (!env.VOICEMAIL_AUDIO) throw new Error("R2 unavailable");
+      await env.VOICEMAIL_AUDIO.delete(recordings.map(r => r.r2_key));
+      r2Objects += recordings.length;
+    } catch { console.warn(JSON.stringify({ event: "crm_reset_recording_cleanup_failed", customer_id: id, recordings: recordings.length })); }
   }
   const deleted: Record<string, number> = {};
   removals.forEach((r, i) => { deleted[r.table] = (deleted[r.table] || 0) + Number(result[1 + detach.length + i].meta.changes || 0); });
