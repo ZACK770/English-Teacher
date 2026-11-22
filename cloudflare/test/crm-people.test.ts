@@ -405,4 +405,27 @@ describe("CRM read-only endpoints", () => {
     expect(await (await request("calls/call1/transcript")).json()).toMatchObject({ turns: [{ role: "learner", text: "Hello" }], recording: null });
     expect(await (await request("calls/empty/transcript")).json()).toMatchObject({ turns: [] });
   });
+  it("provides real analytics, smart multi-term search and sortable customer columns", async () => {
+    customer(); customer("person2", "0507654321"); session();
+    sql.prepare("UPDATE console_records SET body=? WHERE kind='customers' AND id='person1'").run(JSON.stringify({ name: "יעל כהן", phone: "0501234567", source: "קמפיין נובמבר", notes: "מבקשת שיעור ערב" }));
+    const analytics = await (await request("analytics")).json() as any;
+    expect(analytics).toMatchObject({ totals: { leads: 2, customers_with_calls: 1, calls: 1, minutes: 2 }, statuses: { trial: 1, new: 1 } });
+    expect(analytics.sources).toEqual(expect.arrayContaining([expect.objectContaining({ source: "קמפיין נובמבר", leads: 1, trials: 1 })]));
+    expect(analytics.days).toHaveLength(30);
+    expect((await (await request("people?q=יעל%20ערב")).json() as any).items).toHaveLength(1);
+    const sorted = await (await request("people?sort=name&direction=desc")).json() as any;
+    expect(sorted.items.map((p: any) => p.id)).toEqual(["person1", "person2"]);
+    expect((await request("people?sort=not-a-column")).status).toBe(422);
+  });
+  it("excludes translator and navigation activity from the English-school CRM", async () => {
+    customer(); session("english"); session("translate"); session("navigate");
+    sql.prepare("INSERT INTO bots(id,label,role,created_at,updated_at) VALUES ('translator-bot','תרגומון','translator',?,?),('voice-navigator-live','ניווט','custom',?,?)").run(now, now, now, now);
+    sql.prepare("UPDATE call_customers SET bot_id='translator-bot' WHERE call_id='translate'").run();
+    sql.prepare("UPDATE call_customers SET bot_id='voice-navigator-live' WHERE call_id='navigate'").run();
+    event("ivr-events", { call_id: "translate", route: "translator" });
+    const card = await (await request("people/person1")).json() as any;
+    expect(card.calls.map((c: any) => c.call_id)).toEqual(["english"]);
+    expect(card).toMatchObject({ calls_count: 1, minutes_used: 2, card_payment: { available: false } });
+    expect(card.journey.some((step: any) => step.call_id === "translate" || step.call_id === "navigate")).toBe(false);
+  });
 });
