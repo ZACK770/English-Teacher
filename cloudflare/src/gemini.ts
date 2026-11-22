@@ -165,6 +165,10 @@ export class GeminiLive {
     this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } });
   }
 
+  prompt(text: string) {
+    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } });
+  }
+
   addContext(text: string) {
     this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: false } });
   }

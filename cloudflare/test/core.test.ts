@@ -9,7 +9,7 @@ import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
 import worker from "../src/index";
 import { ProgressStore } from "../src/progress";
-import { TutorSession } from "../src/session";
+import { silenceNudgeDue, TutorSession } from "../src/session";
 import { INITIAL_CONTROLS } from "../../src/store/initialData";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
@@ -142,4 +142,13 @@ it("keeps a migrated bot visible but unavailable without changing its saved reco
   expect((await store.getBot("voice-navigator-live"))?.enabled).toBe(false);
   expect((await store.getBot("student"))?.enabled).toBe(true);
   expect(records[0].enabled).toBe(1);
+});
+
+describe("silence nudge", () => {
+  it("re-prompts after seven quiet seconds, at most twice in a row", () => {
+    expect(silenceNudgeDue(10000, 2000, 3000, 0)).toBe(true);
+    expect(silenceNudgeDue(9000, 2000, 3000, 0)).toBe(false);
+    expect(silenceNudgeDue(10000, 4000, 1000, 0)).toBe(false);
+    expect(silenceNudgeDue(20000, 0, 0, 2)).toBe(false);
+  });
 });

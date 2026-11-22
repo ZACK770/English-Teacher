@@ -1263,7 +1263,8 @@ describe("real learner portal", () => {
     expect(runtime).toContain("preserving all digits and leading zeros");
     expect(runtime).toContain("Do not offer to email the lesson summary or collect an email address unprompted.");
     expect(runtime).toContain("not a repeat-after-me drill");
-    expect(runtime).toContain("הפעם האחרונה שהבנת שאתה חייב לדעת אנגלית");
+    expect(runtime).toContain("Ask nothing else before practice");
+    expect(runtime).not.toContain("הפעם האחרונה שהבנת שאתה חייב לדעת אנגלית");
     expect(runtime).toContain("after the application signals 90 seconds of practice");
     expect(runtime).toContain("כאן אפשר פשוט לדבר ולהתאמן בקצב שלך");
     expect(runtime).toContain("Do not interrupt practice, repeat a pitch, or imply unlimited free minutes");

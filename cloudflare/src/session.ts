@@ -19,6 +19,14 @@ import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntak
 import { LearningStore } from "./learning";
 import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 
+export const SILENCE_NUDGE_MS = 7000;
+export const MAX_SILENCE_NUDGES = 2;
+export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"שומע אותי? אפשר לענות גם בעברית\"), then ask your last question again more simply; if it had options, name them briefly.";
+
+export function silenceNudgeDue(now: number, lastHuman: number, lastTutorAudio: number, nudges: number): boolean {
+  return nudges < MAX_SILENCE_NUDGES && now - Math.max(lastHuman, lastTutorAudio) >= SILENCE_NUDGE_MS;
+}
+
 export class TutorSession {
   readonly meter = new SessionMeter();
   readonly startedAt = new Date();
@@ -39,6 +47,9 @@ export class TutorSession {
   private artifact: PromptArtifact | null = null;
   private lastInput = Date.now();
   private lastHuman = Date.now();
+  private lastTutorAudio = Date.now();
+  private silenceNudges = 0;
+  private nudgedAt = 0;
   private clockPrevious = this.startedAt.getTime();
   private meteredAt: number | null = null;
   private basicGeminiCost = 0;
@@ -620,6 +631,7 @@ export class TutorSession {
       await sleep(FRAME_MS, this.abort.signal);
       const audio = this.output.shift();
       this.sendAudio(audio ?? SILENCE_FRAME);
+      if (audio) this.lastTutorAudio = Date.now();
       if (audio && !this.firstSent) {
         this.firstSent = true;
         await markQuickIntro(this.b, this.callId, this.customerId);
@@ -633,6 +645,7 @@ export class TutorSession {
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (!this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
       this.maybeOpenSalesWindow(Date.now());
+      this.maybeNudgeSilence(Date.now());
       if (this.lessonDurationMs && this.meteredAt !== null && !this.closingSent && !this.reconnecting && !this.output.length) {
         const target = this.lessonDurationMs;
         if (Date.now() - this.meteredAt >= target - Math.min(60000, target / 4)) {
@@ -646,6 +659,16 @@ export class TutorSession {
       }
       await sleep(500, this.abort.signal);
     }
+  }
+
+  private maybeNudgeSilence(now: number) {
+    if (!this.ai || !this.firstSent || this.reconnecting || this.closingSent || this.finalSent || this.output.length) return;
+    if (this.lastHuman > this.nudgedAt) this.silenceNudges = 0;
+    if (!silenceNudgeDue(now, this.lastHuman, this.lastTutorAudio, this.silenceNudges)) return;
+    this.silenceNudges++;
+    this.nudgedAt = this.lastTutorAudio = now;
+    this.ai.prompt(SILENCE_NUDGE_NOTE);
+    void this.progress.logDiagnostic(this.profileId, this.callId, "silence_nudge", { nudge: this.silenceNudges }).catch(() => {});
   }
 
   private maybeOpenSalesWindow(now: number) {
