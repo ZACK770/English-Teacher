@@ -29,7 +29,7 @@ export function parseReminderAnswer(answer: string): { active: boolean; time_loc
   const minute = numeric?.[2] ? Number(numeric[2]) : /וחצי/.test(text) ? 30 : /ורבע/.test(text) ? 15 : 0;
   if (minute > 59 || /רבע ל/.test(text)) return null;
   const afternoon = /בערב|אחר הצהריים|אחרי הצהריים|בצהריים/.test(text);
-  const morning = /בבוקר/.test(text);
+  const morning = /בבוקר|לפנות בוקר/.test(text);
   const night = /בלילה/.test(text);
   const explicitClock = !!numeric && (numeric[2] !== undefined || numeric[1].startsWith("0"));
   if (afternoon && hour < 12) hour += 12;

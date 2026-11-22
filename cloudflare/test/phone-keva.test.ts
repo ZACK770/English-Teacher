@@ -486,6 +486,14 @@ describe("phone monthly enrollment", () => {
 });
 
 describe("five-package phone sales", () => {
+  it.each([true, false])("quotes calendar terms rather than days when phone_enabled=%s", async phone_enabled => {
+    await b.save("packages", { ...await b.record("packages", "school-foundations"), price_ils: 700, phone_enabled }, "school-foundations");
+    await b.save("packages", { ...await b.record("packages", "school-mastery"), phone_enabled }, "school-mastery");
+    const text = JSON.stringify(await respond());
+    expect(text).toContain("לחצי שנה");
+    expect(text).toContain("לשנה");
+    expect(text).not.toMatch(/180|365|דקות/);
+  });
   it("keeps the phone Master default, then saves the first-lesson choice through the tutor tool", async () => {
     await purchaseMaster();
     const original = db.sql.prepare("SELECT domains_json FROM subscriptions").get()!;
