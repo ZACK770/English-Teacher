@@ -33,7 +33,7 @@ export class CallRecorder {
     this.safe(() => {
       const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       for (let i = 0; i + 1 < pcm.length; i += 2) this.inbound.push(view.getInt16(i, true));
-      while (this.inbound.length - this.offset > 8000) this.append(this.inbound[this.offset++]);
+      while (this.inbound.length - this.offset > 1600) this.append(this.inbound[this.offset++]);
       this.compact();
     });
   }
