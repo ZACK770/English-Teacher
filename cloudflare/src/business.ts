@@ -434,7 +434,7 @@ export class BusinessStore {
       WHERE (r.customer_id=? OR r.subscription_id IN
         (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
          WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
-      AND NOT ${receiptOnHold} AND r.product='school' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
+      AND NOT ${receiptOnHold} AND r.product='school' AND r.package_id<>'school-topup' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
       ORDER BY r.created_at DESC LIMIT 1`).bind(customerId, customerId, at, at).first<{ id: string }>();
     const sub = receipt ? null : await this.db.prepare(`SELECT s.plan_id AS id FROM subscriptions s JOIN plans p ON p.id=s.plan_id
       WHERE s.status='active' AND s.access_suspended_at IS NULL AND p.product='school'
