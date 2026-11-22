@@ -261,7 +261,7 @@ export class BusinessStore {
     const activeSession = "SELECT 1 FROM usage_allocations WHERE customer_id=? AND billed_seconds IS NULL AND created_at>?";
     const busy = { seconds: 0, mode: "busy" };
     const blocked = { seconds: 0, mode: "blocked", extension: policy.blocked_extension };
-    const paymentFailed = { seconds: 0, mode: "payment_failed", extension: "/8" };
+    const paymentFailed = { seconds: 0, mode: "payment_failed", extension: "/3" };
     if (!policy.enabled) {
       if ((teacher || policyRow) && policy.product === "school" && await this.schoolPaymentBlocked(customerId)) return paymentFailed;
       if ((teacher || policyRow) && policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
