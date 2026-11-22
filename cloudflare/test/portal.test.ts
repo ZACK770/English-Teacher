@@ -1267,7 +1267,7 @@ describe("real learner portal", () => {
     try {
       const welcome = await dial("pirsumfon-1");
       expect(welcome).toEqual([
-        { type: "simpleMessage", files: [{ fileLink: expect.stringContaining("/brand/phone/pirsumfon-welcome-v1.wav") }] },
+        { type: "simpleMessage", files: [{ fileId: "1485697" }] },
         { type: "goTo", goTo: "/" },
       ]);
       expect(await dial("pirsumfon-1")).toEqual(welcome);

@@ -2,11 +2,11 @@ import { normalizePhone } from "./callbacks";
 import { type Env, sha256Hex } from "./env";
 
 const CALLER_IDS = ["0765674487", "0765674429"];
-const WELCOME_FILE = "pirsumfon-welcome-v1.wav";
+const WELCOME_FILE_ID = "1485697";
 
-export function pirsumfonWelcome(baseUrl: string) {
+export function pirsumfonWelcome() {
   return [
-    { type: "simpleMessage", files: [{ fileLink: new URL("/brand/phone/" + WELCOME_FILE, baseUrl).href }] },
+    { type: "simpleMessage", files: [{ fileId: WELCOME_FILE_ID }] },
     { type: "goTo", goTo: "/" },
   ];
 }
