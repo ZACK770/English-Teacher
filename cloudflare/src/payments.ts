@@ -10,11 +10,21 @@ import { customerPackageName } from "../../src/paymentCopy";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
 
 export const PREFIX = "dibura-";
+export const SCHOOL_SALES_PACKAGE_IDS = ["school-step", "school-pace", "school-fluent", "school-foundations", "school-mastery"];
+export const SALES_MENU_TEXT = "למנוי סטארט, 3 אימונים בשבוע, צעד ראשון לדיבור, ב־59 שקלים לחודש, הקישו 1. למנוי סמול טוק, אימון בכל יום, מתחילים לדבר באמת, ב־119 שקלים לחודש, הקישו 2. למנוי פרו, הבחירה המומלצת, אימון יומי ארוך לקצב מהיר ותוצאות, ב־199 שקלים לחודש, הקישו 3. למסלול מקס לחצי שנה, אימון בכל יום לבניית בסיס חזק, ב־690 שקלים ועד 6 תשלומים, הקישו 4. ולמסלול מאסטר לשנה שלמה, אימון בכל יום עם אוצר מילים מתקדם ותחום לבחירה, עד שליטה וביטחון, ב־1,490 שקלים ועד 12 תשלומים, הקישו 5.";
+export const TERMS_STEP_TEXT = "המשך התהליך מהווה הסכמה לתנאי השימוש ולתקנון. להאזנה לתקנון המנוי והחבילה מקישים 1. לאישור והמשך מקישים 2.";
+export const TERMS_TEXT = `תקנון המנוי, בקצרה.
+המנויים החודשיים, סטארט, סמול טוק ופרו, מתחדשים מדי חודש בהוראת קבע באשראי, ואפשר לבטל בכל עת, בלי התחייבות.
+מסלול מקס לחצי שנה ומסלול מאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים.
+כדי לשמור על שיעורים איכותיים וזמינים לכולם, לכל מנוי יש היקף שיחה חודשי: בסטארט עד 60 דקות בחודש, בסמול טוק עד 200, בפרו עד 300, ובמקס ובמאסטר עד 150 דקות בחודש.
+התשלום מאובטח ומתבצע דרך נדרים פלוס.
+לשאלות, לעזרה או לביטול, צוות השירות שלנו תמיד כאן בשבילכם.
+`;
 
 class ExistingMonthlyEnrollmentError extends Error {}
 
 export function canPurchaseByPhone(pkg: { product?: string; billing?: string; automated_purchase?: boolean; duration_months?: number }) {
-  return canPurchaseAutomatically(pkg) || (pkg.product === "school" && pkg.billing === "monthly" && !pkg.duration_months);
+  return canPurchaseAutomatically(pkg) || (pkg.product === "school" && (pkg.billing === "monthly" || !!pkg.duration_months));
 }
 
 export function safeMessage(value: unknown): string {
@@ -325,7 +335,7 @@ export class PaymentStore {
       this.db.prepare("UPDATE payment_issues SET status='resolved',resolved_at=?,resolution='התשלום אושר מול הסולק' WHERE order_id=? AND status='open' AND kind IN ('refusal','pbx_failure')").bind(now, orderId),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:nedarim_verified", orderId, now),
     ];
-    if (order.channel === "web" && (pkg.billing === "monthly" || pkg.duration_months)) {
+    if ((order.channel === "web" && pkg.billing === "monthly") || pkg.duration_months) {
       await new SubscriptionStore(this.db).create(order.customer_id, order.package_id, now,
         pkg.duration_months === 12 && JSON.parse(order.snapshot).guarantee_domain ? [{ domain: "everyday", levels: ["beginner"] }, { domain: "everyday", levels: ["intermediate", "fluent"] }, { domain: JSON.parse(order.snapshot).guarantee_domain }] : undefined,
         { id: order.id, priceAgorot: agorot(pkg.price_ils), monthlyMinutes: pkg.minutes, termMonths: pkg.duration_months ?? null, receiptId, chargeAgorot: amount, vatRate: order.vat_rate,
@@ -379,7 +389,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       const message = state === "failed" || state === "cancelled"
         ? "התשלום לא אושר או שהרכישה בוטלה."
         : JSON.parse(order.snapshot).billing === "monthly"
-          ? "בקשת ההצטרפות נקלטה. המנוי ייפתח בתוך דקות לאחר קבלת האישור. אין לבצע תשלום נוסף."
+          ? "בקשת ההצטרפות נקלטה. המנוי ייפתח בקרוב לאחר קבלת האישור. אין לבצע תשלום נוסף."
           : "ממתינים לאישור חברת הסליקה. החבילה תיפתח אוטומטית לאחר קבלת האישור. אין לבצע תשלום נוסף.";
       return selectionMenu("isaacPayExit", message + " לחזרה הקישו 0. לשירות הקישו 9.");
     }
@@ -388,7 +398,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       return { type: "goTo", goTo: extensionPath(base), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales"] };
     }
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
-    if (params.isaacPayConfirm === "1") {
+    if (params.isaacPayConfirm === "2") {
       const current = PackageSchema.safeParse(await store.business.record("packages", order.package_id));
       if (!current.success || !current.data.active || !current.data.phone_enabled || !canPurchaseByPhone(current.data) ||
         agorot(current.data.price_ils) !== order.amount_agorot) {
@@ -397,17 +407,16 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       }
       if (!(await store.issue(callId))) return selectionMenu("isaacPayExit", "הבקשה כבר בטיפול או פג תוקפה. לחזרה הקישו 0. לשירות הקישו 9.");
       return {
-        type: "creditCard", name: "isaacPayStatus", post: true, sum: order.amount_agorot / 100, sumChangeable: "no", payments: 1,
+        type: "creditCard", name: "isaacPayStatus", post: true, sum: order.amount_agorot / 100, sumChangeable: "no", payments: pkg.duration_months ? pkg.max_payments : 1,
         paymentsMode: pkg.billing === "monthly" ? "kevaMonthly" : "regular",
         ...(pkg.billing === "monthly" ? { kevaDay: Math.min(28, Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", day: "numeric" }).format(new Date()))) } : {}),
         cvv: "yes", tz: "yes", terminal: env.NEDARIM_PHONE_TERMINAL ?? "", category: PREFIX + order.id,
         noFailExit: "no", noSuccess: "yes", noConfirmation: "yes",
       };
     }
-    const text = pkg.billing === "monthly"
-      ? `מנוי ${customerPackageName(pkg.name)}, במחיר ${order.amount_agorot / 100} שקלים לחודש. להצטרפות בהוראת קבע באשראי הקישו 1. לביטול הקישו 0.`
-      : `${customerPackageName(pkg.name)}, בתוקף ל-${pkg.validity_days} ימים, במחיר ${order.amount_agorot / 100} שקלים. לתשלום חד פעמי באשראי הקישו 1. לביטול הקישו 0.`;
-    return selectionMenu("isaacPayConfirm", text, "0,1");
+    const terms = selectionMenu("isaacPayConfirm", TERMS_STEP_TEXT, "0,1,2");
+    if (params.isaacPayConfirm === "1") terms.files = [{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }];
+    return terms;
   }
   const choice = params.isaacPackage ?? "";
   if (["0", "9", "ERROR"].includes(choice)) {
@@ -424,6 +433,14 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   }
   const all = await store.business.list("packages");
   const packages = Object.fromEntries(all.map((p) => [p.id, p]));
+  if (SCHOOL_SALES_PACKAGE_IDS.every((id, i) => packageIds[i] === id && packages[id]?.active && packages[id]?.phone_enabled && canPurchaseByPhone(packages[id]))) {
+    return {
+      ...selectionMenu("isaacPackage", SALES_MENU_TEXT, "0,1,2,3,4,5,9"),
+      files: env.SALES_MENU_AUDIO_URL && env.SALES_MENU_AUDIO_VERSION
+        ? [{ fileLink: env.SALES_MENU_AUDIO_URL, fileName: "sales-menu-" + env.SALES_MENU_AUDIO_VERSION }]
+        : [{ text: SALES_MENU_TEXT }],
+    };
+  }
   const lines: string[] = [];
   packageIds.forEach((id, index) => {
     const p = packages[id];

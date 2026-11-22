@@ -17,6 +17,9 @@ export const PackageSchema = z.object({
   name: z.string().min(1).max(100),
   product: z.enum(["school", "translator"]),
   minutes: z.number().int().min(1).max(100000),
+  sessions_per_week: z.number().int().min(1).max(7).default(7),
+  monthly_minutes: z.number().int().min(0).max(100000).optional(),
+  max_payments: z.number().int().min(1).max(12).default(1),
   price_ils: z.number().min(0).max(100000),
   validity_days: z.number().int().min(1).max(3650).default(30),
   max_call_minutes: z.number().int().min(1).max(60).default(5),
@@ -424,6 +427,24 @@ export class BusinessStore {
       AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
         (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL)) LIMIT 1`)
       .bind(at, at, customerId, customerId).first();
+  }
+
+  async activeSchoolPackage(customerId: string, at = nowIso()) {
+    const receipt = await this.db.prepare(`SELECT r.package_id AS id FROM sales_receipts r
+      WHERE (r.customer_id=? OR r.subscription_id IN
+        (SELECT m.subscription_id FROM subscription_members m JOIN subscriptions s ON s.id=m.subscription_id
+         WHERE m.customer_id=? AND m.removed_at IS NULL AND s.status IN ('active','cancelled','past_due')))
+      AND NOT ${receiptOnHold} AND r.product='school' AND r.expires_at>? AND (r.valid_from IS NULL OR r.valid_from<=?)
+      ORDER BY r.created_at DESC LIMIT 1`).bind(customerId, customerId, at, at).first<{ id: string }>();
+    const sub = receipt ? null : await this.db.prepare(`SELECT s.plan_id AS id FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+      WHERE s.status='active' AND s.access_suspended_at IS NULL AND p.product='school'
+      AND NOT EXISTS (SELECT 1 FROM standing_orders o WHERE o.entitlement_id=s.id AND (o.state='past_due' OR o.last_refusal_at IS NOT NULL))
+      AND s.started_at<=? AND s.current_period_end>? AND (s.customer_id=? OR EXISTS
+        (SELECT 1 FROM subscription_members m WHERE m.subscription_id=s.id AND m.customer_id=? AND m.removed_at IS NULL))
+      ORDER BY s.created_at DESC LIMIT 1`).bind(at, at, customerId, customerId).first<{ id: string }>();
+    const id = receipt?.id ?? sub?.id;
+    const pkg = id ? await this.record("packages", id) : null;
+    return pkg ? { id: id!, name: String(pkg.name), sessions_per_week: Number(pkg.sessions_per_week ?? 7), monthly_minutes: pkg.monthly_minutes as number | undefined } : null;
   }
 
   private async isSchoolAccessSuspended(customerId: string, at = nowIso()) {

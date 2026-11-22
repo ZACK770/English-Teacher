@@ -48,6 +48,8 @@ export interface Env {
   NEDARIM_WEBHOOK_SECRET?: string;
   NEDARIM_PHONE_TERMINAL?: string;
   NEDARIM_PHONE_ENABLED?: string;
+  SALES_MENU_AUDIO_URL?: string;
+  SALES_MENU_AUDIO_VERSION?: string;
   NEDARIM_API_VALID?: string;
   NEDARIM_IFRAME_MOSAD?: string;
   CRM_EVENTS_URL?: string;

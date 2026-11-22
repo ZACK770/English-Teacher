@@ -34,8 +34,11 @@ describe("site and dashboard pricing", () => {
     expect(source).not.toContain("₪220");
     expect(source).toContain('p.product === "school" && p.automated_purchase');
     expect(source).not.toContain("תוספת דקות ותרגומון");
-    expect(FREE_TIER_TEXT).toContain("שיעור פתיחה");
+    expect(FREE_TIER_TEXT).toContain("2 שיחות התנסות קצרות בחודש");
     expect(FREE_TIER_TEXT).not.toContain("דקות");
+    expect(MONTHLY_TERMS).not.toContain("דקות");
+    expect(MONTHLY_TERMS).toContain("זמן שיחה שלא נוצל נצבר לחודש אחד בלבד");
+    expect(PRICING_PACKAGES.find(p => p.id === "school-topup").name).toBe("תוספת זמן שיחה");
     expect(source).not.toMatch(/p\.(?:minutes|max_call_minutes)/);
     expect(MONTHLY_TERMS).not.toContain("₪29");
     expect(MONTHLY_TERMS).toContain("עד חודשיים בשנה");
