@@ -299,7 +299,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   else if (route === "ad" && system.phone === SPEAKCALL_PHONE && path === "/50") {
     await registerPirsumfonEntry(b, callId, customerId, p.campaign);
     ctx?.waitUntil(pingPirsumfonCaller(env, callId, p.PBXphone).catch(() => console.warn("Pirsumfon ping failed")));
-    result = pirsumfonWelcome(s.publicBaseUrl || new URL(request.url).origin);
+    result = pirsumfonWelcome();
   }
   else if (route === "quota" && !p.isaacQuota && await b.schoolPaymentBlocked(customerId)) result = menu("isaacQuota", PAYMENT_FAILED_MESSAGE + ". לתמיכה הקישו 4. לתפריט הראשי הקישו 0.", "0,4");
   else if (route === "ad" && p.isaacTeacher !== undefined) result = ivrResponse("school", p, copy, s.projectPath);
