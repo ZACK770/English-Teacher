@@ -43,6 +43,7 @@ it("uses a system instruction for basic translation and returns the spoken refus
   const result = await new BasicTranslator(env, settings(env), "English").translate(new Uint8Array(320), new AbortController().signal);
   const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
   expect(body.systemInstruction.parts[0].text).toBe(HAREDI_CONTENT_RULE);
+  expect(body.systemInstruction.parts[0].text).toContain("Translation: politely decline inappropriate input without transcribing or translating.");
   expect(body.systemInstruction.parts.map((part: { text: string }) => part.text).join("").split(HAREDI_CONTENT_RULE)).toHaveLength(2);
   expect(body.systemInstruction.parts[1].text).toContain("selected English");
   expect(body.contents).toEqual([{ role: "user", parts: [{ inline_data: { mime_type: "audio/wav", data: expect.any(String) } }] }]);
