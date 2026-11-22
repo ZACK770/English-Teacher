@@ -530,6 +530,82 @@ it("serves root options, mode and bots routes and the quota learning key", async
   expect(await call("bots", "/6", "&isaacBotChoice=0")).toMatchObject({ goTo: "/2" });
 });
 
+describe("one-time caller messages", () => {
+  const phone = "0500000001", otherPhone = "0500000002";
+  const path = "/v1/admin/caller-messages/" + phone;
+  const done = { isaacPersonalMessage: "finished", DURATION_isaacPersonalMessage: "3" };
+  const create = (inbound_enabled = false) => request(path, "test-admin", { narration_id: "test-message", inbound_enabled });
+  const callback = async (id: string, extra: Record<string, string> = {}, route = "school") => {
+    const response = await worker.fetch(new Request("https://school.example/v1/technoline/ivr/" + route, {
+      method: "POST", body: new URLSearchParams({
+        callback_key: "test-pbx", PBXphone: phone, PBXnum: "0765673575", PBXextensionPath: route === "school" ? "/1" : "/90",
+        PBXcallStatus: "CALL", PBXcallType: "in", PBXcallId: id, ...extra,
+      }),
+    }), env);
+    expect(response.status).toBe(200);
+    return response.json() as Promise<any>;
+  };
+  beforeEach(async () => {
+    Object.assign(env, { TLIVR_PROJECT_ENABLED: "1", TLIVR_CALLBACK_BODY_SECRET: "test-pbx", TLIVR_PROJECT_PATH: "/",
+      TLIVR_SYSTEM_API_KEY: "provider-test", PUBLIC_BASE_URL: "https://school.example" });
+    const message = "שלום, הודעה אישית מספיקול.";
+    await b.save("narrations", { name: "בדיקה", text: message, language: "he-IL", placement: "other", status: "approved" }, "test-message");
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(message));
+    await b.saveAudio("test-message", Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join(""), wav(new Uint8Array(48_000), 8000));
+  });
+
+  it("handles only the matching caller before school, releases interrupted playback and marks only a finished message", async () => {
+    expect((await request(path, tokenA, { narration_id: "test-message" })).status).toBe(401);
+    expect((await create(true)).status).toBe(201);
+    expect(await callback("other", { PBXphone: otherPhone })).toMatchObject({ goTo: "/7" });
+    const pending = await callback("first");
+    expect(pending).toMatchObject({ type: "audioPlayer", name: "isaacPersonalMessage" });
+    const fileUrl = pending.files[0].fileLink as string;
+    const audio = await worker.fetch(new Request(fileUrl), env);
+    expect(audio.headers.get("Content-Type")).toBe("audio/wav");
+    expect((await audio.arrayBuffer()).byteLength).toBe(48_044);
+    expect(JSON.stringify(await b.list("ivr-events"))).not.toContain(fileUrl);
+    expect(await callback("wrong-call", done)).toMatchObject({ goTo: "/7" });
+    expect(await callback("first", { ...done, PBXcallStatus: "HANGUP" })).toEqual({ type: "hangup" });
+    expect((await worker.fetch(new Request(fileUrl), env)).status).toBe(404);
+    expect(await callback("short")).toMatchObject({ type: "audioPlayer" });
+    expect(await callback("short", { ...done, DURATION_isaacPersonalMessage: "1" })).toMatchObject({ goTo: "/7" });
+    expect(await callback("second")).toMatchObject({ type: "audioPlayer" });
+    expect(await callback("second", done)).toMatchObject({ goTo: "/7" });
+    expect(await callback("third")).toMatchObject({ goTo: "/7" });
+    expect(await (await request(path, "test-admin")).json()).toMatchObject({ played_at: expect.any(String) });
+  });
+
+  it.each([false, true])("dispatches an authenticated outbound campaign with inbound fallback set to %s", async fallback => {
+    expect((await create()).status).toBe(201);
+    expect(await callback("before-activation")).toMatchObject({ goTo: "/7" });
+    const dial = { extension_id: "456", inbound_fallback: fallback };
+    const provider = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ status: "OK", errorCode: "0", campaignId: "test-campaign" }));
+    vi.stubGlobal("fetch", provider);
+    expect((await request(path + "/dial", tokenA, dial)).status).toBe(401);
+    expect((await request(path + "/dial", "test-admin", dial)).status).toBe(202);
+    expect((await request(path + "/dial", "test-admin", dial)).status).toBe(409);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(provider.mock.calls[0][1].body as string)).toMatchObject({
+      action: "campaignRun", phones: [phone], messagesType: "extensionActivation", extensionActivation: "456", dialRetries: 0,
+    });
+    expect(await callback("wrong-extension", { PBXcallType: "out", PBXextensionId: "777" }, "caller-message")).toEqual({ type: "hangup" });
+    const outgoing = { PBXcallType: "out", PBXextensionId: "456" };
+    if (fallback) {
+      expect(await callback("missed-call", outgoing, "caller-message")).toMatchObject({ type: "simpleMenu", name: "isaacPersonalAnswer" });
+      expect(await callback("missed-call", { ...outgoing, PBXcallStatus: "HANGUP" }, "caller-message")).toEqual({ type: "hangup" });
+      expect(await callback("next-inbound")).toMatchObject({ type: "audioPlayer" });
+      expect(await callback("next-inbound", done)).toMatchObject({ goTo: "/7" });
+    } else {
+      expect(await callback("still-disabled")).toMatchObject({ goTo: "/7" });
+      expect(await callback("answered", outgoing, "caller-message")).toMatchObject({ type: "simpleMenu", name: "isaacPersonalAnswer" });
+      expect(await callback("answered", { ...outgoing, isaacPersonalAnswer: "1" }, "caller-message")).toMatchObject({ type: "audioPlayer" });
+      expect(await callback("answered", { ...outgoing, ...done }, "caller-message")).toEqual({ type: "hangup" });
+    }
+    expect(await (await request(path, "test-admin")).json()).toMatchObject({ played_at: expect.any(String) });
+  });
+});
+
 it("blocks browser, PBX, and text calls at the shared budget without connecting to Gemini", async () => {
   env.GEMINI_DAILY_BUDGET_USD = "0.01";
   const connect = vi.spyOn(GeminiLive.prototype, "connect");

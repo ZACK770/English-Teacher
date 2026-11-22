@@ -163,15 +163,24 @@ export class CheckoutStore {
   async kevaCharge(data: Record<string, any>, mosadId: string) {
     const kevaId = String(data.KevaId);
     const transactionId = String(data.TransactionId ?? "");
+    const amount = agorot(data.Amount);
+    if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
     let sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(kevaId).first<Record<string, any>>();
     if (!sub) {
       const subId = String(data.Groupe ?? "").startsWith(PREFIX) ? String(data.Groupe).slice(PREFIX.length) : "";
       sub = /^[0-9a-f]{32}$/.test(subId) ? await this.db.prepare("SELECT * FROM standing_orders WHERE id=? AND keva_id IS NULL").bind(subId).first<Record<string, any>>() : null;
-      if (!sub) return { ignored: true };
+      if (!sub) {
+        if (!/^[0-9]{1,20}$/.test(kevaId)) throw new Error("Invalid settlement");
+        const reference = `nedarim-keva:${kevaId}:${transactionId}`;
+        await this.db.prepare(`INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at)
+          SELECT ?,?,'unmatched_keva',?,?
+          WHERE NOT EXISTS (SELECT 1 FROM sales_receipts WHERE reference=?)`)
+          .bind(await sha256Hex(reference), reference, `חיוב נדרים פלוס בסך ${amount / 100} ₪ (עסקה ${transactionId}, הוראת קבע ${kevaId}) לא שויך למנוי. יש לבדוק ולשייך את התשלום.`,
+            nowIso(), `nedarim:${mosadId}:${transactionId}`).run();
+        return { review: true };
+      }
       await this.activate(sub.id, kevaId, "");
     }
-    const amount = agorot(data.Amount);
-    if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
     const imported = await this.db.prepare("SELECT transaction_id FROM payment_orders WHERE id=? AND channel='nedarim'")
       .bind(sub.first_order_id).first<{ transaction_id: string }>();
     if (imported && BigInt(transactionId) < BigInt(imported.transaction_id)) return { ignored: true };

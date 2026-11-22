@@ -20,6 +20,7 @@ import { SubscriptionStore } from "./subscriptions";
 import { BusinessStore } from "./business";
 import { crmPeople } from "./crm-people";
 import { callCostReport, callReviewReport, runCallReviews, syncCallReviewPhone } from "./call-review";
+import { callerMessageAdmin, callerMessageAudio } from "./caller-messages";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -65,12 +66,17 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
   }
   const narration = path.match(/^\/v1\/technoline\/narrations\/([^/]+)\/([a-f0-9]{64})\.wav$/);
   if (narration && request.method === "GET") return publicNarration(env, decodeURIComponent(narration[1]), narration[2]);
+  if (path.startsWith("/v1/technoline/caller-messages/audio/") && request.method === "GET") return callerMessageAudio(env, path);
   if (path === "/v1/payments/nedarim/webhook" && request.method === "POST") return Response.json(await handleWebhook(request, env));
   if (path.startsWith("/v1/admin/") || path.startsWith("/v1/progress/")) {
     if (path.startsWith("/v1/admin/auth/")) return adminAuth(request, env, path);
     const identity = await adminIdentity(request, env);
     if (!identity) throw new HttpError(401, "Unauthorized");
     if (!identity.bearer && request.method !== "GET") requireOrigin(request);
+    if (path.startsWith("/v1/admin/caller-messages/")) {
+      if (identity.role !== "owner") throw new HttpError(403, "Forbidden");
+      return callerMessageAdmin(request, env, path);
+    }
     const crmResponse = await crmPeople(request, env, path, identity);
     if (crmResponse) return crmResponse;
     const ownerResponse = await adminOwners(request, env, path, identity);

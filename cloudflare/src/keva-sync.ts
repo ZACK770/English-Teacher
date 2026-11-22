@@ -70,6 +70,8 @@ async function activatePaidKeva(env: Env, row: Record<string, unknown>, kevaId: 
       db.prepare(`INSERT INTO standing_orders(id,customer_id,package_id,snapshot,monthly_agorot,first_order_id,state,keva_id,next_date,last_charge_at,entitlement_id,created_at,updated_at)
         VALUES (?,?,?,?,?,?,'active',?,?,?,?,?,?)`).bind(id, customerId, plan.id, snapshot, monthlyAgorot, id, kevaId, str(detail.KevaNextDate), start, id, start, now),
       db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES ('payment:keva_imported',?,?)").bind(id, now),
+      db.prepare(`UPDATE payment_issues SET status='resolved',resolved_at=?,resolution='התשלום אומת ושויך בסנכרון נדרים פלוס'
+        WHERE id=? AND kind='unmatched_keva' AND status='open'`).bind(now, await sha256Hex(`nedarim-keva:${kevaId}:${transactionId}`)),
     ],
   });
 }

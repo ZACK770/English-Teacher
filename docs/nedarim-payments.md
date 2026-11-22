@@ -10,6 +10,10 @@ Step plan's minutes and keeps its actual rate; other rates must match exactly
 one active monthly school plan. Unknown phones, prices and conflicts are left
 untouched. Website checkout remains separate.
 
+Confirmed standing-order charges without a local match appear once per
+transaction in the collections issue queue. If a subsequent sync imports
+that same verified charge, it closes the issue without issuing a second receipt.
+
 The import creates the paid receipt and subscription atomically without
 charging or changing the order in Nedarim. Subsequent charges use the existing
 signed webhook and admin reconciliation. An operator can run the same sync

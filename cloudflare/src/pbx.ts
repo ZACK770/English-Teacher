@@ -11,6 +11,7 @@ import { DEFAULT_TEACHER_NAME, TeacherSchema, teachersKind } from "./learner";
 import { HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 import { enqueueVoicemail, processVoicemail } from "./voicemails";
 import { withRecordedAudio } from "./phone-audio";
+import { callerMessagePlayback } from "./caller-messages";
 
 const text = (fallback: string) => z.string().min(10).max(2000).default(fallback);
 export const IVRCopySchema = z.object({
@@ -260,6 +261,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   const path = "/" + (p.PBXextensionPath ?? "").replace(/^\/+|\/+$/g, "");
   if (!withinBase(system.base, path)) throw new HttpError(403, "Outside project extension");
   s = { ...s, systemPhone: system.phone, projectPath: system.base };
+  if (route === "caller-message") return await callerMessagePlayback(env, p, true) ?? { type: "hangup" };
   if (!visiblePhone(p.PBXphone ?? "")) {
     return p.PBXcallStatus === "HANGUP" || p.hiddenCallerEnd
       ? { type: "hangup" }
@@ -302,6 +304,9 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     result = await startTranslation(b, progress, s, callId, customerId);
   } else if (route === "teachers" || route === "bots") result = await chooseTeacher(b, progress, s, p, callId, customerId, route === "bots");
   else result = ivrResponse(route, p, copy, s.projectPath);
+  if (route === "school" && (p.PBXcallStatus === "HANGUP" || result.goTo === extensionPath(system.base, "/7"))) {
+    result = await callerMessagePlayback(env, p) ?? result;
+  }
   if (result.goTo === extensionPath(system.base, "/7") && system.phone === SPEAKCALL_PHONE && canCallWithLessonSummary(env, p.PBXphone ?? "")) {
     await b.saveContext(callId, { summary_callback_caller: await sha256Hex(normalizePhone(p.PBXphone)!) });
   }
@@ -318,6 +323,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   }
   withRecordedAudio(result, s.publicBaseUrl);
   const inputs = Object.fromEntries(Object.entries(p).filter(([key]) => key.startsWith("isaac") || key === "FILEID_isaacMessage").map(([key, value]) => [key, value.slice(0, 200)]));
-  await b.save("ivr-events", { call_id: callId, customer_id: customerId, route, input: inputs, output: result, finished: p.PBXcallStatus === "HANGUP", latency_ms: Date.now() - clock, at: nowIso(), request_method: request.method }, randomHex(16));
+  const loggedResult = result.type === "audioPlayer" ? { type: result.type, name: result.name } : result;
+  await b.save("ivr-events", { call_id: callId, customer_id: customerId, route, input: inputs, output: loggedResult, finished: p.PBXcallStatus === "HANGUP", latency_ms: Date.now() - clock, at: nowIso(), request_method: request.method }, randomHex(16));
   return result;
 }
