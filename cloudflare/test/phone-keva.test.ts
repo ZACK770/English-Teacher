@@ -12,6 +12,9 @@ import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain"
 import { TutorSession } from "../src/session";
 import { controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
+import { salesOfferResponse } from "../src/sales-offer";
+import { SALES_OFFER_PACKAGE, SALES_OFFER_TERMS_TEXT } from "../src/sales-offer-product";
+import { CheckoutStore } from "../src/checkout";
 
 class SqlD1 {
   sql = new DatabaseSync(":memory:");
@@ -106,6 +109,139 @@ beforeEach(async () => {
   }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); db.sql.close(); });
+
+async function selectOffer() {
+  env.SALES_OFFER_MODE = "allowlist";
+  env.SALES_OFFER_ALLOWLIST = "+972500000001";
+  await b.save("sales-offers", { customer_id: "c1", phone: "0500000001", call_id: "phone-hk", status: "answered", expires_at: "2026-11-22T21:59:59Z" }, "offer");
+  await b.saveContext("phone-hk", { offer_call: "offer" });
+  return salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1");
+}
+async function issueOffer() {
+  expect(await selectOffer())
+    .toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1", files: [{ text: SALES_OFFER_TERMS_TEXT }] });
+  return respond({ isaacPayConfirm: "1" });
+}
+async function activateOffer() {
+  const module = await issueOffer();
+  immediateProvider(String(module.category), "59", { charge: { Status: "OK", TransactionId: "987654", Confirmation: "0012345", Amount: "20", Currency: "1", KevaId: "54321" } });
+  await respond({ isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" });
+  expect((await store.orderForCall("phone-hk"))!.state).toBe("paid");
+  return module;
+}
+
+describe("bound monthly sales offer billing", () => {
+  it("creates a 59 monthly keva, charges 20 now, and grants only the first calendar month", async () => {
+    const module = await activateOffer();
+    expect(module).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", sum: 59 });
+    expect(Object.fromEntries(providerForms().find(f => f.get("Action") === "TashlumBodedNew")!)).toMatchObject({ Amount: "20", KevaId: "54321" });
+    expect(await store.orderForCall("phone-hk")).toMatchObject({ amount_agorot: 2000, package_id: SALES_OFFER_PACKAGE });
+    expect(db.sql.prepare("SELECT monthly_agorot,package_id FROM standing_orders").get()).toMatchObject({ monthly_agorot: 5900, package_id: "school-step" });
+    expect(db.sql.prepare("SELECT price_agorot,monthly_minutes,plan_id FROM subscriptions").get()).toMatchObject({ price_agorot: 5900, monthly_minutes: 60, plan_id: "school-step" });
+    expect(db.sql.prepare("SELECT amount_ils,minutes,package_id,expires_at FROM sales_receipts").get()).toMatchObject({ amount_ils: 20, minutes: 30, package_id: SALES_OFFER_PACKAGE, expires_at: "2026-12-22T13:00:00.000+00:00" });
+  });
+  it.each([600, 15])("caps the first month at three practices, even with %s seconds used per call", async billed => {
+    await activateOffer();
+    await b.save("policies", { product: "school", enabled: false }, "isaac-basic");
+    for (let i = 0; i < 3; i++) {
+      expect(await b.reserveCall("c1", "isaac-basic", "practice-" + i, 1200)).toMatchObject({ mode: "paid", seconds: 600 });
+      await b.settleCall("practice-" + i, billed);
+    }
+    expect(await b.reserveCall("c1", "isaac-basic", "fourth", 1200)).toMatchObject({ seconds: 0, mode: "blocked" });
+  });
+  it("does not bypass a concurrent call or a payment hold", async () => {
+    await activateOffer();
+    expect(await b.reserveCall("c1", "isaac-basic", "practice", 1200)).toMatchObject({ seconds: 600 });
+    expect(await b.reserveCall("c1", "isaac-basic", "busy", 1200)).toMatchObject({ seconds: 0, mode: "busy" });
+    await b.settleCall("practice", 10);
+    db.sql.prepare("UPDATE standing_orders SET state='past_due'").run();
+    expect(await b.reserveCall("c1", "isaac-basic", "held", 1200)).toMatchObject({ seconds: 0 });
+  });
+  it.each([true, false])("allows separate top-up receipts after three offer practices with policy enabled=%s", async enabled => {
+    await activateOffer();
+    await b.save("policies", { product: "school", enabled }, "isaac-basic");
+    for (let i = 0; i < 3; i++) {
+      await b.reserveCall("c1", "isaac-basic", "short-" + i, 1200);
+      await b.settleCall("short-" + i, 15);
+    }
+    db.sql.prepare(`INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at)
+      VALUES ('topup','c1','school-topup','school','topup',29,0,30,'2026-12-22T13:00:00Z',?)`).run(new Date().toISOString());
+    expect(await b.reserveCall("c1", "isaac-basic", "topup-call", 600)).toMatchObject({ seconds: 600, mode: "paid" });
+    expect(db.sql.prepare("SELECT receipt_id FROM usage_allocations WHERE call_id='topup-call'").get()).toMatchObject({ receipt_id: "topup" });
+    expect(await b.reserveCall("c1", "isaac-basic", "overlap", 600)).toMatchObject({ seconds: 0, mode: "busy" });
+    await b.settleCall("topup-call", 600);
+    db.sql.prepare("UPDATE sales_receipts SET expires_at='2026-11-01T00:00:00Z' WHERE id='topup'").run();
+    expect(await b.reserveCall("c1", "isaac-basic", "expired-topup", 600)).toMatchObject({ seconds: 0, mode: "blocked" });
+  });
+  it("renews at 59 into normal Start minutes and removes the three-practice cap", async () => {
+    const module = await activateOffer();
+    await b.save("policies", { product: "school", enabled: true, opening_seconds: 0, free_calls_month: 0, basic_enabled: false }, "isaac-basic");
+    vi.setSystemTime(new Date("2026-12-22T13:00:00Z"));
+    expect(await hook({ MosadNumber: "7019554", Groupe: module.category, KevaId: "54321", TransactionId: "987655", Confirmation: "approval", Amount: "59", Currency: "1", TransactionTime: "22/12/2026 15:00" })).toMatchObject({ paid: true });
+    expect(db.sql.prepare("SELECT period_number,monthly_minutes FROM subscriptions").get()).toMatchObject({ period_number: 2, monthly_minutes: 60 });
+    expect(db.sql.prepare("SELECT package_id,minutes,amount_ils FROM sales_receipts WHERE package_id='school-step'").get()).toMatchObject({ package_id: "school-step", minutes: 60, amount_ils: 59 });
+    for (let i = 0; i < 4; i++) {
+      expect(await b.reserveCall("c1", "isaac-basic", "renewed-" + i, 600)).toMatchObject({ mode: "paid", seconds: 600 });
+      await b.settleCall("renewed-" + i, 600);
+    }
+  });
+  it("recovers a verified first 20 charge from history without charging again", async () => {
+    const module = await issueOffer();
+    provider(String(module.category), "59");
+    detail.CreatedDate = "22/11/2026";
+    detail.HistoryData[0].Amount = "20";
+    await respond({ isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("paid");
+    expect(providerForms().some(f => f.get("Action") === "TashlumBodedNew")).toBe(false);
+    expect(db.sql.prepare("SELECT minutes,amount_ils FROM sales_receipts").get()).toMatchObject({ minutes: 30, amount_ils: 20 });
+  });
+  it("rejects public, unbound, expired and mode-off purchases", async () => {
+    await expect(store.create("other", "c1", SALES_OFFER_PACKAGE)).rejects.toThrow("bound call");
+    await issueOffer();
+    await expect(store.create("other", "c1", SALES_OFFER_PACKAGE, false, env)).rejects.toThrow("bound call");
+    env.SALES_OFFER_MODE = "off";
+    await expect(store.create("phone-hk", "c1", SALES_OFFER_PACKAGE, false, env)).rejects.toThrow("bound call");
+    env.SALES_OFFER_MODE = "on";
+    vi.setSystemTime(new Date("2026-11-23T13:00:00Z"));
+    await expect(store.create("phone-hk", "c1", SALES_OFFER_PACKAGE, false, env)).rejects.toThrow("bound call");
+    const webEnv = { ...env, NEDARIM_API_VALID: "test" };
+    await expect(new CheckoutStore(b).start(webEnv, "c1", SALES_OFFER_PACKAGE)).rejects.toThrow("לא פתוח");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["full", "single"])("requires the exact offer renewal disclosure before card in %s mode", async mode => {
+    env.SALES_MENU_MODE = mode;
+    env.SALES_OFFER_MODE = "on";
+    await b.save("sales-offers", { customer_id: "c1", phone: "0500000001", call_id: "phone-hk", status: "answered", expires_at: "2026-11-22T21:59:59Z" }, "offer");
+    await b.saveContext("phone-hk", { offer_call: "offer" });
+    const terms = await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1");
+    const text = "שימו לב: החודש הראשון בעשרים שקלים כולל שלושה אימונים של עשר דקות. בסוף החודש המנוי ממשיך אוטומטית כמנוי סטארט, בחמישים ותשעה שקלים לחודש, עד שתבטלו. אפשר לבטל בכל רגע בשלוחה 3, בהנהלת חשבונות ושירות לקוחות. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.";
+    expect(terms).toMatchObject({ type: "simpleMenu", name: "isaacPayConfirm", enabledKeys: "0,1", files: [{ text }] });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("selected");
+    for (const key of [undefined, "2", "9"]) {
+      expect(await respond(key ? { isaacPayConfirm: key } : {})).toMatchObject({ name: "isaacPayConfirm", files: [{ text }] });
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 59, paymentsMode: "kevaMonthly" });
+  });
+  it.each(["0", "ERROR"])("backs out of offer renewal terms on %s without issuing a card request", async key => {
+    await selectOffer();
+    expect(await respond({ isaacPayConfirm: key })).toMatchObject({ type: "goTo" });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("hides the offer from public and regular phone menus, including fallback catalogues", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/public/packages"), env);
+    expect(JSON.stringify(await response.json())).not.toContain(SALES_OFFER_PACKAGE);
+    const catalog = await b.record("packages", "school-step");
+    await b.save("packages", { ...catalog, active: false }, "school-step");
+    const menu = await respond();
+    expect(JSON.stringify(menu)).not.toContain("חודש היכרות");
+    expect(SCHOOL_SALES_PACKAGE_IDS).not.toContain(SALES_OFFER_PACKAGE);
+    env = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_PROJECT_PATH: "/", TLIVR_CALLBACK_SECRET: "cb" };
+    await handleCallback(new Request("https://example.test/v1/technoline/ivr/sales?key=cb&PBXnum=0765673575&PBXextensionPath=/3&PBXphone=0500000001&PBXcallId=fallback"), env, settings(env), "sales");
+    expect((await b.loadContext("payments:fallback")).package_ids).not.toContain(SALES_OFFER_PACKAGE);
+  });
+});
 
 describe("in-call first monthly charge", () => {
   const result = { isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" };
@@ -638,7 +774,7 @@ describe("five-package phone sales", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each(["/", "/99"].flatMap(base => ["1", "2", "3"].map(key => [base, key])))("hands service submenu base %s key %s to service without creating an order", async (base, key) => {
+  it.each(["/", "/99"].flatMap(base => ["1", "2"].map(key => [base, key])))("hands service submenu base %s key %s to service without creating an order", async (base, key) => {
     env.SALES_MENU_MODE = "single";
     expect(await paymentResponse(store, env, base, { PBXcallId: "phone-hk", isaacSinglePackage: "8", isaacSalesService: key }, "c1", ids)).toEqual({
       type: "goTo", goTo: base === "/" ? "/4" : "/99/4", removeParams: ["isaacPackage", "isaacSales", "isaacSinglePackage", "isaacSalesService"],

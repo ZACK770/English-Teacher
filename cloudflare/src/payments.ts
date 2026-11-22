@@ -6,6 +6,8 @@ import { providerTime } from "./nedarim";
 import { reconcilePhoneKeva } from "./keva-sync";
 import { claimPhoneKevaFirstCharge, completePhoneKevaFirstCharge } from "./phone-keva-charge";
 import { visiblePhone } from "./phone";
+import { boundSalesOffer, isSalesOfferPackage, phoneFirstPrice, SALES_OFFER_TERMS_TEXT } from "./sales-offer-product";
+import { subscriptionCancellationResponse } from "./subscription-cancel";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { customerPackageName } from "../../src/paymentCopy";
 import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomHex, secureEqual } from "./env";
@@ -243,7 +245,8 @@ export class PaymentStore {
     };
   }
 
-  async create(callId: string, customerId: string, packageId: string, allowHidden = false) {
+  async create(callId: string, customerId: string, packageId: string, allowHidden = false, env?: Env) {
+    if (isSalesOfferPackage(packageId) && (allowHidden || !await boundSalesOffer(this.business, callId, customerId, env))) throw new Error("Offer requires its bound call");
     if (customerId.startsWith("anonymous-")) throw new Error("A recognized caller is required");
     const existing = await this.orderForCall(callId);
     if (existing) {
@@ -256,7 +259,7 @@ export class PaymentStore {
     const pkg = PackageSchema.parse(body);
     if (!(allowHidden ? canPurchaseAutomatically(pkg) : canPurchaseByPhone(pkg))) throw new Error("ההצטרפות למסלול זה דרך נציג");
     if (!pkg.active || (!allowHidden && !pkg.phone_enabled)) throw new Error("Inactive package");
-    const amount = agorot(pkg.price_ils);
+    const amount = agorot(phoneFirstPrice(packageId, pkg));
     const orderId = randomHex(16);
     const now = nowIso();
     const monthly = !allowHidden && pkg.billing === "monthly";
@@ -414,19 +417,22 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     if (params.isaacPayConfirm === "1") {
       const current = PackageSchema.safeParse(await store.business.record("packages", order.package_id));
       if (!current.success || !current.data.active || !current.data.phone_enabled || !canPurchaseByPhone(current.data) ||
-        agorot(current.data.price_ils) !== order.amount_agorot) {
+        agorot(phoneFirstPrice(order.package_id, current.data)) !== order.amount_agorot ||
+        (isSalesOfferPackage(order.package_id) && (!await boundSalesOffer(store.business, callId, customerId, env) ||
+          current.data.price_ils !== pkg.price_ils))) {
         await store.cancelSelection(callId);
         return selectionMenu("isaacPayExit", "החבילה השתנתה או אינה זמינה לרכישה. לחזרה הקישו 0. לשירות הקישו 9.");
       }
       if (!(await store.issue(callId))) return selectionMenu("isaacPayExit", "הבקשה כבר בטיפול או פג תוקפה. לחזרה הקישו 0. לשירות הקישו 9.");
       return {
-        type: "creditCard", name: "isaacPayStatus", post: true, sum: order.amount_agorot / 100, sumChangeable: "no", payments: pkg.duration_months ? pkg.max_payments : 1,
+        type: "creditCard", name: "isaacPayStatus", post: true, sum: isSalesOfferPackage(order.package_id) ? pkg.price_ils : order.amount_agorot / 100, sumChangeable: "no", payments: pkg.duration_months ? pkg.max_payments : 1,
         paymentsMode: pkg.billing === "monthly" ? "kevaMonthly" : "regular",
         ...(pkg.billing === "monthly" ? { kevaDay: Math.min(28, Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", day: "numeric" }).format(new Date()))) } : {}),
         cvv: "yes", tz: "yes", terminal: env.NEDARIM_PHONE_TERMINAL ?? "", category: PREFIX + order.id,
         noFailExit: "no", noSuccess: "yes", noConfirmation: "yes",
       };
     }
+    if (isSalesOfferPackage(order.package_id)) return selectionMenu("isaacPayConfirm", SALES_OFFER_TERMS_TEXT, "0,1");
     const stepText = single ? SINGLE_TERMS_STEP_TEXT : TERMS_STEP_TEXT;
     const terms = selectionMenu("isaacPayConfirm", stepText, "0,1,2");
     if (params.isaacPayConfirm === "2") terms.files = [{ text: single ? SINGLE_TERMS_TEXT : TERMS_TEXT }, { text: stepText }];
@@ -439,7 +445,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       const serviceChoice = params.isaacSalesService ?? "";
       const cancelSubscriptionRequested = serviceChoice === "3";
       if (cancelSubscriptionRequested) {
-        return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
+        return subscriptionCancellationResponse(store.business, env, base, params, customerId);
       }
       if (["1", "2"].includes(serviceChoice)) {
         return { type: "goTo", goTo: extensionPath(base, "/4"), removeParams: ["isaacPackage", "isaacSales", ...singleParams] };
@@ -486,7 +492,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     }
     return paymentResponse(store, env, base, params, customerId, packageIds);
   }
-  const all = await store.business.list("packages");
+  const all = (await store.business.list("packages")).filter(p => !isSalesOfferPackage(p.id));
   const packages = Object.fromEntries(all.map((p) => [p.id, p]));
   const quotedPrices = [59, 119, 199, 690, 1490];
   const quotedPayments = [1, 1, 1, 6, 12];

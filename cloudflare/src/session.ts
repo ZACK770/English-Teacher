@@ -3,7 +3,7 @@ import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
-import { BusinessStore } from "./business";
+import { type Allowance, BusinessStore } from "./business";
 import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText, normalizePhone } from "./callbacks";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
@@ -18,6 +18,7 @@ import { practiceSummary } from "./practice";
 import { reminderGuidance, savePracticeReminder } from "./practice-reminders";
 import { masteryDomainGuidance, saveMasteryDomain } from "./mastery-domain";
 import { compilePrompt, type PromptArtifact } from "./prompt";
+import { OFFER_GUIDANCE, offerGift, salesOfferTestPhone, SALES_EXTENSION_PATH } from "./sales-offer";
 import { parseStartFrame, transferCommand } from "./technoline";
 import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
 import { LearningStore } from "./learning";
@@ -71,6 +72,7 @@ export class TutorSession {
   private salesWindowOpen = false;
   private practiceStarted: { at: number; failureGapMs: number } | null = null;
   private returnPath: string | null = null;
+  private offerCall = false;
   private pbxBase: string | null = null;
 
   private extension(suffix = "") {
@@ -232,6 +234,7 @@ export class TutorSession {
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
       const callContext = await this.b.loadContext(this.callId);
+      this.offerCall = !!callContext.offer_call && !this.portal;
       const adCall = callContext.entry === "ad";
       this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall);
       const opening = await quickOpening(this.b, this.callId);
@@ -258,7 +261,18 @@ export class TutorSession {
       }
       const history = await this.progress.lessonContext(this.customerId) + await this.b.lessonContext(this.customerId, profileId) + "\n" + await runtimeContext(this.b, this.callId);
       if (this.abort.signal.aborted) return;
-      const allowance = await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      if (this.offerCall) {
+        this.controls.custom_instructions += "\n" + OFFER_GUIDANCE;
+        this.controls.opening_message = OFFER_GUIDANCE;
+        this.controls.summary_callback = false;
+      }
+      const testGift = this.offerCall && salesOfferTestPhone(this.env, this.callerPhone)
+        ? await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId) : 0;
+      let allowance: Allowance = testGift ? { seconds: testGift, mode: "free" } : await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      if (this.offerCall && !allowance.seconds && ["free", "blocked"].includes(allowance.mode)) {
+        const seconds = await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId);
+        if (seconds) allowance = { seconds, mode: "free" };
+      }
       this.freeTrial = allowance.mode === "free";
       this.freeFollowup = allowance.free_followup === true;
       reserved = allowance.seconds > 0;
@@ -371,7 +385,8 @@ export class TutorSession {
         }
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
-        const target = this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+        if (this.offerCall && !this.disconnected) this.returnPath = this.extension(SALES_EXTENSION_PATH);
+        const target = this.offerCall && !this.disconnected ? this.returnPath : this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
         if (!this.disconnected) {
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }

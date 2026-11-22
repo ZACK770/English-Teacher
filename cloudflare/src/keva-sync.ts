@@ -4,18 +4,23 @@ import { manageKeva, providerDay, providerTime } from "./nedarim";
 import { agorot } from "./payments";
 import { visiblePhone } from "./phone";
 import { addMonths, SubscriptionStore } from "./subscriptions";
+import { isSalesOfferPackage } from "./sales-offer-product";
 
 const str = (value: unknown) => (value == null ? "" : String(value)).trim();
 const tail9 = (phone: string) => phone.replace(/\D/g, "").slice(-9);
 const LEGACY_GROUP = "חבילות ספיקול";
 
 export async function verifyKevaForActivation(env: Env, row: Record<string, unknown>, kevaId: string, enrollment?: Record<string, any>, knownDetail?: Record<string, any>) {
+  const saved = enrollment ? PackageSchema.safeParse(JSON.parse(enrollment.snapshot)) : null;
+  if (saved && !saved.success) return;
+  const offer = !!enrollment && isSalesOfferPackage(enrollment.package_id);
+  const monthlyAgorot = offer && saved?.success ? agorot(saved.data.price_ils) : enrollment?.amount_agorot ?? agorot(row.Amount);
   const group = enrollment ? "dibura-" + enrollment.id : LEGACY_GROUP;
   if (!/^\d{1,20}$/.test(kevaId) || str(row.Groupe) !== group || str(row.Enabled) !== "1" ||
     str(row.Currency) !== "1" || str(row.ErrorText)) return;
   const phone = visiblePhone(str(row.Phone));
   if (!phone) return;
-  if (enrollment && (phone !== enrollment.phone || agorot(row.Amount) !== enrollment.amount_agorot ||
+  if (enrollment && (phone !== enrollment.phone || agorot(row.Amount) !== monthlyAgorot ||
     !["issued", "awaiting_settlement"].includes(enrollment.state))) return;
   if (enrollment) {
     const created = providerTime(row.CreationDate) || providerDay(row.CreationDate);
@@ -31,11 +36,10 @@ export async function verifyKevaForActivation(env: Env, row: Record<string, unkn
   if (!owner) return;
   if (enrollment && owner.customer_id !== enrollment.customer_id) return;
 
-  const monthlyAgorot = enrollment?.amount_agorot ?? agorot(row.Amount);
   const business = new BusinessStore(db);
-  const saved = enrollment ? PackageSchema.safeParse(JSON.parse(enrollment.snapshot)) : null;
   if (saved && (!saved.success || saved.data.billing !== "monthly" || saved.data.product !== "school" || saved.data.minutes < 1)) return;
-  const plans = enrollment && saved?.success ? [{ id: enrollment.package_id, included_minutes: saved.data.minutes }] : (await db.prepare(`SELECT id,included_minutes FROM plans WHERE product='school' AND billing='monthly' AND active=1
+  const plans = offer ? (await db.prepare("SELECT id,included_minutes FROM plans WHERE id='school-step' AND product='school' AND billing='monthly'").all<{ id: string; included_minutes: number }>()).results
+    : enrollment && saved?.success ? [{ id: enrollment.package_id, included_minutes: saved.data.minutes }] : (await db.prepare(`SELECT id,included_minutes FROM plans WHERE product='school' AND billing='monthly' AND active=1
     AND CASE WHEN ?1=4900 THEN id='school-step' ELSE price_agorot=?1 END`).bind(monthlyAgorot)
     .all<{ id: string; included_minutes: number }>()).results;
   if (plans.length !== 1 || plans[0].included_minutes < 1) return;
@@ -73,7 +77,7 @@ export async function activatePaidKeva(env: Env, row: Record<string, unknown>, k
     start = latestDay;
     const charge = latest[0].event;
     transactionId = str(charge.TransactionId);
-    if (agorot(str(charge.Amount).replace(/\s*₪$/, "")) !== monthlyAgorot) return;
+    if (agorot(str(charge.Amount).replace(/\s*₪$/, "")) !== (enrollment && isSalesOfferPackage(enrollment.package_id) ? enrollment.amount_agorot : monthlyAgorot)) return;
     const nextDate = providerDay(detail.KevaNextDate);
     if (!nextDate) return;
     end = [nextDate, addMonths(start, 1)].sort()[0];
@@ -88,13 +92,15 @@ export async function activatePaidKeva(env: Env, row: Record<string, unknown>, k
   const reference = `nedarim:${env.NEDARIM_MOSAD_ID}:${transactionId}`;
   if (await db.prepare("SELECT 1 FROM sales_receipts WHERE reference=?").bind(reference).first()) return;
   const vat = enrollment?.vat_rate ?? (await business.economics()).vat_rate;
-  const snapshot = JSON.stringify({ ...pkg, price_ils: monthlyAgorot / 100 });
+  const offer = !!enrollment && isSalesOfferPackage(enrollment.package_id);
+  const renewalPackage = offer ? await business.record("packages", "school-step") : pkg;
+  const snapshot = JSON.stringify({ ...renewalPackage, price_ils: monthlyAgorot / 100 });
   await new SubscriptionStore(db).create(customerId, plan.id, start, enrollment ? [] : undefined, {
     id, priceAgorot: monthlyAgorot, monthlyMinutes: plan.included_minutes, termMonths: null, grantFirstPeriod: false,
     period: { number: 1, start, end },
     statements: [
       db.prepare(`INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at,subscription_id,valid_from)
-        VALUES (?,?,?,'school',?,?,?,?,?,?,?,?)`).bind(receiptId, customerId, plan.id, reference, monthlyAgorot / 100, vat, plan.included_minutes, addMonths(end, 1), start, id, start),
+        VALUES (?,?,?,'school',?,?,?,?,?,?,?,?)`).bind(receiptId, customerId, offer ? enrollment!.package_id : plan.id, reference, (offer ? enrollment!.amount_agorot : monthlyAgorot) / 100, vat, offer ? 30 : plan.included_minutes, offer ? end : addMonths(end, 1), start, id, start),
       ...(enrollment ? [
         db.prepare(`UPDATE payment_orders SET state='paid',transaction_id=?,receipt_id=?,subscription_id=?,entitlement_id=?,updated_at=?,confirmation=COALESCE(?,confirmation)
           WHERE id=? AND state IN ('issued','awaiting_settlement')`).bind(transactionId, receiptId, id, id, now, immediate?.confirmation || null, enrollment.id),

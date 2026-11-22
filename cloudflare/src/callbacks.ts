@@ -4,6 +4,7 @@ import { analyticsInput, conversion } from "./analytics";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
+import { salesOfferDialError } from "./sales-offer";
 
 const CALLBACK_IP_PREFIX = "public-callback:ip:";
 const CALLBACK_IP_LIMIT = 3;
@@ -27,7 +28,7 @@ const RequestSchema = z.object({
   preferred_time: z.string().trim().max(80).default(""),
   preferred_at: z.string().datetime({ offset: true }).optional(),
   consent: z.literal(true),
-  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).refine(source => !["lesson_followup", "lesson_summary"].includes(source)).default(""),
+  source: z.string().trim().max(40).regex(/^[a-z0-9_-]*$/).refine(source => !["lesson_followup", "lesson_summary", "sales_offer"].includes(source)).default(""),
   website: z.string().max(0).default(""),
 });
 
@@ -36,12 +37,12 @@ const israel = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
 });
 
-function localDate(date: Date): Date {
+export function localDate(date: Date): Date {
   const parts = Object.fromEntries(israel.formatToParts(date).map(p => [p.type, p.value]));
   return new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second));
 }
 
-function fromLocal(local: Date): Date {
+export function fromLocal(local: Date): Date {
   let result = new Date(local);
   for (let i = 0; i < 4; i++) {
     const delta = local.getTime() - localDate(result).getTime();
@@ -303,7 +304,7 @@ export async function submitCallback(request: Request, env: Env): Promise<Respon
   if (preferred && (preferred.getTime() < Date.parse(now) || preferred.getTime() > Date.parse(now) + 30 * 86400000)) throw new HttpError(422, "Invalid preferred_at");
   const scheduled = body.timing === "now" ? new Date(now) : preferred ?? parsePreferredTime(body.preferred_time, new Date(now)) ?? new Date(now);
   const nextAttempt = (body.timing === "now" ? nextImmediateSlot(scheduled) : nextCallingSlot(scheduled)).toISOString();
-  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND source NOT IN ('lesson_followup','lesson_summary') LIMIT 1")
+  const recent = await env.DB.prepare("SELECT id FROM callback_requests WHERE phone=? AND created_at>? AND source NOT IN ('lesson_followup','lesson_summary','sales_offer') LIMIT 1")
     .bind(phone, new Date(time - 86400000).toISOString()).first<{ id: string }>();
   if (recent) return Response.json({ ok: true, id: recent.id, duplicate: true });
   const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") || "unknown");
@@ -338,6 +339,14 @@ function dialerConfigured(env: Env): boolean {
 }
 
 async function dialCallbackRow(env: Env, item: { id: string; phone: string; attempts: number; timing: string; source: string }, now: Date, immediateForm = false): Promise<"dialing" | "dialed" | "queued" | "failed"> {
+  if (item.source === "sales_offer") {
+    const error = await salesOfferDialError(env, item.id, item.phone, now);
+    if (error) {
+      await env.DB.prepare("UPDATE callback_requests SET status='failed',last_error=?,next_attempt_at=NULL,updated_at=? WHERE id=? AND status='queued'")
+        .bind(error, now.toISOString(), item.id).run();
+      return "failed";
+    }
+  }
   const slot = immediateForm && item.timing === "now" && item.attempts === 0 ? nextImmediateSlot(now) : nextCallingSlot(now);
   if (slot.getTime() !== now.getTime()) {
     await env.DB.prepare("UPDATE callback_requests SET next_attempt_at=?,updated_at=? WHERE id=? AND status='queued'")
@@ -382,6 +391,10 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
     const failure = callbackFailure(item.attempts + 1, new Date());
     await env.DB.prepare("UPDATE callback_requests SET status=?,provider_ref=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
       .bind(ok ? "dialed" : failure.status, providerRef, ok ? null : lastError, nowIso(), ok ? null : failure.nextAttemptAt, item.id).run();
+    if (ok && item.source === "sales_offer") {
+      await env.DB.prepare("UPDATE console_records SET body=json_set(body,'$.status','dialed'),updated_at=? WHERE kind='sales-offers' AND id=? AND json_extract(body,'$.status')='queued'")
+        .bind(nowIso(), item.id).run();
+    }
     return ok ? "dialed" : failure.status;
   } catch {
     const failure = callbackFailure(item.attempts + 1, new Date());

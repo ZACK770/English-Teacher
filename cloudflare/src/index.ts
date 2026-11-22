@@ -9,6 +9,8 @@ import { PaymentStore } from "./payments";
 import { webTurn } from "./learn";
 import { syncCrm } from "./crm";
 import { cleanupCallbackQuota, dispatchCallbacks, submitCallback } from "./callbacks";
+import { selectSalesOffers } from "./sales-offer";
+import { isSalesOfferPackage } from "./sales-offer-product";
 import { learnerVoice } from "./learner";
 import { cleanupPortalAuth, phoneAuthStatus, portalAuth } from "./portal-auth";
 import { legalBasePath, legalPageForPath } from "../../src/legalRoutes";
@@ -90,7 +92,7 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
   }
   if (path === "/v1/public/callback" && request.method === "POST") return submitCallback(request, env);
   if (path === "/v1/public/packages" && request.method === "GET") {
-    const items = (await new BusinessStore(env.DB).list("packages")).filter(p => p.active && p.product === "school").map(p => ({
+    const items = (await new BusinessStore(env.DB).list("packages")).filter(p => !isSalesOfferPackage(p.id) && p.active && p.product === "school").map(p => ({
       id: p.id, name: p.name, price_ils: p.price_ils, billing: p.billing, duration_months: p.duration_months,
       sessions_per_week: p.sessions_per_week ?? 7, tagline: p.tagline, recommended: p.recommended,
       max_payments: p.max_payments ?? 1, phone_enabled: p.phone_enabled,
@@ -213,7 +215,7 @@ export default {
       await syncKevas(env).catch(error => console.error("Keva sync failed", error));
       if (env.NEDARIM_API_KEY) await new PaymentStore(new BusinessStore(env.DB)).reconcile(env);
     })().catch(() => console.error("Nedarim reconciliation failed")));
-    ctx.waitUntil(dispatchCallbacks(env).catch(() => undefined));
+    ctx.waitUntil(selectSalesOffers(env).then(() => dispatchCallbacks(env)).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupRecordings(env).catch(() => console.warn("Recording retention failed")));
     ctx.waitUntil(cleanupCallbackQuota(env));
