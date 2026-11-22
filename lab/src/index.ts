@@ -116,8 +116,11 @@ async function chain(request: Request, env: Env) {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const path = new URL(request.url).pathname;
-    if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
+    const url = new URL(request.url);
+    if (url.pathname === "/lab") return Response.redirect(`${url.origin}/lab/`, 301);
+    if (url.pathname.startsWith("/lab/")) url.pathname = url.pathname.slice(4);
+    const path = url.pathname;
+    if (!path.startsWith("/api/")) return env.ASSETS.fetch(new Request(url, request));
     if (!env.LAB_PASSCODE || request.headers.get("Authorization") !== `Bearer ${env.LAB_PASSCODE}`) return json({ error: "Invalid lab passcode" }, 401);
     try {
       if (path === "/api/config" && request.method === "GET") return json({ openai: !!env.OPENAI_API_KEY });

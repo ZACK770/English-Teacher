@@ -23,7 +23,7 @@ const status=text=>$('status').textContent=text;
 const money=n=>'$'+n.toFixed(7);
 function totals(){const seconds=elapsed+(active?(Date.now()-started)/1000:0);$('totals').textContent=`תורים: ${turns} · סה״כ: ${money(total)} · לדקה: ${seconds?money(total/(seconds/60)):'—'}`;}
 function line(who,text){const el=document.createElement('article');el.textContent=who+': '+text;$('transcript').append(el);}
-async function api(path,body){const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+pass},body});const d=await r.json();if(!r.ok)throw Error(d.error);return d;}
+async function api(path,body){const r=await fetch('api/'+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+pass},body});const d=await r.json();if(!r.ok)throw Error(d.error);return d;}
 async function login(){const config=await api('config');localStorage.setItem('lab-pass',pass);$('lab').hidden=false;$('login').hidden=true;const option=$('engine').options[1];option.disabled=!config.openai;option.textContent=config.openai?'B — OpenAI Realtime mini':'B — OpenAI (לא מוגדר עדיין)';}
 $('login').onsubmit=async e=>{e.preventDefault();pass=$('pass').value;try{await login();}catch(e){alert(e.message);}};
 if(pass)login().catch(()=>{localStorage.removeItem('lab-pass');});
@@ -43,7 +43,7 @@ $('record').onclick=async()=>{
       if(!active){busy=false;controls();return;}
       status('מתמלל וחושב…');try{
         const form=new FormData();form.set('audio',new Blob(chunks,{type:recorder.mimeType}),'turn.webm');form.set('seconds',String(seconds));form.set('history',JSON.stringify(history.slice(-40)));
-        const response=await fetch('/api/chain',{method:'POST',headers:{Authorization:'Bearer '+pass},body:form});
+        const response=await fetch('api/chain',{method:'POST',headers:{Authorization:'Bearer '+pass},body:form});
         if(!response.ok)throw Error((await response.json()).error);
         const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',playback=Promise.resolve(),summary=false;
         const play=d=>new Promise((resolve,reject)=>{
