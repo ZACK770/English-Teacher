@@ -12,13 +12,13 @@ const OUTPUT_USD_PER_MILLION = 1.5;
 const reviewCost = (input: number, output: number) => (input * INPUT_USD_PER_MILLION + output * OUTPUT_USD_PER_MILLION) / 1e6;
 
 const tweaks = {
-  long_reply: "Keep each phone reply to one short instruction or example, then pause for the learner.",
-  no_practice: "After explaining or greeting, ask the learner to say one concrete English phrase and wait for their reply.",
-  missed_correction: "When a learner makes a clear, important error, model one natural correction and invite them to try it once.",
-  wrong_level: "If the learner struggles, switch to simpler words and demonstrate one short example before retrying.",
-  wrong_language: "Use the configured support language for brief help and preserve English for the learner’s practice.",
-  missed_request: "Acknowledge the learner’s clear request before moving on to the next exercise.",
-  menu_confusion: "If asked to use a phone menu during the lesson, explain that it is voice-only and offer the configured return-to-menu action.",
+  long_reply: { en: "Keep each phone reply to one short instruction or example, then pause for the learner.", he: "בכל תשובה בטלפון, תן הנחיה אחת קצרה או דוגמה אחת והמתן לתגובת התלמיד." },
+  no_practice: { en: "After explaining or greeting, ask the learner to say one concrete English phrase and wait for their reply.", he: "אחרי הסבר או ברכה, בקש מהתלמיד לומר משפט מסוים באנגלית והמתן לתגובה." },
+  missed_correction: { en: "When a learner makes a clear, important error, model one natural correction and invite them to try it once.", he: "כשהתלמיד עושה טעות ברורה וחשובה, הדגם תיקון טבעי אחד ובקש ממנו לנסות שוב פעם אחת." },
+  wrong_level: { en: "If the learner struggles, switch to simpler words and demonstrate one short example before retrying.", he: "אם התלמיד מתקשה, עבור למילים פשוטות יותר והדגם דוגמה קצרה לפני ניסיון נוסף." },
+  wrong_language: { en: "Use the configured support language for brief help and preserve English for the learner’s practice.", he: "תן עזרה קצרה בשפת העזר שנבחרה, והשאר את התרגול באנגלית." },
+  missed_request: { en: "Acknowledge the learner’s clear request before moving on to the next exercise.", he: "התייחס לבקשה ברורה של התלמיד לפני המעבר לתרגיל הבא." },
+  menu_confusion: { en: "If asked to use a phone menu during the lesson, explain that it is voice-only and offer the configured return-to-menu action.", he: "אם התלמיד מבקש להשתמש בתפריט במהלך השיעור, הסבר שהשיעור מתנהל בדיבור והצע את אפשרות החזרה לתפריט שהוגדרה." },
 } as const;
 const issues = Object.keys(tweaks) as [keyof typeof tweaks, ...(keyof typeof tweaks)[]];
 const judgment = z.object({ issue: z.enum(["none", ...issues]), excerpt: z.number().int() });
@@ -220,7 +220,7 @@ export async function callReviewReport(env: Env, now = Date.now()) {
       SELECT profile_id,bot_version,COUNT(*) AS reviewed FROM call_reviews
       WHERE ended_at>=?1 AND status='reviewed' GROUP BY profile_id,bot_version
     )
-    SELECT r.profile_id,r.bot_version,json_extract(f.value,'$.code') AS code,COUNT(*) AS affected,g.reviewed,
+    SELECT r.profile_id,b.label AS profile_label,r.bot_version,json_extract(f.value,'$.code') AS code,COUNT(*) AS affected,g.reviewed,
       COUNT(DISTINCT s.student_id) AS learners,
       json_group_array(r.call_id) AS evidence_call_ids
     FROM call_reviews r
@@ -237,7 +237,8 @@ export async function callReviewReport(env: Env, now = Date.now()) {
   return { since, review_model: REVIEW_MODEL, coverage: coverage.results, findings: findings.results,
     prompt_candidates: candidates.results.flatMap(r => Object.hasOwn(tweaks, String(r.code)) ? [{
       ...r, evidence_call_ids: (JSON.parse(String(r.evidence_call_ids)) as string[]).slice(0, 5),
-      proposed_instruction: tweaks[r.code as keyof typeof tweaks], status: "requires_validation",
+      proposed_instruction: tweaks[r.code as keyof typeof tweaks].en, proposed_instruction_he: tweaks[r.code as keyof typeof tweaks].he,
+      status: "requires_validation",
     }] : []), recent: recent.results.map(r => ({ ...r, findings: JSON.parse(String(r.findings)) })) };
 }
 

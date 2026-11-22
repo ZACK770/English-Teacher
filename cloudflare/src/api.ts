@@ -15,6 +15,7 @@ import { renderNarration, renderVoicePreview } from "./learn";
 import { syncCrm } from "./crm";
 import { dispatchCallbacks, listCallbacks, testCallbackDial } from "./callbacks";
 import { listVoicemails, voicemailAudio } from "./voicemails";
+import { recordingAudio } from "./recordings";
 import { SubscriptionStore } from "./subscriptions";
 import { subscriptionApi } from "./subscription-api";
 
@@ -147,6 +148,8 @@ export async function handleAdmin(request: Request, env: Env, s: Settings, path:
   if (path === "/v1/admin/crm/voicemails" && method === "GET") return Response.json(await listVoicemails(env, url.searchParams.get("before"), url.searchParams.get("customer_id")), { headers: { "Cache-Control": "no-store" } });
   const voicemail = path.match(/^\/v1\/admin\/crm\/voicemails\/([a-f0-9]{64})\/audio$/);
   if (voicemail && method === "GET") return voicemailAudio(env, voicemail[1]);
+  const recording = path.match(/^\/v1\/admin\/crm\/recordings\/([^/]+)\/audio$/);
+  if (recording && method === "GET") return recordingAudio(env, decodeURIComponent(recording[1]), request);
   if (path === "/v1/admin/ad-campaigns" && method === "GET") return ok(await adCampaignReport(env));
   if (path === "/v1/admin/callbacks" && method === "GET") return ok(await listCallbacks(env));
   if (path === "/v1/admin/callbacks/dispatch" && method === "POST") return ok(await dispatchCallbacks(env));

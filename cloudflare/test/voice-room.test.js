@@ -27,6 +27,10 @@ const render = () => {
   hooks.stateIndex = hooks.refIndex = 0;
   return renderToStaticMarkup(createElement(VoiceRoom, { token: "test", botId: "teacher", name: "דוד", onDone: done }));
 };
+it("shows the recording and 90-day retention notice before connecting", () => {
+  expect(render()).toContain("השיעור באתר מוקלט לצורך בקרת איכות ונשמר 90 יום");
+  expect(portalRequest).not.toHaveBeenCalled();
+});
 beforeEach(() => {
   portalRequest.mockReset().mockResolvedValue({ ticket: "test-ticket" });
   Object.assign(hooks, { values: [], refs: [], effects: [], stateIndex: 0, refIndex: 0, capture: true });

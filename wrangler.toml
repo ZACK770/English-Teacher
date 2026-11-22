@@ -5,6 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [vars]
+CALL_REVIEW_ENABLED = "1"
+RECORD_PHONE_CALLS = "1"
 GA_MEASUREMENT_ID = ""
 CF_BEACON_TOKEN = "9bbae75ae72c4010961886b5be1e0df9"
 

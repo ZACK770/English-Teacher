@@ -110,6 +110,11 @@ between website and phone. Hidden callers remain isolated.
 
 ## Copy, audio and logs
 
+Telephone call recording is enabled in production by `RECORD_PHONE_CALLS="1"`
+in `cloudflare/wrangler.toml`; without it phone calls are not recorded. Portal
+lessons are always recorded and show a Hebrew notice before starting.
+Recordings are kept 90 days.
+
 #pbx edits live static copy without a deployment or a provider edit.
 Narration library generates persistent8k mono WAV. Approved current audio can be
 published to a menu slot through publish-to-ivr. PBX plays a content-addressed

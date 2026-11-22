@@ -1,5 +1,6 @@
 import { type Env, HttpError, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
+import { drainRecordingDeletions } from "./recordings";
 
 type Row = Record<string, any>;
 type Removal = { table: string; where: string; args: unknown[] };
@@ -65,6 +66,7 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   const receipts = JSON.stringify((await rows("SELECT id FROM sales_receipts WHERE customer_id=?", id)).map(r => r.id));
   const voicemails = await rows("SELECT id,audio_ready FROM ivr_voicemails WHERE customer_id=? OR caller_key IN (SELECT value FROM json_each(?))", id, hashJson);
   const removals: Removal[] = [];
+  const recordings = await rows("SELECT r2_key FROM call_recordings WHERE customer_id=? OR call_id IN (SELECT value FROM json_each(?))", id, calls);
   const remove = (table: string, where: string, ...args: unknown[]) => removals.push({ table, where, args });
   for (const table of ["learning_results", "learning_exposures", "learning_batches", "learning_lessons", "learning_targets"]) remove(table, "customer_id=?", id);
   remove("payment_issues", "order_id IN (SELECT value FROM json_each(?))", orders);
@@ -76,6 +78,7 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   remove("subscriptions", "customer_id=?", id);
   for (const table of ["active_calls", "conversation_turns", "diagnostic_events", "latency_events", "prompt_snapshots", "navigation_usage_events", "navigation_call_costs"]) remove(table, "call_id IN (SELECT value FROM json_each(?))", calls);
   remove("sessions", "student_id=?", id);
+  remove("call_recordings", "customer_id=? OR call_id IN (SELECT value FROM json_each(?))", id, calls);
   remove("call_customers", "customer_id=?", id);
   remove("callback_requests", "phone NOT IN (SELECT value FROM json_each(?)) AND (phone IN (SELECT value FROM json_each(?)) OR id IN (SELECT json_extract(body,'$.callback_id') FROM console_records WHERE kind='sales-followups' AND json_extract(body,'$.customer_id')=?))", conflictingJson, phoneJson, id);
   remove("ivr_voicemails", "customer_id=? OR caller_key IN (SELECT value FROM json_each(?))", id, hashJson);
@@ -101,6 +104,8 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
       .bind(JSON.stringify(removals.flatMap(r => r.args)), actor.username, id, new Date().toISOString()),
     ...detach,
     ...removals.map(r => env.DB.prepare(`DELETE FROM ${r.table} WHERE ${r.where}`).bind(...r.args)),
+    env.DB.prepare("INSERT OR IGNORE INTO recording_deletions(r2_key,created_at) SELECT value,? FROM json_each(?)")
+      .bind(new Date().toISOString(), JSON.stringify(recordings.map(r => r.r2_key))),
   ]);
   let r2Objects = 0;
   if (voicemails.length) {
@@ -109,6 +114,12 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
       await env.VOICEMAIL_AUDIO.delete(voicemails.map(v => `voicemails/${v.id}.mp3`));
       r2Objects = voicemails.length;
     } catch { console.warn(JSON.stringify({ event: "crm_reset_audio_cleanup_failed", customer_id: id, voicemail_ids: voicemails.map(v => v.id) })); }
+  }
+  if (recordings.length) {
+    r2Objects += await drainRecordingDeletions(env, recordings.map(r => r.r2_key)).catch(() => {
+      console.warn("Recording deletion deferred");
+      return 0;
+    });
   }
   const deleted: Record<string, number> = {};
   removals.forEach((r, i) => { deleted[r.table] = (deleted[r.table] || 0) + Number(result[1 + detach.length + i].meta.changes || 0); });
