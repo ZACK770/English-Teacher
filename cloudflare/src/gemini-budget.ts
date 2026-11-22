@@ -36,7 +36,7 @@ export function budgetConfig(env: Env) {
 }
 
 type Limits = ReturnType<typeof budgetConfig>;
-type Lease = { until: number; last: number; metered: number; baseMetered: number; floor: number; held: number };
+type Lease = { until: number; last: number; metered: number; baseMetered: number; floor: number; held: number; paid: boolean };
 type Notice = { spent: number; daily: number; blocked: boolean; sent: boolean };
 type Ledger = { day: string; spent: number; leases: Record<string, Lease>; notices: Record<string, Notice> };
 type Operation = "acquire" | "check" | "release" | "status";
@@ -96,7 +96,7 @@ function advance(state: Ledger, now: number, limits: Limits) {
   }
 }
 
-export function applyBudget(state: Ledger, now: number, limits: Limits, op: Operation, id = "", observed = 0) {
+export function applyBudget(state: Ledger, now: number, limits: Limits, op: Operation, id = "", observed = 0, paid = false) {
   advance(state, now, limits);
   const lease = state.leases[id];
   let denial: BudgetDenial | undefined;
@@ -109,13 +109,14 @@ export function applyBudget(state: Ledger, now: number, limits: Limits, op: Oper
   else if (op === "acquire" && Object.keys(state.leases).length >= limits.maxJobs) denial = "system_busy";
   else if (op === "acquire" || op === "check") {
     const held = floorCost(LEASE_MS, limits);
-    if (state.spent + othersHeld + held > limits.daily) {
+    const paidLease = op === "acquire" ? paid : lease?.paid === true;
+    if (!paidLease && state.spent + othersHeld + held > limits.daily) {
       denial = "gemini_budget_reached";
       if (lease) {
         lease.held = floorCost(lease.until - now, limits);
       }
     } else {
-      state.leases[id] = { until: now + LEASE_MS, last: now, held, metered: lease?.metered ?? 0, baseMetered: lease?.baseMetered ?? 0, floor: lease?.floor ?? 0 };
+      state.leases[id] = { until: now + LEASE_MS, last: now, held, paid: paidLease, metered: lease?.metered ?? 0, baseMetered: lease?.baseMetered ?? 0, floor: lease?.floor ?? 0 };
     }
   }
   if (!state.notices[state.day] && (denial === "gemini_budget_reached" || state.spent >= limits.daily * 0.8)) {
@@ -135,7 +136,8 @@ export class GeminiBudget {
   fetch = async (request: Request): Promise<Response> => {
     const op = new URL(request.url).pathname.slice(1) as Operation | Outcome;
     let id = "", observed = 0, config: GuardConfig = {};
-    const data = request.method === "POST" ? await request.json<{ id?: string; cost?: number; config?: GuardConfig; error?: string }>() : {};
+    const data = request.method === "POST" ? await request.json<{ id?: string; cost?: number; config?: GuardConfig; error?: string; paid?: boolean }>() : {};
+    if (data.paid !== undefined && typeof data.paid !== "boolean") return new Response(null, { status: 400 });
     if (data.config && typeof data.config === "object") {
       config = Object.fromEntries(CONFIG_KEYS.filter(key => typeof data.config?.[key] === "string").map(key => [key, data.config![key]]));
     }
@@ -150,7 +152,7 @@ export class GeminiBudget {
     const storage = this.ctx.storage;
     const state = storage.kv.get<Ledger>("ledger") ?? newBudgetLedger(now);
     const alreadyNotified = !!state.notices[dayOf(now)];
-    const result = applyBudget(state, now, budgetConfig({ ...this.env, ...config }), op, id, observed);
+    const result = applyBudget(state, now, budgetConfig({ ...this.env, ...config }), op, id, observed, data.paid);
     storage.kv.put("ledger", state);
     if ((!alreadyNotified && result.alert_state === "pending") || op === "status") this.ctx.waitUntil(this.sendAlert());
     if (op === "status") {
@@ -218,10 +220,10 @@ export class GeminiBudget {
   }
 }
 
-async function callGuard(env: Env, op: Operation | Outcome, id = "", cost = 0, error?: string) {
+async function callGuard(env: Env, op: Operation | Outcome, id = "", cost = 0, error?: string, paid?: boolean) {
   const stub = env.GEMINI_BUDGET.getByName(BUDGET_GUARD_NAME, { locationHint: "weur" });
   const request = stub.fetch("https://budget.internal/" + op, {
-    method: "POST", body: JSON.stringify({ id, cost, error, config: guardConfig(env) }),
+    method: "POST", body: JSON.stringify({ id, cost, error, paid, config: guardConfig(env) }),
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -241,13 +243,13 @@ export async function reportGeminiOutcome(env: Env, ok: boolean, error = "") {
   await callGuard(env, ok ? "success" : "failure", "", 0, ok ? undefined : error.slice(0, 200)).catch(() => undefined);
 }
 
-export async function acquireGeminiBudget(env: Env, cost: () => number, stop: (reason: BudgetDenial) => void) {
+export async function acquireGeminiBudget(env: Env, cost: () => number, stop: (reason: BudgetDenial) => void, { paid = false }: { paid?: boolean } = {}) {
   const id = crypto.randomUUID();
   const unavailable = "gemini_guard_unavailable";
   async function check(op: "acquire" | "check") {
     const start = Date.now();
     try {
-      const response = await callGuard(env, op, id, cost());
+      const response = await callGuard(env, op, id, cost(), undefined, paid);
       if (!response.ok || Date.now() >= start + LOCAL_DEADLINE_MS) throw new GeminiBudgetError(unavailable);
       const { denial } = await response.json<{ denial?: BudgetDenial }>();
       if (denial) throw new GeminiBudgetError(denial);

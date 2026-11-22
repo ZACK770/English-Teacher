@@ -8,7 +8,7 @@ import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
-import { geminiKeyForCall } from "./gemini-key";
+import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { CallRecorder } from "./recordings";
@@ -230,7 +230,8 @@ export class TutorSession {
         return;
       }
       if (this.abort.signal.aborted) return;
-      releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason));
+      const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
+      releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
