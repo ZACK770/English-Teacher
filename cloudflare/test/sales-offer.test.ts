@@ -224,6 +224,55 @@ describe("high-interest sales offer audience", () => {
   });
 });
 
+describe("cron-configured test offers", () => {
+  beforeEach(() => {
+    env.SALES_OFFER_AUDIENCE = "high_interest";
+    env.SALES_OFFER_MIN_TUTOR_CALLS = "1000000";
+    env.SALES_OFFER_TEST_PHONES = "0501111111";
+    env.SALES_OFFER_TEST_AT = "2026-06-16T09:00:00+03:00";
+  });
+  it("queues the specified time without an audience match and deduplicates repeated crons and phone formats", async () => {
+    env.SALES_OFFER_TEST_PHONES = "0501111111,+972501111111,0501111111";
+    await selectSalesOffers(env);
+    vi.setSystemTime(new Date(+now + 600000));
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT next_attempt_at,status,source FROM callback_requests").all()).toEqual([{
+      next_attempt_at: "2026-06-16T06:00:00.000Z", status: "queued", source: "sales_offer",
+    }]);
+    expect(sql.prepare("SELECT id FROM console_records WHERE kind='sales-offers'").all()).toHaveLength(1);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["", "invalid", "2026-06-16T09:00:00", "2026-06-15T14:00:00Z", "2026-06-15T13:59:00Z", "2026-06-19T15:00:00+03:00"])("ignores empty, non-ISO, due, past or closed test times: %s", async at => {
+    env.SALES_OFFER_TEST_AT = at;
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("does not queue while off, without test phones, or outside the allowlist", async () => {
+    env.SALES_OFFER_MODE = "off";
+    await selectSalesOffers(env);
+    env.SALES_OFFER_MODE = "allowlist";
+    env.SALES_OFFER_ALLOWLIST = "0502222222";
+    await selectSalesOffers(env);
+    env.SALES_OFFER_ALLOWLIST = "0501111111";
+    env.SALES_OFFER_TEST_PHONES = "";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(0);
+  });
+  it("queues each configured phone in on mode and isolates missing customers", async () => {
+    await b.save("customers", { name: "Other", phone: "0502222222" }, "other");
+    env.SALES_OFFER_MODE = "on";
+    env.SALES_OFFER_TEST_PHONES = "invalid,0509999999,0501111111,0502222222";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT * FROM callback_requests").all()).toHaveLength(2);
+  });
+  it("keeps ordinary audience selection independent of an invalid test time", async () => {
+    env.SALES_OFFER_AUDIENCE = "dropoffs";
+    env.SALES_OFFER_TEST_AT = "invalid";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT next_attempt_at FROM callback_requests").all()).toEqual([{ next_attempt_at: "2026-06-15T14:00:00.000Z" }]);
+  });
+});
+
 describe("explicitly gated test offers", () => {
   beforeEach(() => { env.SALES_OFFER_TEST_PHONES = "+972501111111"; });
   it("can repeat for an existing subscriber at distinct times, with one gift per offer", async () => {

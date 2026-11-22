@@ -114,6 +114,13 @@ export async function queueTestSalesOffer(env: Env, rawPhone: string, at: Date) 
 
 export async function selectSalesOffers(env: Env, now = new Date()) {
   if (!["on", "allowlist"].includes(env.SALES_OFFER_MODE ?? "")) return;
+  const testAt = new Date(env.SALES_OFFER_TEST_AT ?? "");
+  if (/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(env.SALES_OFFER_TEST_AT ?? "") && +testAt > +now) {
+    for (const phone of new Set(phoneList(env.SALES_OFFER_TEST_PHONES))) {
+      if (!salesOfferTestPhone(env, phone)) continue;
+      try { await queueTestSalesOffer(env, phone, testAt); } catch {}
+    }
+  }
   const audience = env.SALES_OFFER_AUDIENCE ?? "dropoffs";
   if (!["dropoffs", "high_interest", "quota_exhausted"].includes(audience)) return;
   const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 3);
