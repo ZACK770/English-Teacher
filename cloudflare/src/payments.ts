@@ -10,6 +10,8 @@ import { type Env, HttpError, extensionPath, nowIso, paymentsConfigured, randomH
 
 export const PREFIX = "dibura-";
 
+class ExistingMonthlyEnrollmentError extends Error {}
+
 export function canPurchaseByPhone(pkg: { product?: string; billing?: string; automated_purchase?: boolean; duration_months?: number }) {
   return canPurchaseAutomatically(pkg) || (pkg.product === "school" && pkg.billing === "monthly" && !pkg.duration_months);
 }
@@ -242,16 +244,27 @@ export class PaymentStore {
     const now = nowIso();
     const monthly = !allowHidden && pkg.billing === "monthly";
     const phone = monthly ? visiblePhone(customer.phone) : "";
-    if (monthly && (!phone || await this.db.prepare(`SELECT 1 FROM standing_orders WHERE customer_id=? AND state IN ('pending','active','past_due')
-      UNION ALL SELECT 1 FROM subscriptions WHERE customer_id=? AND status IN ('active','paused','past_due')
-      UNION ALL SELECT 1 FROM phone_keva_enrollments e JOIN payment_orders o ON o.id=e.order_id WHERE o.customer_id=? AND o.state IN ('selected','issued','awaiting_settlement')`)
-      .bind(customerId, customerId, customerId).first())) throw new Error("כבר קיים מנוי או בקשת הצטרפות בטיפול");
-    await this.db.batch([this.db
-      .prepare("INSERT INTO payment_orders (id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'selected',?,?)")
-      .bind(orderId, callId, customerId, packageId, JSON.stringify(pkg), amount, (await this.business.economics()).vat_rate, now, now),
-      ...(monthly ? [this.db.prepare("INSERT INTO phone_keva_enrollments(order_id,phone) VALUES (?,?)").bind(orderId, phone)] : []),
-    ]);
+    if (monthly && !phone) throw new Error("A recognized phone is required");
+    if (monthly && await this.hasMonthlyEnrollment(customerId)) throw new ExistingMonthlyEnrollmentError();
+    try {
+      await this.db.batch([this.db
+        .prepare("INSERT INTO payment_orders (id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'selected',?,?)")
+        .bind(orderId, callId, customerId, packageId, JSON.stringify(pkg), amount, (await this.business.economics()).vat_rate, now, now),
+        ...(monthly ? [this.db.prepare("INSERT INTO phone_keva_enrollments(order_id,phone) VALUES (?,?)").bind(orderId, phone)] : []),
+      ]);
+    } catch (error) {
+      if (monthly && await this.hasMonthlyEnrollment(customerId)) throw new ExistingMonthlyEnrollmentError();
+      throw error;
+    }
     return (await this.db.prepare("SELECT * FROM payment_orders WHERE id=?").bind(orderId).first<Record<string, any>>())!;
+  }
+
+  private async hasMonthlyEnrollment(customerId: string) {
+    return this.db.prepare(`SELECT 1 FROM standing_orders WHERE customer_id=? AND state IN ('pending','active','past_due')
+      UNION ALL SELECT 1 FROM subscriptions WHERE customer_id=? AND status IN ('active','paused','past_due')
+      UNION ALL SELECT 1 FROM payment_orders WHERE customer_id=? AND channel='phone' AND json_extract(snapshot,'$.billing')='monthly'
+      AND state IN ('selected','issued','awaiting_settlement')`)
+      .bind(customerId, customerId, customerId).first();
   }
 
   async issue(callId: string): Promise<boolean> {
@@ -402,8 +415,9 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
   if (/^\d+$/.test(choice) && Number(choice) >= 1 && Number(choice) <= packageIds.length) {
     try {
       await store.create(callId, customerId, packageIds[Number(choice) - 1]);
-    } catch {
-      return selectionMenu("isaacPayExit", "החבילה אינה זמינה לרכישה. לחזרה הקישו 0. לשירות הקישו 9.");
+    } catch (error) {
+      const message = error instanceof ExistingMonthlyEnrollmentError ? "כבר יש לך מנוי פעיל." : "החבילה אינה זמינה לרכישה.";
+      return selectionMenu("isaacPayExit", message + " לחזרה הקישו 0. לשירות הקישו 9.");
     }
     return paymentResponse(store, env, base, params, customerId, packageIds);
   }

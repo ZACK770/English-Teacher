@@ -198,6 +198,54 @@ describe("phone monthly enrollment", () => {
     expect(counts()).toEqual([0, 0, 0]);
   });
 
+  it.each(["pending", "active", "past_due"])("explains an existing %s standing order instead of generic unavailability", async state => {
+    db.sql.prepare(`INSERT INTO standing_orders(id,customer_id,package_id,snapshot,monthly_agorot,first_order_id,state,created_at,updated_at)
+      VALUES ('existing','c1','school-step','{}',5900,'first',?,'2026-11-22','2026-11-22')`).run(state);
+    expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit", enabledKeys: "0,9",
+      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await respond({ isaacPayExit: "0" })).toMatchObject({ type: "goTo", goTo: "/" });
+    expect(await respond({ isaacPayExit: "9" })).toMatchObject({ type: "goTo", goTo: "/4" });
+  });
+
+  it.each(["active", "paused", "past_due"])("explains an existing %s subscription", async status => {
+    db.sql.prepare(`INSERT INTO subscriptions(id,customer_id,plan_id,status,price_agorot,started_at,created_at,updated_at)
+      VALUES ('existing','c1','school-step',?,5900,'2026-11-22','2026-11-22','2026-11-22')`).run(status);
+    expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit",
+      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
+  it.each(["selected", "issued", "awaiting_settlement"])("explains an existing %s phone enrollment", async state => {
+    await store.create("another-call", "c1", "school-step");
+    db.sql.prepare("UPDATE payment_orders SET state=? WHERE call_id='another-call'").run(state);
+    expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit",
+      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
+  it("explains a pending-phone unique-index conflict after a concurrent selection", async () => {
+    const batch = db.batch.bind(db);
+    vi.spyOn(db, "batch").mockImplementationOnce(async statements => {
+      await store.create("winning-call", "c1", "school-step");
+      return batch(statements);
+    });
+    expect(await respond({ isaacPackage: "1" })).toMatchObject({ name: "isaacPayExit",
+      files: [{ text: "כבר יש לך מנוי פעיל. לחזרה הקישו 0. לשירות הקישו 9." }] });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect((await store.orderForCall("winning-call"))!.state).toBe("selected");
+  });
+
+  it("keeps other purchase failures generic", async () => {
+    await b.save("packages", { ...await b.record("packages", "school-step"), active: false }, "school-step");
+    const unavailable = { name: "isaacPayExit", files: [{ text: "החבילה אינה זמינה לרכישה. לחזרה הקישו 0. לשירות הקישו 9." }] };
+    expect(await respond({ isaacPackage: "1" })).toMatchObject(unavailable);
+    vi.spyOn(db, "batch").mockRejectedValueOnce(new Error("Database unavailable"));
+    expect(await respond({ isaacPackage: "2" })).toMatchObject(unavailable);
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
   it("renews an activated phone subscription through the existing signed charge handler", async () => {
     const module = await issue(); provider(String(module.category));
     await respond({ isaacPayStatus: "OK" });
