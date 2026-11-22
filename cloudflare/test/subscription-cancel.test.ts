@@ -172,11 +172,47 @@ describe("phone subscription cancellation", () => {
     expect(messages(await respond({ isaacCancelSubscription: "1" }))).toContain("ביטול המנוי הושלם");
     expect((await store.get(sub.id)).status).toBe("cancelled");
   });
-  it("uses local subscription cancellation when there is no standing order", async () => {
+  it("does not offer cancellation when there is no monthly standing order", async () => {
     const sub = await subscribe("a", "owner", false);
-    await respond();
+    expect(messages(await respond())).toContain("לא נמצא מנוי פעיל");
     await respond({ isaacCancelSubscription: "1" });
-    expect((await store.get(sub.id)).status).toBe("cancelled");
+    expect((await store.get(sub.id)).status).toBe("active");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["school-foundations", "school-mastery"])("preserves prepaid %s courses and their monthly grants, routing to service", async plan => {
+    const course = await store.create("owner", plan, "2026-06-15T14:00:00Z", [{ domain: "everyday" }, { domain: "business" }]);
+    expect(messages(await respond())).toContain("קורס ששולם מראש או בתשלומים");
+    expect(await respond({ isaacCancelSubscription: "1" })).toMatchObject({ enabledKeys: "0" });
+    expect((await store.get(course.id)).status).toBe("active");
+    expect(await respond({ isaacCancelSubscription: "0" })).toMatchObject({ type: "goTo", goTo: "/4" });
+    await store.tick("2026-07-15T14:00:00Z");
+    expect((await store.get(course.id)).period_number).toBe(2);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("only cancels the monthly standing order when a prepaid course also exists", async () => {
+    const course = await store.create("owner", "school-foundations", "2026-06-15T14:00:00Z");
+    const monthly = await subscribe();
+    const text = messages(await respond());
+    expect(text).toContain("מנוי");
+    expect(text).not.toContain("מקס");
+    await respond({ isaacCancelSubscription: "1" });
+    expect((await store.get(monthly.id)).status).toBe("cancelled");
+    expect((await store.get(course.id)).status).toBe("active");
+  });
+  it("rebuilds an older pending cancellation that included prepaid courses", async () => {
+    const course = await store.create("owner", "school-foundations", "2026-06-15T14:00:00Z");
+    await b.saveContext("subscription-cancel:phone-call", { customer_id: "owner", phone: "0501111111", ids: [course.id], completed: [], state: "pending" });
+    expect(messages(await respond({ isaacCancelSubscription: "1" }))).toContain("קורס ששולם מראש או בתשלומים");
+    expect((await store.get(course.id)).status).toBe("active");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rechecks the subscription kind before cancelling a saved target", async () => {
+    const course = await store.create("owner", "school-foundations", "2026-06-15T14:00:00Z");
+    await subscribe();
+    await respond();
+    await b.saveContext("subscription-cancel:phone-call", { ids: [course.id] });
+    expect(messages(await respond({ isaacCancelSubscription: "1" }))).toContain("לא הצלחנו להשלים");
+    expect((await store.get(course.id)).status).toBe("active");
     expect(fetch).not.toHaveBeenCalled();
   });
   it("refuses mismatched caller identity and ignores hangup confirmations", async () => {
