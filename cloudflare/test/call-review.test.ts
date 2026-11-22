@@ -3,7 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import type { Env } from "../src/env";
-import { HAREDI_CONTENT_RULE } from "../src/content-rules";
+import { HAREDI_CONTENT_RULE, RESTRICTED_CONTENT } from "../src/content-rules";
 import { callCostReport, callReviewReport, runCallReviews, sampleTutorTranscript, syncCallReviewPhone } from "../src/call-review";
 import worker from "../src/index";
 
@@ -116,8 +116,10 @@ describe("finished-call review", () => {
     await runCallReviews(env, now);
     expect(fetch).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetch.mock.calls[0][1]?.body as string);
-    expect(body.systemInstruction.parts[0].text).toContain(HAREDI_CONTENT_RULE);
-    expect(body.systemInstruction.parts[0].text.split(HAREDI_CONTENT_RULE)).toHaveLength(2);
+    expect(body.systemInstruction.parts[0].text.split(RESTRICTED_CONTENT)).toHaveLength(2);
+    for (const behavior of HAREDI_CONTENT_RULE.split("\n").slice(1)) {
+      expect(body.systemInstruction.parts[0].text).not.toContain(behavior);
+    }
     expect(body.generationConfig.responseSchema.required).toContain("content_drift_excerpt");
     const report = await callReviewReport(env, now);
     expect(report.findings).toContainEqual({ code: "content_drift", logs: 1 });
