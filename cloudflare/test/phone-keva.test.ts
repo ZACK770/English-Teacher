@@ -111,7 +111,7 @@ describe("in-call first monthly charge", () => {
   const result = { isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" };
   const actions = () => providerForms().map(form => form.get("Action"));
 
-  it.each([["1", "59", 60], ["2", "119", 200], ["3", "199", 400]])("charges and activates plan %s during the same callback", async (choice, amount, minutes) => {
+  it.each([["1", "59", 60], ["2", "119", 200], ["3", "199", 300]])("charges and activates plan %s during the same callback", async (choice, amount, minutes) => {
     const module = await issue(String(choice));
     immediateProvider(String(module.category), String(amount));
     expect(JSON.stringify(await respond(result))).toContain("התשלום אושר והחבילה נפתחה");
@@ -186,7 +186,7 @@ describe("in-call first monthly charge", () => {
     const charge = failure === "empty" ? {} : failure === "unknown" ? { Status: "Pending" } : failure === "missing transaction" ? { Status: "OK", Confirmation: "123" }
       : { Status: "OK", TransactionId: "987654", Confirmation: "123", Amount: "119" };
     immediateProvider(String(module.category), "59", failure === "network" ? { network: "TashlumBodedNew" } : { charge });
-    expect(JSON.stringify(await respond(result))).toContain("בתוך דקות");
+    expect(JSON.stringify(await respond(result))).toContain("בקרוב לאחר קבלת האישור");
     await respond(result);
     expect((await store.orderForCall("phone-hk"))!.state).toBe("awaiting_settlement");
     expect(counts()).toEqual([0, 0, 0]);
@@ -214,7 +214,7 @@ describe("in-call first monthly charge", () => {
     if (mismatch === "unknown history") delete detail.HistoryData;
     if (mismatch === "existing attempt") detail.HistoryData = [{ ID: "2", Date: "22/11/2026" }];
     if (mismatch === "success without history") detail.KevaSuccess = "1";
-    expect(JSON.stringify(await respond(result))).toContain("בתוך דקות");
+    expect(JSON.stringify(await respond(result))).toContain("בקרוב לאחר קבלת האישור");
     expect(actions()).toEqual(["GetKevaId"]);
     expect(counts()).toEqual([0, 0, 0]);
   });
