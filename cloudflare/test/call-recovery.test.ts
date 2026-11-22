@@ -10,6 +10,8 @@ import { NEUTRAL_HEBREW } from "../src/customer-language";
 import * as google from "../src/google";
 import { settings, type Env } from "../src/env";
 import { handleCallback } from "../src/pbx";
+import { FRAME_BYTES, FRAME_MS } from "../src/audio";
+import { controlsFromSettings } from "../src/controls";
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
@@ -79,6 +81,113 @@ function session() {
   tutor.ai = { resumeHandle: "resume-handle", close: vi.fn() };
   return { tutor, pbx };
 }
+
+it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-ms allowance", async allowanceMs => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  const ai = new GeminiLive("wss://example.test", "test", {});
+  const send = vi.spyOn(ai, "send").mockImplementation(() => {});
+  tutor.ai = ai;
+  tutor.controls = { ...controlsFromSettings(false), idle_timeout_seconds: 1 };
+  tutor.meteredAt = Date.now();
+  tutor.allowanceMs = allowanceMs;
+  vi.setSystemTime(tutor.meteredAt + allowanceMs - 25500);
+  tutor.lastInput = tutor.lastHuman = Date.now();
+  const running = tutor.watchdog().catch(() => {});
+  expect(send).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(send).toHaveBeenCalledExactlyOnceWith({ clientContent: {
+    turns: [{ role: "user", parts: [{ text: expect.stringContaining("short Hebrew sentences") }] }],
+    turnComplete: true,
+  } });
+  const instruction = send.mock.calls[0][0] as any;
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("invitation to call again");
+  expect(instruction.clientContent.turns[0].parts[0].text).toContain("end_session");
+  expect(tutor.finalSent).toBe(true);
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(send).toHaveBeenCalledOnce();
+  expect(tutor.reason).toBe("");
+  tutor.stop();
+  await running;
+});
+
+it.each([0, null])("does not request quota closing without an active allowance clock: %s", async clock => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.prompt = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.allowanceMs = clock === 0 ? 0 : 240000;
+  tutor.meteredAt = clock === null ? null : Date.now();
+  const running = tutor.watchdog().catch(() => {});
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(tutor.ai.prompt).not.toHaveBeenCalled();
+  expect(tutor.finalSent).toBe(false);
+  tutor.stop();
+  await running;
+});
+
+it("defers the closing response request until Gemini reconnection finishes", async () => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.prompt = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.allowanceMs = 240000;
+  tutor.meteredAt = Date.now() - 215000;
+  tutor.reconnecting = Promise.resolve();
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.ai.prompt).not.toHaveBeenCalled();
+  tutor.reconnecting = null;
+  await vi.advanceTimersByTimeAsync(500);
+  expect(tutor.ai.prompt).toHaveBeenCalledOnce();
+  tutor.stop();
+  await running;
+});
+
+it.each([false, true])("only bypasses the unfinished-intake end gate during quota closing: %s", async closing => {
+  const { tutor } = session();
+  tutor.controls = { ...controlsFromSettings(false), intake_pending: true };
+  tutor.ai.addContext = vi.fn();
+  tutor.finalSent = closing;
+  expect(await tutor.recordTool({ name: "end_session", args: { reason: "task_completed" } })).toBe(closing);
+  expect(tutor.reason).toBe(closing ? "model:task_completed" : "");
+  expect(tutor.progress.logDiagnostic).toHaveBeenCalledTimes(closing ? 0 : 1);
+  expect(tutor.ai.addContext).toHaveBeenCalledTimes(closing ? 0 : 1);
+});
+
+it("plays the buffered goodbye and padded partial audio before finishing within the allowance", async () => {
+  vi.useFakeTimers();
+  const { tutor, pbx } = session();
+  tutor.reason = "model:task_completed";
+  tutor.meteredAt = Date.now();
+  tutor.allowanceMs = 1000;
+  tutor.output = [new Uint8Array(FRAME_BYTES).fill(1), new Uint8Array(FRAME_BYTES).fill(2)];
+  tutor.partial = new Uint8Array([3, 4]);
+  tutor.abort.abort();
+  const draining = tutor.drainFinalAudio();
+  await vi.runAllTimersAsync();
+  await draining;
+  expect(pbx.send).toHaveBeenCalledTimes(13);
+  expect(pbx.send.mock.calls[0][0]).toEqual(new Uint8Array(FRAME_BYTES).fill(1));
+  expect(pbx.send.mock.calls[1][0]).toEqual(new Uint8Array(FRAME_BYTES).fill(2));
+  const partial = new Uint8Array(FRAME_BYTES);
+  partial.set([3, 4]);
+  expect(pbx.send.mock.calls[2][0]).toEqual(partial);
+  expect(Date.now() - tutor.meteredAt).toBe(13 * FRAME_MS);
+});
+
+it.each([0, 3 * FRAME_MS + 5])("does not drain goodbye audio beyond %s remaining milliseconds", async remaining => {
+  vi.useFakeTimers();
+  const { tutor, pbx } = session();
+  tutor.reason = "model:task_completed";
+  tutor.allowanceMs = 240000;
+  tutor.meteredAt = Date.now() - tutor.allowanceMs + remaining;
+  tutor.output = Array.from({ length: 10 }, () => new Uint8Array(FRAME_BYTES));
+  const draining = tutor.drainFinalAudio();
+  await vi.runAllTimersAsync();
+  await draining;
+  expect(pbx.send).toHaveBeenCalledTimes(Math.floor(remaining / FRAME_MS));
+  expect(Date.now()).toBeLessThanOrEqual(tutor.meteredAt + tutor.allowanceMs);
+});
 
 it("rejects a hidden router stream with speech and hangup before Gemini, identity, or quota access", async () => {
   vi.useFakeTimers();

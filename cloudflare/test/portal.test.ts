@@ -625,6 +625,63 @@ it.each(["setup", "connected"])("transfers isaac calls to quota at the %s hard t
   expect(socket.send).toHaveBeenCalledWith(transferCommand("/88"));
 });
 
+it.each([240, 10.788])("keeps the hard cut at a %s-second allowance if Gemini never ends", async seconds => {
+  vi.useFakeTimers();
+  const controls = { ...controlsFromSettings(false), store_transcripts: false };
+  await progress.createBot({ id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general", channel_id: "isaac-channel", phone_enabled: true, web_enabled: true, enabled: true }, controls);
+  vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ seconds, mode: "free" });
+  vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
+  vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  const socket = { send: vi.fn(), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, { ...settings(env), projectPath: "/" }, crypto.randomUUID()) as any;
+  const untilStopped = () => new Promise<void>(resolve => tutor.abort.signal.addEventListener("abort", () => resolve(), { once: true }));
+  let ready!: () => void;
+  const connected = new Promise<void>(resolve => { ready = resolve; });
+  vi.spyOn(tutor, "pbxToAi").mockImplementation(untilStopped);
+  vi.spyOn(tutor, "aiToOutput").mockImplementation(untilStopped);
+  vi.spyOn(tutor, "pacedOutput").mockImplementation(untilStopped);
+  vi.spyOn(tutor, "watchdog").mockImplementation(() => { ready(); return untilStopped(); });
+  const running = tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "isaac-channel", callId: "quota-hard-limit", caller: "0500000002" }), "isaac-basic", false);
+  await connected;
+  await vi.advanceTimersByTimeAsync(seconds * 1000 - 1);
+  expect(tutor.reason).toBe("");
+  expect(socket.send).not.toHaveBeenCalledWith(transferCommand("/88"));
+  await vi.advanceTimersByTimeAsync(1);
+  await running;
+  expect(tutor.reason).toBe("hard_time_limit");
+  expect(socket.send).toHaveBeenCalledWith(transferCommand("/88"));
+});
+
+it.each([
+  ["/", undefined, "/88"], ["/99", undefined, "/99/88"],
+  ["/", "main", "/"], ["/99", "main", "/99"],
+  ["/", "school", "/1"], ["/99", "school", "/99/1"],
+  ["/", "options", "/2"], ["/99", "options", "/99/2"],
+])("routes quota closing under %s with destination %s to %s", async (projectPath, destination, expected) => {
+  vi.useFakeTimers();
+  const controls = { ...controlsFromSettings(false), store_transcripts: false };
+  await progress.createBot({ id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general", channel_id: "isaac-channel", phone_enabled: true, web_enabled: true, enabled: true }, controls);
+  vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ seconds: 240, mode: "free" });
+  vi.spyOn(GeminiLive.prototype, "connect").mockResolvedValue();
+  vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  const socket = { send: vi.fn(), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, { ...settings(env), projectPath }, crypto.randomUUID()) as any;
+  vi.spyOn(tutor, "pbxToAi").mockResolvedValue(undefined);
+  vi.spyOn(tutor, "aiToOutput").mockImplementation(async () => {
+    tutor.finalSent = true;
+    tutor.controls.intake_pending = true;
+    expect(await tutor.recordTool({ name: "end_session", args: { reason: destination ? "caller_requested" : "task_completed", destination } })).toBe(true);
+  });
+  vi.spyOn(tutor, "pacedOutput").mockResolvedValue(undefined);
+  vi.spyOn(tutor, "watchdog").mockResolvedValue(undefined);
+  vi.spyOn(tutor, "drainFinalAudio").mockResolvedValue(undefined);
+  await tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "isaac-channel", callId: "quota-goodbye~segment", caller: "0500000002" }), "isaac-basic", false);
+  expect(tutor.reason).toBe(destination ? "model:caller_requested" : "model:task_completed");
+  expect(socket.send).toHaveBeenCalledWith(transferCommand(expected!));
+});
+
 it("routes a caller out of minutes to the quota menu even when Gemini is unavailable", async () => {
   env.GEMINI_BUDGET = { getByName: vi.fn() } as unknown as DurableObjectNamespace;
   await b.save("policies", { enabled: true, blocked_extension: "/99/3" }, "student");
