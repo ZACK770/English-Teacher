@@ -69,7 +69,7 @@ export async function getCopy(b: BusinessStore): Promise<IVRCopy> {
 }
 
 export async function startSchool(b: BusinessStore, progress: ProgressStore, s: Settings, callId: string, customerId: string, selected?: string): Promise<IVRResponse> {
-  if (await b.schoolPaymentBlocked(customerId)) return { type: "goTo", goTo: extensionPath(s.projectPath, "/8"), removeParams: REMOVE };
+  if (await b.schoolPaymentBlocked(customerId)) return { type: "goTo", goTo: extensionPath(s.projectPath, "/3"), removeParams: REMOVE };
   const bots = (await progress.listBots()).filter((bot) => bot.enabled && bot.phone_enabled && bot.role === "teacher");
   if (!bots.length) return menu("isaacTeacher", (await getCopy(b)).school, "0,9");
   const saved = await b.loadContext("preferences:" + customerId);
