@@ -163,6 +163,7 @@ export class CheckoutStore {
   async kevaCharge(data: Record<string, any>, mosadId: string) {
     const kevaId = String(data.KevaId);
     const transactionId = String(data.TransactionId ?? "");
+    const reference = `nedarim-keva:${kevaId}:${transactionId}`;
     const amount = agorot(data.Amount);
     if (!/^[0-9]{1,30}$/.test(transactionId) || !data.Confirmation || String(data.Currency ?? "") !== "1") throw new Error("Invalid settlement");
     let sub = await this.db.prepare("SELECT * FROM standing_orders WHERE keva_id=?").bind(kevaId).first<Record<string, any>>();
@@ -171,7 +172,6 @@ export class CheckoutStore {
       sub = /^[0-9a-f]{32}$/.test(subId) ? await this.db.prepare("SELECT * FROM standing_orders WHERE id=? AND keva_id IS NULL").bind(subId).first<Record<string, any>>() : null;
       if (!sub) {
         if (!/^[0-9]{1,20}$/.test(kevaId)) throw new Error("Invalid settlement");
-        const reference = `nedarim-keva:${kevaId}:${transactionId}`;
         await this.db.prepare(`INSERT OR IGNORE INTO payment_issues (id,order_id,kind,message,created_at)
           SELECT ?,?,'unmatched_keva',?,?
           WHERE NOT EXISTS (SELECT 1 FROM sales_receipts WHERE reference=?)`)
@@ -206,15 +206,20 @@ export class CheckoutStore {
       });
       sub.entitlement_id = entitlement.id;
     }
-    const reference = `nedarim-keva:${kevaId}:${transactionId}`;
+    const issueId = await sha256Hex(reference);
+    const resolveIssue = (at: string) => this.db.prepare(`UPDATE payment_issues
+      SET status='resolved',resolved_at=?,resolution='התשלום אומת ושויך למנוי'
+      WHERE id=? AND kind='unmatched_keva' AND status='open'`).bind(at, issueId);
     const legacy = await this.db.prepare("SELECT id,amount_ils,customer_id,subscription_id FROM sales_receipts WHERE reference=?").bind(`nedarim:${mosadId}:${transactionId}`).first<{ id: string; amount_ils: number; customer_id: string; subscription_id: string | null }>();
     if (legacy) {
       if (legacy.customer_id !== sub.customer_id || legacy.subscription_id !== sub.entitlement_id || agorot(data.Amount) !== agorot(legacy.amount_ils)) throw new Error("Payment amount mismatch");
+      await resolveIssue(nowIso()).run();
       return { paid: true, receipt_id: legacy.id, duplicate: true };
     }
     const existing = await this.db.prepare("SELECT r.id,r.amount_ils FROM subscription_renewals n JOIN sales_receipts r ON r.subscription_id=n.subscription_id AND r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=? AND n.subscription_id=?").bind(reference, sub.entitlement_id).first<{ id: string; amount_ils: number }>();
     if (existing) {
       if (agorot(data.Amount) !== agorot(existing.amount_ils)) throw new Error("Payment amount mismatch");
+      await resolveIssue(nowIso()).run();
       return { paid: true, receipt_id: existing.id, duplicate: true };
     }
     const expected = await subscriptions.renewalAmount(sub.entitlement_id);
@@ -234,6 +239,7 @@ export class CheckoutStore {
       ...(amount === expected ? [] : [this.db.prepare("INSERT OR IGNORE INTO payment_issues(id,order_id,kind,message,created_at) VALUES (?,?,?,?,?)").bind((await sha256Hex("subscription_amount_difference:" + reference)).slice(0, 32), sub.first_order_id, "subscription_amount_difference", `הפרש גבייה במנוי: נדרש ${expected / 100} ₪, חויב ${amount / 100} ₪, יתרה להסדרה ${(expected - amount) / 100} ₪`, now)]),
       this.db.prepare("UPDATE standing_orders SET state='active',last_charge_at=?,last_refusal_at=NULL,next_date=?,updated_at=? WHERE id=?").bind(chargedAt, ddmmyyyy(new Date(Date.now() + MONTH_MS)), now, sub.id),
       this.db.prepare("INSERT INTO console_audit(action,entity_id,created_at) VALUES (?,?,?)").bind("payment:keva_charge", sub.id, now),
+      resolveIssue(now),
     ] });
     const receipt = await this.db.prepare("SELECT r.id FROM subscription_renewals n JOIN sales_receipts r ON r.reference='subscription:'||n.subscription_id||':'||n.period_start WHERE n.reference=?").bind(reference).first<{ id: string }>();
     return { paid: true, receipt_id: receipt?.id, customer_id: sub.customer_id, subscription_id: renewed.id };

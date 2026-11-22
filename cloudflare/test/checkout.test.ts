@@ -93,6 +93,22 @@ describe("existing Nedarim subscribers", () => {
     expect(issue()).toEqual([{ status: "resolved", order_id: "nedarim-keva:12345:902", message: expect.stringContaining("902") }]);
   });
 
+  it("resolves an unmatched charge when reconciliation later credits it as a renewal", async () => {
+    providerKeva(paidKeva, paidKevaDetail);
+    const charge = { MosadNumber: "7019554", KevaId: "12345", TransactionId: "903", Currency: "1", Amount: "49",
+      Confirmation: "10", TransactionTime: "19/12/2026 12:00:00" };
+    expect(await (await hook(charge)).json()).toEqual({ review: true });
+    expect((await syncPaidKeva()).status).toBe(200);
+    const issue = () => db.sql.prepare("SELECT status FROM payment_issues WHERE order_id='nedarim-keva:12345:903'").get();
+    expect(issue()).toEqual({ status: "open" });
+    vi.setSystemTime(new Date("2026-12-19T13:00:00Z"));
+    const store = new PaymentStore(b);
+    vi.spyOn(store, "providerRows").mockImplementation(async (_env, action) => action === "GetHistoryJson" ? [charge] : []);
+    expect(await store.reconcile(env)).toMatchObject({ GetHistoryJson: { received: 1, matched: 1 } });
+    expect(issue()).toEqual({ status: "resolved" });
+    expect(db.sql.prepare("SELECT reference FROM subscription_renewals").all()).toEqual([{ reference: "nedarim-keva:12345:903" }]);
+  });
+
   it.each([49, 59])("opens paid phone and portal access for an existing ₪%s monthly payment", async amount => {
     const actions = providerKeva({ ...paidKeva, Amount: String(amount) }, { ...paidKevaDetail,
       KevaAmount: String(amount), HistoryData: [{ ...paidKevaDetail.HistoryData[0], Amount: amount + " ₪" }],
