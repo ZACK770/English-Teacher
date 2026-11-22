@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { SubscriptionStore } from "../src/subscriptions";
-import { settings, type Env } from "../src/env";
+import { settings, sha256Hex, type Env } from "../src/env";
 import { controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { TutorSession } from "../src/session";
@@ -115,6 +115,32 @@ describe("practice reminder preferences", () => {
 
 describe("scheduled practice pings", () => {
   beforeEach(async () => { await savePracticeReminder(db, "learner", "בשמונה בערב", now); });
+  it("pings the last verified calling number once, including a linked phone without a primary", async () => {
+    const business = new BusinessStore(db);
+    const phone = "0502222222";
+    await business.save("learner-phone-links", { customer_id: "learner", phone }, (await sha256Hex(phone)).slice(0, 24));
+    expect(await business.identifyCall(phone, "linked-call", "teacher")).toBe("learner");
+    sql.exec("UPDATE customers SET primary_phone=NULL WHERE id='learner'");
+    env.REMINDERS_MODE = "live";
+    await dispatchPracticeReminders(env, now);
+    await dispatchPracticeReminders(env, now);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).phones).toEqual([phone]);
+  });
+  it("uses the most recent calling number and falls back when its verification is removed", async () => {
+    const business = new BusinessStore(db);
+    const phone = "0502222222";
+    const linkId = (await sha256Hex(phone)).slice(0, 24);
+    await business.save("learner-phone-links", { customer_id: "learner", phone }, linkId);
+    await business.identifyCall(phone, "linked-first", "teacher");
+    await business.identifyCall("0501111111", "primary-latest", "teacher");
+    expect((await business.loadContext("preferences:learner")).last_verified_caller).toBe("0501111111");
+    await business.identifyCall(phone, "linked-latest", "teacher");
+    sql.prepare("DELETE FROM console_records WHERE kind='learner-phone-links' AND id=?").run(linkId);
+    env.REMINDERS_MODE = "live";
+    await dispatchPracticeReminders(env, now);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).phones).toEqual(["0501111111"]);
+  });
   it("defaults off and does not claim events or call the provider", async () => {
     delete env.REMINDERS_MODE;
     await dispatchPracticeReminders(env, now);

@@ -91,7 +91,10 @@ export async function dispatchPracticeReminders(env: Env, now = new Date()): Pro
       if (!Array.isArray(weekdays)) continue;
       const due = slots.find(s => s.weekday !== 6 && s.time === row.time_local && weekdays.includes(s.weekday));
       if (!due) continue;
-      const phone = normalizePhone(row.phone);
+      const business = new BusinessStore(env.DB);
+      const preferences = await business.loadContext("preferences:" + row.customer_id);
+      const lastCaller = typeof preferences.last_verified_caller === "string" ? normalizePhone(preferences.last_verified_caller) : null;
+      const phone = lastCaller && await business.customerForPhone(lastCaller) === row.customer_id ? lastCaller : normalizePhone(row.phone);
       if (!phone || (mode === "live" && allowlist && !allowlist.has(phone))) continue;
       if (!await new BusinessStore(env.DB).hasPaidAccess(row.customer_id, now.toISOString())) continue;
       const id = await sha256Hex("practice-reminder:" + row.customer_id + ":" + due.day);
