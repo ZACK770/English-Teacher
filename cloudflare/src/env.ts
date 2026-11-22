@@ -50,6 +50,11 @@ export interface Env {
   NEDARIM_PHONE_ENABLED?: string;
   SALES_MENU_AUDIO_URL?: string;
   SALES_MENU_AUDIO_VERSION?: string;
+  SALES_MENU_MODE?: string;
+  SALES_SINGLE_AUDIO_URL?: string;
+  SALES_SINGLE_AUDIO_VERSION?: string;
+  SALES_SERVICE_AUDIO_URL?: string;
+  SALES_SERVICE_AUDIO_VERSION?: string;
   REMINDERS_MODE?: "off" | "dry_run" | "live";
   REMINDERS_ALLOWLIST?: string;
   NEDARIM_API_VALID?: string;

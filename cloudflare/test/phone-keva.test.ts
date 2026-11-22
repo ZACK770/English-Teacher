@@ -5,7 +5,7 @@ import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
 import { type Env, settings } from "../src/env";
 import { handleCallback } from "../src/pbx";
-import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT } from "../src/payments";
+import { PaymentStore, paymentResponse, handleWebhook, SALES_MENU_TEXT, SCHOOL_SALES_PACKAGE_IDS, TERMS_STEP_TEXT, TERMS_TEXT, SALES_SINGLE_TEXT, SALES_SERVICE_TEXT, SINGLE_TERMS_STEP_TEXT, SINGLE_TERMS_TEXT } from "../src/payments";
 import worker from "../src/index";
 import { reconcilePhoneKeva, syncKevas } from "../src/keva-sync";
 import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
@@ -589,6 +589,161 @@ describe("five-package phone sales", () => {
     expect(response.files).toEqual([{ fileLink: "https://example.test/sales.wav", fileName: "sales-menu-v3" }]);
     expect(await respond({ isaacPackage: "0" })).toMatchObject({ type: "goTo", goTo: "/" });
     expect(await respond({ isaacPackage: "9" })).toMatchObject({ type: "goTo", goTo: "/4" });
+  });
+
+  it.each([undefined, "", "full", "SINGLE", "other"])("keeps the existing sales and terms responses for mode=%s", async mode => {
+    const menu = await respond();
+    env.SALES_MENU_MODE = mode;
+    env.SALES_SINGLE_AUDIO_URL = "https://example.test/single.mp3";
+    env.SALES_SINGLE_AUDIO_VERSION = "draft1";
+    expect(await respond()).toEqual(menu);
+    expect(await respond({ isaacSinglePackage: "8" })).toEqual(menu);
+    expect(await respond({ isaacSinglePackage: "8", isaacSalesService: "3" })).toEqual(menu);
+    expect(await respond({ isaacPackage: "9" })).toMatchObject({ goTo: "/4" });
+    expect((await respond({ isaacPackage: "1" })).files).toEqual([{ text: TERMS_STEP_TEXT }]);
+    expect((await respond({ isaacPayConfirm: "2" })).files).toEqual([{ text: TERMS_TEXT }, { text: TERMS_STEP_TEXT }]);
+  });
+
+  it("offers only Start in single mode and uses its existing purchase path by package id", async () => {
+    env.SALES_MENU_MODE = "single";
+    expect(await respond()).toMatchObject({ name: "isaacSinglePackage", enabledKeys: "0,1,8,9", files: [{ text: SALES_SINGLE_TEXT }] });
+    expect(JSON.stringify(await respond())).not.toContain("דקות");
+    expect((await paymentResponse(store, env, "/", { PBXcallId: "phone-hk", isaacSinglePackage: "1" }, "c1", [...ids].reverse())).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
+    expect(await store.orderForCall("phone-hk")).toMatchObject({ package_id: "school-step", amount_agorot: 5900, state: "selected" });
+    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 59, paymentsMode: "kevaMonthly", payments: 1 });
+  });
+
+  it.each(["1", "2", "3", "4", "5"])("retains full-menu recording and purchase key %s after single-menu 9", async choice => {
+    env.SALES_MENU_AUDIO_URL = "https://example.test/full.mp3";
+    env.SALES_MENU_AUDIO_VERSION = "clean1";
+    const full = await respond();
+    env.SALES_MENU_MODE = "single";
+    expect((await respond()).files).toEqual([{ text: SALES_SINGLE_TEXT }]);
+    expect(await respond({ isaacSinglePackage: "9" })).toEqual(full);
+    expect((await respond({ isaacSinglePackage: "9", isaacPackage: choice })).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
+    expect((await store.orderForCall("phone-hk"))?.package_id).toBe(ids[Number(choice) - 1]);
+  });
+
+  it("uses Isaac's exact first-menu and service-menu drafts", () => {
+    expect(SALES_SINGLE_TEXT).toBe("רוצים לדעת אנגלית?! מומלץ להתחיל בסטארט: 3 אימונים בשבוע, ב־59 שקלים לחודש. להצטרפות הקישו 1. לכל החבילות הקישו 9. להנהלת חשבונות ושירות לקוחות הקישו 8. לחזרה הקישו 0.");
+    expect(SALES_SERVICE_TEXT).toBe("להנהלת חשבונות הקישו 1. לבירור חשבון הקישו 2. לביטול מנוי הקישו 3. לחזרה הקישו 0.");
+  });
+
+  it.each(["", "9"])("opens or repeats the service submenu on selection %s without creating an order", async selection => {
+    env.SALES_MENU_MODE = "single";
+    expect(await respond({ isaacSinglePackage: "8", isaacSalesService: selection })).toMatchObject({
+      name: "isaacSalesService", enabledKeys: "0,1,2,3", files: [{ text: SALES_SERVICE_TEXT }],
+    });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["/", "/99"].flatMap(base => ["1", "2", "3"].map(key => [base, key])))("hands service submenu base %s key %s to service without creating an order", async (base, key) => {
+    env.SALES_MENU_MODE = "single";
+    expect(await paymentResponse(store, env, base, { PBXcallId: "phone-hk", isaacSinglePackage: "8", isaacSalesService: key }, "c1", ids)).toEqual({
+      type: "goTo", goTo: base === "/" ? "/4" : "/99/4", removeParams: ["isaacPackage", "isaacSales", "isaacSinglePackage", "isaacSalesService"],
+    });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "ERROR"])("returns from the service submenu on %s and clears its chained selections", async key => {
+    env.SALES_MENU_MODE = "single";
+    const response = await respond({ isaacSinglePackage: "8", isaacSalesService: key });
+    expect(response).toMatchObject({ name: "isaacSinglePackage", files: [{ text: SALES_SINGLE_TEXT }], removeParams: ["isaacSinglePackage", "isaacSalesService"] });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+    expect((await respond({ isaacSinglePackage: "1" })).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
+  });
+
+  it("uses independent versioned service audio only when both settings exist", async () => {
+    env.SALES_MENU_MODE = "single";
+    env.SALES_SINGLE_AUDIO_URL = "https://example.test/start.mp3";
+    env.SALES_SINGLE_AUDIO_VERSION = "start1";
+    const service = () => respond({ isaacSinglePackage: "8" });
+    expect((await service()).files).toEqual([{ text: SALES_SERVICE_TEXT }]);
+    env.SALES_SERVICE_AUDIO_URL = "https://example.test/service.mp3";
+    expect((await service()).files).toEqual([{ text: SALES_SERVICE_TEXT }]);
+    delete env.SALES_SERVICE_AUDIO_URL;
+    env.SALES_SERVICE_AUDIO_VERSION = "service1";
+    expect((await service()).files).toEqual([{ text: SALES_SERVICE_TEXT }]);
+    env.SALES_SERVICE_AUDIO_URL = "https://example.test/service.mp3";
+    expect((await service()).files).toEqual([{ fileLink: "https://example.test/service.mp3", fileName: "sales-service-service1" }]);
+    expect((await respond()).files).toEqual([{ fileLink: "https://example.test/start.mp3", fileName: "sales-single-start1" }]);
+    expect((await respond({ isaacSinglePackage: "8", isaacSalesService: "0" })).files).toEqual([{ fileLink: "https://example.test/start.mp3", fileName: "sales-single-start1" }]);
+  });
+
+  it("keeps service reachable through full-menu 9 under the configured base", async () => {
+    env.SALES_MENU_MODE = "single";
+    expect(await paymentResponse(store, env, "/99", { PBXcallId: "phone-hk", isaacSinglePackage: "9", isaacPackage: "9" }, "c1", ids)).toMatchObject({
+      type: "goTo", goTo: "/99/4", removeParams: expect.arrayContaining(["isaacSinglePackage", "isaacPackage"]),
+    });
+  });
+
+  it.each(["0", "ERROR"])("returns from the single menu on %s and clears its callback parameter", async choice => {
+    env.SALES_MENU_MODE = "single";
+    expect(await respond({ isaacSinglePackage: choice })).toMatchObject({ type: "goTo", goTo: "/", removeParams: expect.arrayContaining(["isaacSinglePackage"]) });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
+  it("uses TTS until both single-menu audio settings exist, independently of full-menu audio", async () => {
+    env.SALES_MENU_MODE = "single";
+    env.SALES_MENU_AUDIO_URL = "https://example.test/full.mp3";
+    env.SALES_MENU_AUDIO_VERSION = "clean1";
+    env.SALES_SINGLE_AUDIO_URL = "https://example.test/start.mp3";
+    expect((await respond()).files).toEqual([{ text: SALES_SINGLE_TEXT }]);
+    delete env.SALES_SINGLE_AUDIO_URL;
+    env.SALES_SINGLE_AUDIO_VERSION = "draft1";
+    expect((await respond()).files).toEqual([{ text: SALES_SINGLE_TEXT }]);
+    env.SALES_SINGLE_AUDIO_URL = "https://example.test/start.mp3";
+    expect((await respond()).files).toEqual([{ fileLink: "https://example.test/start.mp3", fileName: "sales-single-draft1" }]);
+    Object.assign(env, { TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575", TLIVR_PROJECT_PATH: "/" });
+    const callback = (extra = "") => handleCallback(new Request("https://example.test/v1/technoline/ivr/sales?key=cb&PBXnum=0765673575&PBXextensionPath=/3&PBXphone=0500000001&PBXcallId=single-audio" + extra), env, settings(env), "sales");
+    expect((await callback()).files).toEqual([{ fileLink: "https://example.test/start.mp3", fileName: "sales-single-draft1" }]);
+    expect((await callback("&isaacSinglePackage=9")).files).toEqual([{ fileLink: "https://example.test/full.mp3", fileName: "sales-menu-clean1" }]);
+    expect((await callback("&isaacSinglePackage=9&isaacPackage=9")).goTo).toBe("/4");
+  });
+
+  it.each([{ active: false }, { phone_enabled: false }, { price_ils: 79 }, { sessions_per_week: 7 }])("does not offer or charge a stale Start quote: %j", async change => {
+    env.SALES_MENU_MODE = "single";
+    await b.save("packages", { ...await b.record("packages", "school-step"), ...change }, "school-step");
+    expect((await respond()).name).not.toBe("isaacSinglePackage");
+    expect(await respond({ isaacSinglePackage: "1" })).toMatchObject({ name: "isaacPayExit" });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
+  it("does not substitute a different package when Start is absent from the call snapshot", async () => {
+    env.SALES_MENU_MODE = "single";
+    expect(await paymentResponse(store, env, "/", { PBXcallId: "phone-hk", isaacSinglePackage: "1" }, "c1", ["school-pace"])).toMatchObject({ name: "isaacPayExit" });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
+  it("keeps unknown single-menu keys on the first menu without creating an order", async () => {
+    env.SALES_MENU_MODE = "single";
+    expect(await respond({ isaacSinglePackage: "2" })).toMatchObject({ name: "isaacSinglePackage" });
+    expect(await store.orderForCall("phone-hk")).toBeNull();
+  });
+
+  it("reads the shorter terms on 2 without charging, then approves only on 1", async () => {
+    env.SALES_MENU_MODE = "single";
+    expect((await respond({ isaacSinglePackage: "1" })).files).toEqual([{ text: SINGLE_TERMS_STEP_TEXT }]);
+    for (let i = 0; i < 2; i++) {
+      expect(await respond({ isaacPayConfirm: "2" })).toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1,2", files: [{ text: SINGLE_TERMS_TEXT }, { text: SINGLE_TERMS_STEP_TEXT }] });
+      expect((await store.orderForCall("phone-hk"))?.state).toBe("selected");
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(SINGLE_TERMS_STEP_TEXT.length).toBeLessThan(TERMS_STEP_TEXT.length);
+    expect(SINGLE_TERMS_TEXT.length).toBeLessThan(TERMS_TEXT.length);
+    expect(SINGLE_TERMS_TEXT).not.toContain("דקות");
+    expect(SINGLE_TERMS_TEXT).toContain("בתשלום אחד או בתשלומים. לכל מנוי מכסת שימוש חודשית הוגנת. התשלום");
+    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 59 });
+  });
+
+  it("cancels the shorter terms on 0 without charging", async () => {
+    env.SALES_MENU_MODE = "single";
+    await respond({ isaacSinglePackage: "1" });
+    expect(await respond({ isaacPayConfirm: "0" })).toMatchObject({ type: "goTo", removeParams: expect.arrayContaining(["isaacSinglePackage"]) });
+    expect((await store.orderForCall("phone-hk"))?.state).toBe("cancelled");
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("reads the approved terms on 2, returns to terms, and only issues on 1", async () => {
