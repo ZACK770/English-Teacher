@@ -131,6 +131,21 @@ it.each(["portal", "other teacher", "other destination"])("does not promise a pa
   await running;
 });
 
+it("invites another free call instead of claiming the whole trial is over", async () => {
+  vi.useFakeTimers();
+  const { tutor } = session();
+  tutor.ai.prompt = vi.fn();
+  tutor.controls = controlsFromSettings(false);
+  tutor.freeTrial = tutor.freeFollowup = true;
+  tutor.allowanceMs = 30000;
+  tutor.meteredAt = Date.now() - 5000;
+  const running = tutor.watchdog().catch(() => {});
+  expect(tutor.ai.prompt.mock.calls[0][0]).toContain("אפשר להתקשר שוב ולהמשיך את ההתנסות החינמית");
+  expect(tutor.ai.prompt.mock.calls[0][0]).not.toContain("זמן ההתנסות החינמית הסתיים");
+  tutor.stop();
+  await running;
+});
+
 it.each([0, null])("does not request quota closing without an active allowance clock: %s", async clock => {
   vi.useFakeTimers();
   const { tutor } = session();
