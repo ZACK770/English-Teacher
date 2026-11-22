@@ -19,6 +19,7 @@ export const PackageSchema = z.object({
   minutes: z.number().int().min(1).max(100000),
   sessions_per_week: z.number().int().min(1).max(7).default(7),
   monthly_minutes: z.number().int().min(0).max(100000).optional(),
+  max_payments: z.number().int().min(1).max(12).default(1),
   price_ils: z.number().min(0).max(100000),
   validity_days: z.number().int().min(1).max(3650).default(30),
   max_call_minutes: z.number().int().min(1).max(60).default(5),

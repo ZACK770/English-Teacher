@@ -808,15 +808,8 @@ describe("approved pricing catalog", () => {
     expect(await b.record("policies", "translator")).toMatchObject({ opening_seconds: 600 });
   });
   it("seeds the approved school catalog and mirrors accurate billing types", async () => {
-    const practiceCatalog: Record<string, { name: string; sessions_per_week: number; monthly_minutes: number }> = {
-      "school-step": { name: "סטארט", sessions_per_week: 3, monthly_minutes: 60 },
-      "school-pace": { name: "סמול טוק", sessions_per_week: 7, monthly_minutes: 200 },
-      "school-fluent": { name: "פרו", sessions_per_week: 7, monthly_minutes: 300 },
-      "school-foundations": { name: "מקס", sessions_per_week: 7, monthly_minutes: 150 },
-      "school-mastery": { name: "מאסטר", sessions_per_week: 7, monthly_minutes: 150 },
-    };
     for (const pkg of PRICING_PACKAGES.filter(p => p.product === "school")) {
-      expect(PackageSchema.parse(await b.record("packages", pkg.id))).toEqual(PackageSchema.parse({ ...pkg, ...practiceCatalog[pkg.id] }));
+      expect(PackageSchema.parse(await b.record("packages", pkg.id))).toEqual(PackageSchema.parse(pkg));
       const plan = db.sql.prepare("SELECT * FROM plans WHERE id=?").get(pkg.id)!;
       expect([plan.billing, plan.price_agorot, plan.included_minutes]).toEqual([pkg.billing, pkg.price_ils * 100, pkg.minutes]);
     }

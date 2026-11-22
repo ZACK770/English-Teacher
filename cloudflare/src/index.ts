@@ -88,6 +88,14 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     if (response) return response;
   }
   if (path === "/v1/public/callback" && request.method === "POST") return submitCallback(request, env);
+  if (path === "/v1/public/packages" && request.method === "GET") {
+    const items = (await new BusinessStore(env.DB).list("packages")).filter(p => p.active && p.product === "school").map(p => ({
+      id: p.id, name: p.name, price_ils: p.price_ils, billing: p.billing, duration_months: p.duration_months,
+      sessions_per_week: p.sessions_per_week ?? 7, tagline: p.tagline, recommended: p.recommended,
+      max_payments: p.max_payments ?? 1, phone_enabled: p.phone_enabled,
+    }));
+    return Response.json({ items });
+  }
   const turn = path.match(/^\/v1\/bots\/([a-z][a-z0-9-]{1,62})\/turn$/);
   if (turn && request.method === "POST") return webTurn(request, env, s, turn[1]);
   const portal = await handlePortal(request, env, path);
