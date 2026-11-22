@@ -327,19 +327,20 @@ export class BusinessStore {
           FROM usage_allocations WHERE customer_id=?
             AND (product=? OR (product=? AND receipt_id IS NULL))
         )
-        WHERE (?=0 OR remaining>=10) AND NOT EXISTS (${activeSession}) AND NOT EXISTS
-        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=? AND billed_seconds>=60)
+        WHERE (?=0 OR remaining>=1) AND NOT EXISTS (${activeSession}) AND NOT EXISTS
+        (SELECT 1 FROM usage_allocations WHERE customer_id=? AND product=?
+          AND (billed_seconds>=60 OR (?>0 AND billed_seconds>0)))
         RETURNING reserved_seconds`)
         .bind(callId, customerId, openingProduct, seconds, now,
           policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId, openingProduct, policy.product,
-          policy.trial_total_seconds, customerId, cutoff, customerId, openingProduct).first<{ reserved_seconds: number }>();
+          policy.trial_total_seconds, customerId, cutoff, customerId, openingProduct, policy.trial_total_seconds).first<{ reserved_seconds: number }>();
       if (opening) {
         return { seconds: opening.reserved_seconds, mode: "free" };
       }
     }
     const monthPrefix = now.slice(0, 7) + "%";
-    if (!anonymous && policy.free_calls_month > 0) {
-      const seconds = Math.min(maxSeconds, policy.free_call_seconds);
+    if (!anonymous && (policy.trial_total_seconds > 0 || policy.free_calls_month > 0)) {
+      const seconds = policy.trial_total_seconds > 0 ? Math.min(maxSeconds, policy.trial_total_seconds) : Math.min(maxSeconds, policy.free_call_seconds);
       const allocation = await this.db.prepare(`
         INSERT OR IGNORE INTO usage_allocations
           (call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
@@ -350,14 +351,14 @@ export class BusinessStore {
           FROM usage_allocations WHERE customer_id=?
             AND (product=? OR (product=? AND receipt_id IS NULL))
         )
-        WHERE (?=0 OR remaining>=10) AND (
+        WHERE (?=0 OR remaining>=1) AND (?>0 OR (
           SELECT COUNT(*) FROM usage_allocations WHERE customer_id=? AND product=? AND receipt_id IS NULL
             AND created_at LIKE ? AND (billed_seconds IS NULL OR billed_seconds>0)
-        ) < ? AND NOT EXISTS (${activeSession})
+        ) < ?) AND NOT EXISTS (${activeSession})
         RETURNING reserved_seconds
       `).bind(callId, customerId, policy.product, seconds, now,
         policy.trial_total_seconds, policy.trial_total_seconds, seconds, customerId,
-        policy.product + "-opening", policy.product, policy.trial_total_seconds,
+        policy.product + "-opening", policy.product, policy.trial_total_seconds, policy.trial_total_seconds,
         customerId, policy.product, monthPrefix, policy.free_calls_month, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "free" };
     }
@@ -511,7 +512,7 @@ export class BusinessStore {
     const now = nowIso();
     const live = receipts.find((r) => r.product === "school" && !r.on_hold && r.expires_at > now && r.minutes * 60 - r.spent_seconds >= 1);
     const pkg = live ? PackageSchema.safeParse(await this.record("packages", live.package_id)) : null;
-    const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60)").bind(customerId).first();
+    const opening = await this.db.prepare("SELECT 1 FROM usage_allocations WHERE customer_id=? AND product='school-opening' AND (billed_seconds IS NULL OR billed_seconds>=60 OR (?>0 AND billed_seconds>0))").bind(customerId, policy.trial_total_seconds).first();
     const trialUsed = policy.trial_total_seconds > 0 ? await this.db.prepare(`
       SELECT COALESCE(SUM(COALESCE(billed_seconds,reserved_seconds)),0) AS seconds
       FROM usage_allocations WHERE customer_id=?
@@ -521,11 +522,12 @@ export class BusinessStore {
     const freeCallsLeft = Math.max(0, policy.free_calls_month - (used?.n ?? 0));
     return {
       paid, payment_failed, limited: true,
-      opening_minutes: !payment_failed && !customerId.startsWith("anonymous-") && !opening ? policy.opening_seconds / 60 : 0,
+      opening_minutes: !payment_failed && !customerId.startsWith("anonymous-") && !opening
+        ? (policy.trial_total_seconds > 0 ? Math.min(policy.opening_seconds, trialRemaining) : policy.opening_seconds) / 60 : 0,
       free_calls_left: payment_failed || customerId.startsWith("anonymous-") ? 0 : policy.trial_total_seconds > 0
-        ? trialRemaining < 10 ? 0 : Math.min(freeCallsLeft, Math.ceil(trialRemaining / policy.free_call_seconds)) : freeCallsLeft,
+        ? trialRemaining >= 1 ? 1 : 0 : freeCallsLeft,
       free_call_minutes: policy.trial_total_seconds > 0
-        ? trialRemaining < 10 ? 0 : Math.min(policy.free_call_seconds, trialRemaining) / 60 : Math.round(policy.free_call_seconds / 60),
+        ? trialRemaining / 60 : Math.round(policy.free_call_seconds / 60),
       plan_name: pkg?.success ? pkg.data.name.split(" · ")[0] : "",
       max_call_minutes: pkg?.success ? pkg.data.max_call_minutes : 0,
     };
