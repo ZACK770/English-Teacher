@@ -351,6 +351,7 @@ export class TutorSession {
         if (this.callId && this.customerId && this.controls) {
           try {
             await this.latency("ai_connection_closed", { reason: this.reason || "transport_ended", ...this.disconnectDetails });
+            await this.latency("audio_queue_at_end", { ...this.audioQueueDetails(), disconnected: this.disconnected, phase: "before_drain" }).catch(() => {});
             await this.drainFinalAudio();
           } finally {
             if (reserved && this.meteredAt !== null) {
@@ -421,6 +422,11 @@ export class TutorSession {
     this.partial = data.slice(whole);
   }
 
+  private audioQueueDetails() {
+    const bytes = this.output.reduce((sum, frame) => sum + frame.byteLength, this.partial.byteLength);
+    return { queued_audio_bytes: bytes, queued_audio_ms: bytes * FRAME_MS / FRAME_BYTES };
+  }
+
   private async pbxToAi() {
     let batch: Uint8Array[] = [];
     while (!this.abort.signal.aborted) {
@@ -459,13 +465,14 @@ export class TutorSession {
         this.carry = carry;
         this.enqueue(pcm);
       } else if (event.type === "interrupted") {
+        const queued = this.audioQueueDetails();
         this.pendingEmail = null;
         this.summaryCallbackSpeech = "";
         this.reminderSpeech = "";
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
-        await this.latency("tutor_interrupted");
+        await this.latency("tutor_interrupted", queued);
       } else if (event.type === "transcript") {
         const pending = this.pendingEmail;
         if (pending) {
@@ -498,7 +505,7 @@ export class TutorSession {
         this.meter.tutorTurns++;
         this.learnerSeen = false;
         this.firstAudio = false;
-        await this.latency("tutor_turn_complete", { tutor_turn: this.meter.tutorTurns });
+        await this.latency("tutor_turn_complete", { tutor_turn: this.meter.tutorTurns, ...this.audioQueueDetails() });
         if (this.controls?.lesson) {
           await new LearningStore(this.env.DB).exposures(this.customerId, this.callId, this.controls.lesson.vocabulary, this.meter.transcript.filter(t => t.role === "tutor").map(t => t.text).join(" "));
         }
