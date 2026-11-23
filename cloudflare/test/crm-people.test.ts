@@ -153,6 +153,25 @@ describe("QA customer exclusion", () => {
     expect(await isQaPhone(env.DB, "0507654321")).toBe(false);
     expect(await isQaPhone(env.DB, "0501111111")).toBe(false);
   });
+  it("dials a real primary owner despite an old QA phone link", async () => {
+    customer("qa", "0507654321"); customer("real", "0501234567");
+    sql.exec("UPDATE customers SET source='qa-test' WHERE id='qa'");
+    insert("customer_phones", { phone: "0501234567", customer_id: "real" });
+    const business = new BusinessStore(env.DB);
+    await business.save("learner-phone-links", { phone: "0501234567", customer_id: "qa" }, (await sha256Hex("0501234567")).slice(0, 24));
+    expect(await business.customerForPhone("0501234567")).toBe("real");
+    expect(await isQaPhone(env.DB, "0501234567")).toBe(false);
+    Object.assign(env, { TLIVR_SYSTEM_API_KEY: "test", TLIVR_CALLBACK_EXTENSION_ID: "123" });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ status: "OK", errorCode: 0, campaignId: "real-callback" }));
+    vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(new Date("2026-06-15T10:00:00Z"));
+    try {
+      insert("callback_requests", { id: "real-callback", phone: "0501234567", name: "Real", for_whom: "self", goal: "test", timing: "scheduled", source: "landing", consent_at: now, status: "queued", attempts: 0, created_at: now, updated_at: now, next_attempt_at: "2026-06-15T09:00:00Z" });
+      expect(await dispatchCallbacks(env)).toMatchObject({ sent: 1 });
+      expect(sql.prepare("SELECT status,attempts FROM callback_requests").get()).toEqual({ status: "dialed", attempts: 1 });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({ action: "campaignRun", phones: ["0501234567"] });
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe("CRM receipt labels", () => {

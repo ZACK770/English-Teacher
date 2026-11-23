@@ -17,11 +17,11 @@ export async function isQaCustomer(db: D1Database, id: string): Promise<boolean>
 }
 
 export async function isQaPhone(db: D1Database, phone: string): Promise<boolean> {
-  return !!await db.prepare(`SELECT 1 FROM (
-    SELECT customer_id AS id FROM customer_phones WHERE phone=?1
-    UNION SELECT id FROM customers WHERE primary_phone=?1
-    UNION SELECT id FROM console_records WHERE kind='customers' AND json_extract(body,'$.phone')=?1
-    UNION SELECT json_extract(body,'$.customer_id') AS id FROM console_records
+  return !!await db.prepare(`SELECT 1 FROM (SELECT id FROM (
+    SELECT customer_id AS id,0 AS priority FROM customer_phones WHERE phone=?1
+    UNION SELECT id,1 AS priority FROM customers WHERE primary_phone=?1
+    UNION SELECT id,2 AS priority FROM console_records WHERE kind='customers' AND json_extract(body,'$.phone')=?1
+    UNION SELECT json_extract(body,'$.customer_id') AS id,3 AS priority FROM console_records
       WHERE kind='learner-phone-links' AND json_extract(body,'$.phone')=?1
-  ) candidate WHERE ${qaCustomerSql("candidate.id")} LIMIT 1`).bind(phone).first();
+  ) ORDER BY priority,id LIMIT 1) candidate WHERE ${qaCustomerSql("candidate.id")}`).bind(phone).first();
 }
