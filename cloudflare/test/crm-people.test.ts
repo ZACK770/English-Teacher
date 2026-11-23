@@ -122,9 +122,14 @@ describe("QA customer exclusion", () => {
     expect(await (await request("analytics")).json()).toMatchObject({ totals: { leads: 1 } });
     expect(await new BusinessStore(env.DB).summary()).toMatchObject({ customers: 1 });
   });
-  it("blocks QA Pirsumfon, voice summaries and queued callbacks without contacting a provider", async () => {
+  it.each(["primary", "portal-linked"])("blocks QA Pirsumfon, voice summaries and queued callbacks to a %s phone without contacting a provider", async kind => {
     customer();
     sql.exec("UPDATE customers SET source='qa-test'");
+    if (kind === "portal-linked") {
+      sql.exec("UPDATE customers SET primary_phone='0507654321'; UPDATE console_records SET body=json_set(body,'$.phone','0507654321') WHERE kind='customers'");
+      await new BusinessStore(env.DB).save("learner-phone-links", { phone: "0501234567", customer_id: "person1" }, "linked-phone");
+    }
+    expect(await isQaPhone(env.DB, "0501234567")).toBe(true);
     Object.assign(env, { TLIVR_SYSTEM_API_KEY: "test", TLIVR_SYSTEM_PHONE: "0765673575", GOOGLE_TTS_SERVICE_ACCOUNT_JSON: "test", TLIVR_CALLBACK_EXTENSION_ID: "123" });
     const fetcher = vi.spyOn(globalThis, "fetch");
     const audio = vi.fn();
@@ -139,6 +144,14 @@ describe("QA customer exclusion", () => {
       expect(audio).not.toHaveBeenCalled();
       expect(sql.prepare("SELECT COUNT(*) AS n FROM pirsumfon_pings").get()?.n).toBe(0);
     } finally { vi.useRealTimers(); }
+  });
+  it("does not exclude portal-linked phones for real or missing customers", async () => {
+    customer();
+    const business = new BusinessStore(env.DB);
+    await business.save("learner-phone-links", { phone: "0507654321", customer_id: "person1" }, "real-link");
+    await business.save("learner-phone-links", { phone: "0501111111", customer_id: "missing" }, "missing-link");
+    expect(await isQaPhone(env.DB, "0507654321")).toBe(false);
+    expect(await isQaPhone(env.DB, "0501111111")).toBe(false);
   });
 });
 
