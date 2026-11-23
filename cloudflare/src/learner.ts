@@ -169,7 +169,7 @@ export async function applyLearnerControls(
     "Encourage actual speaking, one short question at a time. Be natural, kind, and concise. Use the selected conversation, spelling or grammar practice.",
   ].filter(Boolean).join("\n");
   return {
-    ...controls, ...privacy, lesson,
+    ...controls, ...privacy, lesson, phone_lesson: channel === "phone",
     teacher_name: teacher?.name || DEFAULT_TEACHER_NAME,
     teacher_female: isFemaleVoice(teacher?.voice || DEFAULT_TEACHER_VOICE),
     intake_pending: intakePending,
@@ -184,7 +184,7 @@ export async function applyLearnerControls(
 
 function phoneCalibration(intakePending: boolean): string {
   return [
-    "Phone ability calibration (overrides any fixed level or learner age in the base persona): use the learner's stated level from the next question. מתקדם / advanced means fluent: use natural mostly-English conversation and open-ended questions that invite detail or an opinion, not elementary greetings or repeat-after-me drills. Use a brief Hebrew hint if needed. If the learner says this is too easy or answers with ease, increase the conversational challenge immediately; do not change the saved level from observation alone.",
+    "Phone ability calibration (overrides any fixed level or learner age in the base persona): use the learner's stated level for the difficulty of the next question, not the language you speak. מתקדם / advanced means fluent: ask open-ended questions that invite detail or an opinion, not elementary greetings or repeat-after-me drills. If the learner says this is too easy or answers with ease, increase the conversational challenge immediately; do not change the saved level from observation alone.",
     intakePending
       ? "Before intake is saved, the configured level is provisional. Once the learner gives their level and goal, call save_intake and start at that level; do not ask them to prove their level first."
       : "When the learner explicitly states a different level as their own (not as quoted or role-play content), treat it as a level change. If clear, use it immediately and call save_intake with the current goal and the new level; clarify once only if ambiguous.",

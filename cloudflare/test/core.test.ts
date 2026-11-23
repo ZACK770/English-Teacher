@@ -12,7 +12,7 @@ import type { Env } from "../src/env";
 import { SessionMeter } from "../src/meter";
 import worker from "../src/index";
 import { ProgressStore } from "../src/progress";
-import { silenceNudgeDue, TutorSession } from "../src/session";
+import { PHONE_SILENCE_NUDGE_NOTE, SILENCE_NUDGE_NOTE, silenceNudgeDue, TutorSession } from "../src/session";
 import { INITIAL_CONTROLS } from "../../src/store/initialData";
 
 const pcm = (values: number[]) => new Uint8Array(Int16Array.from(values).buffer);
@@ -167,6 +167,11 @@ it("keeps a migrated bot visible but unavailable without changing its saved reco
 });
 
 describe("silence nudge", () => {
+  it("rephrases the whole phone question in Hebrew and resets English calibration", () => {
+    expect(PHONE_SILENCE_NUDGE_NOTE).toContain(SILENCE_NUDGE_NOTE);
+    expect(PHONE_SILENCE_NUDGE_NOTE).toContain("Rephrase the question itself in Hebrew, not English");
+    expect(PHONE_SILENCE_NUDGE_NOTE).toContain("reset the independent-answer count");
+  });
   it("re-prompts after seven quiet seconds, at most twice in a row", () => {
     expect(silenceNudgeDue(10000, 2000, 3000, 0)).toBe(true);
     expect(silenceNudgeDue(9000, 2000, 3000, 0)).toBe(false);

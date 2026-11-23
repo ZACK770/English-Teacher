@@ -65,6 +65,8 @@ describe("compact application instruction contracts", () => {
     const text = adRuntimeContext({ entry: "ad", ad_new_caller: true });
     for (const rule of ["Ask nothing else before practice", "Whenever asked for Hebrew", "not a repeat-after-me drill", "after the application signals 90 seconds", "explicit agreement", "Never request registration email", "preserving all digits and leading zeros", "Await explicit yes", "identical address", "Only its saved=true", "Never claim an SMS was already sent", "Never offer a discounted first month", "29 shekel", "free trial that requires a credit card", "Do not pressure; one offer is enough"]) expect(text).toContain(rule);
     expect(text.match(/call save_email/g)).toHaveLength(1);
+    expect(text).toContain("First minute: frame practice in Hebrew");
+    expect(text).not.toContain("get a natural, open-ended English question");
     const returning = adRuntimeContext({ entry: "ad", ad_new_caller: false });
     expect(returning).toContain("Returning caller: skip the introductory questionnaire");
     expect(returning).not.toContain("Ask nothing else before practice");

@@ -27,6 +27,7 @@ import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./pho
 export const SILENCE_NUDGE_MS = 7000;
 export const MAX_SILENCE_NUDGES = 2;
 export const SILENCE_NUDGE_NOTE = "APPLICATION NOTE: the caller has been silent for several seconds after your last turn. They may not have heard you or may not know what to answer. In one short Hebrew sentence check that they can hear you (for example \"יש קליטה? גם עברית זה מצוין.\"), then ask your last question again more simply; if it had options, name them briefly.";
+export const PHONE_SILENCE_NUDGE_NOTE = SILENCE_NUDGE_NOTE + " Rephrase the question itself in Hebrew, not English. Return to Hebrew and reset the independent-answer count according to the phone language policy.";
 
 export function silenceNudgeDue(now: number, lastHuman: number, lastTutorAudio: number, nudges: number): boolean {
   return nudges < MAX_SILENCE_NUDGES && now - Math.max(lastHuman, lastTutorAudio) >= SILENCE_NUDGE_MS;
@@ -690,7 +691,7 @@ export class TutorSession {
             topic: args.topic === undefined ? previous.topic : updated?.topic ?? previous.topic,
           };
         });
-        const access = this.portal ? "These override the requested direction when access is limited." : "The level immediately replaces the earlier conversational level; access limits apply to curriculum, not to the difficulty of your English conversation. Continue assessing only the original targets until the next call.";
+        const access = this.portal ? "These override the requested direction when access is limited." : "Apply the level to conversational difficulty immediately; it does not change the language you speak. Access limits apply to curriculum, not to conversational difficulty. Continue assessing only the original targets until the next call.";
         this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}. ${access} The full saved plan applies from the next call. Start or continue the lesson now.`);
       }
       return saved;
@@ -807,7 +808,7 @@ export class TutorSession {
     if (!silenceNudgeDue(now, this.lastHuman, this.lastTutorAudio, this.silenceNudges)) return;
     this.silenceNudges++;
     this.nudgedAt = this.lastTutorAudio = now;
-    this.ai.prompt(SILENCE_NUDGE_NOTE);
+    this.ai.prompt(this.controls.phone_lesson ? PHONE_SILENCE_NUDGE_NOTE : SILENCE_NUDGE_NOTE);
     void this.progress.logDiagnostic(this.profileId, this.callId, "silence_nudge", { nudge: this.silenceNudges }).catch(() => {});
   }
 
