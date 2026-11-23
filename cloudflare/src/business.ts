@@ -708,12 +708,12 @@ export class BusinessStore {
     const m = month();
     const [salesResult, usageResult] = await this.db.batch<Record<string, any>>([
       this.db.prepare("SELECT * FROM sales_receipts ORDER BY created_at DESC"),
-      this.db.prepare(`SELECT s.call_id,s.duration_seconds,s.estimated_cost_usd,s.started_at,COALESCE(c.customer_id,s.student_id) AS customer_id,c.bot_id,b.role,u.receipt_id,u.call_id AS metered_call
+      this.db.prepare(`SELECT s.call_id,s.duration_seconds,s.estimated_cost_usd,s.started_at,s.student_id,c.customer_id,c.bot_id,b.role,u.receipt_id,u.call_id AS metered_call
         FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id LEFT JOIN bots b ON b.id=c.bot_id
         LEFT JOIN usage_allocations u ON u.call_id=s.call_id AND u.product<>?`).bind(UNMETERED_SESSION_PRODUCT),
     ]);
     const sales = salesResult.results.filter(r => !excluded.has(r.customer_id));
-    const usage = usageResult.results.filter(r => !excluded.has(r.customer_id));
+    const usage = usageResult.results.filter(r => !excluded.has(r.customer_id) && !excluded.has(r.student_id));
     const round = (v: number) => Math.round(v * 100) / 100;
     const monthlySales = sales.filter((r) => String(r.created_at).startsWith(m));
     const net = monthlySales.reduce((a, r) => a + r.amount_ils / (1 + r.vat_rate), 0);

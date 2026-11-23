@@ -53,6 +53,32 @@ function session(id = "call1", transcript: string | null = JSON.stringify([{ rol
 const request = (path: string, auth = true, method = "GET") => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/" + path, { method, headers: auth ? { Authorization: "Bearer crm-test-secret" } : {} }), env);
 const reset = (confirm: unknown = "0501234567", id = "person1", headers: Record<string, string> = { Authorization: "Bearer crm-test-secret" }) => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/people/" + id, { method: "DELETE", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ confirm }) }), env);
 describe("QA customer exclusion", () => {
+  it("keeps unlinked sessions out of product usage while retaining their overall cost", async () => {
+    customer(); session("linked"); session("unlinked");
+    sql.exec("DELETE FROM call_customers WHERE call_id='unlinked'");
+    const business = new BusinessStore(env.DB);
+    await business.putSetting("economics", { usd_ils: 4 });
+    expect(await business.summary()).toMatchObject({
+      ai_cost_ils: 0.8, unattributed_sessions: 1,
+      products: { school: { minutes: 2, ai_cost: 0.4 }, translator: { minutes: 0, ai_cost: 0 } },
+    });
+    sql.exec("DELETE FROM call_customers");
+    expect(await business.summary()).toMatchObject({
+      ai_cost_ils: 0.8, unattributed_sessions: 2,
+      products: { school: { minutes: 0, ai_cost: 0 }, translator: { minutes: 0, ai_cost: 0 } },
+    });
+  });
+  it.each(["unlinked", "student_id", "customer_id"])("excludes QA usage identified through %s", async identity => {
+    customer(); customer("real", "0507654321"); session();
+    sql.exec("UPDATE customers SET source='qa-test' WHERE id='person1'");
+    if (identity === "unlinked") sql.exec("DELETE FROM call_customers");
+    if (identity === "student_id") sql.exec("UPDATE call_customers SET customer_id='real'");
+    if (identity === "customer_id") sql.exec("UPDATE sessions SET student_id='real'");
+    expect(await new BusinessStore(env.DB).summary()).toMatchObject({
+      ai_cost_ils: 0, unattributed_sessions: 0,
+      products: { school: { minutes: 0, ai_cost: 0 }, translator: { minutes: 0, ai_cost: 0 } },
+    });
+  });
   it("returns no exclusions for an empty database and propagates lookup failures", async () => {
     expect(await qaCustomerIds(env.DB)).toEqual(new Set());
     expect(await isQaPhone(env.DB, "0501234567")).toBe(false);
