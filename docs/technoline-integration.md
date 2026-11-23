@@ -241,6 +241,16 @@ or implement shared cancellation routing before scaling workers/instances.
 
 ## Official references
 
+### Campaign external IDs
+
+`campaignRun.externalID` is limited to 50 characters by the
+[campaign API docs](https://pbx.tlivr.com/campaignApiDocs.html). Generate a fresh
+ID for each send: up to 17 characters of the local reference, a hyphen, and
+32 random hexadecimal characters. Keep local reminder/customer-day and callback
+deduplication IDs unchanged. Reusing a provider external ID returned error 54
+in the authorized reminder test; a fresh ID was accepted. This does not enable
+automatic reminder retries or make uncertain sends safe to retry.
+
 https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
 https://pbx.tlivr.com/streamingApiDocs.html

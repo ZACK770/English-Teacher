@@ -491,7 +491,7 @@ describe("lesson callback scheduling", () => {
     expect(fetcher).not.toHaveBeenCalled();
     vi.setSystemTime(new Date("2026-01-05T08:00:00Z"));
     expect(await dispatchCallbacks(env)).toEqual({ sent: 1, queued: 1 });
-    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ phones: ["0500000001"], externalID: row.id });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ phones: ["0500000001"], externalID: expect.stringMatching(new RegExp("^" + String(row.id).slice(0, 17) + "-[a-f0-9]{32}$")) });
     expect(db.sql.prepare("SELECT status FROM callback_requests").get()?.status).toBe("dialed");
     await recordSalesTool(b, "learner-a", "followup-call", "schedule_next_lesson", args);
     expect(await dispatchCallbacks(env)).toEqual({ sent: 0, queued: 0 });
@@ -1631,6 +1631,9 @@ describe("real learner portal", () => {
         expect.objectContaining({ phones: ["0501112255"], messagesType: "RH", callId: "0765674487", dialRetries: 0 }),
       ]);
       expect(send.mock.calls[0][0]).toBe("https://api.tlivr.com/campaignApi.php");
+      const externalIds = send.mock.calls.map(([, init]) => JSON.parse(init.body as string).externalID);
+      expect(new Set(externalIds).size).toBe(3);
+      for (const id of externalIds) expect(id).toMatch(/^pirsumfon-[a-f0-9]{7}-[a-f0-9]{32}$/);
       expect(await b.loadContext("pirsumfon-1")).not.toHaveProperty("entry");
       expect(await dial("pirsumfon-1", "school", "1")).toMatchObject({ type: "goTo", goTo: "/7" });
       for (const did of ["0765674487", "0765674429"]) {
@@ -1833,6 +1836,7 @@ describe("real learner portal", () => {
       expect(form.get("phones")).toBe("0500000001");
       expect(form.get("dialRetries")).toBe("0");
       expect(form.get("betweenRetries")).toBe("20");
+      expect(form.get("externalID")).toMatch(/^[a-f0-9]{17}-[a-f0-9]{32}$/);
       expect((form.get("audioFile") as File).type).toBe("audio/wav");
       return Response.json({ status: "OK", errorCode: 0 });
     });

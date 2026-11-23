@@ -1,4 +1,5 @@
 import { BusinessStore } from "./business";
+import { campaignExternalId } from "./technoline-campaign";
 import { normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
 import { type Env, sha256Hex } from "./env";
 import { PRACTICE_DAY_MIN_SECONDS, refreshReminderWeekdays, reminderWeekdays } from "./practice";
@@ -109,7 +110,7 @@ export async function dispatchPracticeReminders(env: Env, now = new Date()): Pro
           signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY, phones: [phone],
             title: "SpeakCall practice reminder", messagesType: "RH", callId: SPEAKCALL_PHONE,
-            dialRetries: 0, reasonableHours: "no", externalID: id }),
+            dialRetries: 0, reasonableHours: "no", externalID: campaignExternalId(id) }),
         });
         const result = await response.json<{ status?: string; errorCode?: string | number }>();
         sent = response.ok && String(result?.status).toUpperCase() === "OK" && String(result?.errorCode) === "0";
