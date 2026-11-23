@@ -368,6 +368,26 @@ describe("learner settings to Gemini", () => {
     expect(tools.map(t => t.name)).toEqual(["report_learning_batch", "record_lesson_summary", "end_session", "save_intake"]);
     expect(JSON.stringify(tools)).not.toContain("business.liability");
   });
+  it("bases phone lesson language on independent answers, not the saved level or role-play mode", async () => {
+    await b.savePreference("alice", { level: "fluent", conversation_mode: "roleplay" });
+    const bot = { id: "isaac-advanced", role: "teacher" as const };
+    const base = { ...controlsFromSettings(false), base_prompt: "Use mostly English by default." };
+    const phone = await applyLearnerControls(b, "alice", bot, base, undefined, "phone");
+    const system = buildSystemInstruction(phone, "Earlier lessons used English.");
+    expect(phone.lesson?.level).toBe("fluent");
+    expect(system).toContain("Start and teach in natural, gender-neutral Hebrew at every level");
+    expect(system).toContain("at least three consecutive correct, relevant English answers the learner phrased independently");
+    expect(system).toContain("Repeating or reading an example");
+    expect(system).toContain("silence, an unrelated answer, 'מה?' or 'לא הבנתי'), respond in Hebrew immediately");
+    expect(system).toContain("following the phone language policy even in role-play");
+    expect(system).not.toContain("Explain in Hebrew only when asked");
+    expect(system).not.toContain("means fluent: use natural mostly-English conversation");
+
+    const web = await applyLearnerControls(b, "alice", bot, base);
+    expect(buildSystemInstruction(web, "")).not.toContain("Phone language policy");
+    const translator = await applyLearnerControls(b, "alice", { id: "translator", role: "translator" }, base, undefined, "phone");
+    expect(buildSystemInstruction(translator, "")).not.toContain("Phone language policy");
+  });
   it("sends intake minutes as an integer without an enum to Gemini Live", async () => {
     const controls = await applyLearnerControls(b, "alice", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
     const { setup } = buildSetupPayload(controls, "lesson", "teacher", settings({} as any));
@@ -379,6 +399,25 @@ describe("learner settings to Gemini", () => {
       },
     });
     expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");
+  });
+  it("persists an explicit relative phone downgrade for future calls", async () => {
+    const bot = { id: "isaac-basic", role: "teacher" as const };
+    const base = controlsFromSettings(false);
+    const intake = { goal: "travel", level: "lower" };
+    expect(await saveIntake(b, "alice", bot.id, { goal: "travel", level: "fluent", minutes: 20 })).toBe(true);
+    const phoneControls = () => applyLearnerControls(b, "alice", bot, base, undefined, "phone");
+    const before = await phoneControls();
+    expect(before.lesson?.level).toBe("fluent");
+    const tools = buildSetupPayload(before, "", bot.id, settings({} as any)).setup.tools[0].functionDeclarations;
+    expect(tools.find(t => t.name === "save_intake")).toMatchObject({ parameters: { properties: { level: { enum: ["beginner", "intermediate", "fluent", "lower"] } } } });
+    expect(await saveIntake(b, "alice", bot.id, intake)).toBe(false);
+    for (const level of ["intermediate", "beginner", "beginner"]) {
+      expect(await saveIntake(b, "alice", bot.id, intake, { allowLower: true })).toBe(true);
+      expect((await phoneControls()).lesson?.level).toBe(level);
+      const preferences = await b.loadContext("preferences:alice");
+      expect(preferences.plan).toMatchObject({ goal: "travel", level, minutes: 20 });
+      expect(await b.record(teachersKind("alice"), preferences.active_teacher)).toMatchObject({ level });
+    }
   });
   it("takes the intake goal from what the learner said when it names exactly one purpose", () => {
     expect(goalFromLearnerSpeech("study", "דני. אני רוצה ללמוד אנגלית בשביל טיול לחו\"ל")).toBe("travel");

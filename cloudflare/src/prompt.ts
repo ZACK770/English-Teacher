@@ -10,6 +10,7 @@ import {
   INTAKE_TOOL,
   LESSON_SUMMARY_TOOL,
   OBSERVATION_TOOL,
+  PHONE_INTAKE_TOOL,
   TRANSLATION_LANGUAGE_TOOL,
 } from "./tools";
 
@@ -44,7 +45,7 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
   const salesTools = c.sales ? SALES_TOOLS.filter(t => !call.customerId?.startsWith("anonymous-") || t.name === "start_ad_practice") : [];
   // Intake also handles direction changes later in the same connection.
   const tools: Record<string, unknown>[] = c.lesson
-    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : []), ...(call.practiceReminders && call.customerId && !call.customerId.startsWith("anonymous-") ? [PRACTICE_REMINDER_TOOL] : [])]
+    ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, c.phone_lesson ? PHONE_INTAKE_TOOL : INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : []), ...(call.practiceReminders && call.customerId && !call.customerId.startsWith("anonymous-") ? [PRACTICE_REMINDER_TOOL] : [])]
     : [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL, TRANSLATION_LANGUAGE_TOOL];
   if (c.lesson && call.masteryDomain && call.customerId && !call.customerId.startsWith("anonymous-")) tools.push(MASTERY_DOMAIN_TOOL);
   return {

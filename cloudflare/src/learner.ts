@@ -169,7 +169,7 @@ export async function applyLearnerControls(
     "Encourage actual speaking, one short question at a time. Be natural, kind, and concise. Use the selected conversation, spelling or grammar practice.",
   ].filter(Boolean).join("\n");
   return {
-    ...controls, ...privacy, lesson,
+    ...controls, ...privacy, lesson, phone_lesson: channel === "phone",
     teacher_name: teacher?.name || DEFAULT_TEACHER_NAME,
     teacher_female: isFemaleVoice(teacher?.voice || DEFAULT_TEACHER_VOICE),
     intake_pending: intakePending,
@@ -184,7 +184,8 @@ export async function applyLearnerControls(
 
 function phoneCalibration(intakePending: boolean): string {
   return [
-    "Phone ability calibration (overrides any fixed level or learner age in the base persona): use the learner's stated level from the next question. מתקדם / advanced means fluent: use natural mostly-English conversation and open-ended questions that invite detail or an opinion, not elementary greetings or repeat-after-me drills. Use a brief Hebrew hint if needed. If the learner says this is too easy or answers with ease, increase the conversational challenge immediately; do not change the saved level from observation alone.",
+    "Phone ability calibration (overrides any fixed level or learner age in the base persona): use the learner's stated level for the difficulty of the next question, not the language you speak. מתקדם / advanced means fluent: ask open-ended questions that invite detail or an opinion, not elementary greetings or repeat-after-me drills. If the learner says this is too easy or answers with ease, increase the conversational challenge immediately; do not change the saved level from observation alone.",
+    "If the learner explicitly asks for a lower or easier level (e.g. 'אפשר לרדת רמה?'), call save_intake once for that request and include the current goal. Use the named level if given, or level='lower' if not. Do not just simplify a single question. On success, continue at the new difficulty in Hebrew. If they only sound confused, simplify without saving a level change.",
     intakePending
       ? "Before intake is saved, the configured level is provisional. Once the learner gives their level and goal, call save_intake and start at that level; do not ask them to prove their level first."
       : "When the learner explicitly states a different level as their own (not as quoted or role-play content), treat it as a level change. If clear, use it immediately and call save_intake with the current goal and the new level; clarify once only if ambiguous.",
@@ -363,7 +364,7 @@ export async function phoneTeacherFor(progress: ProgressStore, botId: string) {
 
 export async function saveIntake(
   b: BusinessStore, customerId: string, phoneBotId: string | null, args: unknown,
-  { lessonBotId = phoneBotId, previewTeacher }: { lessonBotId?: string | null; previewTeacher?: string } = {},
+  { lessonBotId = phoneBotId, previewTeacher, allowLower = false }: { lessonBotId?: string | null; previewTeacher?: string; allowLower?: boolean } = {},
 ) {
   const given = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const prior = await b.loadContext("preferences:" + customerId);
@@ -371,6 +372,10 @@ export async function saveIntake(
   if (previewTeacher && !teacher) return false;
   const kept = (key: "level" | "minutes" | "topic" | "difficulty") => given[key] ?? [prior[key], prior.plan?.[key]].find(value => PlanSchema.shape[key].safeParse(value).success);
   let level = given.level;
+  if (allowLower && level === "lower") {
+    const current = resolveLessonChoices(prior, lessonBotId ?? "", teacher).level;
+    level = current === "fluent" ? "intermediate" : "beginner";
+  }
   if (level === undefined) {
     if (teacher || prior.trial_setup || PlanSchema.safeParse(prior.plan).success) {
       level = kept("level") ?? resolveLessonChoices({}, lessonBotId ?? "", teacher).level;
