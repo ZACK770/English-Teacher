@@ -33,6 +33,18 @@ const request = (path: string, body?: unknown, headers: Record<string, string> =
 }), env);
 
 describe("analytics ingestion and funnel", () => {
+  it("excludes QA conversions and their linked anonymous visitor from the funnel", async () => {
+    const at = new Date().toISOString();
+    sql.prepare("INSERT INTO customers(id,source,created_at,updated_at) VALUES ('qa','qa-test',?,?)").run(at, at);
+    await request("/v1/public/events", event());
+    await conversion(env, "purchase", attribution, "qa-receipt", "qa", 59);
+    sql.prepare("INSERT INTO payment_orders(id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at) VALUES ('qa-order','qa-call','qa','p','{}',5900,0,'handoff',?,?)").run(at, at);
+    await conversion(env, "begin_checkout", { ...attribution, visitor_id: "qa-order-visitor" }, "qa-order", undefined, undefined, "qa-order");
+    const headers = { Authorization: "Bearer analytics-admin-test" };
+    expect(await (await request("/v1/admin/analytics", undefined, headers)).json()).toMatchObject({ rows: [] });
+    await conversion(env, "purchase", { ...attribution, visitor_id: "real-visitor" }, "real-receipt", "real", 100);
+    expect(await (await request("/v1/admin/analytics", undefined, headers)).json()).toMatchObject({ rows: [expect.objectContaining({ visitors: 1, purchases: 1, revenue: 100 })] });
+  });
   it("accepts a lead despite a failing analytics insert", async () => {
     sql.exec("CREATE TRIGGER fail_analytics BEFORE INSERT ON analytics_events BEGIN SELECT RAISE(FAIL,'analytics unavailable'); END;");
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});

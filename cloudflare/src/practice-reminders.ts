@@ -1,5 +1,6 @@
 import { BusinessStore } from "./business";
 import { campaignExternalId } from "./technoline-campaign";
+import { qaCustomerSql } from "./qa-customers";
 import { normalizePhone, SPEAKCALL_PHONE } from "./callbacks";
 import { type Env, sha256Hex } from "./env";
 import { PRACTICE_DAY_MIN_SECONDS, refreshReminderWeekdays, reminderWeekdays } from "./practice";
@@ -83,7 +84,7 @@ export async function dispatchPracticeReminders(env: Env, now = new Date()): Pro
     return { ...localParts(at), at: at.toISOString() };
   });
   const rows = await env.DB.prepare(`SELECT r.customer_id,r.time_local,r.weekdays,r.source,c.primary_phone AS phone
-    FROM practice_reminders r JOIN customers c ON c.id=r.customer_id WHERE r.active=1`)
+    FROM practice_reminders r JOIN customers c ON c.id=r.customer_id WHERE r.active=1 AND NOT ${qaCustomerSql("r.customer_id")}`)
     .all<{ customer_id: string; time_local: string; weekdays: string; source: string; phone: string }>();
   for (const row of rows.results) {
     try {

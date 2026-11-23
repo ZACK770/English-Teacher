@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type Env, HttpError, sha256Hex } from "./env";
+import { qaCustomerSql } from "./qa-customers";
 
 const short = z.string().max(200);
 const path = z.string().max(500).regex(/^\/[^?#]*$/);
@@ -99,7 +100,11 @@ export async function analyticsSummary(request: Request, env: Env) {
     COUNT(DISTINCT CASE WHEN origin='server' AND event='begin_checkout' THEN reference END) AS checkouts,
     COUNT(DISTINCT CASE WHEN origin='server' AND event='purchase' THEN reference END) AS purchases,
     COALESCE(SUM(CASE WHEN origin='server' AND event='purchase' THEN value ELSE 0 END),0) AS revenue
-    FROM analytics_events WHERE ts>=? AND ts<? GROUP BY 1,2 ORDER BY visitors DESC LIMIT 500`)
+    FROM analytics_events e WHERE ts>=? AND ts<?
+    AND NOT ${qaCustomerSql("e.customer_id")}
+    AND NOT EXISTS (SELECT 1 FROM payment_orders o WHERE (o.id=e.order_id OR o.id=e.reference) AND ${qaCustomerSql("o.customer_id")})
+    AND e.visitor_id NOT IN (SELECT visitor_id FROM analytics_events identified WHERE ${qaCustomerSql("identified.customer_id")})
+    GROUP BY 1,2 ORDER BY visitors DESC LIMIT 500`)
     .bind(start + "T00:00:00.000Z", new Date(Date.parse(end) + 86400000).toISOString()).all<Record<string, string | number>>()).results;
   return Response.json({ start, end, currency: "ILS", rows: rows.map(r => ({ ...r,
     lead_rate: Number(r.leads) / Number(r.visitors), signup_rate: Number(r.signups) / Number(r.visitors),

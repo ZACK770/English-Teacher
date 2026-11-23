@@ -6,6 +6,7 @@ import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./e
 import { visiblePhone } from "./phone";
 import { salesOfferDialError } from "./sales-offer";
 import { campaignExternalId } from "./technoline-campaign";
+import { isQaPhone } from "./qa-customers";
 
 const CALLBACK_IP_PREFIX = "public-callback:ip:";
 const CALLBACK_IP_LIMIT = 3;
@@ -242,6 +243,7 @@ export function lessonSummaryAudioText(points: number | undefined, learnerTurns:
 
 export async function callWithLessonSummary(env: Env, phone: string, callId: string, makeAudio: () => Promise<Uint8Array>, now = new Date()) {
   if (!canCallWithLessonSummary(env, phone, now)) return false;
+  if (await isQaPhone(env.DB, normalizePhone(phone)!)) return false;
   const recipient = normalizePhone(phone)!;
   const id = (await sha256Hex("lesson-summary:" + callId)).slice(0, 32);
   const at = now.toISOString();
@@ -340,6 +342,11 @@ function dialerConfigured(env: Env): boolean {
 }
 
 async function dialCallbackRow(env: Env, item: { id: string; phone: string; attempts: number; timing: string; source: string }, now: Date, immediateForm = false): Promise<"dialing" | "dialed" | "queued" | "failed"> {
+  if (await isQaPhone(env.DB, item.phone)) {
+    await env.DB.prepare("UPDATE callback_requests SET status='failed',last_error='QA test customer excluded',next_attempt_at=NULL,updated_at=? WHERE id=? AND status='queued'")
+      .bind(now.toISOString(), item.id).run();
+    return "failed";
+  }
   if (item.source === "sales_offer") {
     const error = await salesOfferDialError(env, item.id, item.phone, now);
     if (error) {

@@ -1,5 +1,6 @@
 import { BusinessStore, UNMETERED_SESSION_PRODUCT } from "./business";
 import type { Env } from "./env";
+import { qaCustomerSql } from "./qa-customers";
 
 const OVERLAP_MS = 3 * 3600 * 1000;
 
@@ -14,10 +15,11 @@ export async function syncCrm(env: Env): Promise<Record<string, unknown>> {
      FROM sessions s JOIN call_customers c ON c.call_id=s.call_id LEFT JOIN bots b ON b.id=c.bot_id
      LEFT JOIN usage_allocations u ON u.call_id=s.call_id AND u.product<>?
      WHERE s.ended_at>=? AND s.student_id NOT LIKE 'system:%' AND s.student_id NOT LIKE 'anonymous-%'
+       AND NOT ${qaCustomerSql("c.customer_id")}
        AND c.bot_id<>'voice-navigator-live' AND COALESCE(b.role,'teacher') NOT IN ('translator','navigation')
      ORDER BY s.ended_at LIMIT 1000`,
   ).bind(UNMETERED_SESSION_PRODUCT, since).all<Record<string, any>>();
-  const { results: receipts } = await env.DB.prepare("SELECT * FROM sales_receipts WHERE created_at>=? ORDER BY created_at LIMIT 1000").bind(since).all<Record<string, any>>();
+  const { results: receipts } = await env.DB.prepare(`SELECT * FROM sales_receipts WHERE created_at>=? AND NOT ${qaCustomerSql("sales_receipts.customer_id")} ORDER BY created_at LIMIT 1000`).bind(since).all<Record<string, any>>();
   const packages = Object.fromEntries((await b.list("packages")).map((p) => [p.id, p]));
   const customerIds = [...new Set([...calls.map((c) => c.student_id), ...receipts.map((r) => r.customer_id)])];
   const events: Record<string, unknown>[] = [];

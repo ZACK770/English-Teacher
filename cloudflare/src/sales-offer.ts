@@ -3,6 +3,7 @@ import { fromLocal, localDate, nextCallingSlot, normalizePhone } from "./callbac
 import { type Env, HttpError, nowIso } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
 import { SCHOOL_FREE_POLICY } from "../../src/pricing";
+import { isQaCustomer, qaCustomerSql } from "./qa-customers";
 
 export const SALES_EXTENSION_PATH = "/3";
 export const SALES_OFFER_RECORDING = "sales-offer-month20-22a3e286bc65.wav";
@@ -85,6 +86,7 @@ function scheduleAt(at: Date) {
 }
 
 async function queueOffer(b: BusinessStore, env: Env, customerId: string, phone: string, droppedAt: string, schedule: { at: string; expires: string }, now: Date) {
+  if (await isQaCustomer(b.db, customerId)) return null;
   const test = salesOfferTestPhone(env, phone);
   if (!salesOfferAllowed(env, phone) || !test && await customerBought(b, customerId, now.toISOString())) return null;
   const id = test ? `sales-offer:test:${customerId}:${schedule.at}` : "sales-offer:" + customerId;
@@ -141,6 +143,7 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
   const { results } = await env.DB.prepare(`WITH candidates AS (${candidates})
     SELECT t.customer_id,t.dropped_at,ph.phone FROM candidates t JOIN customer_phones ph ON ph.customer_id=t.customer_id
     WHERE length(ph.phone) BETWEEN 8 AND 15 AND ph.phone NOT GLOB '*[^0-9]*' AND ph.phone GLOB '*[1-9]*'
+    AND NOT ${qaCustomerSql("t.customer_id")}
     AND (?6='on' OR ph.phone IN (SELECT value FROM json_each(?5)))
     AND (ph.phone IN (SELECT value FROM json_each(?4)) OR (
       NOT ${buyerSql("t.customer_id", "?1")} AND NOT EXISTS(
@@ -157,6 +160,7 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
 export async function salesOfferDialError(env: Env, id: string, phone: string, now: Date) {
   const b = new BusinessStore(env.DB);
   const offer = await b.record("sales-offers", id);
+  if (offer && await isQaCustomer(b.db, offer.customer_id)) return "QA test customer excluded";
   if (!salesOfferAllowed(env, phone)) return "Sales offer gate disabled for phone";
   if (!offer || offer.phone !== normalizePhone(phone) || !["queued", "dialed"].includes(offer.status) || offer.expires_at <= now.toISOString()) return "Sales offer unavailable or expired";
   if (!salesOfferTestPhone(env, phone) && await customerBought(b, offer.customer_id, now.toISOString())) return "Sales offer customer already purchased";
