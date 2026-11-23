@@ -696,17 +696,20 @@ export class TutorSession {
       return saved;
     }
     if (call.name === "end_session") {
+      const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
       if (this.controls?.intake_pending && !this.finalSent && !this.intakeReminded && args.reason !== "caller_requested" && args.reason !== "no_response" && !args.destination) {
         this.intakeReminded = true;
+        if (reason === "task_completed") await this.logCompletionDecision(false, "intake_pending");
         await this.progress.logDiagnostic(this.profileId, this.callId, "intake_missing_at_end").catch(() => {});
         this.ai?.addContext("APPLICATION NOTE: the first-call intake was not saved. Do not hang up yet: call save_intake now with the goal and level the learner gave (omit unknown answers), then say goodbye and call end_session again.");
         return false;
       }
-      const reason = ["caller_requested", "task_completed", "no_response"].includes(String(args.reason)) ? String(args.reason) : "task_completed";
-      if (reason === "task_completed" && !this.canCompleteSession()) {
+      if (reason === "task_completed") {
+        const condition = this.completionCondition();
         const maySuggest = this.controls?.ending_policy === "model_discretion" || (this.controls?.ending_policy === "after_target_with_permission" && this.meteredAt !== null && Date.now() - this.meteredAt >= this.controls.target_lesson_minutes * 60000);
-        if (maySuggest) this.endConfirmationAt ??= this.meter.transcript.length;
-        return { saved: false, reason: "confirmation_required", next_step: maySuggest
+        if (!condition && maySuggest) this.endConfirmationAt ??= this.meter.transcript.length;
+        await this.logCompletionDecision(!!condition, condition ?? "confirmation_required");
+        if (!condition) return { saved: false, reason: "confirmation_required", next_step: maySuggest
           ? 'Ask the learner "רוצה לסיים?" and wait for their answer. Only after they agree, say the full goodbye and call end_session again. If they decline, continue the lesson.'
           : "Continue the lesson with another useful exercise. Do not suggest ending or ask for permission to end. End only if the learner explicitly asks to stop or the application signals the allowance is ending." };
       }
@@ -727,10 +730,29 @@ export class TutorSession {
     return this.meter.recordLearning(call.name ?? "", args);
   }
 
-  private canCompleteSession() {
-    if (this.finalSent || (this.meteredAt !== null && this.allowanceMs > 0 && Date.now() - this.meteredAt >= this.allowanceMs)) return true;
+  private async logCompletionDecision(allowed: boolean, condition: string) {
+    await this.progress.logDiagnostic(this.profileId, this.callId, "task_completed_guard", {
+      allowed, condition,
+      confirmation_requested_at_turn: this.endConfirmationAt,
+      transcript_turns: this.meter.transcript.length,
+      ending_policy: this.controls?.ending_policy ?? null,
+      has_lesson: !!this.controls?.lesson,
+      has_lesson_summary: this.meter.lessonSummary !== null,
+      learner_turns: this.meter.learnerTurns,
+      tutor_turns: this.meter.tutorTurns,
+      metered_at: this.meteredAt,
+      elapsed_ms: this.meteredAt === null ? null : Date.now() - this.meteredAt,
+      allowance_ms: this.allowanceMs,
+      target_lesson_minutes: this.controls?.target_lesson_minutes ?? null,
+      final_sent: this.finalSent,
+    }).catch(() => {});
+  }
+
+  private completionCondition() {
+    if (this.finalSent) return "quota_closing";
+    if (this.meteredAt !== null && this.allowanceMs > 0 && Date.now() - this.meteredAt >= this.allowanceMs) return "quota_exhausted";
     const learner = this.meter.transcript.filter(t => t.role === "learner").at(-1)?.text.trim() ?? "";
-    if (/^(?:תפסיק|תפסיקי|די|רוצה לסיים|אני רוצה לסיים|בוא נסיים|להתראות|stop|stop please|please stop|goodbye|bye|I want to stop|let's stop)[.!?\s]*$/i.test(learner)) return true;
+    if (/^(?:תפסיק|תפסיקי|די|רוצה לסיים|אני רוצה לסיים|בוא נסיים|להתראות|stop|stop please|please stop|goodbye|bye|I want to stop|let's stop)[.!?\s]*$/i.test(learner)) return "explicit_stop";
     if (this.endConfirmationAt !== null) {
       const turns = this.meter.transcript.slice(this.endConfirmationAt);
       let answer = turns.length - 1;
@@ -738,10 +760,10 @@ export class TutorSession {
       let previous = answer - 1;
       while (previous >= 0 && turns[previous].role !== "learner") previous--;
       const question = turns.slice(previous + 1, answer).filter(t => t.role === "tutor").map(t => t.text).join(" ");
-      if (answer >= 0 && /רוצה לסיים|want to (?:end|stop|finish)/i.test(question) && isEmailConfirmation(turns[answer].text)) return true;
+      if (answer >= 0 && /רוצה לסיים|want to (?:end|stop|finish)/i.test(question) && isEmailConfirmation(turns[answer].text)) return "learner_confirmation";
     }
-    if (!this.controls?.lesson) return !!this.controls && this.meter.learnerTurns > 0 && this.meter.tutorTurns > 0;
-    return this.controls.ending_policy === "model_discretion" && this.meter.learnerTurns > 0 && this.meter.lessonSummary !== null;
+    if (!this.controls?.lesson) return this.controls && this.meter.learnerTurns > 0 && this.meter.tutorTurns > 0 ? "non_lesson_turns" : null;
+    return this.controls.ending_policy === "model_discretion" && this.meter.learnerTurns > 0 && this.meter.lessonSummary !== null ? "lesson_summary_under_policy" : null;
   }
 
   private async pacedOutput() {
