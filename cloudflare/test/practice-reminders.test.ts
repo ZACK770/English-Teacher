@@ -222,6 +222,28 @@ describe("scheduled practice pings", () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ action: "campaignRun", phones: ["0501111111"], messagesType: "RH", callId: "0765673575", dialRetries: 0, externalID: expect.any(String) });
     expect(events()).toEqual([{ day: "2026-06-14", status: "sent", sent_at: now.toISOString() }]);
   });
+  it("keeps the event ID deterministic but uses fresh external IDs on an explicit replay", async () => {
+    env.REMINDERS_MODE = "live";
+    vi.mocked(fetch).mockResolvedValue(Response.json({ status: "ERROR", errorCode: 54 }));
+    await dispatchPracticeReminders(env, now);
+    const first = sql.prepare("SELECT id,status FROM practice_reminder_events").get()!;
+    await dispatchPracticeReminders(env, now);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(first.status).toBe("failed");
+    sql.exec("DELETE FROM practice_reminder_events");
+    vi.mocked(fetch).mockResolvedValue(Response.json({ status: "OK", errorCode: 0 }));
+    await dispatchPracticeReminders(env, now);
+    expect(sql.prepare("SELECT id,status FROM practice_reminder_events").get()).toEqual({ id: first.id, status: "sent" });
+    const ids = vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)).externalID);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+    for (const id of ids) {
+      expect(id).toMatch(new RegExp("^" + String(first.id).slice(0, 17) + "-[a-f0-9]{32}$"));
+      expect(id.length).toBeLessThanOrEqual(50);
+    }
+    await dispatchPracticeReminders(env, now);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("normalizes the live allowlist and rejects all unlisted numbers", async () => {
     env.REMINDERS_MODE = "live";
     env.REMINDERS_ALLOWLIST = "0502222222";

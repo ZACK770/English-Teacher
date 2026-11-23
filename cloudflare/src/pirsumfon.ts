@@ -1,5 +1,6 @@
 import { normalizePhone } from "./callbacks";
 import { type Env, sha256Hex } from "./env";
+import { campaignExternalId } from "./technoline-campaign";
 
 const CALLER_IDS = ["0765674487", "0765674429"];
 const WELCOME_FILE_ID = "1485697";
@@ -28,7 +29,7 @@ export async function pingPirsumfonCaller(env: Env, callId: string, caller: stri
     body: JSON.stringify({
       action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY, phones: [phone],
       title: "SpeakCall Pirsumfon", messagesType: "RH", callId: CALLER_IDS[(claim.sequence - 1) % CALLER_IDS.length],
-      dialRetries: 0, reasonableHours: "no", externalID: "pirsumfon-" + hash.slice(0, 40),
+      dialRetries: 0, reasonableHours: "no", externalID: campaignExternalId("pirsumfon-" + hash),
     }),
   });
   const status = await response.json<{ status?: string; errorCode?: string | number }>();

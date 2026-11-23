@@ -28,11 +28,20 @@ describe("Technoline callback dialer", () => {
     expect(buildTechnolineCallbackBody(env, "0501234567", "req-1", now)).toEqual({
       action: "campaignRun", apiKey: "test-key", phones: ["0501234567"], title: "SpeakCall callback",
       messagesType: "extensionActivation", extensionActivation: "456", dialRetries: 2,
-      betweenRetries: 15, reasonableHours: "no", externalID: "req-1",
+      betweenRetries: 15, reasonableHours: "no", externalID: expect.stringMatching(/^req-1-[a-f0-9]{32}$/),
     });
     expect(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: "123" }, "0501234567", "req-1", now, true))
       .toMatchObject({ demo: "yes", extensionActivation: "123" });
     expect(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: undefined }, "0501234567", "req-1", now).extensionActivation).toBeUndefined();
+  });
+  it("uses a fresh external ID when retrying the same callback request", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ status: "ERROR", errorCode: 54 }));
+    vi.stubGlobal("fetch", fetcher);
+    await dialTechnolineCallback(env, "0501234567", "req-1");
+    await dialTechnolineCallback(env, "0501234567", "req-1");
+    const bodies = fetcher.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(bodies[0].externalID).not.toBe(bodies[1].externalID);
+    expect(bodies.map(body => body.phones)).toEqual([["0501234567"], ["0501234567"]]);
   });
   it.each([
     [200, { status: "OK", errorCode: 0, campaignId: "demo", billing: 0 }, true],

@@ -5,6 +5,7 @@ import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
 import { salesOfferDialError } from "./sales-offer";
+import { campaignExternalId } from "./technoline-campaign";
 
 const CALLBACK_IP_PREFIX = "public-callback:ip:";
 const CALLBACK_IP_LIMIT = 3;
@@ -201,7 +202,7 @@ export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: 
     title: "SpeakCall callback", messagesType: "extensionActivation",
     extensionActivation: env.TLIVR_CALLBACK_EXTENSION_ID,
     dialRetries: sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "no",
-    externalID: requestId, ...(demo ? { demo: "yes" } : {}),
+    externalID: campaignExternalId(requestId), ...(demo ? { demo: "yes" } : {}),
   };
 }
 
@@ -257,7 +258,7 @@ export async function callWithLessonSummary(env: Env, phone: string, callId: str
     for (const [key, value] of Object.entries({
       action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY!,
       title: "SpeakCall lesson summary", messagesType: "audioFile", callId: SPEAKCALL_PHONE,
-      dialRetries: "0", betweenRetries: "20", reasonableHours: "yes", externalID: id,
+      dialRetries: "0", betweenRetries: "20", reasonableHours: "yes", externalID: campaignExternalId(id),
     })) body.set(key, value);
     body.set("phones", recipient);
     body.set("audioFile", new Blob([new Uint8Array(wav(pcm, 8000))], { type: "audio/wav" }), "summary.wav");
