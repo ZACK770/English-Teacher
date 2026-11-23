@@ -92,6 +92,21 @@ export const INTAKE_TOOL = {
   }
 };
 
+export const PHONE_INTAKE_TOOL = {
+  ...INTAKE_TOOL,
+  parameters: {
+    ...INTAKE_TOOL.parameters,
+    properties: {
+      ...INTAKE_TOOL.parameters.properties,
+      level: {
+        ...INTAKE_TOOL.parameters.properties.level,
+        enum: [...INTAKE_TOOL.parameters.properties.level.enum, "lower"],
+        description: INTAKE_TOOL.parameters.properties.level.description + " Use lower only when the learner explicitly requests a lower or easier level without naming one.",
+      },
+    },
+  },
+};
+
 export const END_SESSION_TOOL = {
   "name": "end_session",
   "description": "After generating the FULL spoken summary/goodbye, end on caller request or permitted task completion; never leave a finished session running. Server plays buffered speech and controls hangup/transfer.",

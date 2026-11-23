@@ -674,7 +674,7 @@ export class TutorSession {
       const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
       const goal = typeof args.goal === "string" && this.controls?.intake_pending ? goalFromLearnerSpeech(args.goal, heard) : args.goal;
       const previewTeacher = this.portal?.teacherId;
-      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal }, { lessonBotId: this.profileId, previewTeacher });
+      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal }, { lessonBotId: this.profileId, previewTeacher, allowLower: this.controls?.phone_lesson });
       await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) {
         const controls = this.controls = { ...this.controls, intake_pending: false };

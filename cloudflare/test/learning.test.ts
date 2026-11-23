@@ -400,6 +400,25 @@ describe("learner settings to Gemini", () => {
     });
     expect(intake).not.toHaveProperty("parameters.properties.minutes.enum");
   });
+  it("persists an explicit relative phone downgrade for future calls", async () => {
+    const bot = { id: "isaac-basic", role: "teacher" as const };
+    const base = controlsFromSettings(false);
+    const intake = { goal: "travel", level: "lower" };
+    expect(await saveIntake(b, "alice", bot.id, { goal: "travel", level: "fluent", minutes: 20 })).toBe(true);
+    const phoneControls = () => applyLearnerControls(b, "alice", bot, base, undefined, "phone");
+    const before = await phoneControls();
+    expect(before.lesson?.level).toBe("fluent");
+    const tools = buildSetupPayload(before, "", bot.id, settings({} as any)).setup.tools[0].functionDeclarations;
+    expect(tools.find(t => t.name === "save_intake")).toMatchObject({ parameters: { properties: { level: { enum: ["beginner", "intermediate", "fluent", "lower"] } } } });
+    expect(await saveIntake(b, "alice", bot.id, intake)).toBe(false);
+    for (const level of ["intermediate", "beginner", "beginner"]) {
+      expect(await saveIntake(b, "alice", bot.id, intake, { allowLower: true })).toBe(true);
+      expect((await phoneControls()).lesson?.level).toBe(level);
+      const preferences = await b.loadContext("preferences:alice");
+      expect(preferences.plan).toMatchObject({ goal: "travel", level, minutes: 20 });
+      expect(await b.record(teachersKind("alice"), preferences.active_teacher)).toMatchObject({ level });
+    }
+  });
   it("takes the intake goal from what the learner said when it names exactly one purpose", () => {
     expect(goalFromLearnerSpeech("study", "דני. אני רוצה ללמוד אנגלית בשביל טיול לחו\"ל")).toBe("travel");
     expect(goalFromLearnerSpeech("study", "אני רוצה ללמוד אנגלית לבגרות")).toBe("study");
