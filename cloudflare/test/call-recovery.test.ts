@@ -82,7 +82,7 @@ function session() {
   return { tutor, pbx };
 }
 
-it.each([240000, 30000])("requests a spoken quota closing once at T-25s of a %s-ms allowance", async allowanceMs => {
+it.each([240000, 30000, 61044])("requests a spoken quota closing once at T-25s of a %s-ms allowance", async allowanceMs => {
   vi.useFakeTimers();
   const { tutor } = session();
   const ai = new GeminiLive("wss://example.test", "test", {});
@@ -204,7 +204,10 @@ it.each([false, true])("only bypasses the unfinished-intake end gate during quot
   tutor.finalSent = closing;
   expect(await tutor.recordTool({ name: "end_session", args: { reason: "task_completed" } })).toBe(closing);
   expect(tutor.reason).toBe(closing ? "model:task_completed" : "");
-  expect(tutor.progress.logDiagnostic).toHaveBeenCalledTimes(closing ? 0 : 1);
+  expect(tutor.progress.logDiagnostic).toHaveBeenCalledTimes(closing ? 1 : 2);
+  expect(tutor.progress.logDiagnostic).toHaveBeenCalledWith("", "", "task_completed_guard", expect.objectContaining({
+    allowed: closing, condition: closing ? "quota_closing" : "intake_pending",
+  }));
   expect(tutor.ai.addContext).toHaveBeenCalledTimes(closing ? 0 : 1);
 });
 

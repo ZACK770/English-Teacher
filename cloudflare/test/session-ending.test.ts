@@ -7,6 +7,7 @@ function session() {
   const env = {} as Env;
   const tutor = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), "owner") as any;
   tutor.controls = { ...controlsFromSettings(false), ending_policy: "model_discretion", intake_pending: false, lesson: { vocabulary: [], grammar: [] } };
+  tutor.progress.logDiagnostic = vi.fn().mockResolvedValue(undefined);
   return tutor;
 }
 
@@ -95,4 +96,66 @@ it("routes a refusal through the Gemini tool response without ending the audio l
   await tutor.aiToOutput();
   expect(tutor.ai.submitToolResult).toHaveBeenCalledWith(complete, false, expect.objectContaining({ reason: "confirmation_required" }));
   expect(tutor.reason).toBe("");
+});
+
+it.each([
+  ["closing", "quota_closing"], ["quota", "quota_exhausted"],
+  ["explicit", "explicit_stop"], ["confirmation", "learner_confirmation"],
+  ["summary", "lesson_summary_under_policy"], ["translation", "non_lesson_turns"],
+])("logs the exact allowed condition: %s", async (mode, condition) => {
+  const tutor = session();
+  if (mode === "closing") tutor.finalSent = true;
+  if (mode === "quota") { tutor.meteredAt = Date.now() - 1000; tutor.allowanceMs = 1000; }
+  if (mode === "explicit") tutor.meter.transcript.push({ role: "learner", text: "stop" });
+  if (mode === "confirmation") {
+    await tutor.recordTool(complete);
+    tutor.meter.transcript.push({ role: "tutor", text: "רוצה לסיים?" }, { role: "learner", text: "כן" });
+  }
+  if (mode === "summary") { tutor.meter.learnerTurns = 1; tutor.meter.lessonSummary = {}; }
+  if (mode === "translation") { tutor.controls.lesson = undefined; tutor.meter.learnerTurns = tutor.meter.tutorTurns = 1; }
+  expect(await tutor.recordTool(complete)).toBe(true);
+  expect(tutor.progress.logDiagnostic).toHaveBeenLastCalledWith("", "", "task_completed_guard", expect.objectContaining({
+    allowed: true, condition, confirmation_requested_at_turn: mode === "confirmation" ? 0 : null,
+  }));
+});
+
+it("logs every empty or repeated refusal without transcript text", async () => {
+  const tutor = session();
+  tutor.meter.transcript.push({ role: "learner", text: "private learner speech ".repeat(10) });
+  for (let i = 0; i < 2; i++) await tutor.recordTool(complete);
+  expect(tutor.progress.logDiagnostic).toHaveBeenCalledTimes(2);
+  const details = tutor.progress.logDiagnostic.mock.calls[1][3];
+  expect(details).toMatchObject({ allowed: false, condition: "confirmation_required", confirmation_requested_at_turn: 1, has_lesson: true, final_sent: false, metered_at: null });
+  expect(JSON.stringify(details)).not.toContain("private learner speech");
+});
+
+it("logs intake refusals before the normal completion guard", async () => {
+  const tutor = session();
+  tutor.controls.intake_pending = true;
+  expect(await tutor.recordTool(complete)).toBe(false);
+  expect(tutor.progress.logDiagnostic).toHaveBeenCalledWith("", "", "task_completed_guard", expect.objectContaining({ allowed: false, condition: "intake_pending" }));
+});
+
+it("preserves a short remaining allowance ending before the full allowance expires", async () => {
+  const tutor = session();
+  tutor.controls.ending_policy = "after_target_with_permission";
+  tutor.controls.target_lesson_minutes = 10;
+  tutor.meteredAt = Date.now() - 36923;
+  tutor.allowanceMs = 61044;
+  tutor.meter.learnerTurns = 2;
+  tutor.meter.tutorTurns = 3;
+  expect(await tutor.recordTool(complete)).toMatchObject({ saved: false });
+  tutor.finalSent = true;
+  expect(await tutor.recordTool(complete)).toBe(true);
+  expect(tutor.progress.logDiagnostic).toHaveBeenLastCalledWith("", "", "task_completed_guard", expect.objectContaining({
+    allowed: true, condition: "quota_closing", allowance_ms: 61044, final_sent: true, has_lesson: true, confirmation_requested_at_turn: null,
+  }));
+});
+
+it("does not change a guard refusal when diagnostic persistence fails", async () => {
+  const tutor = session();
+  tutor.progress.logDiagnostic.mockRejectedValue(new Error("database unavailable"));
+  expect(await tutor.recordTool(complete)).toMatchObject({ saved: false, reason: "confirmation_required" });
+  tutor.finalSent = true;
+  expect(await tutor.recordTool(complete)).toBe(true);
 });
