@@ -1,6 +1,7 @@
 import { normalizePhone } from "./callbacks";
 import { type Env, sha256Hex } from "./env";
 import { campaignExternalId } from "./technoline-campaign";
+import { isQaPhone } from "./qa-customers";
 
 const CALLER_IDS = ["0765674487", "0765674429"];
 const WELCOME_FILE_ID = "1485697";
@@ -15,6 +16,7 @@ export function pirsumfonWelcome() {
 export async function pingPirsumfonCaller(env: Env, callId: string, caller: string) {
   const phone = normalizePhone(caller);
   if (!phone || !env.TLIVR_SYSTEM_API_KEY) return;
+  if (await isQaPhone(env.DB, phone)) return;
   const hash = await sha256Hex(callId);
   const claim = await env.DB.prepare(`
     INSERT OR IGNORE INTO pirsumfon_pings (sequence, call_hash)

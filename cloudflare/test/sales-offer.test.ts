@@ -363,6 +363,21 @@ describe("explicitly gated test offers", () => {
 });
 
 describe("sales offers", () => {
+  it.each(["typed", "legacy"])("excludes %s QA sources from selection and already queued callbacks", async storage => {
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).not.toBeNull();
+    sql.exec("UPDATE callback_requests SET next_attempt_at='2026-06-15T13:00:00Z'");
+    if (storage === "typed") sql.exec("UPDATE customers SET source='qa-test' WHERE id='learner'");
+    else sql.exec("UPDATE console_records SET body=json_set(body,'$.source','qa-test') WHERE kind='customers' AND id='learner'");
+    expect(await dispatchCallbacks(env)).toMatchObject({ sent: 0 });
+    expect(fetch).not.toHaveBeenCalled();
+    sql.exec("DELETE FROM callback_requests; DELETE FROM console_records WHERE kind='sales-offers'");
+    env.SALES_OFFER_TEST_PHONES = "0501111111";
+    env.SALES_OFFER_ALLOWLIST = "0501111111";
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toBeNull();
+    expect(await queueTestSalesOffer(env, "0501111111", new Date(+now + 60000))).toBeNull();
+  });
   it("uses the exact twenty-shekel menu without moving renewal disclosure into the menu", () => {
     expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.");
   });

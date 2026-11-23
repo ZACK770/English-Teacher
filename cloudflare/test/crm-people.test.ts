@@ -10,6 +10,11 @@ import { ProgressStore } from "../src/progress";
 import { startAdEntry } from "../src/ad-entry";
 import { sha256Hex } from "../src/env";
 import { cleanupRecordings } from "../src/recordings";
+import { isQaCustomer, isQaPhone, qaCustomerIds } from "../src/qa-customers";
+import { pingPirsumfonCaller } from "../src/pirsumfon";
+import { callWithLessonSummary, dispatchCallbacks } from "../src/callbacks";
+import { adCampaignReport } from "../src/ad-entry";
+import { syncCrm } from "../src/crm";
 
 let sql: DatabaseSync, env: Env;
 beforeEach(() => {
@@ -47,6 +52,160 @@ function session(id = "call1", transcript: string | null = JSON.stringify([{ rol
 }
 const request = (path: string, auth = true, method = "GET") => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/" + path, { method, headers: auth ? { Authorization: "Bearer crm-test-secret" } : {} }), env);
 const reset = (confirm: unknown = "0501234567", id = "person1", headers: Record<string, string> = { Authorization: "Bearer crm-test-secret" }) => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/people/" + id, { method: "DELETE", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ confirm }) }), env);
+describe("QA customer exclusion", () => {
+  it("keeps unlinked sessions out of product usage while retaining their overall cost", async () => {
+    customer(); session("linked"); session("unlinked");
+    sql.exec("DELETE FROM call_customers WHERE call_id='unlinked'");
+    const business = new BusinessStore(env.DB);
+    await business.putSetting("economics", { usd_ils: 4 });
+    expect(await business.summary()).toMatchObject({
+      ai_cost_ils: 0.8, unattributed_sessions: 1,
+      products: { school: { minutes: 2, ai_cost: 0.4 }, translator: { minutes: 0, ai_cost: 0 } },
+    });
+    sql.exec("DELETE FROM call_customers");
+    expect(await business.summary()).toMatchObject({
+      ai_cost_ils: 0.8, unattributed_sessions: 2,
+      products: { school: { minutes: 0, ai_cost: 0 }, translator: { minutes: 0, ai_cost: 0 } },
+    });
+  });
+  it.each(["unlinked", "student_id", "customer_id"])("excludes QA usage identified through %s", async identity => {
+    customer(); customer("real", "0507654321"); session();
+    sql.exec("UPDATE customers SET source='qa-test' WHERE id='person1'");
+    if (identity === "unlinked") sql.exec("DELETE FROM call_customers");
+    if (identity === "student_id") sql.exec("UPDATE call_customers SET customer_id='real'");
+    if (identity === "customer_id") sql.exec("UPDATE sessions SET student_id='real'");
+    expect(await new BusinessStore(env.DB).summary()).toMatchObject({
+      ai_cost_ils: 0, unattributed_sessions: 0,
+      products: { school: { minutes: 0, ai_cost: 0 }, translator: { minutes: 0, ai_cost: 0 } },
+    });
+  });
+  it("returns no exclusions for an empty database and propagates lookup failures", async () => {
+    expect(await qaCustomerIds(env.DB)).toEqual(new Set());
+    expect(await isQaPhone(env.DB, "0501234567")).toBe(false);
+    const lookup = vi.spyOn(env.DB, "prepare").mockImplementation(() => { throw new Error("database unavailable"); });
+    await expect(isQaCustomer(env.DB, "person1")).rejects.toThrow("database unavailable");
+    await expect(pingPirsumfonCaller({ ...env, TLIVR_SYSTEM_API_KEY: "test" }, "call", "0501234567")).rejects.toThrow("database unavailable");
+    lookup.mockRestore();
+  });
+  it.each(["typed", "legacy"])("recognizes the %s source marker, not names or notes", async storage => {
+    customer();
+    if (storage === "typed") sql.exec("UPDATE customers SET source='qa-test'");
+    else sql.exec("UPDATE console_records SET body=json_set(body,'$.source','qa-test') WHERE kind='customers'");
+    expect(await isQaCustomer(env.DB, "person1")).toBe(true);
+    expect(await isQaPhone(env.DB, "0501234567")).toBe(true);
+    expect(await qaCustomerIds(env.DB)).toEqual(new Set(["person1"]));
+    expect(await isQaCustomer(env.DB, "missing")).toBe(false);
+    expect(await isQaPhone(env.DB, "0507654321")).toBe(false);
+    sql.exec("UPDATE customers SET source='organic',name='qa-test',notes='qa-test'; UPDATE console_records SET body=json_set(body,'$.source','organic') WHERE kind='customers'");
+    expect(await isQaCustomer(env.DB, "person1")).toBe(false);
+  });
+  it("excludes QA from CRM statistics, overview and ad reports but retains its card", async () => {
+    customer(); session();
+    sql.exec("UPDATE customers SET source='qa-test'");
+    for (const day of ["2026-01-01", "2026-01-02"]) insert("practice_days", { customer_id: "person1", day, seconds: 120, calls: 1, first_at: now, last_at: now });
+    insert("sales_receipts", { id: "qa-sale", customer_id: "person1", package_id: "p", product: "school", reference: "qa", amount_ils: 100, vat_rate: 0, minutes: 60, expires_at: "2099-01-01", created_at: now });
+    insert("payment_orders", { id: "qa-order", call_id: "order-call", customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 10000, vat_rate: 0, state: "handoff", channel: "web", created_at: now, updated_at: now });
+    event("ad-entries", { campaign: "qa", new_caller: false });
+    event("sales-followups", { campaign: "qa", type: "lesson", status: "pending" });
+    expect(await (await request("analytics")).json()).toMatchObject({ totals: { leads: 0, calls: 0, revenue_ils: 0, card_orders: 0 }, sources: [] });
+    expect(await (await request("returning")).json()).toMatchObject({ items: [], totals: { returning: 0 } });
+    expect(await (await request("calls")).json()).toMatchObject({ totals: { calls: 0 } });
+    expect(await new BusinessStore(env.DB).summary()).toMatchObject({ customers: 0, gross_receipts_ils: 0, paying_customers_month: 0, ai_cost_ils: 0 });
+    expect(await adCampaignReport(env)).toEqual({ campaigns: [], followups: [] });
+    Object.assign(env, { CRM_EVENTS_URL: "https://crm.example.test", CRM_INGEST_SECRET: "test" });
+    const send = vi.spyOn(globalThis, "fetch");
+    expect(await syncCrm(env)).toMatchObject({ customers: 0, calls: 0, purchases: 0 });
+    expect(send).not.toHaveBeenCalled();
+    expect((await request("people/person1")).status).toBe(200);
+    expect(await (await request("people")).json()).toMatchObject({ items: [expect.objectContaining({ id: "person1" })] });
+    customer("real", "0507654321");
+    expect(await (await request("analytics")).json()).toMatchObject({ totals: { leads: 1 } });
+    expect(await new BusinessStore(env.DB).summary()).toMatchObject({ customers: 1 });
+  });
+  it.each(["primary", "portal-linked"])("blocks QA Pirsumfon, voice summaries and queued callbacks to a %s phone without contacting a provider", async kind => {
+    customer();
+    sql.exec("UPDATE customers SET source='qa-test'");
+    if (kind === "portal-linked") {
+      sql.exec("UPDATE customers SET primary_phone='0507654321'; UPDATE console_records SET body=json_set(body,'$.phone','0507654321') WHERE kind='customers'");
+      await new BusinessStore(env.DB).save("learner-phone-links", { phone: "0501234567", customer_id: "person1" }, "linked-phone");
+    }
+    expect(await isQaPhone(env.DB, "0501234567")).toBe(true);
+    Object.assign(env, { TLIVR_SYSTEM_API_KEY: "test", TLIVR_SYSTEM_PHONE: "0765673575", GOOGLE_TTS_SERVICE_ACCOUNT_JSON: "test", TLIVR_CALLBACK_EXTENSION_ID: "123" });
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    const audio = vi.fn();
+    await pingPirsumfonCaller(env, "qa-call", "0501234567");
+    expect(await callWithLessonSummary(env, "0501234567", "qa-call", audio, new Date("2026-06-15T10:00:00Z"))).toBe(false);
+    vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(new Date("2026-06-15T10:00:00Z"));
+    try {
+      insert("callback_requests", { id: "qa-callback", phone: "0501234567", name: "QA", for_whom: "self", goal: "test", timing: "scheduled", source: "landing", consent_at: now, status: "queued", attempts: 0, created_at: now, updated_at: now, next_attempt_at: "2026-06-15T09:00:00Z" });
+      expect(await dispatchCallbacks(env)).toMatchObject({ sent: 0 });
+      expect(sql.prepare("SELECT status,attempts FROM callback_requests").get()).toEqual({ status: "failed", attempts: 0 });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(audio).not.toHaveBeenCalled();
+      expect(sql.prepare("SELECT COUNT(*) AS n FROM pirsumfon_pings").get()?.n).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it("does not exclude portal-linked phones for real or missing customers", async () => {
+    customer();
+    const business = new BusinessStore(env.DB);
+    await business.save("learner-phone-links", { phone: "0507654321", customer_id: "person1" }, "real-link");
+    await business.save("learner-phone-links", { phone: "0501111111", customer_id: "missing" }, "missing-link");
+    expect(await isQaPhone(env.DB, "0507654321")).toBe(false);
+    expect(await isQaPhone(env.DB, "0501111111")).toBe(false);
+  });
+  it("dials a real primary owner despite an old QA phone link", async () => {
+    customer("qa", "0507654321"); customer("real", "0501234567");
+    sql.exec("UPDATE customers SET source='qa-test' WHERE id='qa'");
+    insert("customer_phones", { phone: "0501234567", customer_id: "real" });
+    const business = new BusinessStore(env.DB);
+    await business.save("learner-phone-links", { phone: "0501234567", customer_id: "qa" }, (await sha256Hex("0501234567")).slice(0, 24));
+    expect(await business.customerForPhone("0501234567")).toBe("real");
+    expect(await isQaPhone(env.DB, "0501234567")).toBe(false);
+    Object.assign(env, { TLIVR_SYSTEM_API_KEY: "test", TLIVR_CALLBACK_EXTENSION_ID: "123" });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ status: "OK", errorCode: 0, campaignId: "real-callback" }));
+    vi.useFakeTimers({ toFake: ["Date"] }).setSystemTime(new Date("2026-06-15T10:00:00Z"));
+    try {
+      insert("callback_requests", { id: "real-callback", phone: "0501234567", name: "Real", for_whom: "self", goal: "test", timing: "scheduled", source: "landing", consent_at: now, status: "queued", attempts: 0, created_at: now, updated_at: now, next_attempt_at: "2026-06-15T09:00:00Z" });
+      expect(await dispatchCallbacks(env)).toMatchObject({ sent: 1 });
+      expect(sql.prepare("SELECT status,attempts FROM callback_requests").get()).toEqual({ status: "dialed", attempts: 1 });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({ action: "campaignRun", phones: ["0501234567"] });
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("CRM receipt labels", () => {
+  it("distinguishes free grants, unverified orders and verified payments", async () => {
+    customer();
+    for (const [id, amount] of [["grant", 0], ["unknown", 59], ["verified", 59]] as const) {
+      insert("sales_receipts", { id, customer_id: "person1", package_id: "p", product: "school", reference: id === "unknown" ? "nedarim:mock:unverified" : id, amount_ils: amount, vat_rate: 0, minutes: 60, expires_at: "2099-01-01", created_at: now });
+    }
+    for (const [id, state, receipt, transaction] of [["handoff", "handoff", "grant", null], ["unverified-paid", "paid", "unknown", null], ["paid", "paid", "verified", "tx-1"]]) {
+      insert("payment_orders", { id, call_id: id, customer_id: "person1", package_id: "p", snapshot: "{}", amount_agorot: 5900, vat_rate: 0, state, receipt_id: receipt, transaction_id: transaction, created_at: now, updated_at: now });
+    }
+    const card = await (await request("people/person1")).json() as any;
+    expect(card.journey).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "receipt:grant", label: "הענקה ללא חיוב" }),
+      expect.objectContaining({ id: "receipt:unknown", label: "תקבול לא מאומת" }),
+      expect.objectContaining({ id: "receipt:verified", label: "תשלום התקבל" }),
+      expect.objectContaining({ id: "order:handoff", label: "הזמנה נפתחה" }),
+      expect.objectContaining({ id: "order:unverified-paid", label: "הזמנה נפתחה" }),
+    ]));
+    expect(card.journey.filter((e: any) => e.label === "תשלום התקבל")).toHaveLength(1);
+    sql.exec("UPDATE sales_receipts SET payment_reversed_at='2026-11-20T00:00:00Z' WHERE id='verified'");
+    const reversed = await (await request("people/person1")).json() as any;
+    expect(reversed.journey.some((e: any) => e.label === "תשלום התקבל")).toBe(false);
+  });
+  it("recognizes provider-confirmed renewal receipts, not arbitrary renewal references", async () => {
+    customer(); planAndSubscription();
+    const start = "2026-11-01T00:00:00Z";
+    insert("sales_receipts", { id: "renewal", customer_id: "person1", package_id: "p", product: "school", reference: "subscription:sub:" + start, amount_ils: 59, vat_rate: 0, minutes: 60, expires_at: "2099-01-01", created_at: now, subscription_id: "sub" });
+    insert("subscription_renewals", { reference: "nedarim-keva:123:456", subscription_id: "sub", period_start: start, created_at: now });
+    expect((await (await request("people/person1")).json() as any).journey).toEqual(expect.arrayContaining([expect.objectContaining({ id: "receipt:renewal", label: "תשלום התקבל" })]));
+    sql.exec("UPDATE subscription_renewals SET reference='manual-renewal'");
+    expect((await (await request("people/person1")).json() as any).journey).toEqual(expect.arrayContaining([expect.objectContaining({ id: "receipt:renewal", label: "תקבול לא מאומת" })]));
+  });
+});
 describe('returning practice customers', () => {
   it('matches the card receipt priority and ignores newer top-up receipts', async () => {
     customer();

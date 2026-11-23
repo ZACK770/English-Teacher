@@ -136,6 +136,15 @@ describe("practice reminder preferences", () => {
 
 describe("scheduled practice pings", () => {
   beforeEach(async () => { await savePracticeReminder(db, "learner", "בשמונה בערב", now); });
+  it.each(["typed", "legacy"])("excludes %s qa-test customers even when allowlisted", async storage => {
+    env.REMINDERS_MODE = "live";
+    env.REMINDERS_ALLOWLIST = "0501111111";
+    if (storage === "typed") sql.exec("UPDATE customers SET source='qa-test' WHERE id='learner'");
+    else sql.exec("UPDATE console_records SET body=json_set(body,'$.source','qa-test') WHERE kind='customers' AND id='learner'");
+    await dispatchPracticeReminders(env, now);
+    expect(events()).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it.each(["dry_run", "live"])("does not claim or send reminders for a top-up-only customer in %s", async mode => {
     sql.exec("UPDATE sales_receipts SET package_id='school-topup',subscription_id=NULL; DELETE FROM subscriptions");
     const business = new BusinessStore(db);

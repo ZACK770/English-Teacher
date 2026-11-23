@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type Env, HttpError, sha256Hex } from "./env";
+import { qaCustomerSql } from "./qa-customers";
 
 const short = z.string().max(200);
 const path = z.string().max(500).regex(/^\/[^?#]*$/);
@@ -90,7 +91,11 @@ export async function analyticsSummary(request: Request, env: Env) {
   const start = query.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
   const end = query.get("end") || new Date().toISOString().slice(0, 10);
   if (!date.safeParse(start).success || !date.safeParse(end).success || start > end || Date.parse(end) - Date.parse(start) > 366 * 86400000) throw new HttpError(422, "Invalid date range (maximum 366 days)");
-  const rows = (await env.DB.prepare(`SELECT
+  const rows = (await env.DB.prepare(`WITH attributed AS (
+    SELECT e.*,COALESCE(e.customer_id,(SELECT customer_id FROM payment_orders WHERE id=e.order_id),
+      (SELECT customer_id FROM payment_orders WHERE id=e.reference)) AS owner_id
+    FROM analytics_events e
+  ) SELECT
     COALESCE(NULLIF(json_extract(first_touch,'$.utm_source'),''),'direct') AS utm_source,
     COALESCE(NULLIF(json_extract(first_touch,'$.utm_campaign'),''),NULLIF(json_extract(first_touch,'$.campaign'),''),'(none)') AS utm_campaign,
     COUNT(DISTINCT visitor_id) AS visitors,
@@ -99,7 +104,10 @@ export async function analyticsSummary(request: Request, env: Env) {
     COUNT(DISTINCT CASE WHEN origin='server' AND event='begin_checkout' THEN reference END) AS checkouts,
     COUNT(DISTINCT CASE WHEN origin='server' AND event='purchase' THEN reference END) AS purchases,
     COALESCE(SUM(CASE WHEN origin='server' AND event='purchase' THEN value ELSE 0 END),0) AS revenue
-    FROM analytics_events WHERE ts>=? AND ts<? GROUP BY 1,2 ORDER BY visitors DESC LIMIT 500`)
+    FROM attributed e WHERE ts>=? AND ts<?
+    AND NOT ${qaCustomerSql("e.owner_id")}
+    AND (e.owner_id IS NOT NULL OR e.visitor_id NOT IN (SELECT visitor_id FROM attributed identified WHERE ${qaCustomerSql("identified.owner_id")}))
+    GROUP BY 1,2 ORDER BY visitors DESC LIMIT 500`)
     .bind(start + "T00:00:00.000Z", new Date(Date.parse(end) + 86400000).toISOString()).all<Record<string, string | number>>()).results;
   return Response.json({ start, end, currency: "ILS", rows: rows.map(r => ({ ...r,
     lead_rate: Number(r.leads) / Number(r.visitors), signup_rate: Number(r.signups) / Number(r.visitors),

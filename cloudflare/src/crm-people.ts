@@ -4,6 +4,7 @@ import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
 import { resetCustomer, resetTrial } from "./crm-reset";
 import { practiceMetrics } from "./crm-practice";
+import { qaCustomerIds } from "./qa-customers";
 
 export const SHORT_SESSION_SECONDS = 60;
 export const INACTIVE_DAYS = 3;
@@ -35,7 +36,12 @@ async function load(env: Env) {
       (s.transcript_json IS NOT NULL AND s.transcript_json <> 'null' AND s.transcript_json <> '[]') AS has_transcript,
       EXISTS(SELECT 1 FROM call_recordings r WHERE r.call_id=s.call_id) AS recording,
       c.bot_id,c.channel FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id`,
-    "SELECT * FROM sales_receipts WHERE product='school'",
+    `SELECT r.*, (r.payment_reversed_at IS NULL AND (EXISTS(SELECT 1 FROM payment_orders o WHERE o.receipt_id=r.id
+      AND o.state='paid' AND trim(COALESCE(o.transaction_id,''))<>'') OR EXISTS (
+        SELECT 1 FROM subscription_renewals n WHERE n.subscription_id=r.subscription_id
+        AND r.reference='subscription:'||n.subscription_id||':'||n.period_start
+        AND n.reference GLOB 'nedarim-keva:*:*'))) AS verified_payment
+      FROM sales_receipts r WHERE r.product='school'`,
     "SELECT s.*,p.product,p.name AS plan_name FROM subscriptions s LEFT JOIN plans p ON p.id=s.plan_id WHERE p.product='school' OR p.product IS NULL ORDER BY s.created_at,s.id",
     "SELECT * FROM callback_requests",
     "SELECT * FROM ivr_voicemails",
@@ -51,6 +57,7 @@ async function load(env: Env) {
     "SELECT customer_id,day,sent_at,responded_at,status FROM practice_reminder_events WHERE day >= date('now','-31 days')",
     "SELECT id,body FROM console_records WHERE kind='packages'",
     `SELECT candidate.customer_id, ${ACTIVE_SCHOOL_PACKAGE_ID_SQL} AS package_id FROM (SELECT id AS customer_id, ? AS at FROM customers) candidate`,
+    "SELECT * FROM payment_orders ORDER BY created_at",
   ];
   const [results, economics] = await Promise.all([env.DB.batch<Row>(queries.map((q, i) => i === 18 ? env.DB.prepare(q).bind(new Date().toISOString()) : env.DB.prepare(q))), new BusinessStore(env.DB).economics()]);
   const [typed, records, allSessions, receipts, subscriptions, callbacks, voicemails, bots, analytics, phones, renewals, members, preferences, paymentOrders, standingOrders] = results.map(r => r.results);
@@ -97,7 +104,7 @@ async function load(env: Env) {
     const sub = subscriptions.find(s => s.id === member.subscription_id);
     if (sub) familySubscriptions.set(member.customer_id, [...(familySubscriptions.get(member.customer_id) || []), sub]);
   }
-  return { practice, activePackages, familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), cardPaymentAvailable };
+  return { practice, activePackages, familySubscriptions, people, economics, bots: new Map(bots.map(b => [b.id, b.label])), sessions: group(sessions, "student_id"), receipts: group(receipts, "customer_id"), subscriptions: group(subscriptions, "customer_id"), callbacks: group(callbacks, "customer_id"), callbacksById: new Map(callbacks.map(c => [c.id, c])), voicemails: group(voicemails, "customer_id"), events: group(events, "customer_id"), analytics: group(analytics, "customer_id"), paymentOrders: group(paymentOrders, "customer_id"), allPaymentOrders: group(results[19].results, "customer_id"), cardPaymentAvailable };
 }
 type Data = Awaited<ReturnType<typeof load>>;
 const schoolEvents = (data: Data, id: string) => (data.events.get(id) || []).filter(e => !(e.kind === "ivr-events" && ["translator", "start-translation", "languages"].includes(e.route)));
@@ -155,7 +162,10 @@ function journey(data: Data, id: string) {
     if (e.kind === "subscription-member") add(e.kind, e, "הוספת בן משפחה למנוי");
     if (e.kind === "subscription-member-removed") add(e.kind, e, "הסרת בן משפחה ממנוי");
   }
-  for (const r of data.receipts.get(id) || []) add("receipt", r, "תשלום התקבל", stamp(r), { amount_ils: r.amount_ils });
+  for (const r of data.receipts.get(id) || []) add("receipt", r, n(r.amount_ils) === 0 ? "הענקה ללא חיוב" : r.verified_payment ? "תשלום התקבל" : "תקבול לא מאומת", stamp(r), { amount_ils: r.amount_ils });
+  for (const order of data.allPaymentOrders.get(id) || []) {
+    if (order.state !== "paid" || !String(order.transaction_id || "").trim() || !order.receipt_id) add("order", order, "הזמנה נפתחה", stamp(order), { status: order.state });
+  }
   for (const s of data.subscriptions.get(id) || []) { add("subscription", s, "יצירת מנוי", s.created_at, { plan: s.plan_id, status: s.status }); if (s.updated_at !== s.created_at) add("subscription-update", s, "עדכון מנוי — מצב נוכחי", s.updated_at, { status: s.status }); }
   for (const c of data.callbacks.get(id) || []) { add("callback", c, "בקשה לשיחה חוזרת", c.created_at, { status: c.status, scheduled_at: c.next_attempt_at }); if (c.updated_at !== c.created_at) add("callback-update", c, "עדכון בקשת שיחה", c.updated_at, { status: c.status }); }
   for (const v of data.voicemails.get(id) || []) add("voicemail", v, "הודעה קולית", stamp(v), { transcript: v.transcript, status: v.status });
@@ -192,8 +202,10 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     return ok({ call_id: decodeURIComponent(match[3]), turns: parse(row.transcript_json, []), recording: null });
   }
   const data = await load(env);
+  const excluded = await qaCustomerIds(env.DB);
   if (path === "/v1/admin/crm/returning") {
     const items = [...data.people.values()].flatMap(p => {
+      if (excluded.has(p.id)) return [];
       const metrics = data.practice.get(p.id);
       if (!metrics || metrics.practice_days_total < 2) return [];
       const pkg = data.activePackages.get(p.id);
@@ -208,7 +220,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     const to = params.get("to") || new Date().toISOString().slice(0, 10);
     const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
     if (!validDate(from) || !validDate(to) || from > to) throw new HttpError(422, "טווח תאריכים לא תקין");
-    const all = [...data.sessions.entries()].flatMap(([id, sessions]) => sessions.map(s => ({ ...costCall(data, s), customer_id: id, customer_name: data.people.get(id)?.name || "ללא שם" })))
+    const all = [...data.sessions.entries()].filter(([id]) => !excluded.has(id)).flatMap(([id, sessions]) => sessions.map(s => ({ ...costCall(data, s), customer_id: id, customer_name: data.people.get(id)?.name || "ללא שם" })))
       .filter(s => s.started_at.slice(0, 10) >= from && s.started_at.slice(0, 10) <= to).sort((a, b) => b.started_at.localeCompare(a.started_at) || a.call_id.localeCompare(b.call_id));
     const totals = { calls: all.length, minutes: safe(all.reduce((v, s) => v + n(s.duration_seconds) / 60, 0)), ai_cost_ils: safe(all.reduce((v, s) => v + s.ai_cost_ils, 0)), telephony_cost_ils: safe(all.reduce((v, s) => v + s.telephony_cost_ils, 0)), total_cost_ils: safe(all.reduce((v, s) => v + s.total_cost_ils, 0)) };
     const aggregate = (key: "customer_id" | "teacher") => {
@@ -219,7 +231,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     return ok({ from, to, items: all.slice(0, 2000), capped: all.length > 2000, totals, insights: { cost_per_minute: totals.minutes ? safe(totals.total_cost_ils / totals.minutes) : 0, short_call_share: all.length ? safe(all.filter(s => n(s.duration_seconds) < 60).length / all.length) : 0, top_customers: aggregate("customer_id").slice(0, 5), by_teacher: aggregate("teacher") } });
   }
   if (path === "/v1/admin/crm/analytics") {
-    const details = [...data.people.values()].map(p => personDetails(data, p));
+    const details = [...data.people.values()].filter(p => !excluded.has(p.id)).map(p => personDetails(data, p));
     const people = details.map(p => p.summary);
     const statuses = Object.fromEntries(Object.keys(STATUS_LABELS).map(k => [k, people.filter(p => p.status === k).length]));
     const sources = new Map<string, { source: string; leads: number; trials: number; paying: number; revenue_ils: number; minutes: number }>();
@@ -237,8 +249,8 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
       if (first) activityDays.add(first);
       for (const date of activityDays) if (days.has(date)) days.get(date)!.active++;
     }
-    for (const rows of data.sessions.values()) for (const s of rows) { const date = String(s.started_at).slice(0, 10); if (days.has(date)) days.get(date)!.calls++; }
-    const cardOrders = [...data.paymentOrders.values()].flat();
+    for (const [id, rows] of data.sessions) if (!excluded.has(id)) for (const s of rows) { const date = String(s.started_at).slice(0, 10); if (days.has(date)) days.get(date)!.calls++; }
+    const cardOrders = [...data.paymentOrders.entries()].filter(([id]) => !excluded.has(id)).flatMap(([, rows]) => rows);
     return ok({ generated_at: new Date().toISOString(), totals: { leads: people.length, customers_with_calls: people.filter(p => p.calls_count).length, calls: people.reduce((a, p) => a + p.calls_count, 0), minutes: safe(people.reduce((a, p) => a + p.minutes_used, 0)), revenue_ils: safe(people.reduce((a, p) => a + p.revenue_ils, 0)), estimated_cost_ils: safe(people.reduce((a, p) => a + p.total_cost_ils, 0)), callbacks_waiting: details.filter(p => p.callback).length, card_orders: cardOrders.length, card_paid: cardOrders.filter(o => o.state === "paid").length }, statuses, sources: [...sources.values()].map(s => ({ ...s, conversion_pct: s.leads ? safe(s.paying / s.leads * 100) : 0 })).sort((a, b) => b.leads - a.leads), days: [...days.values()] });
   }
   if (match[2]) {

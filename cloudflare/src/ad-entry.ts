@@ -5,6 +5,7 @@ import { enqueueLessonCallback, followupLessonTime, SPEAKCALL_PHONE, tomorrowAt 
 import { DEFAULT_TEACHER_NAME, PHONE_SIGNUP_NAME, PlanSchema } from "./learner";
 import { ProgressStore } from "./progress";
 import { startSchool, type IVRResponse } from "./pbx";
+import { qaCustomerIds } from "./qa-customers";
 
 export const AD_ENTRIES = "ad-entries";
 export const SALES_FOLLOWUPS = "sales-followups";
@@ -303,8 +304,9 @@ export async function recordSalesTool(b: BusinessStore, customerId: string, call
 
 export async function adCampaignReport(env: Env) {
   const b = new BusinessStore(env.DB);
-  const entries = await b.list(AD_ENTRIES);
-  const followups = await b.list(SALES_FOLLOWUPS);
+  const excluded = await qaCustomerIds(env.DB);
+  const entries = (await b.list(AD_ENTRIES)).filter(e => !excluded.has(e.customer_id));
+  const followups = (await b.list(SALES_FOLLOWUPS)).filter(f => !excluded.has(f.customer_id));
   const rows: Record<string, { campaign: string; calls: number; new_callers: number; returning_callers: number; lessons_booked: number; emails: number; payment_links: number }> = {};
   const row = (campaign: string) => (rows[campaign] ??= { campaign, calls: 0, new_callers: 0, returning_callers: 0, lessons_booked: 0, emails: 0, payment_links: 0 });
   for (const e of entries) {
