@@ -13,6 +13,22 @@ const lesson: LessonPlan = {
 const controls = { ...controlsFromSettings(true), lesson };
 const names = (c: TutorControls = controls, customerId?: string) => buildSetupPayload(c, "test", "teacher", s, { customerId }).setup.tools[0].functionDeclarations.map(t => t.name);
 
+it("requires longer detected speech to start a PBX lesson turn without changing how it ends", () => {
+  const vad = (c: TutorControls) => buildSetupPayload(c, "test", "teacher", s).setup.realtimeInputConfig;
+  const web = vad(controls);
+  expect(web.automaticActivityDetection.prefixPaddingMs).toBe(400);
+  expect(vad({ ...controls, phone_lesson: true })).toEqual({
+    ...web,
+    automaticActivityDetection: {
+      startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+      endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+      prefixPaddingMs: 500,
+      silenceDurationMs: 700,
+    },
+  });
+  expect(vad({ ...controls, phone_lesson: true, vad_prefix_ms: 650 }).automaticActivityDetection.prefixPaddingMs).toBe(650);
+});
+
 describe("call-scoped tool availability", () => {
   it("omits assessment, sales and callback tools when unavailable, but keeps direction changes after intake", () => {
     expect(names({ ...controls, intake_pending: false })).toEqual(["record_lesson_summary", "end_session", "save_intake"]);
@@ -49,6 +65,16 @@ describe("call-scoped tool availability", () => {
 });
 
 describe("compact application instruction contracts", () => {
+  it("redirects off-topic requests during lessons without adding the rule to translator prompts or enabling search", () => {
+    const system = buildSystemInstruction(controls, "");
+    expect(system).toContain("Lesson scope outside translation");
+    expect(system).toContain("no internet access");
+    expect(system).toContain("searching the web or reporting or commenting on news, current events or politics");
+    expect(system).toContain('"אני כאן רק כדי לתרגל אנגלית", then ask a neutral, level-appropriate question in English');
+    expect(buildSystemInstruction(controlsFromSettings(true), "")).not.toContain("Lesson scope outside translation");
+    expect(Object.keys(buildSetupPayload(controls, system, "teacher", s).setup.tools[0])).toEqual(["functionDeclarations"]);
+  });
+
   it("retains administrator/persona/history rules verbatim and all-role lifecycle safeguards", () => {
     const c = { ...controls, base_prompt: "Hebrew/Haredi-appropriate content only. Never ask for passwords.", custom_instructions: "Keep all safety rules intact." };
     const system = buildSystemInstruction(c, "Prior learner notes");
