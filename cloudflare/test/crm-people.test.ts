@@ -939,3 +939,22 @@ describe("CRM customer editing", () => {
     expect(await (await update({ preferred_bot: "" })).json()).toMatchObject({ preferred_bot: "" });
   });
 });
+it("keeps internal notes off the queue and records completion without dispatching calls", async () => {
+  customer();
+  const path = "care/person1";
+  const write = (body: object) => worker.fetch(new Request("https://speakcall.app/v1/admin/crm/" + path, {
+    method: "POST", headers: { Authorization: "Bearer crm-test-secret", "Content-Type":"application/json" },
+    body: JSON.stringify(body),
+  }), env);
+  const created = await write({action:"task", due:"2025-01-01",title:"בדיקת רמה"});
+  expect(created.status).toBe(200);
+  const task = await created.json() as {id:string};
+  expect((await write({action:"note",title:"הערה פנימית"})).status).toBe(200);
+  expect(await (await request("care")).json()).toHaveLength(1);
+  expect((await write({id:task.id,action:"postpone",due:"2099-01-01"})).status).toBe(200);
+  expect(await (await request("care")).json()).toHaveLength(0);
+  expect((await write({id:task.id,action:"close",title:"הרמה מתאימה"})).status).toBe(200);
+  expect(await (await request(path)).json()).toEqual(expect.arrayContaining([expect.objectContaining({id:task.id, closed:expect.any(String), by:expect.any(String),outcome:"הרמה מתאימה"})]));
+  expect((await write({id:task.id,action:"close",title:"שוב"})).status).toBe(409);
+  expect(sql.prepare("SELECT COUNT(*) AS n FROM callback_requests").get()?.n).toBe(0);
+});

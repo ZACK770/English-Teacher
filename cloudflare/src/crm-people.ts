@@ -1,10 +1,11 @@
-import { ACTIVE_SCHOOL_PACKAGE_ID_SQL, BusinessStore } from "./business";
+﻿import { ACTIVE_SCHOOL_PACKAGE_ID_SQL, BusinessStore } from "./business";
 import { practiceInternal } from "./practice";
 import { type Env, HttpError } from "./env";
 import { visiblePhone } from "./phone";
 import { resetCustomer, resetTrial } from "./crm-reset";
 import { practiceMetrics } from "./crm-practice";
 import { qaCustomerIds } from "./qa-customers";
+import { saveCare, type CareItem } from "./crm-care";
 
 export const SHORT_SESSION_SECONDS = 60;
 export const INACTIVE_DAYS = 3;
@@ -174,6 +175,41 @@ function journey(data: Data, id: string) {
   return rows.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 }
 export async function crmPeople(request: Request, env: Env, path: string, actor?: { role: string; username: string }): Promise<Response | null> {
+  const care = path.match(/^\/v1\/admin\/crm\/care(?:\/([^/]+))?$/);
+  if (care) {
+    const customer = decodeURIComponent(care[1] || "");
+    const data = await load(env);
+    if (customer && !data.people.has(customer)) throw new HttpError(404, "הלקוח לא נמצא");
+    const query = "SELECT body FROM console_records WHERE kind='crm-care'";
+    const saved = customer ? await env.DB.prepare(query + " AND json_extract(body,'$.customer')=?").bind(customer).all<{body:string}>()
+      : await env.DB.prepare(query).all<{body:string}>();
+    const stored = saved.results.map(row => JSON.parse(row.body) as CareItem);
+    const records = new Map(stored.filter(i => i.kind !== "callback" || i.closed).map(i => [i.id,i]));
+    const overrides = new Map(stored.filter(i => i.kind === "callback").map(i => [i.id,i]));
+    const add = (id:string, person:string, at:string) => {
+      const key = "callback:" + id;
+      records.set(key, overrides.get(key) || {id:key, customer:person, due:at, kind:"callback", title:"בקשה לשיחה חוזרת"});
+    };
+    for (const person of customer ? [customer] : data.people.keys()) {
+      for (const c of data.callbacks.get(person) || []) {
+        if (["pending","scheduled","queued","dispatching","dialing"].includes(c.status)) add(c.id,person,c.next_attempt_at || c.created_at);
+      }
+      for (const e of schoolEvents(data,person)) {
+        if (e.kind === "sales-followups" && e.type === "lesson" && e.status === "pending" && !data.callbacksById.has(e.callback_id || e.id)) add(e.callback_id || e.id,person,e.scheduled_at || stamp(e));
+      }
+    }
+    const items = [...records.values()];
+    const respond = (value:unknown) => Response.json(value,{headers:{"Cache-Control":"no-store"}});
+    if (request.method === "POST" && customer && actor) return respond(await saveCare(request,env,customer,actor.username,items));
+    if (request.method !== "GET") throw new HttpError(405, "פעולה לא נתמכת");
+    const day = (value:string) => value.length === 10 ? value : new Date(value).toLocaleDateString("en-CA",{timeZone:"Asia/Jerusalem"});
+    const today = day(new Date().toISOString());
+    const visible = customer ? items : items.filter(i => !i.closed && i.kind !== "note" && day(i.due) <= today);
+    return respond(visible.sort((a,b) => a.due.localeCompare(b.due)).flatMap(i => {
+      const p = data.people.get(i.customer);
+      return p ? [{...i,name:p.name || p.phone || i.customer,last:personDetails(data,p).summary.last_activity}] : [];
+    }));
+  }
   const trial = path.match(/^\/v1\/admin\/crm\/people\/([^/]+)\/reset-trial$/);
   if (trial) {
     if (request.method !== "POST") throw new HttpError(405, "פעולה לא נתמכת");
@@ -284,3 +320,4 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
   const items = rows.slice(offset, offset + limit);
   return ok({ items, counts, total, cursor: offset + limit < rows.length ? items.at(-1)?.id : null });
 }
+
