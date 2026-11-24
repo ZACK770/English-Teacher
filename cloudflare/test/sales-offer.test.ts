@@ -63,6 +63,88 @@ function freeUsage(product: string, billed: number | null, reserved = billed ?? 
     .run(id, product, reserved, billed, date);
 }
 
+describe("rolling sales offers", () => {
+  function phoneCalls(customerId: string, count: number, lastAt: string) {
+    const insert = sql.prepare("INSERT INTO call_customers VALUES (?,?,?,?,?)");
+    for (let i = 0; i < count; i++) {
+      insert.run(customerId + "-" + i, customerId, "ivr", "phone", lastAt);
+    }
+  }
+
+  beforeEach(() => {
+    env.SALES_OFFER_AUDIENCE = "rolling";
+    env.SALES_OFFER_ROLLING_START_AT = now.toISOString();
+  });
+
+  it("uses a gated backlog start and deduplicates repeated selection", async () => {
+    phoneCalls("learner", 4, "2026-06-12T12:00:00Z");
+    env.SALES_OFFER_MODE = "allowlist";
+    env.SALES_OFFER_ALLOWLIST = "0501111111";
+    await selectSalesOffers(env);
+    env.SALES_OFFER_MODE = "on";
+    await selectSalesOffers(env, new Date(+now - 1));
+    expect(sql.prepare("SELECT id FROM callback_requests").all()).toEqual([]);
+    await selectSalesOffers(env);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT id,next_attempt_at FROM callback_requests").all())
+      .toEqual([{ id: offerId, next_attempt_at: now.toISOString() }]);
+  });
+
+  it("counts physical calls, not shared streaming segments, and honors the quota alternative", async () => {
+    phoneCalls("learner", 1, "2026-06-14T06:00:00Z");
+    for (const suffix of ["1", "2", "3"]) {
+      sql.prepare("INSERT INTO call_customers VALUES (?,?,?,?,?)")
+        .run("learner-0~" + suffix, "learner", "teacher", "phone", "2026-06-14T06:05:00Z");
+    }
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toBeNull();
+    await b.save("policies", { enabled: true, trial_total_seconds: 60 }, "trial");
+    freeUsage("school", 60);
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toMatchObject({ rolling: true });
+  });
+
+  it("uses the last call plus 24 hours and moves a closed slot into calling hours", async () => {
+    phoneCalls("learner", 4, "2026-06-15T20:00:00Z");
+    vi.setSystemTime(new Date("2026-06-16T20:00:00Z"));
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toBeNull();
+    vi.setSystemTime(new Date("2026-06-17T05:00:00Z"));
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT next_attempt_at FROM callback_requests").get())
+      .toMatchObject({ next_attempt_at: "2026-06-17T05:00:00.000Z" });
+  });
+
+  it("rechecks the last call before sending and does not retry an uncertain send", async () => {
+    phoneCalls("learner", 4, "2026-06-14T06:00:00Z");
+    await selectSalesOffers(env);
+    sql.prepare("INSERT INTO call_customers VALUES (?,?,?,?,?)")
+      .run("new", "learner", "ivr", "phone", now.toISOString());
+    expect(await dispatchCallbacks(env)).toMatchObject({ sent: 0 });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(sql.prepare("SELECT next_attempt_at FROM callback_requests").get())
+      .toMatchObject({ next_attempt_at: "2026-06-16T14:00:00.000Z" });
+    vi.setSystemTime(new Date("2026-06-16T14:00:00Z"));
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("timeout"));
+    await dispatchCallbacks(env);
+    await dispatchCallbacks(env);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({ dialRetries: 0 });
+    expect(sql.prepare("SELECT status,attempts,next_attempt_at FROM callback_requests").get())
+      .toMatchObject({ status: "failed", attempts: 1, next_attempt_at: null });
+  });
+
+  it("excludes QA and configured test recipients", async () => {
+    phoneCalls("learner", 4, "2026-06-14T06:00:00Z");
+    env.SALES_OFFER_TEST_PHONES = "0501111111";
+    await selectSalesOffers(env);
+    env.SALES_OFFER_TEST_PHONES = "";
+    sql.exec("UPDATE customers SET source='qa-test' WHERE id='learner'");
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toBeNull();
+  });
+});
+
 describe("quota-exhausted sales offer audience", () => {
   beforeEach(() => {
     env.SALES_OFFER_AUDIENCE = "quota_exhausted";

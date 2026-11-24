@@ -65,6 +65,57 @@ export const QUOTA_EXHAUSTED_CANDIDATES_SQL = `WITH
   WHERE (p.trial_seconds>0 AND u.trial_seconds>=p.trial_seconds)
     OR (p.trial_seconds=0 AND u.monthly_calls>=p.free_calls AND (p.opening_seconds=0 OR u.opening_used=1))`;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const rollingBuyerSql = (customer: string) => `(
+  ${buyerSql(customer, "?1")} OR EXISTS(SELECT 1 FROM sales_receipts r WHERE
+    r.customer_id=${customer} AND r.amount_ils>0 AND r.payment_reversed_at IS NULL)
+)`;
+
+const customerPhoneCallsSql = `SELECT c.customer_id,
+  CASE WHEN instr(c.call_id,'~')>0 THEN substr(c.call_id,1,instr(c.call_id,'~')-1) ELSE c.call_id END AS call_id,
+  MAX(julianday(c.created_at),COALESCE(julianday(s.ended_at),0)) AS at
+  FROM call_customers c LEFT JOIN sessions s ON s.call_id=c.call_id WHERE c.channel='phone'
+  UNION ALL
+  SELECT json_extract(body,'$.customer_id'),json_extract(body,'$.call_id'),julianday(created_at)
+  FROM console_records WHERE kind='ivr-events' AND json_extract(body,'$.finished')=1`;
+
+export const ROLLING_SALES_OFFER_CANDIDATES_SQL = `WITH
+  exhausted AS (${QUOTA_EXHAUSTED_CANDIDATES_SQL}),
+  phone_calls AS (${customerPhoneCallsSql}),
+  history AS (
+    SELECT customer_id, COUNT(DISTINCT call_id) AS calls, MAX(at) AS last_call
+    FROM phone_calls GROUP BY customer_id
+  )
+  SELECT h.customer_id,ph.phone,strftime('%Y-%m-%dT%H:%M:%fZ',h.last_call) AS last_call_at
+  FROM history h JOIN customer_phones ph ON ph.customer_id=h.customer_id
+  WHERE (h.calls>=4 OR EXISTS(SELECT 1 FROM exhausted q WHERE q.customer_id=h.customer_id))
+    AND h.last_call<=julianday(?1)-1
+    AND length(ph.phone) BETWEEN 8 AND 15 AND ph.phone NOT GLOB '*[^0-9]*' AND ph.phone GLOB '*[1-9]*'
+    AND NOT ${qaCustomerSql("h.customer_id")}
+    AND NOT ${rollingBuyerSql("h.customer_id")}
+    AND ph.phone NOT IN (SELECT value FROM json_each(?2))
+    AND NOT EXISTS(SELECT 1 FROM console_records o
+      WHERE o.kind='sales-offers' AND json_extract(o.body,'$.customer_id')=h.customer_id)
+  ORDER BY h.last_call,h.customer_id`;
+
+function rollingStart(env: Env) {
+  const raw = env.SALES_OFFER_ROLLING_START_AT ?? "";
+  const start = new Date(raw);
+  return /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(raw) && Number.isFinite(+start) &&
+    +nextCallingSlot(start) === +start ? start : null;
+}
+
+export async function rollingOfferDispatch(env: Env, id: string, now: Date) {
+  const offer = await new BusinessStore(env.DB).record("sales-offers", id);
+  if (!offer?.rolling) return null;
+  const last = await env.DB.prepare(`SELECT strftime('%Y-%m-%dT%H:%M:%fZ',MAX(at)) AS last_call
+    FROM (${customerPhoneCallsSql}) WHERE customer_id=?`)
+    .bind(offer.customer_id).first<{ last_call: string | null }>();
+  if (last?.last_call == null) return { hold: null };
+  const at = nextCallingSlot(new Date(+new Date(last.last_call) + DAY_MS));
+  return { hold: +at > +now ? scheduleAt(at) : null };
+}
+
 export function offerSchedule(drop: Date) {
   const local = localDate(drop);
   local.setUTCDate(local.getUTCDate() + 1);
@@ -85,12 +136,12 @@ function scheduleAt(at: Date) {
   return { at: at.toISOString(), expires: fromLocal(end).toISOString() };
 }
 
-async function queueOffer(b: BusinessStore, env: Env, customerId: string, phone: string, droppedAt: string, schedule: { at: string; expires: string }, now: Date) {
+async function queueOffer(b: BusinessStore, env: Env, customerId: string, phone: string, droppedAt: string, schedule: { at: string; expires: string }, now: Date, rolling = false) {
   if (await isQaCustomer(b.db, customerId)) return null;
   const test = salesOfferTestPhone(env, phone);
   if (!salesOfferAllowed(env, phone) || !test && await customerBought(b, customerId, now.toISOString())) return null;
   const id = test ? `sales-offer:test:${customerId}:${schedule.at}` : "sales-offer:" + customerId;
-  const offer = { id, customer_id: customerId, phone, dropped_at: droppedAt, status: "queued", expires_at: schedule.expires, test };
+  const offer = { id, customer_id: customerId, phone, dropped_at: droppedAt, status: "queued", expires_at: schedule.expires, test, ...(rolling ? { rolling: true } : {}) };
   await b.db.batch([
     b.db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
       SELECT 'sales-offers',?,?,?,? WHERE ?=1 OR NOT EXISTS(
@@ -124,6 +175,22 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
     }
   }
   const audience = env.SALES_OFFER_AUDIENCE ?? "dropoffs";
+  if (audience === "rolling") {
+    const start = rollingStart(env);
+    if (env.SALES_OFFER_MODE !== "on" || !start || +now < +start) return;
+    const b = new BusinessStore(env.DB);
+    const { results } = await env.DB.prepare(ROLLING_SALES_OFFER_CANDIDATES_SQL)
+      .bind(now.toISOString(), JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)))
+      .all<{ customer_id: string; phone: string; last_call_at: string }>();
+    let queued = 0;
+    for (const row of results) {
+      const at = nextCallingSlot(new Date(Math.max(+start, +new Date(row.last_call_at) + DAY_MS)));
+      if (+at > +now) continue;
+      if (await queueOffer(b, env, row.customer_id, row.phone, row.last_call_at, scheduleAt(nextCallingSlot(now)), now, true)) queued++;
+      if (queued >= 100) break;
+    }
+    return;
+  }
   if (!["dropoffs", "high_interest", "quota_exhausted"].includes(audience)) return;
   const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 3);
   const minMinutes = Number(env.SALES_OFFER_MIN_TUTOR_MINUTES ?? 0);
@@ -163,6 +230,13 @@ export async function salesOfferDialError(env: Env, id: string, phone: string, n
   if (offer && await isQaCustomer(b.db, offer.customer_id)) return "QA test customer excluded";
   if (!salesOfferAllowed(env, phone)) return "Sales offer gate disabled for phone";
   if (!offer || offer.phone !== normalizePhone(phone) || !["queued", "dialed"].includes(offer.status) || offer.expires_at <= now.toISOString()) return "Sales offer unavailable or expired";
+  if (offer.rolling) {
+    const start = rollingStart(env);
+    if (env.SALES_OFFER_AUDIENCE !== "rolling" || env.SALES_OFFER_MODE !== "on" ||
+      !start || +start > +now || salesOfferTestPhone(env, phone)) return "Rolling sales offers disabled";
+    return await b.db.prepare(`SELECT 1 WHERE ${rollingBuyerSql("?2")}`)
+      .bind(now.toISOString(), offer.customer_id).first() ? "Sales offer customer already purchased" : null;
+  }
   if (!salesOfferTestPhone(env, phone) && await customerBought(b, offer.customer_id, now.toISOString())) return "Sales offer customer already purchased";
   return null;
 }
