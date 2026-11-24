@@ -14,6 +14,8 @@ import {
   TRANSLATION_LANGUAGE_TOOL,
 } from "./tools";
 
+const PHONE_LESSON_MIN_SPEECH_START_MS = 500;
+
 export interface PromptArtifact {
   system_instruction: string;
   opening_message: string;
@@ -65,7 +67,7 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
         automaticActivityDetection: {
           startOfSpeechSensitivity: c.vad_start_sensitivity,
           endOfSpeechSensitivity: c.vad_end_sensitivity,
-          prefixPaddingMs: c.vad_prefix_ms,
+          prefixPaddingMs: c.phone_lesson ? Math.max(c.vad_prefix_ms, PHONE_LESSON_MIN_SPEECH_START_MS) : c.vad_prefix_ms,
           silenceDurationMs: c.vad_silence_ms,
         },
         activityHandling: c.activity_handling,
