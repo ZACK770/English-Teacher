@@ -1,4 +1,4 @@
-import { type Env, HttpError, sha256Hex } from "./env";
+﻿import { type Env, HttpError, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
 import { drainRecordingDeletions } from "./recordings";
 import { BusinessStore } from "./business";
@@ -125,6 +125,7 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   remove("sessions", "student_id=?", id);
   remove("call_recordings", "customer_id=? OR call_id IN (SELECT value FROM json_each(?))", id, calls);
   remove("call_customers", "customer_id=?", id);
+  remove("console_records", "kind='crm-care' AND json_extract(body,'$.customer')=?", id);
   remove("callback_requests", "phone NOT IN (SELECT value FROM json_each(?)) AND (phone IN (SELECT value FROM json_each(?)) OR id IN (SELECT json_extract(body,'$.callback_id') FROM console_records WHERE kind='sales-followups' AND json_extract(body,'$.customer_id')=?))", conflictingJson, phoneJson, id);
   remove("ivr_voicemails", "customer_id=? OR caller_key IN (SELECT value FROM json_each(?))", id, hashJson);
   remove("analytics_attribution", "reference IN (SELECT reference FROM analytics_events WHERE customer_id=? AND reference IS NOT NULL) OR reference=? OR reference IN (SELECT value FROM json_each(?))", id, id, orders);
@@ -170,3 +171,4 @@ async function performReset(request: Request, env: Env, person: Row, actor?: { r
   removals.forEach((r, i) => { deleted[r.table] = (deleted[r.table] || 0) + Number(result[1 + detach.length + i].meta.changes || 0); });
   return Response.json({ id, deleted, r2_objects: r2Objects }, { headers: { "Cache-Control": "no-store" } });
 }
+
