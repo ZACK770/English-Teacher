@@ -7,6 +7,7 @@ export interface Env {
   SALES_OFFER_MIN_TUTOR_MINUTES?: string;
   SALES_OFFER_TEST_PHONES?: string;
   SALES_OFFER_TEST_AT?: string;
+  SALES_OFFER_SEND_AT?: string;
   GA_MEASUREMENT_ID?: string;
   CF_BEACON_TOKEN?: string;
   DB: D1Database;

@@ -125,6 +125,10 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
   }
   const audience = env.SALES_OFFER_AUDIENCE ?? "dropoffs";
   if (!["dropoffs", "high_interest", "quota_exhausted"].includes(audience)) return;
+  const sendAt = env.SALES_OFFER_SEND_AT?.trim();
+  const scheduled = sendAt ? new Date(sendAt) : null;
+  if (scheduled && (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(sendAt!) || !Number.isFinite(+scheduled) ||
+    +scheduled <= +now || +nextCallingSlot(scheduled) !== +scheduled)) return;
   const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 3);
   const minMinutes = Number(env.SALES_OFFER_MIN_TUTOR_MINUTES ?? 0);
   if (audience === "high_interest" && (env.SALES_OFFER_MIN_TUTOR_CALLS?.trim() === "" || env.SALES_OFFER_MIN_TUTOR_MINUTES?.trim() === "" ||
@@ -153,7 +157,7 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
       audience === "high_interest" ? minMinutes * 60 : 0, JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)),
       JSON.stringify(phoneList(env.SALES_OFFER_ALLOWLIST)), env.SALES_OFFER_MODE).all<{ customer_id: string; dropped_at: string; phone: string }>();
   for (const row of results) {
-    await queueOffer(b, env, row.customer_id, row.phone, row.dropped_at, offerSchedule(new Date(row.dropped_at)), now);
+    await queueOffer(b, env, row.customer_id, row.phone, row.dropped_at, scheduled ? scheduleAt(scheduled) : offerSchedule(new Date(row.dropped_at)), now);
   }
 }
 

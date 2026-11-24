@@ -40,6 +40,39 @@ beforeEach(async () => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); sql.close(); });
 const offerId = "sales-offer:learner";
+describe("fixed customer campaign time", () => {
+  it("keeps next-day scheduling when the override is empty", async () => {
+    env.SALES_OFFER_SEND_AT = "";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT next_attempt_at FROM callback_requests").all()).toEqual([{
+      next_attempt_at: offerSchedule(new Date("2026-06-14T12:00:00Z")).at,
+    }]);
+  });
+  it("queues quota-exhausted customers once at the configured time", async () => {
+    env.SALES_OFFER_AUDIENCE = "quota_exhausted";
+    env.SALES_OFFER_SEND_AT = "2026-06-16T10:00:00.000Z";
+    await b.save("policies", { product: "school", enabled: true, trial_total_seconds: 60 }, "trial");
+    freeUsage("school", 60);
+    await selectSalesOffers(env);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT preferred_time,next_attempt_at FROM callback_requests").all()).toEqual([{
+      preferred_time: env.SALES_OFFER_SEND_AT, next_attempt_at: env.SALES_OFFER_SEND_AT,
+    }]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["invalid", "2026-06-16T13:00:00", "2026-06-15T14:00:00Z", "2026-06-14T14:00:00Z", "2026-06-19T15:00:00Z"])("does not queue with an invalid, elapsed or closed fixed time: %s", async at => {
+    env.SALES_OFFER_SEND_AT = at;
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT id FROM callback_requests").all()).toEqual([]);
+  });
+  it("keeps the customer gate restricted to the allowlist", async () => {
+    env.SALES_OFFER_MODE = "allowlist";
+    env.SALES_OFFER_ALLOWLIST = "0502222222";
+    env.SALES_OFFER_SEND_AT = "2026-06-16T10:00:00.000Z";
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT id FROM callback_requests").all()).toEqual([]);
+  });
+});
 async function answered() {
   await selectSalesOffers(env);
   sql.prepare("UPDATE callback_requests SET status='dialed',updated_at=?").run(now.toISOString());
