@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { adRuntimeContext, SALES_TOOLS } from "../src/ad-entry";
+import { HAREDI_CONTENT_RULE } from "../src/content-rules";
 import { buildSystemInstruction, controlsFromSettings, type TutorControls } from "../src/controls";
 import { settings, type Env } from "../src/env";
 import { lessonInstruction, type LessonPlan } from "../src/learning";
@@ -65,11 +66,16 @@ describe("call-scoped tool availability", () => {
 });
 
 describe("compact application instruction contracts", () => {
-  it("redirects off-topic requests during lessons without adding the rule to translator prompts or enabling search", () => {
+  it("limits current affairs and worldview discussion while allowing history practice, without adding the scope rule to translators", () => {
     const system = buildSystemInstruction(controls, "");
     expect(system).toContain("Lesson scope outside translation");
     expect(system).toContain("no internet access");
-    expect(system).toContain("searching the web or reporting or commenting on news, current events or politics");
+    expect(system).toContain(HAREDI_CONTENT_RULE);
+    expect(system).toContain("subject to the content rules above");
+    expect(system).toContain("current news, current politics or hashkafa (worldview), listen politely, correct only their English if needed without repeating restricted content, and return to the lesson");
+    expect(system).toContain("Do not take a position or add to the discussion");
+    expect(system).toContain("History, including past news and politics, is allowed for English practice");
+    expect(system).toContain("web search, general information, advice or code");
     expect(system).toContain('"אני כאן רק כדי לתרגל אנגלית", then ask a neutral, level-appropriate question in English');
     expect(buildSystemInstruction(controlsFromSettings(true), "")).not.toContain("Lesson scope outside translation");
     expect(Object.keys(buildSetupPayload(controls, system, "teacher", s).setup.tools[0])).toEqual(["functionDeclarations"]);
