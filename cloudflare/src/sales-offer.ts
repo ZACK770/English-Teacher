@@ -304,10 +304,14 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
   const offer = await b.record("sales-offers", context.offer_call);
   if (!offer || offer.customer_id !== customerId || offer.call_id !== p.PBXcallId || offer.expires_at <= nowIso() ||
     !salesOfferAllowed(env, offer.phone) || !salesOfferTestPhone(env, offer.phone) && await customerBought(b, customerId)) return null;
-  if (p.PBXcallStatus === "HANGUP") return { type: "hangup" };
+  if (p.PBXcallStatus === "HANGUP") {
+    await new PaymentStore(b).cancelSelection(p.PBXcallId);
+    return { type: "hangup" };
+  }
   if (p.isaacOfferUnavailable) return { type: "hangup" };
   if (offer.status === "declined") return null;
   if (offer.status === "accepted" && ["0", "ERROR"].includes(p.isaacPayConfirm)) {
+    await new PaymentStore(b).cancelSelection(p.PBXcallId);
     await b.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
     return { ...await recordedOfferMenu(env), removeParams: ["isaacPayConfirm", "isaacOffer"] };
   }

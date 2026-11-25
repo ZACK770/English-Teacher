@@ -131,6 +131,23 @@ async function activateOffer() {
 }
 
 describe("bound monthly sales offer billing", () => {
+  it.each(["0", "ERROR", "HANGUP"])("releases an abandoned offer on %s for a later regular monthly purchase", async key => {
+    await selectOffer();
+    await salesOfferResponse(b, env, "/", {
+      PBXcallId: "phone-hk", ...(key === "HANGUP" ? { PBXcallStatus: key } : { isaacPayConfirm: key }),
+    }, "c1");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
+    expect(await store.create("regular-next-call", "c1", "school-step", false, env)).toMatchObject({ state: "selected", package_id: "school-step" });
+  });
+
+  it("can select the offer again after backing out without issuing a card", async () => {
+    await selectOffer();
+    await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacPayConfirm: "0" }, "c1");
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1"))
+      .toMatchObject({ name: "isaacPayConfirm" });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("selected");
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("creates a 59 monthly keva, charges 20 now, and grants only the first calendar month", async () => {
     const module = await activateOffer();
     expect(module).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", sum: 59 });

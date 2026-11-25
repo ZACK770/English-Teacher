@@ -251,6 +251,12 @@ export class PaymentStore {
     const existing = await this.orderForCall(callId);
     if (existing) {
       if (existing.customer_id !== customerId) throw new Error("Customer mismatch");
+      if (existing.state === "cancelled" && existing.package_id === packageId && isSalesOfferPackage(packageId)) {
+        if (await this.hasMonthlyEnrollment(customerId)) throw new ExistingMonthlyEnrollmentError();
+        await this.db.prepare("UPDATE payment_orders SET state='selected',updated_at=? WHERE id=? AND state='cancelled'")
+          .bind(nowIso(), existing.id).run();
+        return (await this.orderForCall(callId))!;
+      }
       return existing;
     }
     const body = await this.business.record("packages", packageId);
