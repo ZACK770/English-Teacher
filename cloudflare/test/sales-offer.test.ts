@@ -8,7 +8,7 @@ import { type Env, settings } from "../src/env";
 import { controlsFromSettings } from "../src/controls";
 import { ProgressStore } from "../src/progress";
 import { TutorSession } from "../src/session";
-import { ExistingMonthlyEnrollmentError, PaymentStore } from "../src/payments";
+import { ExistingMonthlyEnrollmentError, PaymentStore, paymentResponse } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
 import { handleCallback } from "../src/pbx";
 import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferDialError, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT, SALES_OFFER_RECORDING } from "../src/sales-offer";
@@ -723,7 +723,69 @@ describe("sales offers", () => {
     await answered();
     env = { ...env, NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" };
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
-    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard", sum: 59 });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard", sum: 20 });
+  });
+  it.each(["ok", "update-refused", "unchanged-amount", "unchanged-date", "network", "existing-charge"])("verifies 59 renewal before the exactly-once 20 charge: %s", async outcome => {
+    await answered();
+    Object.assign(env, { NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
+    await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner");
+    const card = await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacPayConfirm: "1" }, "learner");
+    expect(card).toMatchObject({ type: "creditCard", sum: 20, paymentsMode: "kevaMonthly" });
+    const detail = { KevaId: "54321", KevaGroupe: card!.category, KevaPhone: "0501111111", KevaAmount: "20",
+      KevaCurrency: "1", KevaStatus: "1", KevaFrequency: "1", CreatedDate: "15/06/2026",
+      KevaNextDate: "15/06/2026", KevaSuccess: "0",
+      HistoryData: outcome === "existing-charge" ? [{ ID: "1", Amount: "20", Date: "15/06/2026", TransactionId: "987654" }] : [] };
+    const forms: URLSearchParams[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const form = new URLSearchParams(String(init.body));
+      forms.push(form);
+      if (form.get("Action") === "GetKevaId") return Response.json(detail);
+      if (form.get("Action") === "GetKevaJson") return Response.json([]);
+      if (form.get("Action") === "UpdateKevaNew") {
+        if (outcome === "network") throw new Error("Unavailable");
+        if (outcome === "update-refused") return Response.json({ Result: "Error" });
+        expect(Object.fromEntries(form)).toMatchObject({ Amount: "59.00", NextDate: "15/07/2026" });
+        if (outcome !== "unchanged-amount") detail.KevaAmount = "59";
+        if (outcome !== "unchanged-date") detail.KevaNextDate = "15/07/2026";
+        return Response.json({ Result: "OK" });
+      }
+      if (form.get("Action") === "TashlumBodedNew") {
+        expect(detail).toMatchObject({ KevaAmount: "59", KevaNextDate: "15/07/2026" });
+        expect(Object.fromEntries(form)).toMatchObject({ Amount: "20", KevaId: "54321", JoinToKevaId: "Join" });
+        return Response.json({ Status: "OK", TransactionId: "987654", Amount: "20", KevaId: "54321", Currency: "1" });
+      }
+      throw new Error("Unexpected operation");
+    }));
+    const store = new PaymentStore(b);
+    const confirm = () => paymentResponse(store, env, "/", { PBXcallId: "call", isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" }, "learner", ["school-offer-week"]);
+    await confirm();
+    await confirm();
+    expect(forms.filter(f => f.get("Action") === "TashlumBodedNew")).toHaveLength(outcome === "ok" ? 1 : 0);
+    const success = ["ok", "existing-charge"].includes(outcome);
+    expect(await store.orderForCall("call")).toMatchObject({ state: success ? "paid" : "awaiting_settlement", amount_agorot: 2000 });
+    if (success) {
+      expect(sql.prepare("SELECT monthly_agorot FROM standing_orders").get()).toMatchObject({ monthly_agorot: 5900 });
+      expect(sql.prepare("SELECT amount_ils FROM sales_receipts").all()).toEqual([{ amount_ils: 20 }]);
+    } else {
+      expect(sql.prepare("SELECT COUNT(*) AS n FROM sales_receipts").get()).toMatchObject({ n: 0 });
+      expect(sql.prepare("SELECT state FROM phone_keva_first_charges").get()).toMatchObject({ state: "unknown" });
+    }
+  });
+  it.each(["0", "ERROR"])("returns direct payment terms %s to the recorded offer and can accept again", async key => {
+    await answered();
+    Object.assign(env, { PUBLIC_BASE_URL: "https://example.test", ASSETS: { fetch: async () => new Response(null, { headers: { "Content-Type": "audio/wav" } }) },
+      NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
+    await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner");
+    const store = new PaymentStore(b);
+    const order = await store.orderForCall("call");
+    expect(await paymentResponse(store, env, "/", { PBXcallId: "call", isaacPayConfirm: key }, "learner", ["school-offer-week"]))
+      .toMatchObject({ name: "isaacOffer", enabledKeys: "1", files: [{ fileLink: "https://example.test/brand/phone/" + SALES_OFFER_RECORDING }], removeParams: ["isaacPayConfirm", "isaacOffer"] });
+    expect(await store.orderForCall("call")).toMatchObject({ state: "cancelled" });
+    expect(await b.record("sales-offers", offerId)).toMatchObject({ status: "offered" });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
+    expect(await store.orderForCall("call")).toMatchObject({ id: order!.id, state: "selected" });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM payment_orders").get()).toMatchObject({ n: 1 });
+    expect(sql.prepare("SELECT COUNT(DISTINCT customer_id) AS n FROM payment_orders WHERE state='paid' AND package_id='school-offer-week'").get()).toMatchObject({ n: 0 });
   });
   it("returns from terms to the one-key offer without entering credit card details", async () => {
     await answered();

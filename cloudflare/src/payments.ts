@@ -6,7 +6,7 @@ import { providerTime } from "./nedarim";
 import { reconcilePhoneKeva } from "./keva-sync";
 import { claimPhoneKevaFirstCharge, completePhoneKevaFirstCharge } from "./phone-keva-charge";
 import { visiblePhone } from "./phone";
-import { boundSalesOffer, isSalesOfferPackage, phoneFirstPrice, SALES_OFFER_TERMS_TEXT } from "./sales-offer-product";
+import { boundSalesOffer, isSalesOfferPackage, phoneFirstPrice, recordedOfferMenu, SALES_OFFER_TERMS_TEXT } from "./sales-offer-product";
 import { subscriptionCancellationResponse } from "./subscription-cancel";
 import { canPurchaseAutomatically } from "../../src/pricing";
 import { customerPackageName } from "../../src/paymentCopy";
@@ -417,6 +417,12 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
     }
     if (["0", "ERROR"].includes(params.isaacPayConfirm)) {
       await store.cancelSelection(callId);
+      if (isSalesOfferPackage(order.package_id) && await boundSalesOffer(store.business, callId, customerId, env)) {
+        const context = await store.business.loadContext(callId);
+        const offer = await store.business.record("sales-offers", context.offer_call);
+        await store.business.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
+        return { ...await recordedOfferMenu(env), removeParams: ["isaacPayConfirm", "isaacOffer"] };
+      }
       return { type: "goTo", goTo: extensionPath(base), removeParams: ["isaacPackage", "isaacPayConfirm", "isaacSales", ...singleParams] };
     }
     const pkg = PackageSchema.parse(JSON.parse(order.snapshot));
@@ -431,7 +437,7 @@ export async function paymentResponse(store: PaymentStore, env: Env, base: strin
       }
       if (!(await store.issue(callId))) return selectionMenu("isaacPayExit", "הבקשה כבר בטיפול או פג תוקפה. לחזרה הקישו 0. לשירות הקישו 9.");
       return {
-        type: "creditCard", name: "isaacPayStatus", post: true, sum: isSalesOfferPackage(order.package_id) ? pkg.price_ils : order.amount_agorot / 100, sumChangeable: "no", payments: pkg.duration_months ? pkg.max_payments : 1,
+        type: "creditCard", name: "isaacPayStatus", post: true, sum: order.amount_agorot / 100, sumChangeable: "no", payments: pkg.duration_months ? pkg.max_payments : 1,
         paymentsMode: pkg.billing === "monthly" ? "kevaMonthly" : "regular",
         ...(pkg.billing === "monthly" ? { kevaDay: Math.min(28, Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", day: "numeric" }).format(new Date()))) } : {}),
         cvv: "yes", tz: "yes", terminal: env.NEDARIM_PHONE_TERMINAL ?? "", category: PREFIX + order.id,

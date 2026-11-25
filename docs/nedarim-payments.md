@@ -113,6 +113,17 @@ and the documented `MosadNumber` are both sent for the charge. Update responses
 use `Result`, immediate-charge responses use `Status`, and DeleteKeva returns
 plain text `OK`. No raw provider response or card fields are stored.
 
+The bound Black Friday offer uses `sum: 20` with `kevaMonthly`. Before its
+first charge, the server verifies the new ₪20 Keva against the saved order,
+then sends the documented `UpdateKevaNew` partial update with `Amount: 59.00`
+and `NextDate` one calendar month ahead (see `keva-lifecycle.md`).
+Both `Result=OK` and a fresh `GetKevaId` showing the renewal amount and date
+are required before charging. Activation still requires a ₪59 Keva; the first
+receipt and immediate `TashlumBodedNew` charge remain ₪20. Existing successful
+₪20 history is reconciled without a second charge. Failed or uncertain renewal
+updates leave an issue and never initiate the immediate charge. Existing ₪59
+offer enrollments continue through the previous verification path.
+
 ### One-time phone purchases
 
 1. The authenticated PBX callback identifies the customer from the caller number.
