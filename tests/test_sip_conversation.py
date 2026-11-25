@@ -3,6 +3,7 @@ import importlib
 import io
 import json
 import struct
+import sys
 import wave
 from pathlib import Path
 from unittest.mock import Mock
@@ -71,6 +72,38 @@ def test_converse_uses_heard_audio_to_generate_and_play_response(monkeypatch, tm
         "/ausrc aufile,turn-1.wav\n", "/ausrc aufile,silence.wav\n",
     ]
     assert json.loads(log.getvalue())["spoken"] == "I like dogs."
+
+
+def test_main_saves_recordings_and_transcript_when_teacher_hangs_up(monkeypatch, tmp_path):
+    caller = load(monkeypatch)
+    output = tmp_path / "call"
+    monkeypatch.setattr(sys, "argv", ["sip_conversation.py", "child", "--output-dir", str(output)])
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(caller, "credentials", lambda: ("123=4", "test-password", "test.invalid"))
+    monkeypatch.setattr(caller.shutil, "which", lambda _: "fake-baresip")
+    monkeypatch.setattr(caller, "REQUIRED_MODULES", ())
+    client = Mock()
+    client.observe.side_effect = [True, True, None, False, True, caller.CallEnded("hangup")]
+    voice = struct.pack("<h", 1200) * (caller.FRAME_BYTES // 2) * 9
+    capture = Mock()
+    capture.read.side_effect = [b"", voice + bytes(caller.FRAME_BYTES * 60)]
+    monkeypatch.setattr(caller, "Incoming", Mock(return_value=capture))
+    gemini = Mock()
+    gemini.respond.return_value = {"heard": "Goodbye.", "reply": "Bye."}
+    gemini.speak.return_value = voice
+    monkeypatch.setattr(caller, "Gemini", Mock(return_value=gemini))
+
+    def open_client(executable, directory, timeout, account):
+        caller.write_wav(directory / "dump-test-dec.wav", voice)
+        caller.write_wav(directory / "dump-test-enc.wav", voice)
+        return client
+
+    monkeypatch.setattr(caller, "Baresip", open_client)
+    assert caller.main() == 0
+    client.close.assert_called_once()
+    assert (output / "teacher.wav").is_file()
+    assert (output / "caller.wav").is_file()
+    assert json.loads((output / "turns.jsonl").read_text())["heard"] == "Goodbye."
 
 
 @pytest.mark.parametrize("wrapped", [False, True])

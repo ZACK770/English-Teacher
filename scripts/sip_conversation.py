@@ -21,6 +21,7 @@ from sip_test_caller import (
     RATE,
     REQUIRED_MODULES,
     Baresip,
+    CallEnded,
     CallError,
     credentials,
     save_recording,
@@ -217,11 +218,19 @@ def exchange_turns(client, gemini, directory: Path, persona: str,
     print("SIP answered.", flush=True)
     client.observe(min(deadline, time.monotonic() + 4))
     incoming = Incoming(directory)
-    detector = TurnDetector()
     incoming.read()
     if time.monotonic() >= deadline:
         return
     client.send("1")
+    try:
+        listen_and_reply(client, gemini, incoming, directory, persona, start, deadline, log)
+    except CallEnded:
+        print("SIP call ended.", flush=True)
+
+
+def listen_and_reply(client, gemini, incoming: Incoming, directory: Path, persona: str,
+                     start: float, deadline: float, log) -> None:
+    detector = TurnDetector()
     history = []
     last_data = time.monotonic()
     while time.monotonic() < deadline:
