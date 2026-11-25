@@ -258,6 +258,25 @@ deduplication IDs unchanged. Reusing a provider external ID returned error 54
 in the authorized reminder test; a fresh ID was accepted. This does not enable
 automatic reminder retries or make uncertain sends safe to retry.
 
+### In-band DTMF test caller
+
+Generate a 16 kHz mono WAV without calling:
+`python scripts/technoline_test_caller.py --digits 2 --wav /path/to/dtmf.wav`.
+With `TLIVR_SYSTEM_API_KEY` in the environment, running without arguments
+validates one recipient and estimates the campaign cost without dialing.
+Only with owner approval, run with `--live` and a D1 read token in
+`CLOUDFLARE_API_TOKEN`. This test is limited to 0765673575 and key 2
+(native root menu → Worker options); it does not modify PBX extensions
+or existing campaigns. The test creates a new held campaign and only resumes
+it if the provider reports one recipient and zero retries. Do not resume it
+manually, rerun on uncertainty, or use this as a recurring monitor.
+
+The script correlates the answered campaign and inbound call history with the
+Worker event using the inbound call ID. The campaign report's `digits` field
+is what the **callee** sent back, not proof the IVR recognized the tone.
+An answered call without a matching route event does not establish that the
+tone reached the IVR during its digit window.
+
 https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
 https://pbx.tlivr.com/streamingApiDocs.html
