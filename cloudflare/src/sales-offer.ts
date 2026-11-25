@@ -7,7 +7,7 @@ import { isQaCustomer, qaCustomerSql } from "./qa-customers";
 import { SALES_OFFER_CAP_SQL } from "./sales-offer-product";
 
 export const SALES_EXTENSION_PATH = "/3";
-export const SALES_OFFER_RECORDING = "sales-offer-black-friday-100-9ea6c78d7d64.wav";
+export const SALES_OFFER_RECORDING = "sales-offer-black-friday-100-8846fe315b50.wav";
 export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! בלאק פריידיי בספיקול! הטבת חודש ראשון - מוגבלת למאה רוכשים בלבד! מצטרפים עכשיו למנוי החודשי סטארטר, ומשלמים רק עשרים שקלים. כן, עשרים שקלים ואתם על הדרך לדבר אנגלית שוטף! מעוניינים?! הקישו כעת 1.";
 export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call from SpeakCall after the learner’s trial. Speak Hebrew for guidance. Greet warmly by name if known: "שלום, כאן ספיקול, חזרנו לתרגול קצר". Do a short English practice. Close politely and warmly, not abruptly, and say a short special message follows. Never take card details or quote prices.';
 
@@ -235,12 +235,13 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
   }
 }
 
-export async function salesOfferDialError(env: Env, id: string, phone: string, now: Date) {
+export async function salesOfferDialError(env: Env, id: string, phone: string, now: Date, returning = false) {
   const b = new BusinessStore(env.DB);
   const offer = await b.record("sales-offers", id);
   if (offer && await isQaCustomer(b.db, offer.customer_id)) return "QA test customer excluded";
   if (!salesOfferAllowed(env, phone)) return "Sales offer gate disabled for phone";
-  if (!offer || offer.phone !== normalizePhone(phone) || !["queued", "dialed"].includes(offer.status) || offer.expires_at <= now.toISOString()) return "Sales offer unavailable or expired";
+  const statuses = returning ? ["queued", "dialed", "answered", "offered", "accepted", "declined"] : ["queued", "dialed"];
+  if (!offer || offer.phone !== normalizePhone(phone) || !statuses.includes(offer.status) || offer.expires_at <= now.toISOString()) return "Sales offer unavailable or expired";
   if (!await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) return "Sales offer buyer limit reached";
   if (offer.rolling) {
     const start = rollingStart(env);
@@ -260,9 +261,13 @@ export async function enterSalesOffer(b: BusinessStore, env: Env, callId: string
   if (!phone || !salesOfferAllowed(env, phone)) return;
   const row = await b.db.prepare("SELECT id FROM callback_requests WHERE source='sales_offer' AND phone=? AND status IN ('dialing','dialed') AND updated_at>? ORDER BY updated_at DESC LIMIT 1")
     .bind(phone, new Date(Date.now() - 120 * 60000).toISOString()).first<{ id: string }>();
-  if (!row || await salesOfferDialError(env, row.id, phone, new Date())) return;
+  if (!row || await salesOfferDialError(env, row.id, phone, new Date(), true)) return;
   const offer = await b.record("sales-offers", row.id);
   if (offer?.customer_id !== customerId) return;
+  if (offer.call_id && offer.call_id !== callId) {
+    await new PaymentStore(b).cancelSelection(offer.call_id);
+    await b.saveContext(offer.call_id, { offer_call: null });
+  }
   await b.save("sales-offers", { ...offer, status: "answered", answered_at: nowIso(), call_id: callId }, row.id);
   await b.saveContext(callId, { offer_call: row.id });
 }

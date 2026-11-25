@@ -197,6 +197,13 @@ compiled prompt/setup/fingerprint/input/output and latency timeline.
 A successful API check is NOT a completed telephone call. Test real audio/key
 handling by dialing99 after the owner enables routing.
 
+Sales-offer recording previews sent as `campaignRun.audioFile` are playback-only:
+key 1 does not enter the Worker's offer/payment flow. Interactive offer callbacks
+must use the scheduled offer binding and `messagesType=extensionActivation`
+through `dialTechnolineCallback`. Simulate the authenticated POST callbacks for
+`isaacOffer=1` and then `isaacPayConfirm=1` to check terms and card entry
+without placing a call or charging a card.
+
 ## AI lifecycle and cost guards (2026-10-20)
 
 Every bot's compiled prompt and Google tool schema include end_session. Model
