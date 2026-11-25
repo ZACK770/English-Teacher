@@ -10,17 +10,18 @@ const str = (value: unknown) => (value == null ? "" : String(value)).trim();
 const tail9 = (phone: string) => phone.replace(/\D/g, "").slice(-9);
 const LEGACY_GROUP = "חבילות ספיקול";
 
-export async function verifyKevaForActivation(env: Env, row: Record<string, unknown>, kevaId: string, enrollment?: Record<string, any>, knownDetail?: Record<string, any>) {
+export async function verifyKevaForActivation(env: Env, row: Record<string, unknown>, kevaId: string, enrollment?: Record<string, any>, knownDetail?: Record<string, any>, initialOffer = false) {
   const saved = enrollment ? PackageSchema.safeParse(JSON.parse(enrollment.snapshot)) : null;
   if (saved && !saved.success) return;
   const offer = !!enrollment && isSalesOfferPackage(enrollment.package_id);
   const monthlyAgorot = offer && saved?.success ? agorot(saved.data.price_ils) : enrollment?.amount_agorot ?? agorot(row.Amount);
+  const providerAgorot = offer && initialOffer ? enrollment!.amount_agorot : monthlyAgorot;
   const group = enrollment ? "dibura-" + enrollment.id : LEGACY_GROUP;
   if (!/^\d{1,20}$/.test(kevaId) || str(row.Groupe) !== group || str(row.Enabled) !== "1" ||
     str(row.Currency) !== "1" || str(row.ErrorText)) return;
   const phone = visiblePhone(str(row.Phone));
   if (!phone) return;
-  if (enrollment && (phone !== enrollment.phone || agorot(row.Amount) !== monthlyAgorot ||
+  if (enrollment && (phone !== enrollment.phone || agorot(row.Amount) !== providerAgorot ||
     !["issued", "awaiting_settlement"].includes(enrollment.state))) return;
   if (enrollment) {
     const created = providerTime(row.CreationDate) || providerDay(row.CreationDate);
@@ -50,7 +51,7 @@ export async function verifyKevaForActivation(env: Env, row: Record<string, unkn
   const detail = knownDetail ?? JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
   if (str(detail?.KevaId) !== kevaId || str(detail.KevaStatus) !== "1" || str(detail.KevaFrequency) !== "1" ||
     str(detail.KevaCurrency) !== "1" || str(detail.KevaGroupe) !== group || visiblePhone(str(detail.KevaPhone)) !== phone ||
-    agorot(detail.KevaAmount) !== monthlyAgorot || !Array.isArray(detail.HistoryData)) return;
+    agorot(detail.KevaAmount) !== providerAgorot || !Array.isArray(detail.HistoryData)) return;
   if (detail.MosadNumber != null && str(detail.MosadNumber) !== env.NEDARIM_MOSAD_ID) return;
   return { detail, owner, plan, pkg: pkg.data, monthlyAgorot, business, phone };
 }

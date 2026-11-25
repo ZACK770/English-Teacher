@@ -4,11 +4,10 @@ import { type Env, HttpError, nowIso } from "./env";
 import { ExistingMonthlyEnrollmentError, PaymentStore, paymentResponse } from "./payments";
 import { SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { isQaCustomer, qaCustomerSql } from "./qa-customers";
-import { SALES_OFFER_CAP_SQL } from "./sales-offer-product";
+import { offerMenu, recordedOfferMenu, SALES_OFFER_CAP_SQL } from "./sales-offer-product";
+export { SALES_OFFER_RECORDING, SALES_OFFER_TEXT } from "./sales-offer-product";
 
 export const SALES_EXTENSION_PATH = "/3";
-export const SALES_OFFER_RECORDING = "sales-offer-black-friday-100-8846fe315b50.wav";
-export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! בלאק פריידיי בספיקול! הטבת חודש ראשון - מוגבלת למאה רוכשים בלבד! מצטרפים עכשיו למנוי החודשי סטארטר, ומשלמים רק עשרים שקלים. כן, עשרים שקלים ואתם על הדרך לדבר אנגלית שוטף! מעוניינים?! הקישו כעת 1.";
 export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call from SpeakCall after the learner’s trial. Speak Hebrew for guidance. Greet warmly by name if known: "שלום, כאן ספיקול, חזרנו לתרגול קצר". Do a short English practice. Close politely and warmly, not abruptly, and say a short special message follows. Never take card details or quote prices.';
 
 export function salesOfferAllowed(env: Env, phone: string): boolean {
@@ -288,24 +287,6 @@ export async function offerGift(b: BusinessStore, env: Env, offerId: string, cus
   return result.meta.changes === 1 ? seconds : 0;
 }
 
-const offerMenu = (text: string, name = "isaacOffer", keys = "1") => ({
-  type: "simpleMenu", name, enabledKeys: keys, times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ text }],
-});
-
-async function recordedOfferMenu(env: Env) {
-  const menu = offerMenu(SALES_OFFER_TEXT);
-  if (!env.PUBLIC_BASE_URL || !env.ASSETS) return menu;
-  try {
-    const url = new URL(env.PUBLIC_BASE_URL.replace(/\/$/, "") + "/brand/phone/" + SALES_OFFER_RECORDING);
-    if (!["https:", "http:"].includes(url.protocol)) return menu;
-    const audio = await env.ASSETS.fetch(new Request(url, { method: "HEAD" }));
-    if (audio.ok && /^audio\/(?:x-)?wav(?:e)?(?:;|$)/i.test(audio.headers.get("Content-Type") ?? "")) {
-      return { ...menu, files: [{ fileLink: url.toString(), fileName: SALES_OFFER_RECORDING.replace(/\.wav$/, "") }] };
-    }
-  } catch {}
-  return menu;
-}
-
 export async function salesOfferResponse(b: BusinessStore, env: Env, base: string, p: Record<string, string>, customerId: string): Promise<Record<string, any> | null> {
   const context = await b.loadContext(p.PBXcallId);
   if (!context.offer_call) return null;
@@ -318,11 +299,6 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
   }
   if (p.isaacOfferUnavailable) return { type: "hangup" };
   if (offer.status === "declined") return null;
-  if (offer.status === "accepted" && ["0", "ERROR"].includes(p.isaacPayConfirm)) {
-    await new PaymentStore(b).cancelSelection(p.PBXcallId);
-    await b.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
-    return { ...await recordedOfferMenu(env), removeParams: ["isaacPayConfirm", "isaacOffer"] };
-  }
   if (offer.status === "accepted") {
     if (p.isaacPayConfirm === "1" && !p.isaacPayStatus && !await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) {
       await new PaymentStore(b).cancelSelection(p.PBXcallId);

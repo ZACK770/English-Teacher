@@ -1,9 +1,10 @@
 import { BusinessStore } from "./business";
 import { type Env, nowIso, paymentsConfigured } from "./env";
 import { activatePaidKeva, verifyKevaForActivation, type VerifiedPhoneCharge } from "./keva-sync";
-import { manageKeva } from "./nedarim";
+import { manageKeva, providerDay } from "./nedarim";
 import { agorot, PaymentStore } from "./payments";
 import { addMonths } from "./subscriptions";
+import { isSalesOfferPackage } from "./sales-offer-product";
 
 const str = (value: unknown) => String(value ?? "").trim();
 
@@ -28,14 +29,31 @@ export async function completePhoneKevaFirstCharge(env: Env, orderId: string): P
   const issue = (kind: string, message: string) => store.issueForData({ Groupe: group }, kind, message);
   const setState = (state: string) => env.DB.prepare("UPDATE phone_keva_first_charges SET state=? WHERE order_id=?").bind(state, orderId).run();
   try {
-    const detail = JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
+    let detail = JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
     if (!detail || typeof detail !== "object" || Array.isArray(detail)) return;
     const row = { KevaId: detail.KevaId, Groupe: detail.KevaGroupe, Phone: detail.KevaPhone, Amount: detail.KevaAmount,
       Currency: detail.KevaCurrency, Enabled: detail.KevaStatus,
       Success: Array.isArray(detail.HistoryData) && detail.HistoryData.some((event: Record<string, unknown>) => str(event.ID) === "1") ? "1" : detail.KevaSuccess,
       CreationDate: detail.CreatedDate,
       ...(detail.MosadNumber != null ? { MosadNumber: detail.MosadNumber } : {}) };
-    if (!await verifyKevaForActivation(env, row, kevaId, enrollment, detail)) return;
+    const initialOffer = isSalesOfferPackage(enrollment.package_id) && agorot(detail.KevaAmount) === enrollment.amount_agorot;
+    if (!await verifyKevaForActivation(env, row, kevaId, enrollment, detail, initialOffer)) return;
+    if (initialOffer) {
+      const renewal = agorot(JSON.parse(enrollment.snapshot).price_ils);
+      const end = addMonths(nowIso(), 1);
+      const nextDate = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(end));
+      try {
+        const update = JSON.parse(await manageKeva(env, { Action: "UpdateKevaNew", KevaId: kevaId, Amount: (renewal / 100).toFixed(2), NextDate: nextDate }));
+        if (update?.Result !== "OK") throw new Error("Renewal update failed");
+        detail = JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
+        row.Amount = detail.KevaAmount;
+        if (providerDay(detail.KevaNextDate) !== providerDay(nextDate) || !await verifyKevaForActivation(env, row, kevaId, enrollment, detail)) throw new Error("Renewal verification failed");
+      } catch {
+        await setState("unknown");
+        await issue("phone_keva_next_date", "עדכון סכום ומועד החידוש לא אושר והחיוב הראשון לא בוצע. נדרשת בדיקה בנדרים פלוס לפני ניסיון תשלום נוסף.");
+        return;
+      }
+    }
     if (detail.HistoryData.length) {
       await setState("skipped");
       await activatePaidKeva(env, row, kevaId, enrollment, undefined, detail);
@@ -48,8 +66,10 @@ export async function completePhoneKevaFirstCharge(env: Env, orderId: string): P
     const start = nowIso(), end = addMonths(start, 1);
     const nextDate = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(end));
     try {
-      const update = JSON.parse(await manageKeva(env, { Action: "UpdateKevaNew", KevaId: kevaId, NextDate: nextDate }));
-      if (update?.Result !== "OK") throw new Error("Next date update failed");
+      if (!initialOffer) {
+        const update = JSON.parse(await manageKeva(env, { Action: "UpdateKevaNew", KevaId: kevaId, NextDate: nextDate }));
+        if (update?.Result !== "OK") throw new Error("Next date update failed");
+      }
     } catch {
       await setState("unknown");
       await issue("phone_keva_next_date", "עדכון תאריך החיוב הבא לא אושר והחיוב הראשון לא בוצע. נדרשת בדיקה בנדרים פלוס לפני ניסיון תשלום נוסף.");

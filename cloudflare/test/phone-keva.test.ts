@@ -154,7 +154,7 @@ describe("bound monthly sales offer billing", () => {
     expect(await handleCallback(request({ isaacOffer: "1" }), env, settings(env), "main"))
       .toMatchObject({ name: "isaacPayConfirm", files: [{ text: SALES_OFFER_TERMS_TEXT }] });
     expect(await handleCallback(request({ isaacOffer: "1", isaacPayConfirm: "1" }), env, settings(env), "main"))
-      .toMatchObject({ type: "creditCard", name: "isaacPayStatus", sum: 59, paymentsMode: "kevaMonthly" });
+      .toMatchObject({ type: "creditCard", name: "isaacPayStatus", sum: 20, paymentsMode: "kevaMonthly" });
     expect((await store.orderForCall(callId))!.amount_agorot).toBe(2000);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -190,7 +190,7 @@ describe("bound monthly sales offer billing", () => {
   });
   it("creates a 59 monthly keva, charges 20 now, and grants only the first calendar month", async () => {
     const module = await activateOffer();
-    expect(module).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", sum: 59 });
+    expect(module).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", sum: 20 });
     expect(Object.fromEntries(providerForms().find(f => f.get("Action") === "TashlumBodedNew")!)).toMatchObject({ Amount: "20", KevaId: "54321" });
     expect(await store.orderForCall("phone-hk")).toMatchObject({ amount_agorot: 2000, package_id: SALES_OFFER_PACKAGE });
     expect(db.sql.prepare("SELECT monthly_agorot,package_id FROM standing_orders").get()).toMatchObject({ monthly_agorot: 5900, package_id: "school-step" });
@@ -278,11 +278,11 @@ describe("bound monthly sales offer billing", () => {
       expect(await respond(key ? { isaacPayConfirm: key } : {})).toMatchObject({ name: "isaacPayConfirm", files: [{ text }] });
     }
     expect(fetch).not.toHaveBeenCalled();
-    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 59, paymentsMode: "kevaMonthly" });
+    expect(await respond({ isaacPayConfirm: "1" })).toMatchObject({ type: "creditCard", sum: 20, paymentsMode: "kevaMonthly" });
   });
   it.each(["0", "ERROR"])("backs out of offer renewal terms on %s without issuing a card request", async key => {
     await selectOffer();
-    expect(await respond({ isaacPayConfirm: key })).toMatchObject({ type: "goTo" });
+    expect(await respond({ isaacPayConfirm: key })).toMatchObject({ type: "simpleMenu", name: "isaacOffer" });
     expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
     expect(fetch).not.toHaveBeenCalled();
   });
