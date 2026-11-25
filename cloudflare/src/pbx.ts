@@ -291,7 +291,7 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
     await b.savePreference(customerId, values);
   }
   const copy = await getCopy(b);
-  if (["main", "school"].includes(route) && p.PBXcallStatus !== "HANGUP") await enterSalesOffer(b, env, callId, customerId);
+  if (["main", "school", "sales"].includes(route) && p.PBXcallStatus !== "HANGUP") await enterSalesOffer(b, env, callId, customerId);
   const offerContext = await b.loadContext(callId);
   const completedOfferExit = offerContext.offer_call && ["0", "9", "ERROR"].includes(p.isaacPayExit) &&
     (await new PaymentStore(b).orderForCall(callId))?.state === "paid";
