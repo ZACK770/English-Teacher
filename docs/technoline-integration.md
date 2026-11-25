@@ -258,24 +258,29 @@ deduplication IDs unchanged. Reusing a provider external ID returned error 54
 in the authorized reminder test; a fresh ID was accepted. This does not enable
 automatic reminder retries or make uncertain sends safe to retry.
 
-### In-band DTMF test caller
+### SIP test caller
 
-Generate a 16 kHz mono WAV without calling:
-`python scripts/technoline_test_caller.py --digits 2 --wav /path/to/dtmf.wav`.
-With `TLIVR_SYSTEM_API_KEY` in the environment, running without arguments
-validates one recipient and estimates the campaign cost without dialing.
-Only with owner approval, run with `--live` and a D1 read token in
-`CLOUDFLARE_API_TOKEN`. This test is limited to 0765673575 and key 2
-(native root menu → Worker options); it does not modify PBX extensions
-or existing campaigns. The test creates a new held campaign and only resumes
-it if the provider reports one recipient and zero retries. Do not resume it
-manually, rerun on uncertainty, or use this as a recurring monitor.
+Install `baresip-core` and run with Python 3.10+. Supply
+`YEMOT_SIP_USER` and `YEMOT_SIP_PASSWORD` from the session's secret store;
+`YEMOT_SIP_HOST` defaults to `sip.yemot.co.il`. Check credentials without
+making a call: `python3 scripts/sip_test_caller.py --register-only`.
 
-The script correlates the answered campaign and inbound call history with the
-Worker event using the inbound call ID. The campaign report's `digits` field
-is what the **callee** sent back, not proof the IVR recognized the tone.
-An answered call without a matching route event does not establish that the
-tone reached the IVR during its digit window.
+Only for an approved test, dial once and record the audio received from the IVR:
+
+```sh
+python3 scripts/sip_test_caller.py 0765673575 --max-duration 25 \
+  --step wait:5 --step 'keys:2' --output /path/to/new-recording.wav
+```
+
+Steps run in order after answer. `keys:` sends SIP RTP telephone events, not
+audio tones. Add `--step play:/path/to/speech.wav` for 8 kHz mono 16-bit PCM
+speech (convert another format with `ffmpeg -i INPUT -ac 1 -ar 8000 -c:a pcm_s16le speech.wav`).
+The recording contains received audio only; listen to it before claiming that
+the menu detected a key. If testing key 2 on 0765673575, the Worker
+`ivr-events` record for route `options` can also corroborate detection.
+For other owner-approved test lines, set `YEMOT_SIP_ALLOWED_TARGETS` to
+their comma-separated numbers. Never use customer lines. The tool does not
+retry and will not overwrite recordings.
 
 https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
