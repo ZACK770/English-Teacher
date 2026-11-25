@@ -3,12 +3,12 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { URL as FileURL } from "node:url";
 import { BusinessStore } from "../src/business";
-import { dispatchCallbacks, submitCallback } from "../src/callbacks";
+import { dispatchCallbacks, normalizePhone, submitCallback } from "../src/callbacks";
 import { type Env, settings } from "../src/env";
 import { controlsFromSettings } from "../src/controls";
 import { ProgressStore } from "../src/progress";
 import { TutorSession } from "../src/session";
-import { PaymentStore } from "../src/payments";
+import { ExistingMonthlyEnrollmentError, PaymentStore } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
 import { handleCallback } from "../src/pbx";
 import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT, SALES_OFFER_RECORDING } from "../src/sales-offer";
@@ -689,6 +689,20 @@ describe("sales offers", () => {
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacOfferUnavailable" });
     expect(create).toHaveBeenCalledWith("call", "learner", "school-offer-week", false, env);
     expect(await b.record("sales-offers", offerId)).toMatchObject({ status: "accepted" });
+  });
+  it.each([
+    [new ExistingMonthlyEnrollmentError(), "כבר קיים מנוי פעיל בחשבון. לסיום הקישו 0."],
+    [new Error("unavailable"), "החבילה אינה זמינה לרכישה. לסיום הקישו 0."],
+  ])("explains offer creation failure %s without issuing a payment", async (error, text) => {
+    await answered();
+    vi.spyOn(PaymentStore.prototype, "create").mockRejectedValueOnce(error);
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner"))
+      .toMatchObject({ name: "isaacOfferUnavailable", enabledKeys: "0", files: [{ text }] });
+    expect(await new PaymentStore(b).orderForCall("call")).toBeNull();
+  });
+  it("accepts the synthetic phone format and explicit allowlist entry", () => {
+    expect(normalizePhone("0559999901")).toBe("0559999901");
+    expect(salesOfferAllowed({ ...env, SALES_OFFER_MODE: "allowlist", SALES_OFFER_ALLOWLIST: "0527180504,0559999901" }, "0559999901")).toBe(true);
   });
   it("continues an available offer into existing terms then credit card flow", async () => {
     await answered();
