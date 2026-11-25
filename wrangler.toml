@@ -5,7 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [vars]
-CONTENT_SAFETY_MODE = "on"
 SALES_OFFER_MODE = "on"
 SALES_OFFER_SKIP_PRACTICE = "1"
 SALES_OFFER_ALLOWLIST = ""

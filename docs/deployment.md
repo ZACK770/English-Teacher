@@ -35,11 +35,13 @@ Reconnects retain the selected key. Models and shared Gemini budget limits are u
 
 ## סינון תוכן ב־SpeakCall
 
-לפני פריסה עם `CONTENT_SAFETY_MODE = "on"`, יש להחיל את מיגרציית D1 לסינון
-ולהגדיר סודות Worker: `CONTENT_SAFETY_LISTS` (JSON עם המערכים `tutor`, `learner`
-ו־`critical`), `CONTENT_SAFETY_OWNER` (שם המשתמש ב־CRM), `CONTENT_SAFETY_ALERT_FROM`
-ו־`CONTENT_SAFETY_ALERT_TO`. אין לשמור את הרשימות או את ערכי הסודות במאגר.
-ההפעלה דורשת גם את חיבור Workers AI ואת `TLIVR_SYSTEM_API_KEY` הקיים.
+סינון התוכן כבוי ב־Worker שלא הוגדר לכך, כולל בפריסות תצוגה מקדימה.
+לפני הפעלה יש להחיל את מיגרציית D1 לסינון ולהגדיר את סודות ה־Worker
+`CONTENT_SAFETY_LISTS` (JSON עם המערכים `tutor`, `learner`, `critical`),
+`CONTENT_SAFETY_OWNER` (שם המשתמש ב־CRM), `CONTENT_SAFETY_ALERT_FROM` ו־`CONTENT_SAFETY_ALERT_TO`.
+כל מערך חייב להכיל לפחות ערך אחד; כל מונח ב־`critical` חייב להופיע גם ב־`tutor` אחרי נרמול.
+יש לוודא שחיבור Workers AI והסוד `TLIVR_SYSTEM_API_KEY` קיימים, ורק אז להגדיר
+`CONTENT_SAFETY_MODE=on` כסוד ב־Worker המיועד. אין לשמור את הרשימות או את ערכי הסודות במאגר.
 
 ## פריסת Render (מערכת קודמת)
 
