@@ -24,7 +24,7 @@ import { PaymentStore } from "../src/payments";
 import { PRICING_PACKAGES, SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { dispatchVoicemails, processVoicemail } from "../src/voicemails";
 import { syncCrm } from "../src/crm";
-import { FRAME_BYTES, wav } from "../src/audio";
+import { FRAME_BYTES, FRAME_MS, wav, wavToPcm } from "../src/audio";
 import { callWithLessonSummary, cleanupCallbackQuota, dispatchCallbacks } from "../src/callbacks";
 
 it("defaults new teachers to a male voice without overriding an explicit female choice", () => {
@@ -647,6 +647,67 @@ it("keeps complimentary minutes under the daily Gemini cap", async () => {
   await new TutorSession(phone as unknown as WebSocket, env, settings(env), crypto.randomUUID())
     .run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "gift-phone", caller: "0500000001" }), "student", false);
   expect(connect).not.toHaveBeenCalled();
+});
+
+it.each([2, 120])("plays the phone recording during Gemini startup (%s frames), without repeating or mixing with tutor audio", async setupFrames => {
+  vi.useFakeTimers();
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(done => { resolve = done; });
+    return { promise, resolve };
+  }
+  const recording = new Uint8Array(readFileSync(new FileURL("../../public/tutor-connecting.wav", import.meta.url)));
+  const pcm = wavToPcm(recording);
+  const recordingFrames = pcm.byteLength / FRAME_BYTES;
+  expect(recordingFrames).toBeGreaterThan(3);
+  expect(recordingFrames).toBeLessThan(120);
+  const asset = vi.mocked(env.ASSETS.fetch).mockImplementation(async () => new Response(recording));
+  vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ seconds: 240, mode: "free" });
+  const connecting = deferred<void>();
+  const setup = deferred<void>();
+  vi.spyOn(GeminiLive.prototype, "connect").mockImplementation(() => {
+    connecting.resolve();
+    return setup.promise;
+  });
+  vi.spyOn(GeminiLive.prototype, "startGreeting").mockImplementation(() => {});
+  vi.spyOn(GeminiLive.prototype, "addContext").mockImplementation(() => {});
+  const sendAudio = vi.spyOn(GeminiLive.prototype, "sendAudio");
+  const awaitingAudio = deferred<void>();
+  const firstAudio = deferred<GeminiEvent>();
+  vi.spyOn(GeminiLive.prototype, "next").mockImplementationOnce(() => {
+    awaitingAudio.resolve();
+    return firstAudio.promise;
+  });
+  const socket = { send: vi.fn(), close: vi.fn() };
+  const tutor = new TutorSession(socket as unknown as WebSocket, env, settings(env), "owner");
+  const running = tutor.run(JSON.stringify({ type: "start", format: "pcm16;rate=8000;ch=1", token: "test-channel", callId: "connecting-greeting", caller: "0500000001" }), "student", false);
+  try {
+    await connecting.promise;
+    await vi.advanceTimersByTimeAsync(setupFrames * FRAME_MS);
+    expect(asset).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url: "https://assets.invalid/tutor-connecting.wav" }));
+    const sent = socket.send.mock.calls.map(([frame]) => frame as Uint8Array);
+    expect(Buffer.concat(sent)).toEqual(Buffer.from(pcm.subarray(0, setupFrames * FRAME_BYTES)));
+
+    setup.resolve();
+    await awaitingAudio.promise;
+    await vi.advanceTimersByTimeAsync(FRAME_MS);
+    expect(tutor.meter.outputAudioBytes).toBe(0);
+    expect(sendAudio).not.toHaveBeenCalled();
+    expect(socket.send).toHaveBeenLastCalledWith(setupFrames < recordingFrames ? pcm.slice(setupFrames * FRAME_BYTES, (setupFrames + 1) * FRAME_BYTES) : new Uint8Array(FRAME_BYTES));
+
+    const modelPcm = new Uint8Array(FRAME_BYTES * 3).fill(23);
+    firstAudio.resolve({ type: "audio", pcm24k: modelPcm });
+    await vi.advanceTimersByTimeAsync(FRAME_MS);
+    expect(socket.send).toHaveBeenLastCalledWith(new Uint8Array(FRAME_BYTES).fill(23));
+    await vi.advanceTimersByTimeAsync(FRAME_MS);
+    expect(socket.send).toHaveBeenLastCalledWith(new Uint8Array(FRAME_BYTES));
+    expect(tutor.meter.outputAudioBytes).toBe(modelPcm.byteLength);
+  } finally {
+    setup.resolve();
+    firstAudio.resolve({ type: "closed" });
+    tutor.stop("caller_disconnected", true);
+    await running;
+  }
 });
 
 it("defaults blocked calls to the quota extension while preserving custom policy destinations", () => {
@@ -1339,7 +1400,7 @@ describe("call minute reservations", () => {
       await Promise.race([connected, active.then(() => { throw new Error("First call never connected"); })]);
       const secondPhone = socket();
       const notice = new Uint8Array(FRAME_BYTES).fill(3);
-      vi.mocked(env.ASSETS.fetch).mockResolvedValueOnce(new Response(wav(notice, 8000)));
+      vi.mocked(env.ASSETS.fetch).mockClear().mockResolvedValueOnce(new Response(wav(notice, 8000)));
       await new TutorSession(secondPhone as unknown as WebSocket, env, settings(env), "second-owner")
         .run(frame("second-phone"), "student", false);
       expect(vi.mocked(env.ASSETS.fetch).mock.calls[0][0]).toMatchObject({ url: "https://assets.invalid/customer-busy.wav" });
@@ -1733,8 +1794,8 @@ describe("real learner portal", () => {
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner001@Example42.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner001@example42.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("שלום <יצחק>, זה דוד מצוות ההוראה של ספיקול."),
-      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה דוד מצוות ההוראה של ספיקול."),
+      text: expect.stringContaining("שלום <יצחק>, זה יַנקי מצוות ההוראה של ספיקול."),
+      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה יַנקי מצוות ההוראה של ספיקול."),
     }));
     expect(await recordSalesTool(b, customerId, "ad-1", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "trial-29", channel: "sms" })).toBe(false);
@@ -1959,7 +2020,7 @@ describe("real learner portal", () => {
     const call = (id: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/teachers?key=cb&PBXcallId=${id}&PBXnum=0765673575&PBXextensionPath=%2F2%2F1&PBXphone=0500000001${extra}`), pbxEnv, settings(pbxEnv), "teachers");
     const listed = JSON.stringify(await call("pick"));
     expect(listed).toContain("לDana הקישו 1");
-    expect(listed).toContain("לדוד מצוות ספיקול הקישו 2");
+    expect(listed).toContain("ליַנקי מצוות ספיקול הקישו 2");
     expect((await call("pick", "&isaacBotChoice=1")).goTo).toBe("/7");
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ active_teacher: teacher.id, topic: "business", pace: "slow" });
     const named = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
@@ -1969,11 +2030,11 @@ describe("real learner portal", () => {
     expect((await call("pick-default", "&isaacBotChoice=2")).goTo).toBe("/7");
     expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe("");
     const fallback = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
-    expect(fallback.custom_instructions).toContain('"דוד"');
+    expect(fallback.custom_instructions).toContain('"יַנקי" (quoted data); pronounce it "Yankee"');
     for (let i = 0; i < 9; i++) await b.save(teachersKind("learner-a"), { ...config, name: "T" + i });
     const first = JSON.stringify(await call("paged"));
     expect(first).toContain("למורים נוספים הקישו 9");
-    expect(JSON.stringify(await call("paged", "&isaacBotChoice=9"))).toContain("דוד מצוות ספיקול");
+    expect(JSON.stringify(await call("paged", "&isaacBotChoice=9"))).toContain("יַנקי מצוות ספיקול");
     await b.save("customers", { name: "לקוח מהטלפון", phone: "0500000003", source: "missed-call", preferred_bot: "", notes: "" }, "learner-c");
     const anon = await applyLearnerControls(b, "learner-c", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(anon.custom_instructions).toContain("name is unknown");

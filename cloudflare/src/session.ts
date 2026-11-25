@@ -91,6 +91,7 @@ export class TutorSession {
   private profileId = "";
   private firstPbx = false;
   private firstAudio = false;
+  private tutorAudioReceived = false;
   private firstSent = false;
   private learnerSeen = false;
   private settling = false;
@@ -319,6 +320,8 @@ export class TutorSession {
         await this.latency("gemini_connect_started", { tier: selected.tier });
         const ai = new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, this.artifact.setup_message);
         this.ai = ai;
+        const playback = !this.portal && bot.role === "teacher" && !this.offerCall ? this.pacedOutput(true) : undefined;
+        void playback?.catch(() => {});
         await ai.connect();
         if (this.abort.signal.aborted) return;
         if (this.portal) this.pbx.send(JSON.stringify({ type: "ready" }));
@@ -334,7 +337,7 @@ export class TutorSession {
           if (this.profileId.startsWith("isaac-")) this.returnPath = this.extension(QUOTA_EXTENSION_PATH);
           this.stop("hard_time_limit");
         }, allowance.seconds * 1000);
-        await this.runTasks([this.pbxToAi(), this.aiToOutput(), this.pacedOutput(), this.watchdog()]);
+        await this.runTasks([this.pbxToAi(), this.aiToOutput(), playback ?? this.pacedOutput(), this.watchdog()]);
       }
     } catch (error) {
       if (error instanceof GeminiBudgetError) {
@@ -479,6 +482,7 @@ export class TutorSession {
         continue;
       }
       if (event.type === "audio") {
+        if (event.pcm24k.byteLength) this.tutorAudioReceived = true;
         if (this.pendingEmail?.phase === "readback") this.pendingEmail.audio ||= event.pcm24k.byteLength > 0;
         if (!this.firstAudio) { this.firstAudio = true; await this.latency("first_gemini_audio", { tutor_turn: this.meter.tutorTurns + 1 }); }
         this.meter.outputAudioBytes += event.pcm24k.byteLength;
@@ -767,10 +771,23 @@ export class TutorSession {
     return this.controls.ending_policy === "model_discretion" && this.meter.learnerTurns > 0 && this.meter.lessonSummary !== null ? "lesson_summary_under_policy" : null;
   }
 
-  private async pacedOutput() {
+  private async pacedOutput(withConnectingGreeting = false) {
+    let greeting: Uint8Array | undefined;
+    let offset = 0;
+    if (withConnectingGreeting) {
+      void this.loadConnectingGreeting().then(pcm => { greeting = pcm; }).catch(() => {});
+    }
     while (!this.abort.signal.aborted) {
       await sleep(FRAME_MS, this.abort.signal);
       const audio = this.output.shift();
+      if (!audio && !this.tutorAudioReceived && greeting && offset < greeting.length) {
+        const frame = new Uint8Array(FRAME_BYTES);
+        frame.set(greeting.subarray(offset, offset + FRAME_BYTES));
+        offset += FRAME_BYTES;
+        this.sendAudio(frame);
+        continue;
+      }
+      if (!audio && withConnectingGreeting && this.meteredAt === null) continue;
       this.sendAudio(audio ?? SILENCE_FRAME);
       if (audio) this.lastTutorAudio = Date.now();
       if (audio && !this.firstSent) {
@@ -779,6 +796,11 @@ export class TutorSession {
         await this.latency("first_audio_sent_to_phone", { tutor_turn: 1, queue_frames: this.output.length });
       }
     }
+  }
+
+  private async loadConnectingGreeting() {
+    const response = await this.env.ASSETS.fetch(new Request("https://assets.invalid/tutor-connecting.wav"));
+    if (response.ok) return wavToPcm(new Uint8Array(await response.arrayBuffer()));
   }
 
   private async watchdog() {
