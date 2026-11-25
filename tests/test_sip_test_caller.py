@@ -20,11 +20,13 @@ def test_private_number_is_blocked_in_each_format(number):
 
 def test_prepare_steps_stages_speech_and_validates_timing(tmp_path):
     speech = tmp_path / "speech with spaces.wav"
-    caller.write_wav(speech, bytes(16000))
+    speech_audio = b"\x10\x00" * 8000
+    caller.write_wav(speech, speech_audio)
     steps = caller.prepare_steps(tmp_path, ["wait:2", "keys:2#", f"play:{speech}"], 8)
     assert steps == [("wait", "2", 2), ("keys", "2#", 0.7), ("play", "play-2.wav", 1)]
     with wave.open(str(tmp_path / "play-2.wav"), "rb") as wav:
-        assert wav.getnframes() == 8000
+        assert wav.readframes(8000) == speech_audio
+        assert wav.readframes(wav.getnframes()) == bytes(42400 * 2)
     with pytest.raises(caller.CallError, match="exceed"):
         caller.prepare_steps(tmp_path, ["wait:4"], 2)
     with pytest.raises(caller.CallError, match="finite"):

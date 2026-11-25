@@ -84,7 +84,8 @@ def prepare_steps(directory: Path, values: list[str], limit: int) -> list[tuple[
                         raise CallError("Speech WAV is truncated.")
             except (OSError, EOFError, wave.Error):
                 raise CallError("Could not read speech WAV.") from None
-            write_wav(directory / filename, audio)
+            source_frames = (limit + 1) * RATE - int(elapsed * RATE)
+            write_wav(directory / filename, audio.ljust(source_frames * 2, b"\x00"))
             argument = filename
         else:
             raise CallError("Use --step wait:SECONDS, keys:DIGITS or play:FILE.wav.")
