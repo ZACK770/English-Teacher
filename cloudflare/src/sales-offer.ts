@@ -89,7 +89,7 @@ export const ROLLING_SALES_OFFER_CANDIDATES_SQL = `WITH
   )
   SELECT h.customer_id,ph.phone,strftime('%Y-%m-%dT%H:%M:%fZ',h.last_call) AS last_call_at
   FROM history h JOIN customer_phones ph ON ph.customer_id=h.customer_id
-  WHERE (h.calls>=4 OR EXISTS(SELECT 1 FROM exhausted q WHERE q.customer_id=h.customer_id))
+  WHERE (h.calls>=?3 OR EXISTS(SELECT 1 FROM exhausted q WHERE q.customer_id=h.customer_id))
     AND h.last_call<=julianday(?1)-1
     AND length(ph.phone) BETWEEN 8 AND 15 AND ph.phone NOT GLOB '*[^0-9]*' AND ph.phone GLOB '*[1-9]*'
     AND NOT ${qaCustomerSql("h.customer_id")}
@@ -190,8 +190,10 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
       AND EXISTS(SELECT 1 FROM console_records o WHERE o.kind='sales-offers' AND o.id=callback_requests.id
         AND json_extract(o.body,'$.rolling')=1 AND json_extract(o.body,'$.status')='queued')`)
       .bind(nextCallingSlot(now).toISOString(), now.toISOString()).run();
+    const configuredCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 4);
+    const minCalls = Number.isInteger(configuredCalls) && configuredCalls > 0 ? configuredCalls : 4;
     const { results } = await env.DB.prepare(ROLLING_SALES_OFFER_CANDIDATES_SQL)
-      .bind(now.toISOString(), JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)))
+      .bind(now.toISOString(), JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)), minCalls)
       .all<{ customer_id: string; phone: string; last_call_at: string }>();
     let queued = 0;
     for (const row of results) {
