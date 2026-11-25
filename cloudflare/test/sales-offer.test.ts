@@ -590,7 +590,7 @@ describe("sales offers", () => {
   });
   it("does not claim stale outbound calls", async () => {
     await selectSalesOffers(env);
-    sql.prepare("UPDATE callback_requests SET status='dialed',updated_at=?").run("2026-06-15T12:00:00Z");
+    sql.prepare("UPDATE callback_requests SET status='dialed',updated_at=?").run("2026-06-15T10:59:00Z");
     await enterSalesOffer(b, env, "call", "learner");
     expect(await b.loadContext("call")).toEqual({});
   });
