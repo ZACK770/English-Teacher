@@ -10,6 +10,7 @@ import { ProgressStore } from "../src/progress";
 import { TutorSession } from "../src/session";
 import { PaymentStore } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
+import { handleCallback } from "../src/pbx";
 import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT, SALES_OFFER_RECORDING } from "../src/sales-offer";
 
 let sql: DatabaseSync, b: BusinessStore, env: Env;
@@ -461,7 +462,7 @@ describe("sales offers", () => {
     expect(await queueTestSalesOffer(env, "0501111111", new Date(+now + 60000))).toBeNull();
   });
   it("uses the exact twenty-shekel menu without moving renewal disclosure into the menu", () => {
-    expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! לכבוד הבלאק פריידיי בספיקול: הטבת חודש ראשון! מצטרפים עכשיו למנוי החודשי, ובחודש הראשון משלמים רק עשרים שקלים במקום חמישים ותשעה. כן, עשרים שקלים! בחודש הראשון תקבלו שלושה אימונים של עשר דקות עם המורה. ההטבה הזאת רק בשיחה הזאת. להצטרפות בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.");
+    expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! בלאק פריידיי בספיקול! הטבת חודש ראשון - מוגבלת למאה רוכשים בלבד! מצטרפים עכשיו למנוי החודשי סטארטר, ומשלמים רק עשרים שקלים. כן, עשרים שקלים ואתם על הדרך לדבר אנגלית שוטף! מעוניינים?! הקישו כעת 1.");
   });
   it("bundles the offer recording in the same telephone WAV format as the other prompts", () => {
     const audio = readFileSync(new FileURL("../../public/brand/phone/" + SALES_OFFER_RECORDING, import.meta.url));
@@ -478,7 +479,7 @@ describe("sales offers", () => {
     const assets = vi.fn(async () => new Response(null, { headers: { "Content-Type": "audio/wav" } }));
     env.ASSETS = { fetch: assets } as unknown as Fetcher;
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call" }, "learner")).toMatchObject({
-      name: "isaacOffer", enabledKeys: "0,1,2", files: [{
+      name: "isaacOffer", enabledKeys: "1", files: [{
         fileLink: "https://example.test/brand/phone/" + SALES_OFFER_RECORDING,
         fileName: SALES_OFFER_RECORDING.replace(/\.wav$/, ""),
       }],
@@ -593,7 +594,7 @@ describe("sales offers", () => {
     await enterSalesOffer(b, env, "call", "learner");
     expect(await b.loadContext("call")).toEqual({});
   });
-  it.each([30, 32, 40])("attributes provider retries answered %s minutes after campaign submission", async minutes => {
+  it.each([30, 45, 119])("attributes provider retries answered %s minutes after campaign submission", async minutes => {
     await selectSalesOffers(env);
     await dispatchCallbacks(env);
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]!.body));
@@ -603,23 +604,23 @@ describe("sales offers", () => {
     expect(await b.loadContext("retry-call")).toMatchObject({ offer_call: offerId });
     expect(await b.record("sales-offers", offerId)).toMatchObject({ call_id: "retry-call", status: "answered" });
   });
-  it.each([45, 46])("does not attribute a call outside the retry window after %s minutes", async minutes => {
+  it.each([120, 121])("does not attribute a call outside the retry window after %s minutes", async minutes => {
     await selectSalesOffers(env);
     await dispatchCallbacks(env);
     vi.setSystemTime(new Date(+now + minutes * 60000));
     await enterSalesOffer(b, env, "stale-call", "learner");
     expect(await b.loadContext("stale-call")).toEqual({});
   });
-  it.each(["0", "ERROR", "2"])("handles offer key %s", async choice => {
+  it.each(["0", "ERROR", "2", "9"])("hangs up on unsupported offer key or timeout %s", async choice => {
     await answered();
     const response = await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: choice }, "learner");
-    expect(response).toEqual(choice === "2" ? null : { type: "hangup" });
+    expect(response).toEqual({ type: "hangup" });
     expect(await b.record("sales-offers", offerId)).toMatchObject({ status: "declined" });
   });
   it("shows the month offer only in its bound call and handles unavailable package", async () => {
     await answered();
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "other" }, "learner")).toBeNull();
-    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call" }, "learner")).toMatchObject({ name: "isaacOffer", enabledKeys: "0,1,2" });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call" }, "learner")).toMatchObject({ name: "isaacOffer", enabledKeys: "1" });
     const create = vi.spyOn(PaymentStore.prototype, "create");
     sql.prepare("DELETE FROM console_records WHERE kind='packages' AND id='school-offer-week'").run();
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacOfferUnavailable" });
@@ -631,5 +632,54 @@ describe("sales offers", () => {
     env = { ...env, NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" };
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard", sum: 59 });
+  });
+  it("returns from terms to the one-key offer without entering credit card details", async () => {
+    await answered();
+    Object.assign(env, { NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
+    const terms = await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner");
+    expect(terms).toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1" });
+    expect(terms?.files[0].text).toBe("שימו לב: בהטבת בלאק פריידיי הינכם זכאים להטבת חודש ראשון. בסוף החודש המנוי ממשיך אוטומטית כמנוי סטארט במחירו הקבוע. אם לא תרצו להמשיך, ניתן לבטל את המנוי בשלוחה 3 בתוך שלושים הימים הראשונים, ולא תחויבו על חודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.");
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "0" }, "learner"))
+      .toMatchObject({ name: "isaacOffer", enabledKeys: "1", removeParams: ["isaacPayConfirm", "isaacOffer"] });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner"))
+      .toMatchObject({ name: "isaacPayConfirm" });
+  });
+  async function acceptances(count: number) {
+    for (let i = 0; i < count; i++) {
+      await b.save("sales-offers", { customer_id: "buyer-" + i, status: "accepted" }, "accepted-" + i);
+    }
+  }
+  it("stops selection and dispatch after one hundred acceptances", async () => {
+    await acceptances(100);
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toBeNull();
+    await b.save("sales-offers", { customer_id: "learner", phone: "0501111111", status: "queued", expires_at: "2026-06-16T00:00:00Z" }, offerId);
+    sql.prepare("INSERT INTO callback_requests(id,phone,name,for_whom,goal,timing,consent_at,source,status,attempts,created_at,updated_at,next_attempt_at) VALUES (?,'0501111111','','self','offer','scheduled','','sales_offer','queued',0,?,?,?)")
+      .run(offerId, now.toISOString(), now.toISOString(), now.toISOString());
+    expect(await dispatchCallbacks(env)).toMatchObject({ sent: 0 });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("reserves the hundredth slot once and blocks a queued offer from becoming buyer 101", async () => {
+    await answered();
+    await acceptances(99);
+    Object.assign(env, { NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard" });
+    await b.save("customers", { name: "Other", phone: "0502222222" }, "other");
+    await b.save("sales-offers", { customer_id: "other", phone: "0502222222", call_id: "other-call", status: "answered", expires_at: "2026-06-16T00:00:00Z" }, "other-offer");
+    await b.saveContext("other-call", { offer_call: "other-offer" });
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "other-call", isaacOffer: "1" }, "other")).toEqual({ type: "hangup" });
+    expect(await new PaymentStore(b).orderForCall("other-call")).toBeNull();
+  });
+  it("can skip practice for a recognized offer call without changing ordinary inbound calls", async () => {
+    await answered();
+    Object.assign(env, { SALES_OFFER_SKIP_PRACTICE: "1", TLIVR_CALLBACK_SECRET: "cb", TLIVR_PROJECT_ENABLED: "true", TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_PHONE: "0765673575" });
+    const request = new Request("https://example.test/v1/technoline/ivr/main?key=cb&PBXnum=0765673575&PBXextensionPath=/&PBXphone=0501111111&PBXcallId=call");
+    expect(await handleCallback(request, env, settings(env), "main"))
+      .toMatchObject({ name: "isaacOffer", enabledKeys: "1" });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM usage_allocations").get()!.n).toBe(0);
+    const ordinary = new Request("https://example.test/v1/technoline/ivr/main?key=cb&PBXnum=0765673575&PBXextensionPath=/&PBXphone=0502222222&PBXcallId=ordinary");
+    expect(await handleCallback(ordinary, env, settings(env), "main"))
+      .not.toMatchObject({ name: "isaacOffer" });
   });
 });

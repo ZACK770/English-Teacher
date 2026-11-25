@@ -293,8 +293,10 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   const copy = await getCopy(b);
   if (["main", "school"].includes(route) && p.PBXcallStatus !== "HANGUP") await enterSalesOffer(b, env, callId, customerId);
   const offerEntry = route === "main" && !p.isaacMain && (await b.loadContext(callId)).offer_call;
+  const directOffer = env.SALES_OFFER_SKIP_PRACTICE === "1" && ["main", "school"].includes(route) &&
+    (await b.loadContext(callId)).offer_call;
   let result: IVRResponse;
-  if (route === "sales") {
+  if (route === "sales" || directOffer) {
     const context = await b.loadContext("payments:" + callId);
     let ids: string[] = context.package_ids;
     if (!ids) {

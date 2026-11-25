@@ -1,5 +1,6 @@
 export interface Env {
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";
+  SALES_OFFER_SKIP_PRACTICE?: string;
   SALES_OFFER_ALLOWLIST?: string;
   SALES_OFFER_PRACTICE_MINUTES?: string;
   SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest" | "quota_exhausted" | "rolling";

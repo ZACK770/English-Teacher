@@ -4,10 +4,11 @@ import { type Env, HttpError, nowIso } from "./env";
 import { PaymentStore, paymentResponse } from "./payments";
 import { SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { isQaCustomer, qaCustomerSql } from "./qa-customers";
+import { SALES_OFFER_CAP_SQL } from "./sales-offer-product";
 
 export const SALES_EXTENSION_PATH = "/3";
-export const SALES_OFFER_RECORDING = "sales-offer-black-friday-5ce34022b3af.wav";
-export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! לכבוד הבלאק פריידיי בספיקול: הטבת חודש ראשון! מצטרפים עכשיו למנוי החודשי, ובחודש הראשון משלמים רק עשרים שקלים במקום חמישים ותשעה. כן, עשרים שקלים! בחודש הראשון תקבלו שלושה אימונים של עשר דקות עם המורה. ההטבה הזאת רק בשיחה הזאת. להצטרפות בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.";
+export const SALES_OFFER_RECORDING = "sales-offer-black-friday-100-9ea6c78d7d64.wav";
+export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! בלאק פריידיי בספיקול! הטבת חודש ראשון - מוגבלת למאה רוכשים בלבד! מצטרפים עכשיו למנוי החודשי סטארטר, ומשלמים רק עשרים שקלים. כן, עשרים שקלים ואתם על הדרך לדבר אנגלית שוטף! מעוניינים?! הקישו כעת 1.";
 export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call from SpeakCall after the learner’s trial. Speak Hebrew for guidance. Greet warmly by name if known: "שלום, כאן ספיקול, חזרנו לתרגול קצר". Do a short English practice. Close politely and warmly, not abruptly, and say a short special message follows. Never take card details or quote prices.';
 
 export function salesOfferAllowed(env: Env, phone: string): boolean {
@@ -137,6 +138,7 @@ function scheduleAt(at: Date) {
 }
 
 async function queueOffer(b: BusinessStore, env: Env, customerId: string, phone: string, droppedAt: string, schedule: { at: string; expires: string }, now: Date, rolling = false) {
+  if (!await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) return null;
   if (await isQaCustomer(b.db, customerId)) return null;
   const test = salesOfferTestPhone(env, phone);
   if (!salesOfferAllowed(env, phone) || !test && await customerBought(b, customerId, now.toISOString())) return null;
@@ -144,8 +146,8 @@ async function queueOffer(b: BusinessStore, env: Env, customerId: string, phone:
   const offer = { id, customer_id: customerId, phone, dropped_at: droppedAt, status: "queued", expires_at: schedule.expires, test, ...(rolling ? { rolling: true } : {}) };
   await b.db.batch([
     b.db.prepare(`INSERT OR IGNORE INTO console_records(kind,id,body,created_at,updated_at)
-      SELECT 'sales-offers',?,?,?,? WHERE ?=1 OR NOT EXISTS(
-        SELECT 1 FROM console_records WHERE kind='sales-offers' AND json_extract(body,'$.customer_id')=?)`)
+      SELECT 'sales-offers',?,?,?,? WHERE ${SALES_OFFER_CAP_SQL} AND (?=1 OR NOT EXISTS(
+        SELECT 1 FROM console_records WHERE kind='sales-offers' AND json_extract(body,'$.customer_id')=?))`)
       .bind(id, JSON.stringify(offer), now.toISOString(), now.toISOString(), test ? 1 : 0, customerId),
     b.db.prepare(`INSERT OR IGNORE INTO callback_requests(id,phone,name,for_whom,goal,timing,preferred_time,source,consent_at,status,attempts,created_at,updated_at,next_attempt_at)
       SELECT ?,?,'','self','Sales offer','scheduled',?,'sales_offer',?,'queued',0,?,?,?
@@ -230,6 +232,7 @@ export async function salesOfferDialError(env: Env, id: string, phone: string, n
   if (offer && await isQaCustomer(b.db, offer.customer_id)) return "QA test customer excluded";
   if (!salesOfferAllowed(env, phone)) return "Sales offer gate disabled for phone";
   if (!offer || offer.phone !== normalizePhone(phone) || !["queued", "dialed"].includes(offer.status) || offer.expires_at <= now.toISOString()) return "Sales offer unavailable or expired";
+  if (!await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) return "Sales offer buyer limit reached";
   if (offer.rolling) {
     const start = rollingStart(env);
     if (env.SALES_OFFER_AUDIENCE !== "rolling" || env.SALES_OFFER_MODE !== "on" ||
@@ -247,7 +250,7 @@ export async function enterSalesOffer(b: BusinessStore, env: Env, callId: string
   const phone = normalizePhone(customer?.phone ?? "");
   if (!phone || !salesOfferAllowed(env, phone)) return;
   const row = await b.db.prepare("SELECT id FROM callback_requests WHERE source='sales_offer' AND phone=? AND status IN ('dialing','dialed') AND updated_at>? ORDER BY updated_at DESC LIMIT 1")
-    .bind(phone, new Date(Date.now() - 45 * 60000).toISOString()).first<{ id: string }>();
+    .bind(phone, new Date(Date.now() - 120 * 60000).toISOString()).first<{ id: string }>();
   if (!row || await salesOfferDialError(env, row.id, phone, new Date())) return;
   const offer = await b.record("sales-offers", row.id);
   if (offer?.customer_id !== customerId) return;
@@ -268,7 +271,7 @@ export async function offerGift(b: BusinessStore, env: Env, offerId: string, cus
   return result.meta.changes === 1 ? seconds : 0;
 }
 
-const offerMenu = (text: string, name = "isaacOffer", keys = "0,1,2") => ({
+const offerMenu = (text: string, name = "isaacOffer", keys = "1") => ({
   type: "simpleMenu", name, enabledKeys: keys, times: 2, timeout: 7, errorReturn: "ERROR", post: true, files: [{ text }],
 });
 
@@ -295,14 +298,24 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
   if (p.PBXcallStatus === "HANGUP") return { type: "hangup" };
   if (p.isaacOfferUnavailable) return { type: "hangup" };
   if (offer.status === "declined") return null;
+  if (offer.status === "accepted" && ["0", "ERROR"].includes(p.isaacPayConfirm)) {
+    await b.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
+    return { ...await recordedOfferMenu(env), removeParams: ["isaacPayConfirm", "isaacOffer"] };
+  }
   if (offer.status === "accepted") return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
   if (!["answered", "offered"].includes(offer.status)) return null;
   const choice = p.isaacOffer;
-  const status = choice === "1" ? "accepted" : ["0", "2", "ERROR"].includes(choice) ? "declined" : "offered";
-  await b.save("sales-offers", { ...offer, status }, context.offer_call);
-  if (choice === "2") return null;
-  if (["0", "ERROR"].includes(choice)) return { type: "hangup" };
+  if (choice && choice !== "1") {
+    await b.save("sales-offers", { ...offer, status: "declined" }, context.offer_call);
+    return { type: "hangup" };
+  }
   if (choice === "1") {
+    const reserved = await b.db.prepare(`UPDATE console_records
+      SET body=json_set(body,'$.status','accepted','$.accepted_at',COALESCE(json_extract(body,'$.accepted_at'),?)),updated_at=?
+      WHERE kind='sales-offers' AND id=? AND json_extract(body,'$.status') IN ('answered','offered')
+      AND (${SALES_OFFER_CAP_SQL} OR json_extract(body,'$.accepted_at') IS NOT NULL)`)
+      .bind(nowIso(), nowIso(), context.offer_call).run();
+    if (!reserved.meta.changes) return { type: "hangup" };
     try {
       await new PaymentStore(b).create(p.PBXcallId, customerId, "school-offer-week", false, env);
     } catch {
@@ -310,5 +323,7 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
     }
     return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
   }
+  if (!offer.accepted_at && !await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) return { type: "hangup" };
+  await b.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
   return recordedOfferMenu(env);
 }
