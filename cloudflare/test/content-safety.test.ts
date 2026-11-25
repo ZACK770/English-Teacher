@@ -1,5 +1,6 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
+import { URL as FileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   ContentSafetyStore, ContentTurn, STRIKE_WINDOW_MS, adminContentSafety, confirmCriticalIncident, contentPolicy,
@@ -16,7 +17,7 @@ let sqlite: DatabaseSync, env: Env, store: ContentSafetyStore, ai: ReturnType<ty
 
 beforeEach(() => {
   sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync(new URL("../migrations/0034_content_safety.sql", import.meta.url), "utf-8"));
+  sqlite.exec(readFileSync(new FileURL("../migrations/0034_content_safety.sql", import.meta.url), "utf-8"));
   type Statement = { result: () => { results: Record<string, unknown>[]; meta: { changes: number } } };
   const DB = {
     prepare(query: string) {

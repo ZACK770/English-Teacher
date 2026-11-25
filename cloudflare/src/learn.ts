@@ -13,7 +13,7 @@ import { runtimeContext } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
 import { LearningStore } from "./learning";
-import { ContentSafetyStore, ContentTurn, confirmCriticalIncident, contentDenialMessage, contentPolicy, matchedTerms } from "./content-safety";
+import { ContentSafetyError, ContentSafetyStore, ContentTurn, confirmCriticalIncident, contentPolicy, matchedTerms } from "./content-safety";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; elapsedSeconds: number }
 interface LiveOptions {
@@ -33,6 +33,7 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
   let size = 0;
   let startedAt: number | null = null;
   let elapsedSeconds = 0;
+  let completed = false;
   const ai = new GeminiLive(s.geminiLiveUrl, s.geminiKey, setup);
   let budgetError: GeminiBudgetError | undefined;
   const release = await acquireGeminiBudget(env, () => meter.usage(s).estimated_cost_usd, reason => {
@@ -71,7 +72,7 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
           ai.submitToolResult(call, saved);
         }
         if (end) break;
-      } else if (event.type === "turn_complete") { meter.tutorTurns = 1; break; }
+      } else if (event.type === "turn_complete") { completed = true; meter.tutorTurns = 1; break; }
       else if (event.type === "closed" || event.type === "go_away") break;
     }
   };
@@ -92,14 +93,14 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
   }
   if (safety) {
     const store = new ContentSafetyStore(env.DB);
-    const result = safety.turn.finish();
+    const result = safety.turn.finish(completed);
     if (result.tutor) {
       await store.block(safety.customerId);
       if (result.critical.length) await confirmCriticalIncident(env, result.audio, result.critical);
-      throw new HttpError(403, contentDenialMessage("content_blocked"));
+      throw new ContentSafetyError("content_blocked");
     }
     const denied = await store.denied(safety.customerId);
-    if (denied) throw new HttpError(denied === "content_blocked" ? 403 : 503, contentDenialMessage(denied));
+    if (denied) throw new ContentSafetyError(denied);
   }
   return { audio: concat(parts), text: output.join(" "), meter, elapsedSeconds };
 }
@@ -126,9 +127,9 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   if (policy) {
     const store = new ContentSafetyStore(env.DB);
     const denied = await store.denied(customerId);
-    if (denied) throw new HttpError(denied === "content_blocked" ? 403 : 503, contentDenialMessage(denied));
+    if (denied) throw new ContentSafetyError(denied);
     if (matchedTerms(text, policy.learner).length && await store.strike(customerId, crypto.randomUUID())) {
-      throw new HttpError(403, contentDenialMessage("content_blocked"));
+      throw new ContentSafetyError("content_blocked");
     }
   }
   const controls = await applyLearnerControls(b, customerId, bot, await progress.loadControls(botId, defaults(s, botId)));
@@ -166,7 +167,7 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     if (error instanceof GeminiBudgetError) { limited = true; throw error; }
-    if (error instanceof HttpError) throw error;
+    if (error instanceof ContentSafetyError) throw error;
     if (isGeminiError(error)) await reportGeminiOutcome(env, false, (error as Error).message.split(s.geminiKey).join("[redacted]"));
     if (!startedAt) throw error;
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });

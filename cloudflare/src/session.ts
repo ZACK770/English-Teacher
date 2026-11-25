@@ -3,7 +3,7 @@ import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
-import { type ContentDenial, ContentSafetyStore, ContentTurn, confirmCriticalIncident, contentDenialMessage, contentPolicy } from "./content-safety";
+import { type ContentDenial, ContentSafetyError, ContentSafetyStore, ContentTurn, confirmCriticalIncident, contentDenialMessage, contentPolicy } from "./content-safety";
 import { type Allowance, BusinessStore } from "./business";
 import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText, normalizePhone } from "./callbacks";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
@@ -353,9 +353,8 @@ export class TutorSession {
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), playback ?? this.pacedOutput(), this.watchdog()]);
       }
     } catch (error) {
-      if (error instanceof HttpError && error.status === 503 && this.env.CONTENT_SAFETY_MODE === "on" &&
-          error.message === contentDenialMessage("content_suspended")) {
-        this.endForContent("content_suspended");
+      if (error instanceof ContentSafetyError) {
+        this.endForContent(error.reason);
         return;
       }
       if (error instanceof GeminiBudgetError) {

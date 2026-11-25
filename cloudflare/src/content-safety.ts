@@ -37,7 +37,7 @@ export function contentPolicy(env: Env): Policy | null {
     if (critical.some(term => !tutor.includes(term)) || !alertNumbers(env) || !env.AI || !env.TLIVR_SYSTEM_API_KEY) throw new Error("invalid configuration");
     return { tutor, learner, critical };
   } catch {
-    throw new HttpError(503, CONTENT_SUSPENDED_MESSAGE);
+    throw new ContentSafetyError("content_suspended");
   }
 }
 
@@ -74,11 +74,11 @@ export class ContentTurn {
     while (this.bytes > MAX_CLIP_BYTES) this.bytes -= this.audio.shift()!.length;
   }
 
-  finish() {
-    const critical = matchedTerms(this.tutor, this.policy.critical);
+  finish(complete = true) {
+    const critical = complete ? matchedTerms(this.tutor, this.policy.critical) : [];
     const result = {
-      tutor: matchedTerms(this.tutor, this.policy.tutor).length > 0,
-      learner: matchedTerms(this.learner, this.policy.learner).length > 0,
+      tutor: matchedTerms(this.tutor, this.policy.tutor, complete).length > 0,
+      learner: complete && matchedTerms(this.learner, this.policy.learner).length > 0,
       critical,
       audio: critical.length ? concat(this.audio) : new Uint8Array(),
     };
@@ -97,6 +97,12 @@ export class ContentTurn {
 export type ContentDenial = "content_blocked" | "content_suspended";
 export const contentDenialMessage = (reason: ContentDenial) =>
   reason === "content_blocked" ? CONTENT_BLOCKED_MESSAGE : CONTENT_SUSPENDED_MESSAGE;
+
+export class ContentSafetyError extends HttpError {
+  constructor(readonly reason: ContentDenial) {
+    super(reason === "content_blocked" ? 403 : 503, contentDenialMessage(reason));
+  }
+}
 
 export class ContentSafetyStore {
   constructor(private db: D1Database) {}
@@ -159,7 +165,7 @@ export async function verifyCriticalAudio(env: Env, audio: Uint8Array, critical:
   try {
     const result = await env.AI.run(MODEL, {
       audio: b64encode(wav(audio, 24000)), task: "transcribe", vad_filter: true,
-      condition_on_previous_text: false, temperature: 0,
+      condition_on_previous_text: false, log_prob_threshold: -0.5, no_speech_threshold: 0.15,
     });
     return (result.segments ?? []).some(segment => typeof segment.avg_logprob === "number" && segment.avg_logprob >= -0.5
       && typeof segment.no_speech_prob === "number" && segment.no_speech_prob <= 0.15
