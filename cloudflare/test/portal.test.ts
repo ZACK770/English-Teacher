@@ -1794,8 +1794,8 @@ describe("real learner portal", () => {
     expect(await recordSalesTool(b, customerId, "ad-1", "save_email", { email: "Learner001@Example42.com", words: ["meeting", "<b>"], summary: "אמרת 9 משפטים" }, mail)).toBe(true);
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({ from: "noreply@speakcall.app", to: "learner001@example42.com", text: expect.stringContaining("meeting"), html: expect.stringContaining("&lt;b&gt;") }));
     expect(mail.send).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("שלום <יצחק>, זה דוד מצוות ההוראה של ספיקול."),
-      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה דוד מצוות ההוראה של ספיקול."),
+      text: expect.stringContaining("שלום <יצחק>, זה יַנקי מצוות ההוראה של ספיקול."),
+      html: expect.stringContaining("שלום &lt;יצחק&gt;, זה יַנקי מצוות ההוראה של ספיקול."),
     }));
     expect(await recordSalesTool(b, customerId, "ad-1", "schedule_next_lesson", { day: "tomorrow", part_of_day: "evening" })).toBe(true);
     expect(await recordSalesTool(b, customerId, "ad-1", "request_payment_link", { plan_id: "trial-29", channel: "sms" })).toBe(false);
@@ -2020,7 +2020,7 @@ describe("real learner portal", () => {
     const call = (id: string, extra = "") => handleCallback(new Request(`https://x/v1/technoline/ivr/teachers?key=cb&PBXcallId=${id}&PBXnum=0765673575&PBXextensionPath=%2F2%2F1&PBXphone=0500000001${extra}`), pbxEnv, settings(pbxEnv), "teachers");
     const listed = JSON.stringify(await call("pick"));
     expect(listed).toContain("לDana הקישו 1");
-    expect(listed).toContain("לדוד מצוות ספיקול הקישו 2");
+    expect(listed).toContain("ליַנקי מצוות ספיקול הקישו 2");
     expect((await call("pick", "&isaacBotChoice=1")).goTo).toBe("/7");
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ active_teacher: teacher.id, topic: "business", pace: "slow" });
     const named = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
@@ -2030,11 +2030,11 @@ describe("real learner portal", () => {
     expect((await call("pick-default", "&isaacBotChoice=2")).goTo).toBe("/7");
     expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe("");
     const fallback = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
-    expect(fallback.custom_instructions).toContain('"דוד"');
+    expect(fallback.custom_instructions).toContain('"יַנקי" (quoted data); pronounce it "Yankee"');
     for (let i = 0; i < 9; i++) await b.save(teachersKind("learner-a"), { ...config, name: "T" + i });
     const first = JSON.stringify(await call("paged"));
     expect(first).toContain("למורים נוספים הקישו 9");
-    expect(JSON.stringify(await call("paged", "&isaacBotChoice=9"))).toContain("דוד מצוות ספיקול");
+    expect(JSON.stringify(await call("paged", "&isaacBotChoice=9"))).toContain("יַנקי מצוות ספיקול");
     await b.save("customers", { name: "לקוח מהטלפון", phone: "0500000003", source: "missed-call", preferred_bot: "", notes: "" }, "learner-c");
     const anon = await applyLearnerControls(b, "learner-c", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(anon.custom_instructions).toContain("name is unknown");
