@@ -14,6 +14,7 @@ export function ContentSafetyPanel({ customerId, request }: { customerId?: strin
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const enabled = state?.enabled === true;
   useEffect(() => {
     const controller = new AbortController();
     const path = base + (customerId ? '?' + new URLSearchParams({ customer_id: customerId }) : '');
@@ -22,6 +23,16 @@ export function ContentSafetyPanel({ customerId, request }: { customerId?: strin
     }).catch(() => {});
     return () => controller.abort();
   }, [customerId, request, revision]);
+  useEffect(() => {
+    if (!enabled || busy) return;
+    const refresh = () => { if (!document.hidden) setRevision(n => n + 1); };
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [enabled, busy]);
   const hold = customerId ? state?.customer : state?.teacher;
   if (!state?.enabled || (!hold && customerId)) return null;
   const label = customerId ? 'שחרור המשתמש' : 'החזרת המורה לפעילות';
