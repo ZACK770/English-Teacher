@@ -24,7 +24,7 @@ import "./logo-breathing.css";
 type Page = "home" | "teachers" | "materials" | "history" | "achievements" | "settings" | "intake" | "plan" | "checkout";
 const paceNames: Record<string, string> = { slow: "לאט ובנחת", normal: "בקצב טבעי", fast: "אפשר להגביר" };
 const personalities: Record<string, string> = { warm: "חם ומעודד", focused: "ישר לעניין", playful: "עם חיוך" };
-const DEFAULT_NAME = "דוד";
+const DEFAULT_NAME = "יַנקי";
 const FEMALE_NAME = "אסתי";
 const voices = [{ value: "Aoede", label: "רך ובהיר" }, { value: "Puck", label: "קליל וחם" }, { value: "Charon", label: "עמוק ורגוע" }];
 const lessonDate = (s: string) => new Date(s).toLocaleDateString("he-IL", { day: "numeric", month: "long", timeZone: "Asia/Jerusalem" });
