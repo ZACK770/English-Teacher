@@ -725,7 +725,7 @@ describe("sales offers", () => {
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard", sum: 20 });
   });
-  it.each(["ok", "update-refused", "unchanged-amount", "unchanged-date", "network", "existing-charge"])("verifies 59 renewal before the exactly-once 20 charge: %s", async outcome => {
+  it.each(["ok", "short-year", "update-refused", "unchanged-amount", "unchanged-date", "network", "existing-charge"])("verifies 59 renewal before the exactly-once 20 charge: %s", async outcome => {
     await answered();
     Object.assign(env, { NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
     await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner");
@@ -746,11 +746,11 @@ describe("sales offers", () => {
         if (outcome === "update-refused") return Response.json({ Result: "Error" });
         expect(Object.fromEntries(form)).toMatchObject({ Amount: "59.00", NextDate: "15/07/2026" });
         if (outcome !== "unchanged-amount") detail.KevaAmount = "59";
-        if (outcome !== "unchanged-date") detail.KevaNextDate = "15/07/2026";
+        if (outcome !== "unchanged-date") detail.KevaNextDate = outcome === "short-year" ? "15/07/26" : "15/07/2026";
         return Response.json({ Result: "OK" });
       }
       if (form.get("Action") === "TashlumBodedNew") {
-        expect(detail).toMatchObject({ KevaAmount: "59", KevaNextDate: "15/07/2026" });
+        expect(detail).toMatchObject({ KevaAmount: "59", KevaNextDate: outcome === "short-year" ? "15/07/26" : "15/07/2026" });
         expect(Object.fromEntries(form)).toMatchObject({ Amount: "20", KevaId: "54321", JoinToKevaId: "Join" });
         return Response.json({ Status: "OK", TransactionId: "987654", Amount: "20", KevaId: "54321", Currency: "1" });
       }
@@ -760,8 +760,8 @@ describe("sales offers", () => {
     const confirm = () => paymentResponse(store, env, "/", { PBXcallId: "call", isaacPayStatus: "OK", CONFIRM_isaacPayStatus: "54321" }, "learner", ["school-offer-week"]);
     await confirm();
     await confirm();
-    expect(forms.filter(f => f.get("Action") === "TashlumBodedNew")).toHaveLength(outcome === "ok" ? 1 : 0);
-    const success = ["ok", "existing-charge"].includes(outcome);
+    expect(forms.filter(f => f.get("Action") === "TashlumBodedNew")).toHaveLength(["ok", "short-year"].includes(outcome) ? 1 : 0);
+    const success = ["ok", "short-year", "existing-charge"].includes(outcome);
     expect(await store.orderForCall("call")).toMatchObject({ state: success ? "paid" : "awaiting_settlement", amount_agorot: 2000 });
     if (success) {
       expect(sql.prepare("SELECT monthly_agorot FROM standing_orders").get()).toMatchObject({ monthly_agorot: 5900 });

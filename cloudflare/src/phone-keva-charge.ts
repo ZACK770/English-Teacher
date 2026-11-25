@@ -1,7 +1,7 @@
 import { BusinessStore } from "./business";
 import { type Env, nowIso, paymentsConfigured } from "./env";
 import { activatePaidKeva, verifyKevaForActivation, type VerifiedPhoneCharge } from "./keva-sync";
-import { manageKeva } from "./nedarim";
+import { manageKeva, providerDay } from "./nedarim";
 import { agorot, PaymentStore } from "./payments";
 import { addMonths } from "./subscriptions";
 import { isSalesOfferPackage } from "./sales-offer-product";
@@ -47,7 +47,7 @@ export async function completePhoneKevaFirstCharge(env: Env, orderId: string): P
         if (update?.Result !== "OK") throw new Error("Renewal update failed");
         detail = JSON.parse(await manageKeva(env, { Action: "GetKevaId", KevaId: kevaId }));
         row.Amount = detail.KevaAmount;
-        if (str(detail.KevaNextDate) !== nextDate || !await verifyKevaForActivation(env, row, kevaId, enrollment, detail)) throw new Error("Renewal verification failed");
+        if (providerDay(detail.KevaNextDate) !== providerDay(nextDate) || !await verifyKevaForActivation(env, row, kevaId, enrollment, detail)) throw new Error("Renewal verification failed");
       } catch {
         await setState("unknown");
         await issue("phone_keva_next_date", "עדכון סכום ומועד החידוש לא אושר והחיוב הראשון לא בוצע. נדרשת בדיקה בנדרים פלוס לפני ניסיון תשלום נוסף.");
