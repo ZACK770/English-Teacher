@@ -82,3 +82,29 @@ def test_held_report_identifies_undialed_target_from_row():
     report["calls"][0]["phone"] = "076-5673576"
     with pytest.raises(caller.CheckError, match="one undialed target"):
         caller.check_held_report(report)
+
+
+def test_live_check_correlates_uppercase_answered_report(monkeypatch):
+    event = Mock(side_effect=[False, True])
+    monkeypatch.setattr(caller, "worker_event", event)
+    monkeypatch.setattr(caller, "run_campaign", Mock(return_value={
+        "errorCode": 0, "campaignId": 123,
+    }))
+    campaign = Mock(side_effect=[
+        {
+            "campaign": {"dialRetries": "0", "callId": caller.CALLER},
+            "calls": [{"phone": caller.TARGET, "status": "NEW", "retries": "0"}],
+        },
+        {"errorCode": 0},
+        {"campaign": {"status": "הסתיים"}, "calls": [{"status": "ANSWERED", "duration": "00:13"}]},
+    ])
+    monkeypatch.setattr(caller, "campaign", campaign)
+    monkeypatch.setattr(caller.time, "sleep", Mock())
+    monkeypatch.setattr(caller, "call_history", Mock(return_value=[{
+        "entryExt": caller.ROOT_ID, "callId": "test-call",
+    }]))
+    assert caller.live_check("fake", "fake", b"wav") == 0
+    assert [call.args[1] for call in campaign.call_args_list] == [
+        "campaignReport", "campaignResumption", "campaignReport",
+    ]
+    event.assert_called_with("fake", "test-call")

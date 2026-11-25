@@ -185,7 +185,7 @@ def live_check(api_key: str, token: str, audio: bytes) -> int:
     else:
         raise CheckError("Campaign did not finish within the polling limit; result inconclusive.")
     calls = report.get("calls", [])
-    if len(calls) != 1 or calls[0].get("status") != "answered":
+    if len(calls) != 1 or str(calls[0].get("status")).casefold() != "answered":
         raise CheckError("Campaign report does not confirm one answered call; result inconclusive.")
     duration = str(calls[0].get("duration"))
     if re.fullmatch(r"[0-9]+:[0-9]{2}", duration):
