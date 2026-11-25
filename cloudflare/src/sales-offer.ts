@@ -107,8 +107,12 @@ function rollingStart(env: Env) {
 }
 
 export async function rollingOfferDispatch(env: Env, id: string, now: Date) {
-  const offer = await new BusinessStore(env.DB).record("sales-offers", id);
+  const b = new BusinessStore(env.DB);
+  const offer = await b.record("sales-offers", id);
   if (!offer?.rolling) return null;
+  if (offer.status === "queued" && offer.expires_at <= now.toISOString()) {
+    await b.save("sales-offers", { ...offer, expires_at: scheduleAt(nextCallingSlot(now)).expires }, id);
+  }
   const last = await env.DB.prepare(`SELECT strftime('%Y-%m-%dT%H:%M:%fZ',MAX(at)) AS last_call
     FROM (${customerPhoneCallsSql}) WHERE customer_id=?`)
     .bind(offer.customer_id).first<{ last_call: string | null }>();
@@ -181,6 +185,11 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
     const start = rollingStart(env);
     if (env.SALES_OFFER_MODE !== "on" || !start || +now < +start) return;
     const b = new BusinessStore(env.DB);
+    await env.DB.prepare(`UPDATE callback_requests SET status='queued',next_attempt_at=?,updated_at=?,last_error=NULL
+      WHERE source='sales_offer' AND attempts=0 AND status='failed' AND last_error='Sales offer unavailable or expired'
+      AND EXISTS(SELECT 1 FROM console_records o WHERE o.kind='sales-offers' AND o.id=callback_requests.id
+        AND json_extract(o.body,'$.rolling')=1 AND json_extract(o.body,'$.status')='queued')`)
+      .bind(nextCallingSlot(now).toISOString(), now.toISOString()).run();
     const { results } = await env.DB.prepare(ROLLING_SALES_OFFER_CANDIDATES_SQL)
       .bind(now.toISOString(), JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)))
       .all<{ customer_id: string; phone: string; last_call_at: string }>();

@@ -91,6 +91,42 @@ describe("rolling sales offers", () => {
       .toEqual([{ id: offerId, next_attempt_at: now.toISOString() }]);
   });
 
+  it("dials all 70 late-day callbacks across the next calling day without expiry losses", async () => {
+    vi.setSystemTime(new Date("2026-06-15T18:50:00Z"));
+    for (let i = 0; i < 70; i++) {
+      const id = "backlog-" + i;
+      await b.save("customers", { name: id, phone: "050" + String(i).padStart(7, "0") }, id);
+      phoneCalls(id, 4, "2026-06-12T12:00:00Z");
+    }
+    await selectSalesOffers(env);
+    expect(await dispatchCallbacks(env)).toMatchObject({ sent: 20 });
+    vi.setSystemTime(new Date("2026-06-15T19:00:00Z"));
+    expect(await dispatchCallbacks(env)).toMatchObject({ skipped: "outside calling hours" });
+    vi.setSystemTime(new Date("2026-06-16T05:00:00Z"));
+    for (let i = 0; i < 3; i++) {
+      await selectSalesOffers(env);
+      await dispatchCallbacks(env);
+      vi.setSystemTime(new Date(Date.now() + 600000));
+    }
+    expect(sql.prepare("SELECT status,COUNT(*) AS n FROM callback_requests GROUP BY status").all())
+      .toEqual([{ status: "dialed", n: 70 }]);
+    expect(fetch).toHaveBeenCalledTimes(70);
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM callback_requests").get()!.n).toBe(70);
+  });
+
+  it("recovers an expired but never attempted offer without repeating an attempted failure", async () => {
+    phoneCalls("learner", 4, "2026-06-12T12:00:00Z");
+    await selectSalesOffers(env);
+    sql.prepare("UPDATE callback_requests SET status='failed',last_error='Sales offer unavailable or expired'").run();
+    vi.setSystemTime(new Date("2026-06-16T05:00:00Z"));
+    await selectSalesOffers(env);
+    expect(await dispatchCallbacks(env)).toMatchObject({ sent: 1 });
+    sql.prepare("UPDATE callback_requests SET status='failed',last_error='Sales offer unavailable or expired'").run();
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT status,attempts FROM callback_requests").get()).toMatchObject({ status: "failed", attempts: 1 });
+  });
+
   it("counts physical calls, not shared streaming segments, and honors the quota alternative", async () => {
     phoneCalls("learner", 1, "2026-06-14T06:00:00Z");
     for (const suffix of ["1", "2", "3"]) {
