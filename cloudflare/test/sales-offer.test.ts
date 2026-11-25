@@ -91,6 +91,16 @@ describe("rolling sales offers", () => {
       .toEqual([{ id: offerId, next_attempt_at: now.toISOString() }]);
   });
 
+  it("uses the configured two-call threshold without including one-call customers", async () => {
+    env.SALES_OFFER_MIN_TUTOR_CALLS = "2";
+    phoneCalls("learner", 1, "2026-06-12T12:00:00Z");
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT id FROM callback_requests").all()).toEqual([]);
+    sql.prepare("INSERT INTO call_customers VALUES ('second','learner','ivr','phone','2026-06-12T12:00:00Z')").run();
+    await selectSalesOffers(env);
+    expect(sql.prepare("SELECT id FROM callback_requests").all()).toEqual([{ id: offerId }]);
+  });
+
   it("dials all 70 late-day callbacks across the next calling day without expiry losses", async () => {
     vi.setSystemTime(new Date("2026-06-15T18:50:00Z"));
     for (let i = 0; i < 70; i++) {
