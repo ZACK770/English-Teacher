@@ -576,6 +576,7 @@ export async function handleWebhook(request: Request, env: Env): Promise<Record<
       return { recorded: true };
     }
     if (String(data.Status ?? "").toLowerCase() === "error") return await store.refusal(data, mosadId);
+    if (keva && !data.TransactionId && pendingPhone?.state === "paid") return { recorded: true };
     if (keva && !data.TransactionId) return await checkout.kevaCreated(data, mosadId);
     const settled = await store.settle(data, mosadId);
     if (settled.paid) await purchaseAttribution(env, settled.receipt_id).catch(error => console.error("Analytics purchase attribution failed", error));
