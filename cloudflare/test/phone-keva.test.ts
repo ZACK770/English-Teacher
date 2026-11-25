@@ -10,6 +10,7 @@ import worker from "../src/index";
 import { reconcilePhoneKeva, syncKevas } from "../src/keva-sync";
 import { masteryDomainGuidance, saveMasteryDomain } from "../src/mastery-domain";
 import { TutorSession } from "../src/session";
+import { ProgressStore } from "../src/progress";
 import { controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { salesOfferResponse } from "../src/sales-offer";
@@ -242,6 +243,59 @@ describe("bound monthly sales offer billing", () => {
     await b.settleCall("practice", 10);
     db.sql.prepare("UPDATE standing_orders SET state='past_due'").run();
     expect(await b.reserveCall("c1", "isaac-basic", "held", 1200)).toMatchObject({ seconds: 0 });
+    expect(await b.reserveCall("c1", "isaac-basic", "held-qa", 1200, "voice", true)).toMatchObject({ seconds: 0, mode: "blocked" });
+  });
+  it("reserves only two short, receipt-free QA trials after the practice cap", async () => {
+    await activateOffer();
+    for (let i = 0; i < 3; i++) {
+      await b.reserveCall("c1", "isaac-basic", "practice-" + i, 1200);
+      await b.settleCall("practice-" + i, 15);
+    }
+    const reserve = (id: string, channel: "voice" | "text" = "voice", qa = true) =>
+      b.reserveCall("c1", "isaac-basic", id, 1200, channel, qa);
+    expect(await reserve("normal-voice", "voice", false)).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(await reserve("text", "text")).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(await reserve("qa-first")).toEqual({ seconds: 200, mode: "free" });
+    expect(await reserve("qa-concurrent")).toMatchObject({ seconds: 0, mode: "busy" });
+    await b.settleCall("qa-first", 180);
+    expect(await reserve("qa-second")).toEqual({ seconds: 200, mode: "free" });
+    await b.settleCall("qa-second", 180);
+    expect(await reserve("qa-third")).toMatchObject({ seconds: 0, mode: "blocked" });
+    expect(db.sql.prepare("SELECT receipt_id, billed_seconds FROM usage_allocations WHERE product='school-qa-trial'").all())
+      .toEqual([{ receipt_id: null, billed_seconds: 180 }, { receipt_id: null, billed_seconds: 180 }]);
+  });
+  it("passes QA eligibility only for the configured caller with a verified school callback", async () => {
+    Object.assign(env, {
+      TLIVR_PROJECT_ENABLED: "true", TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_PHONE: "0765673575",
+      TLIVR_CALLBACK_SECRET: "cb", TLIVR_ROUTER_CHANNEL: "qa-router", QA_PHONE_TRIAL_CALLER: "0500000001",
+    });
+    await new ProgressStore(env.DB).createBot({
+      id: "isaac-basic", label: "Teacher", role: "teacher", description: "", audience: "general",
+      channel_id: "teacher-channel", enabled: true, phone_enabled: true, web_enabled: true,
+    }, controlsFromSettings(false));
+    const callback = (id: string, phone: string) => handleCallback(new Request(
+      "https://example.test/v1/technoline/ivr/school?key=cb&PBXnum=0765673575&PBXextensionPath=/1&PBXphone=" + phone + "&PBXcallId=" + id,
+    ), env, settings(env), "school");
+    const reserve = vi.spyOn(BusinessStore.prototype, "reserveCall").mockResolvedValue({ mode: "blocked", seconds: 0 });
+    const stream = async (callId: string, caller: string) => {
+      reserve.mockClear();
+      const session = new TutorSession({ send: vi.fn(), close: vi.fn() } as unknown as WebSocket, env, settings(env), callId);
+      await session.run(JSON.stringify({ type: "start", token: "qa-router", callId, caller, format: "pcm16;rate=8000;ch=1" }), null, true);
+      return reserve.mock.lastCall?.[5];
+    };
+    try {
+      expect(await callback("qa-verified", "0500000001")).toMatchObject({ goTo: "/7" });
+      expect(await stream("qa-verified", "+972500000001")).toBe(true);
+      await callback("qa-other", "0500000002");
+      expect(await stream("qa-other", "0500000001")).toBe(false);
+      await callback("qa-mismatch", "0500000001");
+      expect(await stream("qa-mismatch", "0500000002")).toBe(false);
+      await callback("qa-disabled", "0500000001");
+      delete env.QA_PHONE_TRIAL_CALLER;
+      expect(await stream("qa-disabled", "0500000001")).toBe(false);
+    } finally {
+      reserve.mockRestore();
+    }
   });
   it.each([true, false])("allows separate top-up receipts after three offer practices with policy enabled=%s", async enabled => {
     await activateOffer();

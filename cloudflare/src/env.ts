@@ -48,6 +48,7 @@ export interface Env {
   TECHNOLINE_ENFORCE_BEARER?: string;
   TEST_TEACHER_CHANNEL_ID?: string;
   TEST_TEACHER_BEARER_SECRET?: string;
+  QA_PHONE_TRIAL_CALLER?: string;
   TLIVR_SYSTEM_API_KEY?: string;
   TLIVR_CALLBACK_EXTENSION_ID?: string;
   TLIVR_CALLBACK_SECRET?: string;
