@@ -20,11 +20,13 @@ def test_private_number_is_blocked_in_each_format(number):
 
 def test_prepare_steps_stages_speech_and_validates_timing(tmp_path):
     speech = tmp_path / "speech with spaces.wav"
-    caller.write_wav(speech, bytes(16000))
+    speech_audio = b"\x10\x00" * 8000
+    caller.write_wav(speech, speech_audio)
     steps = caller.prepare_steps(tmp_path, ["wait:2", "keys:2#", f"play:{speech}"], 8)
     assert steps == [("wait", "2", 2), ("keys", "2#", 0.7), ("play", "play-2.wav", 1)]
     with wave.open(str(tmp_path / "play-2.wav"), "rb") as wav:
-        assert wav.getnframes() == 8000
+        assert wav.readframes(8000) == speech_audio
+        assert wav.readframes(wav.getnframes()) == bytes(42400 * 2)
     with pytest.raises(caller.CallError, match="exceed"):
         caller.prepare_steps(tmp_path, ["wait:4"], 2)
     with pytest.raises(caller.CallError, match="finite"):
@@ -41,15 +43,23 @@ def test_call_sends_one_dial_then_keys_and_speech():
     ]
 
 
-def test_register_only_never_sends_a_command(monkeypatch, tmp_path):
+@pytest.mark.parametrize("relative_modules", [False, True])
+def test_register_only_never_sends_a_command(monkeypatch, tmp_path, relative_modules):
     monkeypatch.setattr(sys, "argv", [str(script), "--register-only"])
     monkeypatch.setattr(caller.shutil, "which", Mock(return_value="baresip"))
     for module in caller.REQUIRED_MODULES:
         (tmp_path / f"{module}.so").touch()
-    monkeypatch.setenv("BARESIP_MODULE_PATH", str(tmp_path))
+    monkeypatch.chdir(tmp_path.parent)
+    monkeypatch.setenv("BARESIP_MODULE_PATH", tmp_path.name if relative_modules else str(tmp_path))
     monkeypatch.setattr(caller, "credentials", Mock(return_value=("000=0", "test", "test.invalid")))
     client = Mock()
-    backend = Mock(return_value=client)
+
+    def launch(executable, directory, timeout, account):
+        config = (directory / "config").read_text().splitlines()
+        assert f"module_path {tmp_path.resolve()}" in config
+        return client
+
+    backend = Mock(side_effect=launch)
     monkeypatch.setattr(caller, "Baresip", backend)
     assert caller.main() == 0
     assert client.observe.call_args.args[1] == b"registered successfully"

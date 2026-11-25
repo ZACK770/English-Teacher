@@ -84,7 +84,8 @@ def prepare_steps(directory: Path, values: list[str], limit: int) -> list[tuple[
                         raise CallError("Speech WAV is truncated.")
             except (OSError, EOFError, wave.Error):
                 raise CallError("Could not read speech WAV.") from None
-            write_wav(directory / filename, audio)
+            source_frames = (limit + 1) * RATE - int(elapsed * RATE)
+            write_wav(directory / filename, audio.ljust(source_frames * 2, b"\x00"))
             argument = filename
         else:
             raise CallError("Use --step wait:SECONDS, keys:DIGITS or play:FILE.wav.")
@@ -259,7 +260,7 @@ def main() -> int:
             if not args.output.parent.is_dir() or os.path.lexists(args.output):
                 raise CallError("--output must be a new file in an existing directory.")
         executable = shutil.which("baresip")
-        modules = Path(os.environ.get("BARESIP_MODULE_PATH", "/usr/lib/baresip/modules"))
+        modules = Path(os.environ.get("BARESIP_MODULE_PATH", "/usr/lib/baresip/modules")).resolve()
         if not executable or not all((modules / f"{m}.so").is_file() for m in REQUIRED_MODULES):
             raise CallError("Install baresip-core and its modules (Ubuntu: sudo apt install "
                             "baresip-core); set BARESIP_MODULE_PATH if needed.")
