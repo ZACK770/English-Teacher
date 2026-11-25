@@ -282,6 +282,21 @@ For other owner-approved test lines, set `YEMOT_SIP_ALLOWED_TARGETS` to
 their comma-separated numbers. Never use customer lines. The tool does not
 retry and will not overwrite recordings.
 
+For an approved live teacher QA call, supply `GEMINI_API_KEY` with access to
+Gemini Flash audio input and Gemini TTS, then run one persona at a time:
+
+```sh
+python3 scripts/sip_conversation.py beginner --output-dir /path/to/new-call-directory
+```
+
+The only destination is 0765673575. The tool sends key 1, listens for about
+1.2 seconds of silence between teacher turns, and uses each new turn to
+generate and play the caller's next reply. Personas: `beginner`, `child`,
+`off-topic`, `buyer`, `advanced`. The default duration is 180 seconds
+from dial (hard cap: 200). Save `teacher.wav`, `caller.wav`, and
+`turns.jsonl` in a private directory. Check the recordings against the
+generated transcript; the transcript may miss speech at setup or hangup.
+
 https://pbx.tlivr.com/ivrExtensionsApiDocs.html
 https://pbx.tlivr.com/apiModuleDocs.html
 https://pbx.tlivr.com/streamingApiDocs.html
