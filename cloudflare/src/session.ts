@@ -507,7 +507,7 @@ export class TutorSession {
   }
 
   private async finishContentTurn(safety: ContentTurn, complete = true) {
-    const result = safety.finish(complete, true);
+    const result = safety.finish(complete);
     this.verifyCriticalTurn(result);
     if (result.tutor || this.safetyMuted) {
         if (!this.safetyMuted) await this.blockForTutor();

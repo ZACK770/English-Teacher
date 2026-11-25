@@ -78,12 +78,12 @@ export class ContentTurn {
     while (this.bytes > MAX_CLIP_BYTES) this.bytes -= this.audio.shift()!.length;
   }
 
-  finish(complete = true, learnerComplete = complete) {
+  finish(complete = true) {
     const tutorComplete = complete || this.tutorFinished;
     const critical = matchedTerms(this.tutor, this.policy.critical, tutorComplete);
     const result = {
       tutor: matchedTerms(this.tutor, this.policy.tutor, tutorComplete).length > 0,
-      learner: (learnerComplete || this.learnerFinished) && matchedTerms(this.learner, this.policy.learner).length > 0,
+      learner: matchedTerms(this.learner, this.policy.learner, complete || this.learnerFinished).length > 0,
       critical,
       audio: critical.length ? concat(this.audio) : new Uint8Array(),
     };

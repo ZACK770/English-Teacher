@@ -132,18 +132,22 @@ it("counts one completed learner turn regardless of how many words match", async
   expect(sqlite.prepare("SELECT COUNT(*) AS n FROM content_safety_strikes").get()).toEqual({ n: 1 });
 });
 
-it("counts the closing learner remark before honoring end_session", async () => {
+it.each([
+  ["topic", true, true],
+  ["topic.", false, true],
+  ["topic", false, false],
+] as const)("checks the closing learner transcript %j (finished=%s) before honoring end_session", async (text, finished, blocked) => {
   await store.strike("learner", "first");
   await store.strike("learner", "second");
   const session = new TutorSession({} as WebSocket, env, settings(env), "test") as any;
   session.customerId = "learner";
   session.safety = new ContentTurn(policy);
-  const next = vi.fn().mockResolvedValueOnce({ type: "transcript", role: "learner", text: "topic" })
+  const next = vi.fn().mockResolvedValueOnce({ type: "transcript", role: "learner", text, finished })
     .mockResolvedValueOnce({ type: "tool_call", calls: [{ name: "end_session", args: { reason: "caller_requested" } }] });
   session.ai = { next, close: vi.fn(), submitToolResult: vi.fn() };
   await session.aiToOutput();
-  expect(session.reason).toBe("content_blocked");
-  expect(await store.denied("learner")).toBe("content_blocked");
+  expect(session.reason).toBe(blocked ? "content_blocked" : "model:caller_requested");
+  expect(await store.denied("learner")).toBe(blocked ? "content_blocked" : null);
   expect(next).toHaveBeenCalledTimes(2);
 });
 
