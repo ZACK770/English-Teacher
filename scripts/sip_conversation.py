@@ -171,11 +171,20 @@ class Gemini:
             }}}, deadline,
         )
         part = next(part["inlineData"] for part in parts if "inlineData" in part)
-        match = re.search(r"(?:^|;)\s*rate=(\d+)", part["mimeType"])
-        if not match or not part["mimeType"].lower().startswith("audio/l16"):
-            raise CallError("Gemini did not return signed 16-bit PCM audio.")
-        sample_rate = int(match.group(1))
-        samples = array("h", base64.b64decode(part["data"]))
+        media_type = part["mimeType"].lower()
+        audio = base64.b64decode(part["data"])
+        if media_type.split(";", 1)[0] == "audio/wav":
+            with wave.open(io.BytesIO(audio), "rb") as wav:
+                if wav.getnchannels() != 1 or wav.getsampwidth() != 2:
+                    raise CallError("Gemini WAV must be mono, signed 16-bit PCM.")
+                sample_rate = wav.getframerate()
+                audio = wav.readframes(wav.getnframes())
+        else:
+            match = re.search(r"(?:^|;)\s*rate=(\d+)", media_type)
+            if not match or not media_type.startswith("audio/l16"):
+                raise CallError("Gemini did not return signed 16-bit PCM audio.")
+            sample_rate = int(match.group(1))
+        samples = array("h", audio)
         factor, remainder = divmod(sample_rate, RATE)
         if remainder or factor < 1:
             raise CallError("TTS PCM sample rate cannot be reduced to 8 kHz.")

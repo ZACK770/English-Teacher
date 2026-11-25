@@ -1,9 +1,13 @@
+import base64
 import importlib
 import io
 import json
 import struct
+import wave
 from pathlib import Path
 from unittest.mock import Mock
+
+import pytest
 
 
 def load(monkeypatch):
@@ -69,14 +73,24 @@ def test_converse_uses_heard_audio_to_generate_and_play_response(monkeypatch, tm
     assert json.loads(log.getvalue())["spoken"] == "I like dogs."
 
 
-def test_gemini_sends_audio_to_flash_and_plain_reply_to_tts(monkeypatch):
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_gemini_sends_audio_to_flash_and_plain_reply_to_tts(monkeypatch, wrapped):
     caller = load(monkeypatch)
     gemini = caller.Gemini("test-key")
+    audio = struct.pack("<6h", 1, 2, 5, 4, 6, 8)
+    mime_type = "audio/L16;codec=pcm;rate=24000"
+    if wrapped:
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+            wav.writeframes(audio)
+        audio = buffer.getvalue()
+        mime_type = "audio/wav"
     gemini.request = Mock(side_effect=[
         [{"text": '{"heard":"Hello!","reply":"Hi."}'}],
         [{"inlineData": {
-            "mimeType": "audio/L16;codec=pcm;rate=24000",
-            "data": "AQACAAUABAAGAAgA",
+            "mimeType": mime_type,
+            "data": base64.b64encode(audio).decode(),
         }}],
     ])
     assert gemini.respond(bytes(320), "child", [], 1000) == {"heard": "Hello!", "reply": "Hi."}
