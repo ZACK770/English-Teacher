@@ -5,9 +5,11 @@ export interface Env {
   CONTENT_SAFETY_OWNER?: string;
   CONTENT_SAFETY_ALERT_TO?: string;
   CONTENT_SAFETY_ALERT_FROM?: string;
+  SALES_OFFER_SKIP_PRACTICE?: string;
   SALES_OFFER_ALLOWLIST?: string;
   SALES_OFFER_PRACTICE_MINUTES?: string;
-  SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest" | "quota_exhausted";
+  SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest" | "quota_exhausted" | "rolling";
+  SALES_OFFER_ROLLING_START_AT?: string;
   SALES_OFFER_MIN_TUTOR_CALLS?: string;
   SALES_OFFER_MIN_TUTOR_MINUTES?: string;
   SALES_OFFER_TEST_PHONES?: string;

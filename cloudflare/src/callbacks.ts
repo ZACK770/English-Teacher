@@ -4,7 +4,7 @@ import { analyticsInput, conversion } from "./analytics";
 import { BusinessStore } from "./business";
 import { type Env, HttpError, nowIso, randomHex, settings, sha256Hex } from "./env";
 import { visiblePhone } from "./phone";
-import { salesOfferDialError } from "./sales-offer";
+import { rollingOfferDispatch, salesOfferDialError } from "./sales-offer";
 import { campaignExternalId } from "./technoline-campaign";
 import { isQaPhone } from "./qa-customers";
 
@@ -194,7 +194,7 @@ export async function resolveCallbackExtension(env: Env): Promise<CallbackExtens
   }
 }
 
-export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: string, now: Date, demo = false) {
+export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: string, now: Date, demo = false, singleAttempt = false) {
   const retryAt = new Date(now.getTime() + 30 * 60000);
   const sameStretch = nextCallingSlot(now).getTime() === now.getTime()
     && nextCallingSlot(retryAt).getTime() === retryAt.getTime();
@@ -202,19 +202,19 @@ export function buildTechnolineCallbackBody(env: Env, phone: string, requestId: 
     action: "campaignRun", apiKey: env.TLIVR_SYSTEM_API_KEY, phones: [phone],
     title: "SpeakCall callback", messagesType: "extensionActivation",
     extensionActivation: env.TLIVR_CALLBACK_EXTENSION_ID,
-    dialRetries: sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "no",
+    dialRetries: !singleAttempt && sameStretch ? 2 : 0, betweenRetries: 15, reasonableHours: "no",
     externalID: campaignExternalId(requestId), ...(demo ? { demo: "yes" } : {}),
   };
 }
 
-export async function dialTechnolineCallback(env: Env, phone: string, requestId: string, demo = false) {
+export async function dialTechnolineCallback(env: Env, phone: string, requestId: string, demo = false, singleAttempt = false) {
   if (!env.TLIVR_SYSTEM_API_KEY) throw new HttpError(503, "Technoline dialer not configured");
   const extension = await resolveCallbackExtension(env);
   const response = await fetch("https://api.tlivr.com/campaignApi.php", {
     method: "POST",
     headers: { "User-Agent": "speakcall-callbacks/1.0", "Content-Type": "application/json", Accept: "application/json" },
     signal: AbortSignal.timeout(15000),
-    body: JSON.stringify(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: extension.id }, phone, requestId, new Date(), demo)),
+    body: JSON.stringify(buildTechnolineCallbackBody({ ...env, TLIVR_CALLBACK_EXTENSION_ID: extension.id }, phone, requestId, new Date(), demo, singleAttempt)),
   });
   const data: unknown = await response.json().catch(() => null);
   const result = data && typeof data === "object" ? data as Record<string, unknown> : {};
@@ -347,12 +347,25 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
       .bind(now.toISOString(), item.id).run();
     return "failed";
   }
+  const useRelay = !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET;
+  const rolling = item.source === "sales_offer" ? await rollingOfferDispatch(env, item.id, now) : null;
   if (item.source === "sales_offer") {
-    const error = await salesOfferDialError(env, item.id, item.phone, now);
+    const error = (rolling && item.attempts > 0 ? "Rolling sales offer already attempted" : null)
+      ?? (rolling && useRelay ? "Rolling sales offers require the direct Technoline dialer" : null)
+      ?? await salesOfferDialError(env, item.id, item.phone, now);
     if (error) {
       await env.DB.prepare("UPDATE callback_requests SET status='failed',last_error=?,next_attempt_at=NULL,updated_at=? WHERE id=? AND status='queued'")
         .bind(error, now.toISOString(), item.id).run();
       return "failed";
+    }
+    if (rolling?.hold) {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE console_records SET body=json_set(body,'$.expires_at',?),updated_at=? WHERE kind='sales-offers' AND id=?")
+          .bind(rolling.hold.expires, now.toISOString(), item.id),
+        env.DB.prepare("UPDATE callback_requests SET next_attempt_at=?,updated_at=? WHERE id=? AND status='queued'")
+          .bind(rolling.hold.at, now.toISOString(), item.id),
+      ]);
+      return "queued";
     }
   }
   const slot = immediateForm && item.timing === "now" && item.attempts === 0 ? nextImmediateSlot(now) : nextCallingSlot(now);
@@ -370,8 +383,8 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
       return "failed";
     }
   }
-  const useRelay = !!env.CALLBACK_RELAY_URL && !!env.CALLBACK_RELAY_SECRET;
   const provider = useRelay ? "relay" : "technoline";
+  const failureState = () => rolling ? { status: "failed" as const, nextAttemptAt: null } : callbackFailure(item.attempts + 1, new Date());
   const claimed = await env.DB.prepare("UPDATE callback_requests SET status='dialing',attempts=attempts+1,updated_at=? WHERE id=? AND status='queued' AND next_attempt_at<=? AND attempts=?")
     .bind(nowIso(), item.id, now.toISOString(), item.attempts).run();
   if (claimed.meta.changes !== 1) return "dialing";
@@ -391,12 +404,12 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
       providerRef = ok ? String(result.campaign_id ?? "") : null;
       lastError = "relay " + response.status;
     } else {
-      const result = await dialTechnolineCallback(env, item.phone, item.id);
+      const result = await dialTechnolineCallback(env, item.phone, item.id, false, !!rolling);
       ok = result.ok;
       providerRef = ok ? String(result.campaignId ?? "") : null;
       lastError = "technoline " + (result.errorCode || result.httpStatus);
     }
-    const failure = callbackFailure(item.attempts + 1, new Date());
+    const failure = failureState();
     await env.DB.prepare("UPDATE callback_requests SET status=?,provider_ref=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
       .bind(ok ? "dialed" : failure.status, providerRef, ok ? null : lastError, nowIso(), ok ? null : failure.nextAttemptAt, item.id).run();
     if (ok && item.source === "sales_offer") {
@@ -405,7 +418,7 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
     }
     return ok ? "dialed" : failure.status;
   } catch {
-    const failure = callbackFailure(item.attempts + 1, new Date());
+    const failure = failureState();
     await env.DB.prepare("UPDATE callback_requests SET status=?,last_error=?,updated_at=?,next_attempt_at=? WHERE id=?")
       .bind(failure.status, provider + " unreachable", nowIso(), failure.nextAttemptAt, item.id).run();
     return failure.status;

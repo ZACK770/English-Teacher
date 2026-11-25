@@ -33,6 +33,14 @@ Reconnects retain the selected key. Models and shared Gemini budget limits are u
 במשימה המתוזמנת. הנתיב `GET /v1/admin/gemini-budget` (Bearer של המנהל) מציג
 שימוש, שריון, קיבולת ומצב ההתראה, בלי כתובת היעד או נתוני תלמידים.
 
+## סינון תוכן ב־SpeakCall
+
+לפני פריסה עם `CONTENT_SAFETY_MODE = "on"`, יש להחיל את מיגרציית D1 לסינון
+ולהגדיר סודות Worker: `CONTENT_SAFETY_LISTS` (JSON עם המערכים `tutor`, `learner`
+ו־`critical`), `CONTENT_SAFETY_OWNER` (שם המשתמש ב־CRM), `CONTENT_SAFETY_ALERT_FROM`
+ו־`CONTENT_SAFETY_ALERT_TO`. אין לשמור את הרשימות או את ערכי הסודות במאגר.
+ההפעלה דורשת גם את חיבור Workers AI ואת `TLIVR_SYSTEM_API_KEY` הקיים.
+
 ## פריסת Render (מערכת קודמת)
 
 ## לפני שמתחילים
