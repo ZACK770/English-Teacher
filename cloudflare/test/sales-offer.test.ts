@@ -461,7 +461,7 @@ describe("sales offers", () => {
     expect(await queueTestSalesOffer(env, "0501111111", new Date(+now + 60000))).toBeNull();
   });
   it("uses the exact twenty-shekel menu without moving renewal disclosure into the menu", () => {
-    expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.");
+    expect(SALES_OFFER_TEXT).toBe("רוצים לדעת אנגלית?! לכבוד הבלאק פריידיי בספיקול: הטבת חודש ראשון! מצטרפים עכשיו למנוי החודשי, ובחודש הראשון משלמים רק עשרים שקלים במקום חמישים ותשעה. כן, עשרים שקלים! בחודש הראשון תקבלו שלושה אימונים של עשר דקות עם המורה. ההטבה הזאת רק בשיחה הזאת. להצטרפות בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.");
   });
   it("bundles the offer recording in the same telephone WAV format as the other prompts", () => {
     const audio = readFileSync(new FileURL("../../public/brand/phone/" + SALES_OFFER_RECORDING, import.meta.url));

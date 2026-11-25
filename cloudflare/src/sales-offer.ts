@@ -6,8 +6,8 @@ import { SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { isQaCustomer, qaCustomerSql } from "./qa-customers";
 
 export const SALES_EXTENSION_PATH = "/3";
-export const SALES_OFFER_RECORDING = "sales-offer-month20-22a3e286bc65.wav";
-export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! רגע לפני שנפרדים. רק היום, ורק בשיחה הזאת: חודש ראשון בספיקול בעשרים שקלים בלבד. כן, עשרים שקלים! אנחנו מציעים את זה רק עכשיו, כי אנחנו בטוחים שאחרי כמה אימונים תרגישו את ההבדל בעצמכם. בחודש הזה תקבלו שלושה אימונים של עשר דקות עם המורה. להצטרפות עכשיו בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.";
+export const SALES_OFFER_RECORDING = "sales-offer-black-friday-5ce34022b3af.wav";
+export const SALES_OFFER_TEXT = "רוצים לדעת אנגלית?! לכבוד הבלאק פריידיי בספיקול: הטבת חודש ראשון! מצטרפים עכשיו למנוי החודשי, ובחודש הראשון משלמים רק עשרים שקלים במקום חמישים ותשעה. כן, עשרים שקלים! בחודש הראשון תקבלו שלושה אימונים של עשר דקות עם המורה. ההטבה הזאת רק בשיחה הזאת. להצטרפות בכרטיס אשראי הקישו 1. לשאר המנויים הקישו 2. לסיום הקישו 0.";
 export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call from SpeakCall after the learner’s trial. Speak Hebrew for guidance. Greet warmly by name if known: "שלום, כאן ספיקול, חזרנו לתרגול קצר". Do a short English practice. Close politely and warmly, not abruptly, and say a short special message follows. Never take card details or quote prices.';
 
 export function salesOfferAllowed(env: Env, phone: string): boolean {
