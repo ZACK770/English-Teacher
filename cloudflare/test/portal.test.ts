@@ -1753,6 +1753,8 @@ describe("real learner portal", () => {
     const system = tutor.artifact.system_instruction;
     expect(system).toContain("Preserve this CRM administrator guidance.");
     expect(system.includes("First call: before practising, run a short Hebrew intake")).toBe(!ad);
+    expect(system).not.toContain("minutes per lesson");
+    if (!ad) expect(system).toContain("Do not ask about lesson length.");
     expect(system.match(/Ad caller flow \(authoritative/g) ?? []).toHaveLength(ad ? 1 : 0);
     expect(tutor.controls.intake_pending).toBe(true);
   });
