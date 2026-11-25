@@ -381,6 +381,7 @@ export class TutorSession {
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (hardLimit !== undefined) clearTimeout(hardLimit);
       clearTimeout(this.safetyTimer);
+      if (this.safetyMuted && this.safety) this.verifyCriticalTurn(this.safety.finish(false));
       this.abort.abort(new Error("session_finished"));
       this.input.end();
       this.ai?.close();
@@ -471,6 +472,7 @@ export class TutorSession {
   }
 
   private endForContent(reason: ContentDenial) {
+    if (this.safetyMuted && this.safety) this.verifyCriticalTurn(this.safety.finish(false));
     this.muteForContent();
     this.finalMessage = contentDenialMessage(reason);
     this.reason = reason;
@@ -499,12 +501,16 @@ export class TutorSession {
     this.safetyTimer = setTimeout(() => this.endForContent("content_blocked"), 5000);
   }
 
-  private async finishContentTurn(safety: ContentTurn) {
-    const result = safety.finish();
+  private verifyCriticalTurn(result: ReturnType<ContentTurn["finish"]>) {
     if (result.critical.length) this.safetyFollowup = confirmCriticalIncident(this.env, result.audio, result.critical)
       .catch(() => console.warn("Tutor safety incident could not be saved"));
+  }
+
+  private async finishContentTurn(safety: ContentTurn, complete = true) {
+    const result = safety.finish(complete, true);
+    this.verifyCriticalTurn(result);
     if (result.tutor || this.safetyMuted) {
-      if (!this.safetyMuted) await this.blockForTutor();
+        if (!this.safetyMuted) await this.blockForTutor();
       if (!this.abort.signal.aborted) this.endForContent("content_blocked");
       return true;
     }
@@ -634,6 +640,7 @@ export class TutorSession {
         for (const call of event.calls) {
           const result = await this.recordTool(call);
           const saved = typeof result === "boolean" ? result : result.saved;
+          if (call.name === "end_session" && saved && this.safety && await this.finishContentTurn(this.safety, false)) return;
           this.ai!.submitToolResult(call, saved, call.name === "prepare_email" ? {
             prepared: saved,
             next_step: saved ? "Read back the email and wait. After the caller confirms, call save_email." : "Ask the caller to clarify the address.",

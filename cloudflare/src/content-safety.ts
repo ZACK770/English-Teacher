@@ -51,6 +51,8 @@ export function matchedTerms(text: string, list: string[], complete = true): str
 export class ContentTurn {
   private tutor = "";
   private learner = "";
+  private tutorFinished = false;
+  private learnerFinished = false;
   private audio: Uint8Array[] = [];
   private bytes = 0;
 
@@ -59,6 +61,8 @@ export class ContentTurn {
   transcript(role: "tutor" | "learner", raw: string, finished = false) {
     const text = this[role] + raw;
     this[role] = text.length > MAX_TRANSCRIPT ? text.slice(-MAX_TRANSCRIPT).replace(/^\S*/, "") : text;
+    if (role === "learner") this.learnerFinished ||= finished;
+    else this.tutorFinished ||= finished;
     return role === "tutor" && matchedTerms(this.tutor, this.policy.tutor, finished).length > 0;
   }
 
@@ -74,21 +78,24 @@ export class ContentTurn {
     while (this.bytes > MAX_CLIP_BYTES) this.bytes -= this.audio.shift()!.length;
   }
 
-  finish(complete = true) {
-    const critical = complete ? matchedTerms(this.tutor, this.policy.critical) : [];
+  finish(complete = true, learnerComplete = complete) {
+    const tutorComplete = complete || this.tutorFinished;
+    const critical = matchedTerms(this.tutor, this.policy.critical, tutorComplete);
     const result = {
-      tutor: matchedTerms(this.tutor, this.policy.tutor, complete).length > 0,
-      learner: complete && matchedTerms(this.learner, this.policy.learner).length > 0,
+      tutor: matchedTerms(this.tutor, this.policy.tutor, tutorComplete).length > 0,
+      learner: (learnerComplete || this.learnerFinished) && matchedTerms(this.learner, this.policy.learner).length > 0,
       critical,
       audio: critical.length ? concat(this.audio) : new Uint8Array(),
     };
-    this.tutor = this.learner = "";
+    this.learner = "";
+    this.learnerFinished = false;
     this.interrupt();
     return result;
   }
 
   interrupt() {
     this.tutor = "";
+    this.tutorFinished = false;
     this.audio = [];
     this.bytes = 0;
   }

@@ -72,6 +72,18 @@ it("matches complete words and phrases across transcript chunks, not prefixes", 
   expect(turn.finish().critical).toEqual([]);
 });
 
+it("keeps finished or unambiguous tutor matches when the Live turn ends early", () => {
+  const turn = new ContentTurn(policy);
+  turn.transcript("tutor", "critical");
+  expect(turn.finish(false)).toMatchObject({ tutor: false, critical: [] });
+  turn.transcript("tutor", "critical", true);
+  turn.tutorAudio(new Uint8Array([0, 1]));
+  expect(turn.finish(false)).toMatchObject({ tutor: true, critical: ["critical"], audio: new Uint8Array([0, 1]) });
+  turn.transcript("tutor", "critical,");
+  expect(turn.finish(false)).toMatchObject({ tutor: true, critical: ["critical"] });
+  expect(turn.finish(false).critical).toEqual([]);
+});
+
 it("counts an utterance at most once, expires old strikes, and clears the count only after restore", async () => {
   const now = Date.now();
   expect(await store.strike("learner", "expired", now - STRIKE_WINDOW_MS - 1)).toBe(false);
@@ -118,6 +130,41 @@ it("counts one completed learner turn regardless of how many words match", async
   expect(await session.finishContentTurn(turn)).toBe(false);
   expect(await session.finishContentTurn(turn)).toBe(false);
   expect(sqlite.prepare("SELECT COUNT(*) AS n FROM content_safety_strikes").get()).toEqual({ n: 1 });
+});
+
+it("counts the closing learner remark before honoring end_session", async () => {
+  await store.strike("learner", "first");
+  await store.strike("learner", "second");
+  const session = new TutorSession({} as WebSocket, env, settings(env), "test") as any;
+  session.customerId = "learner";
+  session.safety = new ContentTurn(policy);
+  const next = vi.fn().mockResolvedValueOnce({ type: "transcript", role: "learner", text: "topic" })
+    .mockResolvedValueOnce({ type: "tool_call", calls: [{ name: "end_session", args: { reason: "caller_requested" } }] });
+  session.ai = { next, close: vi.fn(), submitToolResult: vi.fn() };
+  await session.aiToOutput();
+  expect(session.reason).toBe("content_blocked");
+  expect(await store.denied("learner")).toBe("content_blocked");
+  expect(next).toHaveBeenCalledTimes(2);
+});
+
+it("verifies captured critical audio even when the Gemini turn times out after muting", async () => {
+  vi.useFakeTimers();
+  try {
+    ai.mockResolvedValue({ segments: [{ text: "critical", avg_logprob: -0.2, no_speech_prob: 0.01 }] });
+    const session = new TutorSession({} as WebSocket, env, settings(env), "test") as any;
+    session.customerId = "learner";
+    session.safety = new ContentTurn(policy);
+    session.safety.transcript("tutor", "critical", true);
+    await session.blockForTutor(true);
+    session.safety.tutorAudio(new Uint8Array([0, 25]));
+    await vi.advanceTimersByTimeAsync(5000);
+    await session.safetyFollowup;
+    expect(session.finalMessage).toBe(CONTENT_BLOCKED_MESSAGE);
+    expect(await store.denied("anyone")).toBe("content_suspended");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("does not suspend teachers on uncertain or mismatched audio; the confirmed incident calls once", async () => {
