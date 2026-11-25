@@ -333,6 +333,11 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   if (result.goTo === extensionPath(system.base, "/7") && system.phone === SPEAKCALL_PHONE && canCallWithLessonSummary(env, p.PBXphone ?? "")) {
     await b.saveContext(callId, { summary_callback_caller: await sha256Hex(normalizePhone(p.PBXphone)!) });
   }
+  const qaPhone = env.QA_PHONE_TRIAL_CALLER;
+  if (qaPhone && route === "school" && result.goTo === extensionPath(system.base, "/7") &&
+      system.phone === SPEAKCALL_PHONE && visiblePhone(p.PBXphone ?? "") === qaPhone) {
+    await b.saveContext(callId, { qa_phone_trial_caller: qaPhone });
+  }
   let slot = ({ main: "welcome", options: "options", school: "school", translator: "translator", languages: "languages", sales: "sales", quota: "quota", mode: "school_mode", service: "service" } as Record<string, string>)[route];
   if (slot && route !== "sales" && result.files?.length) {
     if (route === "service" && result.name === "isaacThanks") slot = "thanks";

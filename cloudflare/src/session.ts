@@ -283,7 +283,11 @@ export class TutorSession {
       }
       const testGift = this.offerCall && salesOfferTestPhone(this.env, this.callerPhone)
         ? await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId) : 0;
-      let allowance: Allowance = testGift ? { seconds: testGift, mode: "free" } : await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60);
+      const qaPhone = this.env.QA_PHONE_TRIAL_CALLER;
+      const qaPhoneTrial = !!qaPhone && shared && !this.portal && bot.role === "teacher"
+        && callContext.qa_phone_trial_caller === qaPhone && visiblePhone(this.callerPhone) === qaPhone;
+      let allowance: Allowance = testGift ? { seconds: testGift, mode: "free" }
+        : await this.b.reserveCall(this.customerId, profileId, this.callId, this.controls.max_call_minutes * 60, "voice", qaPhoneTrial);
       if (this.offerCall && !allowance.seconds && ["free", "blocked"].includes(allowance.mode)) {
         const seconds = await offerGift(this.b, this.env, callContext.offer_call, this.customerId, this.callId);
         if (seconds) allowance = { seconds, mode: "free" };

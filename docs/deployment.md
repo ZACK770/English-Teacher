@@ -43,6 +43,14 @@ Reconnects retain the selected key. Models and shared Gemini budget limits are u
 יש לוודא שחיבור Workers AI והסוד `TLIVR_SYSTEM_API_KEY` קיימים, ורק אז להגדיר
 `CONTENT_SAFETY_MODE=on` כסוד ב־Worker המיועד. אין לשמור את הרשימות או את ערכי הסודות במאגר.
 
+## ניסיון טלפוני לבדיקות QA
+
+`QA_PHONE_TRIAL_CALLER` כבוי כשאינו מוגדר. אחרי פריסת ה־Worker אפשר להגדיר אותו
+כסוד `wrangler secret put QA_PHONE_TRIAL_CALLER` עם מספר הבדיקה המקומי המדויק
+בלבד. ההגדרה מאפשרת עד שתי שיחות של 200 שניות בנתיב הלימוד הטלפוני אחרי מיצוי
+מכסת ההצעה, בלי לשנות קבלות או לעקוף חסימת תשלום. לביטול, מחקו את הסוד
+`wrangler secret delete QA_PHONE_TRIAL_CALLER`. אין לשמור את ערך הסוד במאגר.
+
 ## פריסת Render (מערכת קודמת)
 
 ## לפני שמתחילים

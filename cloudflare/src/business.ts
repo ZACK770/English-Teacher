@@ -272,7 +272,7 @@ export class BusinessStore {
       .bind(quotaMonth, api).run();
   }
 
-  async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number, channel: "voice" | "text" = "voice"): Promise<Allowance> {
+  async reserveCall(customerId: string, botId: string, callId: string, maxSeconds: number, channel: "voice" | "text" = "voice", qaPhoneTrial = false): Promise<Allowance> {
     const policyRow = await this.record("policies", botId);
     const teacher = !policyRow && await this.db.prepare("SELECT 1 FROM bots WHERE id=? AND role='teacher'").bind(botId).first();
     const policy = AccessPolicySchema.parse(policyRow ?? (teacher ? SCHOOL_FREE_POLICY : {}));
@@ -337,7 +337,19 @@ export class BusinessStore {
       `).bind(callId, customerId, cap, now, receipt.id, now, now, customerId, customerId, customerId, cutoff).first<{ reserved_seconds: number }>();
       if (allocation) return { seconds: allocation.reserved_seconds, mode: "paid" };
     }
-    if (cappedOfferReceipt) return await this.db.prepare(activeSession).bind(customerId, cutoff).first() ? busy : blocked;
+    if (cappedOfferReceipt) {
+      if (qaPhoneTrial && channel === "voice" && !await this.schoolPaymentFailed(customerId) && !await this.isSchoolAccessSuspended(customerId, now)) {
+        const allocation = await this.db.prepare(`INSERT OR IGNORE INTO usage_allocations
+          (call_id,customer_id,product,receipt_id,reserved_seconds,billed_seconds,created_at)
+          SELECT ?,?,'school-qa-trial',NULL,?,NULL,?
+          WHERE NOT EXISTS (${activeSession}) AND (SELECT COUNT(*) FROM usage_allocations
+            WHERE customer_id=? AND product='school-qa-trial' AND (billed_seconds IS NULL OR billed_seconds>0)) < 2
+          RETURNING reserved_seconds`)
+          .bind(callId, customerId, Math.min(maxSeconds, 200), now, customerId, cutoff, customerId).first<{ reserved_seconds: number }>();
+        if (allocation) return { seconds: allocation.reserved_seconds, mode: "free" };
+      }
+      return await this.db.prepare(activeSession).bind(customerId, cutoff).first() ? busy : blocked;
+    }
     if (policy.product === "school" && await this.schoolPaymentFailed(customerId)) return paymentFailed;
     if (policy.product === "school" && await this.isSchoolAccessSuspended(customerId, now)) return blocked;
     const anonymous = customerId.startsWith("anonymous-");
