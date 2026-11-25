@@ -1,5 +1,6 @@
 export interface Env {
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";
+  SALES_OFFER_EXTENSION_ID?: string;
   CONTENT_SAFETY_MODE?: "off" | "on";
   CONTENT_SAFETY_LISTS?: string;
   CONTENT_SAFETY_OWNER?: string;

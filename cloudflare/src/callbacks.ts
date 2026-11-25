@@ -404,7 +404,9 @@ async function dialCallbackRow(env: Env, item: { id: string; phone: string; atte
       providerRef = ok ? String(result.campaign_id ?? "") : null;
       lastError = "relay " + response.status;
     } else {
-      const result = await dialTechnolineCallback(env, item.phone, item.id, false, !!rolling);
+      const dialEnv = item.source === "sales_offer" && env.SALES_OFFER_EXTENSION_ID
+        ? { ...env, TLIVR_CALLBACK_EXTENSION_ID: env.SALES_OFFER_EXTENSION_ID } : env;
+      const result = await dialTechnolineCallback(dialEnv, item.phone, item.id, false, !!rolling);
       ok = result.ok;
       providerRef = ok ? String(result.campaignId ?? "") : null;
       lastError = "technoline " + (result.errorCode || result.httpStatus);
