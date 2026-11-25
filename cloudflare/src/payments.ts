@@ -29,7 +29,7 @@ export const SALES_SERVICE_TEXT = "להנהלת חשבונות הקישו 1. ל�
 export const SINGLE_TERMS_STEP_TEXT = "לאישור התקנון ולהמשך לתשלום הקישו 1. לשמיעת התקנון הקישו 2. לביטול הקישו 0.";
 export const SINGLE_TERMS_TEXT = "מנוי חודשי מתחדש באשראי וניתן לביטול בכל עת, ללא התחייבות. מקס לחצי שנה ומאסטר לשנה משולמים מראש, בתשלום אחד או בתשלומים. לכל מנוי מכסת שימוש חודשית הוגנת. התשלום מאובטח דרך נדרים פלוס. לעזרה ולביטול פנו לשירות.";
 
-class ExistingMonthlyEnrollmentError extends Error {}
+export class ExistingMonthlyEnrollmentError extends Error {}
 
 export function canPurchaseByPhone(pkg: { product?: string; billing?: string; automated_purchase?: boolean; duration_months?: number }) {
   return canPurchaseAutomatically(pkg) || (pkg.product === "school" && (pkg.billing === "monthly" || !!pkg.duration_months));

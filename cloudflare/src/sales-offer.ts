@@ -1,7 +1,7 @@
 import { BusinessStore } from "./business";
 import { fromLocal, localDate, nextCallingSlot, normalizePhone } from "./callbacks";
 import { type Env, HttpError, nowIso } from "./env";
-import { PaymentStore, paymentResponse } from "./payments";
+import { ExistingMonthlyEnrollmentError, PaymentStore, paymentResponse } from "./payments";
 import { SCHOOL_FREE_POLICY } from "../../src/pricing";
 import { isQaCustomer, qaCustomerSql } from "./qa-customers";
 import { SALES_OFFER_CAP_SQL } from "./sales-offer-product";
@@ -344,8 +344,11 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
     if (!reserved.meta.changes) return { type: "hangup" };
     try {
       await new PaymentStore(b).create(p.PBXcallId, customerId, "school-offer-week", false, env);
-    } catch {
-      return offerMenu("החבילה אינה זמינה לרכישה. לסיום הקישו 0.", "isaacOfferUnavailable", "0");
+    } catch (error) {
+      const text = error instanceof ExistingMonthlyEnrollmentError
+        ? "כבר קיים מנוי פעיל בחשבון. לסיום הקישו 0."
+        : "החבילה אינה זמינה לרכישה. לסיום הקישו 0.";
+      return offerMenu(text, "isaacOfferUnavailable", "0");
     }
     return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
   }
