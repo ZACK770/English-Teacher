@@ -43,15 +43,23 @@ def test_call_sends_one_dial_then_keys_and_speech():
     ]
 
 
-def test_register_only_never_sends_a_command(monkeypatch, tmp_path):
+@pytest.mark.parametrize("relative_modules", [False, True])
+def test_register_only_never_sends_a_command(monkeypatch, tmp_path, relative_modules):
     monkeypatch.setattr(sys, "argv", [str(script), "--register-only"])
     monkeypatch.setattr(caller.shutil, "which", Mock(return_value="baresip"))
     for module in caller.REQUIRED_MODULES:
         (tmp_path / f"{module}.so").touch()
-    monkeypatch.setenv("BARESIP_MODULE_PATH", str(tmp_path))
+    monkeypatch.chdir(tmp_path.parent)
+    monkeypatch.setenv("BARESIP_MODULE_PATH", tmp_path.name if relative_modules else str(tmp_path))
     monkeypatch.setattr(caller, "credentials", Mock(return_value=("000=0", "test", "test.invalid")))
     client = Mock()
-    backend = Mock(return_value=client)
+
+    def launch(executable, directory, timeout, account):
+        config = (directory / "config").read_text().splitlines()
+        assert f"module_path {tmp_path.resolve()}" in config
+        return client
+
+    backend = Mock(side_effect=launch)
     monkeypatch.setattr(caller, "Baresip", backend)
     assert caller.main() == 0
     assert client.observe.call_args.args[1] == b"registered successfully"

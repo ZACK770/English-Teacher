@@ -260,7 +260,7 @@ def main() -> int:
             if not args.output.parent.is_dir() or os.path.lexists(args.output):
                 raise CallError("--output must be a new file in an existing directory.")
         executable = shutil.which("baresip")
-        modules = Path(os.environ.get("BARESIP_MODULE_PATH", "/usr/lib/baresip/modules"))
+        modules = Path(os.environ.get("BARESIP_MODULE_PATH", "/usr/lib/baresip/modules")).resolve()
         if not executable or not all((modules / f"{m}.so").is_file() for m in REQUIRED_MODULES):
             raise CallError("Install baresip-core and its modules (Ubuntu: sudo apt install "
                             "baresip-core); set BARESIP_MODULE_PATH if needed.")
