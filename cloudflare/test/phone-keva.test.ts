@@ -197,6 +197,35 @@ describe("bound monthly sales offer billing", () => {
     expect(db.sql.prepare("SELECT price_agorot,monthly_minutes,plan_id FROM subscriptions").get()).toMatchObject({ price_agorot: 5900, monthly_minutes: 60, plan_id: "school-step" });
     expect(db.sql.prepare("SELECT amount_ils,minutes,package_id,expires_at FROM sales_receipts").get()).toMatchObject({ amount_ils: 20, minutes: 30, package_id: SALES_OFFER_PACKAGE, expires_at: "2026-12-22T13:00:00.000+00:00" });
   });
+  it("acknowledges duplicate creation webhooks for a paid offer without changing billing", async () => {
+    const module = await activateOffer();
+    vi.mocked(fetch).mockClear();
+    const issues = db.sql.prepare("SELECT COUNT(*) AS n FROM payment_issues");
+    const before = issues.get();
+    const event = { MosadNumber: "7019554", Groupe: module.category, KevaId: "54321", Amount: "20.00", Currency: "1", NextDate: "22/11/2026" };
+    await expect(hook(event)).resolves.toEqual({ recorded: true });
+    await expect(hook(event)).resolves.toEqual({ recorded: true });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(counts()).toEqual([1, 1, 1]);
+    expect(await store.orderForCall("phone-hk")).toMatchObject({ state: "paid", transaction_id: "987654" });
+    expect(db.sql.prepare("SELECT state,monthly_agorot,next_date FROM standing_orders").get()).toEqual({ state: "active", monthly_agorot: 5900, next_date: "22/12/2026" });
+    expect(issues.get()).toEqual(before);
+  });
+  it("flags a creation webhook with a different Keva ID for a paid offer", async () => {
+    const module = await activateOffer();
+    const event = { MosadNumber: "7019554", Groupe: module.category, KevaId: "54322", Amount: "20.00", Currency: "1", NextDate: "22/11/2026" };
+    await expect(hook(event)).rejects.toMatchObject({ status: 400 });
+    expect(db.sql.prepare("SELECT keva_id FROM standing_orders").get()).toEqual({ keva_id: "54321" });
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE status='open'").all()).toEqual([{ kind: "settlement_review" }]);
+  });
+  it("still records a refusal webhook for a paid offer", async () => {
+    const module = await activateOffer();
+    vi.setSystemTime(new Date("2026-12-22T13:00:00Z"));
+    await expect(hook({ MosadNumber: "7019554", Groupe: module.category, KevaId: "54321", Status: "Error", ErrorTime: "22/12/2026 15:00" })).resolves.toEqual({ recorded: true });
+    expect(await store.orderForCall("phone-hk")).toMatchObject({ state: "paid" });
+    expect(db.sql.prepare("SELECT state FROM standing_orders").get()).toEqual({ state: "past_due" });
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE status='open'").all()).toEqual([{ kind: "keva_refusal" }]);
+  });
   it.each([600, 15])("caps the first month at three practices, even with %s seconds used per call", async billed => {
     await activateOffer();
     await b.save("policies", { product: "school", enabled: false }, "isaac-basic");
