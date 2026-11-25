@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [vars]
-SALES_OFFER_MODE = "on"
+SALES_OFFER_MODE = "off"
 SALES_OFFER_SKIP_PRACTICE = "1"
 SALES_OFFER_ALLOWLIST = ""
 SALES_OFFER_TEST_PHONES = "0527180504"
