@@ -174,9 +174,15 @@ export async function verifyCriticalAudio(env: Env, audio: Uint8Array, critical:
       audio: b64encode(wav(audio, 24000)), task: "transcribe", vad_filter: true,
       condition_on_previous_text: false, log_prob_threshold: -0.5, no_speech_threshold: 0.15,
     });
-    return (result.segments ?? []).some(segment => typeof segment.avg_logprob === "number" && segment.avg_logprob >= -0.5
-      && typeof segment.no_speech_prob === "number" && segment.no_speech_prob <= 0.15
-      && matchedTerms(segment.text ?? "", critical).length > 0);
+    let verified = "";
+    for (const segment of result.segments ?? []) {
+      if (segment.text && typeof segment.avg_logprob === "number" && segment.avg_logprob >= -0.5
+        && typeof segment.no_speech_prob === "number" && segment.no_speech_prob <= 0.15) {
+        verified += " " + segment.text;
+        if (matchedTerms(verified, critical).length) return true;
+      } else verified = "";
+    }
+    return false;
   } catch {
     console.warn("Tutor audio verification failed");
     return false;

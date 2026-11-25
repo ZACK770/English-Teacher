@@ -4,7 +4,7 @@ import { URL as FileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   ContentSafetyStore, ContentTurn, STRIKE_WINDOW_MS, adminContentSafety, confirmCriticalIncident, contentPolicy,
-  dispatchContentAlert, matchedTerms,
+  dispatchContentAlert, matchedTerms, verifyCriticalAudio,
 } from "../src/content-safety";
 import { settings, type Env } from "../src/env";
 import { TutorSession } from "../src/session";
@@ -185,6 +185,16 @@ it("does not suspend teachers on uncertain or mismatched audio; the confirmed in
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
     action: "campaignRun", callId: "021111111", phones: ["0501111111"], dialRetries: 0,
   });
+});
+
+it("verifies phrases split across adjacent confident segments, but not across uncertain speech", async () => {
+  const audio = new Uint8Array([0, 25]);
+  const confident = { avg_logprob: -0.2, no_speech_prob: 0.01 };
+  const first = { ...confident, text: "bad" }, last = { ...confident, text: "phrase" };
+  ai.mockResolvedValueOnce({ segments: [first, last] })
+    .mockResolvedValueOnce({ segments: [first, { ...confident, text: "maybe", avg_logprob: -0.9 }, last] });
+  expect(await verifyCriticalAudio(env, audio, ["bad phrase"])).toBe(true);
+  expect(await verifyCriticalAudio(env, audio, ["bad phrase"])).toBe(false);
 });
 
 it("keeps the suspension on provider rejection without dialing a second time", async () => {
