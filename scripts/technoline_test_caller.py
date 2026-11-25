@@ -154,11 +154,13 @@ def check_held_report(report: dict) -> None:
     if retries != "0":
         value = retries if retries.isdecimal() else "unavailable"
         raise CheckError(f"Provider dialRetries={value}; held campaign was not resumed.")
-    if (
-        str(settings.get("recipients")) != "1"
-        or re.sub(r"\D", "", str(settings.get("callId"))) != CALLER
+    calls = report.get("calls", [])
+    if not (
+        re.sub(r"\D", "", str(settings.get("callId"))) == CALLER
+        and len(calls) == 1 and re.sub(r"\D", "", str(calls[0].get("phone"))) == TARGET
+        and calls[0].get("status") == "NEW" and str(calls[0].get("retries")) == "0"
     ):
-        raise CheckError("Provider did not confirm one recipient and the expected caller ID.")
+        raise CheckError("Provider did not confirm the expected caller ID and one undialed target.")
 
 
 def live_check(api_key: str, token: str, audio: bytes) -> int:

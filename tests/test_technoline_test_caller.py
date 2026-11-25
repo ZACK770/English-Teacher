@@ -71,3 +71,14 @@ def test_no_resumption_when_provider_reports_retries(monkeypatch):
     with pytest.raises(caller.CheckError, match="dialRetries=1; held campaign was not resumed"):
         caller.live_check("fake", "fake", b"wav")
     campaign.assert_called_once_with("fake", "campaignReport", campaignId="123")
+
+
+def test_held_report_identifies_undialed_target_from_row():
+    report = {
+        "campaign": {"dialRetries": "0", "recipients": "", "callId": "076-5674688"},
+        "calls": [{"phone": "076-5673575", "status": "NEW", "retries": "0"}],
+    }
+    caller.check_held_report(report)
+    report["calls"][0]["phone"] = "076-5673576"
+    with pytest.raises(caller.CheckError, match="one undialed target"):
+        caller.check_held_report(report)
