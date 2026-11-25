@@ -23,6 +23,7 @@ import { SubscriptionStore } from "./subscriptions";
 import { BusinessStore } from "./business";
 import { crmPeople } from "./crm-people";
 import { callCostReport, callReviewReport, runCallReviews, syncCallReviewPhone } from "./call-review";
+import { adminContentSafety, cleanupContentSafety } from "./content-safety";
 export { CallSession } from "./call";
 export { GeminiBudget } from "./gemini-budget";
 
@@ -74,6 +75,8 @@ async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promi
     const identity = await adminIdentity(request, env);
     if (!identity) throw new HttpError(401, "Unauthorized");
     if (!identity.bearer && request.method !== "GET") requireOrigin(request);
+    const safetyResponse = await adminContentSafety(request, env, path, identity);
+    if (safetyResponse) return safetyResponse;
     const crmResponse = await crmPeople(request, env, path, identity);
     if (crmResponse) return crmResponse;
     const ownerResponse = await adminOwners(request, env, path, identity);
@@ -218,6 +221,7 @@ export default {
     ctx.waitUntil(selectSalesOffers(env).then(() => dispatchCallbacks(env)).catch(() => undefined));
     ctx.waitUntil(dispatchVoicemails(env).catch(() => undefined));
     ctx.waitUntil(cleanupRecordings(env).catch(() => console.warn("Recording retention failed")));
+    if (env.CONTENT_SAFETY_MODE === "on") ctx.waitUntil(cleanupContentSafety(env).catch(() => console.warn("Content safety maintenance failed")));
     ctx.waitUntil(cleanupCallbackQuota(env));
     ctx.waitUntil(cleanupPortalAuth(env));
     ctx.waitUntil(geminiBudgetStatus(env).catch(() => undefined));

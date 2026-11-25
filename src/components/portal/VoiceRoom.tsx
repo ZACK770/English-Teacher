@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
 import { PAYMENT_FAILED_MESSAGE } from "../../paymentCopy";
+import { CONTENT_BLOCKED_MESSAGE, CONTENT_SUSPENDED_MESSAGE } from "../../contentSafetyCopy";
 import { apiPrefix, PortalError, portalRequest } from "./portalApi";
 import { RecordingNotice } from "./RecordingNotice";
 
@@ -10,6 +11,8 @@ const earlyClose = "החיבור לשיחה נסגר לפני שהמורה הת�
 const micPermission = "כדי לדבר כאן צריך לאפשר גישה למיקרופון בדפדפן.";
 const callErrors: Record<string, string> = {
   call_failed: connectionError,
+  content_blocked: CONTENT_BLOCKED_MESSAGE,
+  content_suspended: CONTENT_SUSPENDED_MESSAGE,
   access_blocked: "הגישה לשיחה אינה זמינה כרגע. ההתקדמות נשמרה. לבחירת מסלול: אפשר לחייג 076-5673575 ולהקיש 3.",
   payment_failed: PAYMENT_FAILED_MESSAGE,
   customer_busy: "כבר יש שיחה פעילה בחשבון. כדי להתחיל חדשה, יש לסיים את השיחה הקיימת.",
@@ -176,6 +179,7 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
         url.searchParams.set("ticket", ticket);
         const socket = ws = new WebSocket(url);
         let connected = false, receivedAudio = false, playAt = 0;
+        const playing = new Set<AudioBufferSourceNode>();
         socket.binaryType = "arraybuffer";
         socketTimer = setTimeout(() => fail(connectionError), 10000);
         const ready = () => {
@@ -196,6 +200,11 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
             try {
               const message = JSON.parse(event.data);
               if (message.type === "ready") ready();
+              if (message.type === "clear_audio") {
+                for (const audio of playing) audio.stop();
+                playing.clear();
+                playAt = 0;
+              }
               if (message.type === "hangup" && Object.hasOwn(callErrors, message.reason)) fail(callErrors[message.reason]);
             } catch { /* Optional status frames do not affect audio. */ }
             return;
@@ -207,6 +216,8 @@ export function VoiceRoom({ token, botId, teacherId, name, onDone }: { token: st
           const buffer = audioContext.createBuffer(1, samples.length, 8000);
           buffer.getChannelData(0).set(Float32Array.from(samples, n => n / 32768));
           const audio = audioContext.createBufferSource(); audio.buffer = buffer; audio.connect(audioContext.destination);
+          playing.add(audio);
+          audio.onended = () => { playing.delete(audio); audio.disconnect(); };
           playAt = Math.max(audioContext.currentTime + .025, playAt);
           if (playAt > audioContext.currentTime + 2) playAt = audioContext.currentTime + .025;
           audio.start(playAt); playAt += buffer.duration;

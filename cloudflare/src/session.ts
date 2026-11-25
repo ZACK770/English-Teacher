@@ -3,6 +3,7 @@ import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
 import { concat, downsample24kTo8k, FRAME_BYTES, FRAME_MS, meanSquare, SILENCE_FRAME, upsample8kTo16k, wavToPcm } from "./audio";
 import { BasicTranslator } from "./basic";
+import { type ContentDenial, ContentSafetyStore, ContentTurn, confirmCriticalIncident, contentDenialMessage, contentPolicy } from "./content-safety";
 import { type Allowance, BusinessStore } from "./business";
 import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText, normalizePhone } from "./callbacks";
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
@@ -104,6 +105,10 @@ export class TutorSession {
   private b: BusinessStore;
   private progress: ProgressStore;
   private recorder?: CallRecorder;
+  private safety: ContentTurn | null = null;
+  private safetyMuted = false;
+  private safetyTimer?: ReturnType<typeof setTimeout>;
+  private safetyFollowup?: Promise<void>;
 
   private sendAudio(frame: Uint8Array) {
     this.pbx.send(frame);
@@ -214,8 +219,9 @@ export class TutorSession {
       claimed = await this.progress.claimCall(start.callId, profileId, this.ownerId);
       if (!claimed) throw new Error("Duplicate call connection");
       heartbeat = setInterval(() => {
-        void this.progress.renewCall(this.leaseCallId, this.ownerId).then((renewed) => {
+        void this.progress.renewCall(this.leaseCallId, this.ownerId).then(async (renewed) => {
           if (!renewed) this.stop("call_lease_lost");
+          else if (this.safety && !this.safetyMuted && !this.abort.signal.aborted) await this.checkContentHold();
         }).catch(() => this.stop("call_lease_failed"));
       }, 5000);
       this.callId = shared ? start.callId.slice(0, 160) + "~" + randomHex(8) : start.callId;
@@ -231,6 +237,13 @@ export class TutorSession {
         await this.b.saveContext(this.callId, await this.b.loadContext("preferences:" + this.customerId));
       } else {
         this.customerId = await this.b.identifyCall(start.caller, this.callId, profileId);
+      }
+      if (bot.role === "teacher") {
+        const policy = contentPolicy(this.env);
+        if (policy) {
+          this.safety = new ContentTurn(policy);
+          if (await this.checkContentHold()) return;
+        }
       }
       await this.latency("session_started");
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
@@ -340,6 +353,11 @@ export class TutorSession {
         await this.runTasks([this.pbxToAi(), this.aiToOutput(), playback ?? this.pacedOutput(), this.watchdog()]);
       }
     } catch (error) {
+      if (error instanceof HttpError && error.status === 503 && this.env.CONTENT_SAFETY_MODE === "on" &&
+          error.message === contentDenialMessage("content_suspended")) {
+        this.endForContent("content_suspended");
+        return;
+      }
       if (error instanceof GeminiBudgetError) {
         this.reason ||= error.reason;
         return;
@@ -363,6 +381,7 @@ export class TutorSession {
       this.settling = true;
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (hardLimit !== undefined) clearTimeout(hardLimit);
+      clearTimeout(this.safetyTimer);
       this.abort.abort(new Error("session_finished"));
       this.input.end();
       this.ai?.close();
@@ -389,8 +408,8 @@ export class TutorSession {
         }
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
-        if (this.offerCall && !this.disconnected) this.returnPath = this.extension(SALES_EXTENSION_PATH);
-        const target = this.offerCall && !this.disconnected ? this.returnPath : this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+        if (this.offerCall && !this.disconnected && !this.safetyMuted) this.returnPath = this.extension(SALES_EXTENSION_PATH);
+        const target = this.safetyMuted ? null : this.offerCall && !this.disconnected ? this.returnPath : this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
         if (!this.disconnected) {
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
@@ -400,6 +419,7 @@ export class TutorSession {
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
         this.output = [];
         try { this.pbx.close(1000, "session ended"); } catch { /* peer already closed */ }
+        await this.safetyFollowup;
         await this.recorder?.finish(this.callId, this.profileId, this.customerId);
       }
       if (willCallWithSummary) {
@@ -439,6 +459,70 @@ export class TutorSession {
     await this.progress.logLatency(this.profileId, this.callId, event, now - this.startedAt.getTime(), now - previous, details);
   }
 
+  private muteForContent() {
+    if (this.safetyMuted) return;
+    this.safetyMuted = true;
+    if (this.meteredAt !== null) this.failureStarted ??= Date.now();
+    this.output = [];
+    this.partial = new Uint8Array();
+    this.carry = new Uint8Array();
+    if (this.portal && !this.disconnected) {
+      try { this.pbx.send(JSON.stringify({ type: "clear_audio" })); } catch { /* Peer closed. */ }
+    }
+  }
+
+  private endForContent(reason: ContentDenial) {
+    this.muteForContent();
+    this.finalMessage = contentDenialMessage(reason);
+    this.reason = reason;
+    this.stop(reason);
+  }
+
+  private async checkContentHold() {
+    const denied = await new ContentSafetyStore(this.env.DB).denied(this.customerId);
+    if (denied && !this.abort.signal.aborted) this.endForContent(denied);
+    return denied;
+  }
+
+  private async blockForTutor(waitForAudio = false) {
+    this.muteForContent();
+    this.finalMessage = contentDenialMessage("content_blocked");
+    this.reason = "content_blocked";
+    try {
+      await new ContentSafetyStore(this.env.DB).block(this.customerId);
+    } catch {
+      console.warn("Tutor safety block could not be saved");
+      this.endForContent("content_suspended");
+      return;
+    }
+    if (!waitForAudio) { this.endForContent("content_blocked"); return; }
+    // Keep only this already-muted turn open briefly to verify the critical word against its audio.
+    this.safetyTimer = setTimeout(() => this.endForContent("content_blocked"), 5000);
+  }
+
+  private async finishContentTurn(safety: ContentTurn) {
+    const result = safety.finish();
+    if (result.critical.length) this.safetyFollowup = confirmCriticalIncident(this.env, result.audio, result.critical)
+      .catch(() => console.warn("Tutor safety incident could not be saved"));
+    if (result.tutor || this.safetyMuted) {
+      if (!this.safetyMuted) await this.blockForTutor();
+      if (!this.abort.signal.aborted) this.endForContent("content_blocked");
+      return true;
+    }
+    if (result.learner) {
+      try {
+        if (await new ContentSafetyStore(this.env.DB).strike(this.customerId, crypto.randomUUID())) {
+          this.endForContent("content_blocked");
+          return true;
+        }
+      } catch {
+        this.endForContent("content_suspended");
+        return true;
+      }
+    }
+    return false;
+  }
+
   private enqueue(pcm8: Uint8Array) {
     const data = concat([this.partial, pcm8]);
     const whole = data.byteLength - data.byteLength % FRAME_BYTES;
@@ -464,7 +548,7 @@ export class TutorSession {
       this.meter.inputAudioBytes += pcm.byteLength;
       batch = [];
       if (this.reconnecting) await this.reconnecting;
-      if (!this.abort.signal.aborted && !this.reason) {
+      if (!this.abort.signal.aborted && !this.reason && !this.safetyMuted) {
         try { this.ai!.sendAudio(pcm); } catch { this.ai?.close(); }
       }
     }
@@ -475,6 +559,8 @@ export class TutorSession {
       const event = await this.ai!.next();
       if (this.abort.signal.aborted) return;
       if (event.type === "closed") {
+        if (this.safetyMuted) { this.endForContent("content_blocked"); return; }
+        this.safety?.interrupt();
         this.reconnecting = this.reconnectGemini();
         await this.reconnecting;
         this.reconnecting = null;
@@ -482,6 +568,8 @@ export class TutorSession {
         continue;
       }
       if (event.type === "audio") {
+        this.safety?.tutorAudio(event.pcm24k);
+        if (this.safetyMuted) continue;
         if (event.pcm24k.byteLength) this.tutorAudioReceived = true;
         if (this.pendingEmail?.phase === "readback") this.pendingEmail.audio ||= event.pcm24k.byteLength > 0;
         if (!this.firstAudio) { this.firstAudio = true; await this.latency("first_gemini_audio", { tutor_turn: this.meter.tutorTurns + 1 }); }
@@ -490,6 +578,8 @@ export class TutorSession {
         this.carry = carry;
         this.enqueue(pcm);
       } else if (event.type === "interrupted") {
+        if (this.safetyMuted) { this.endForContent("content_blocked"); return; }
+        this.safety?.interrupt();
         const queued = this.audioQueueDetails();
         this.pendingEmail = null;
         this.summaryCallbackSpeech = "";
@@ -499,6 +589,10 @@ export class TutorSession {
         this.carry = new Uint8Array();
         await this.latency("tutor_interrupted", queued);
       } else if (event.type === "transcript") {
+        if (this.safety?.transcript(event.role, event.rawText ?? event.text, event.finished) && !this.safetyMuted) {
+          await this.blockForTutor(this.safety.criticalCandidate(event.finished));
+        }
+        if (this.safetyMuted || !event.text) continue;
         const pending = this.pendingEmail;
         if (pending) {
           const expected = pending.phase === "readback" ? "tutor" : "learner";
@@ -519,6 +613,7 @@ export class TutorSession {
           this.learnerSeen = true;
         }
       } else if (event.type === "turn_complete") {
+        if (this.safety && await this.finishContentTurn(this.safety)) return;
         this.summaryCallbackSpeech = "";
         this.reminderSpeech = "";
         const pending = this.pendingEmail;
@@ -536,6 +631,7 @@ export class TutorSession {
         }
       } else if (event.type === "usage") this.meter.recordUsage(event.usage);
       else if (event.type === "tool_call") {
+        if (this.safetyMuted) continue;
         for (const call of event.calls) {
           const result = await this.recordTool(call);
           const saved = typeof result === "boolean" ? result : result.saved;
@@ -546,6 +642,8 @@ export class TutorSession {
           if (call.name === "end_session" && saved) return;
         }
       } else if (event.type === "go_away") {
+        if (this.safetyMuted) { this.endForContent("content_blocked"); return; }
+        this.safety?.interrupt();
         this.reconnecting = this.reconnectGemini(true);
         await this.reconnecting;
         this.reconnecting = null;
@@ -779,6 +877,8 @@ export class TutorSession {
     }
     while (!this.abort.signal.aborted) {
       await sleep(FRAME_MS, this.abort.signal);
+      if (this.abort.signal.aborted) return;
+      if (this.safetyMuted) continue;
       const audio = this.output.shift();
       if (!audio && !this.tutorAudioReceived && greeting && offset < greeting.length) {
         const frame = new Uint8Array(FRAME_BYTES);
@@ -805,6 +905,7 @@ export class TutorSession {
 
   private async watchdog() {
     while (!this.abort.signal.aborted) {
+      if (this.safetyMuted) { await sleep(100, this.abort.signal); continue; }
       if (Date.now() - this.lastInput >= 15000) { this.stop("pbx_input_timeout"); return; }
       if (!this.finalSent && !this.reconnecting && Date.now() - this.lastHuman >= this.controls!.idle_timeout_seconds * 1000) { this.stop("idle_timeout"); return; }
       this.maybeOpenSalesWindow(Date.now());
@@ -898,6 +999,11 @@ export class TutorSession {
         const result = await translator.translate(utterance, this.abort.signal);
         this.basicGeminiCost += (result.input_tokens * 0.5 + result.output_tokens * 1.5) / 1_000_000;
         if (this.abort.signal.aborted) return;
+        if (this.safety) {
+          this.safety.transcript("learner", result.heard);
+          this.safety.transcript("tutor", result.text);
+          if (await this.finishContentTurn(this.safety)) return;
+        }
         if (result.text) {
           this.meter.transcript.push({ role: "learner", text: result.heard }, { role: "tutor", text: result.text });
           await say(result.text, result.language);

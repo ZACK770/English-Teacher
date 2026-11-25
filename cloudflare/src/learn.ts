@@ -13,6 +13,7 @@ import { runtimeContext } from "./pbx";
 import { ProgressStore } from "./progress";
 import { compilePrompt } from "./prompt";
 import { LearningStore } from "./learning";
+import { ContentSafetyStore, ContentTurn, confirmCriticalIncident, contentDenialMessage, contentPolicy, matchedTerms } from "./content-safety";
 
 interface LiveResult { audio: Uint8Array; text: string; meter: SessionMeter; elapsedSeconds: number }
 interface LiveOptions {
@@ -21,9 +22,10 @@ interface LiveOptions {
   beforeConnect?: () => Promise<void>;
   learning?: (args: unknown) => Promise<boolean>;
   intake?: (args: unknown) => Promise<boolean>;
+  safety?: { turn: ContentTurn; customerId: string };
 }
 
-async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, { paid = false, storeTranscript = true, beforeConnect, learning, intake }: LiveOptions = {}): Promise<LiveResult> {
+async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId: string, callId: string, setup: unknown, opening: string, maxSeconds: number, timeoutMs: number, { paid = false, storeTranscript = true, beforeConnect, learning, intake, safety }: LiveOptions = {}): Promise<LiveResult> {
   const meter = new SessionMeter();
   const parts: Uint8Array[] = [];
   const output: string[] = [];
@@ -48,11 +50,14 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
       if (budgetError) throw budgetError;
       if (event.type === "audio") {
         if (size + event.pcm24k.byteLength > 24000 * 2 * maxSeconds) break;
+        safety?.turn.tutorAudio(event.pcm24k);
         if (!size) await progress.logLatency(profileId, callId, "first_gemini_audio", Date.now() - t0, 0);
         parts.push(event.pcm24k);
         size += event.pcm24k.byteLength;
         meter.outputAudioBytes += event.pcm24k.byteLength;
       } else if (event.type === "transcript" && event.role === "tutor") {
+        safety?.turn.transcript("tutor", event.rawText ?? event.text, event.finished);
+        if (!event.text) continue;
         output.push(event.text);
         if (storeTranscript) await progress.logTurn(profileId, callId, "output", event.text);
       } else if (event.type === "usage") meter.recordUsage(event.usage);
@@ -85,6 +90,17 @@ async function runLive(env: Env, s: Settings, progress: ProgressStore, profileId
     ai.close();
     await release();
   }
+  if (safety) {
+    const store = new ContentSafetyStore(env.DB);
+    const result = safety.turn.finish();
+    if (result.tutor) {
+      await store.block(safety.customerId);
+      if (result.critical.length) await confirmCriticalIncident(env, result.audio, result.critical);
+      throw new HttpError(403, contentDenialMessage("content_blocked"));
+    }
+    const denied = await store.denied(safety.customerId);
+    if (denied) throw new HttpError(denied === "content_blocked" ? 403 : 503, contentDenialMessage(denied));
+  }
   return { audio: concat(parts), text: output.join(" "), meter, elapsedSeconds };
 }
 
@@ -106,6 +122,15 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
   const parsed = TextTurnSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(422, "נתונים לא תקינים");
   const text = parsed.data.text;
+  const policy = bot.role === "teacher" ? contentPolicy(env) : null;
+  if (policy) {
+    const store = new ContentSafetyStore(env.DB);
+    const denied = await store.denied(customerId);
+    if (denied) throw new HttpError(denied === "content_blocked" ? 403 : 503, contentDenialMessage(denied));
+    if (matchedTerms(text, policy.learner).length && await store.strike(customerId, crypto.randomUUID())) {
+      throw new HttpError(403, contentDenialMessage("content_blocked"));
+    }
+  }
   const controls = await applyLearnerControls(b, customerId, bot, await progress.loadControls(botId, defaults(s, botId)));
   const callId = "web-" + randomHex(12);
   const allowance = await b.reserveCall(customerId, botId, callId, 120, "text");
@@ -136,10 +161,12 @@ export async function webTurn(request: Request, env: Env, s: Settings, botId: st
       storeTranscript: controls.store_transcripts,
       learning: controls.lesson ? args => learning.record(customerId, callId, args) : undefined,
       intake: async args => saveIntake(b, customerId, await phoneTeacherFor(progress, botId), args, { lessonBotId: botId }),
+      safety: policy ? { turn: new ContentTurn(policy), customerId } : undefined,
     });
     if (controls.lesson) await learning.exposures(customerId, callId, controls.lesson.vocabulary, result.text);
   } catch (error) {
     if (error instanceof GeminiBudgetError) { limited = true; throw error; }
+    if (error instanceof HttpError) throw error;
     if (isGeminiError(error)) await reportGeminiOutcome(env, false, (error as Error).message.split(s.geminiKey).join("[redacted]"));
     if (!startedAt) throw error;
     await progress.logDiagnostic(botId, callId, "web_turn_failed", { error_type: error instanceof Error ? error.name : "Error", message: (error instanceof Error ? error.message : "").split(s.geminiKey).join("[redacted]").slice(0, 250) });

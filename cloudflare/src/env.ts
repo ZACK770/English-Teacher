@@ -1,5 +1,10 @@
 export interface Env {
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";
+  CONTENT_SAFETY_MODE?: "off" | "on";
+  CONTENT_SAFETY_LISTS?: string;
+  CONTENT_SAFETY_OWNER?: string;
+  CONTENT_SAFETY_ALERT_TO?: string;
+  CONTENT_SAFETY_ALERT_FROM?: string;
   SALES_OFFER_ALLOWLIST?: string;
   SALES_OFFER_PRACTICE_MINUTES?: string;
   SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest" | "quota_exhausted";
