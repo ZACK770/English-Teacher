@@ -27,6 +27,10 @@ class CallError(Exception):
     pass
 
 
+class CallEnded(CallError):
+    pass
+
+
 def target_number(value: str) -> str:
     number = re.sub(r"[ -]", "", value)
     if number.startswith(("+972", "00972")):
@@ -156,7 +160,9 @@ class Baresip:
             match = re.search(pattern, self.buffer, re.IGNORECASE) if pattern else None
             closed = re.search(rb"session closed|failed to set audio-source", self.buffer)
             if closed and (not match or closed.start() < match.start()):
-                raise CallError("The call ended or SIP audio stopped before the step completed.")
+                if closed.group() == b"session closed":
+                    raise CallEnded("The call ended before the step completed.")
+                raise CallError("SIP audio stopped before the step completed.")
             if match:
                 self.buffer = self.buffer[match.end():]
                 return True
