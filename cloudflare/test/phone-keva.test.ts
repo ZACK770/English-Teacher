@@ -211,6 +211,13 @@ describe("bound monthly sales offer billing", () => {
     expect(db.sql.prepare("SELECT state,monthly_agorot,next_date FROM standing_orders").get()).toEqual({ state: "active", monthly_agorot: 5900, next_date: "22/12/2026" });
     expect(issues.get()).toEqual(before);
   });
+  it("flags a creation webhook with a different Keva ID for a paid offer", async () => {
+    const module = await activateOffer();
+    const event = { MosadNumber: "7019554", Groupe: module.category, KevaId: "54322", Amount: "20.00", Currency: "1", NextDate: "22/11/2026" };
+    await expect(hook(event)).rejects.toMatchObject({ status: 400 });
+    expect(db.sql.prepare("SELECT keva_id FROM standing_orders").get()).toEqual({ keva_id: "54321" });
+    expect(db.sql.prepare("SELECT kind FROM payment_issues WHERE status='open'").all()).toEqual([{ kind: "settlement_review" }]);
+  });
   it("still records a refusal webhook for a paid offer", async () => {
     const module = await activateOffer();
     vi.setSystemTime(new Date("2026-12-22T13:00:00Z"));
