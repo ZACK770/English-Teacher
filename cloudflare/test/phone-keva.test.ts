@@ -131,6 +131,19 @@ async function activateOffer() {
 }
 
 describe("bound monthly sales offer billing", () => {
+  it.each(["main", "school"])("returns a paid direct offer on %s to main without reopening confirmation", async route => {
+    await activateOffer();
+    Object.assign(env, {
+      SALES_OFFER_SKIP_PRACTICE: "1", TLIVR_CALLBACK_SECRET: "cb", TLIVR_PROJECT_ENABLED: "true",
+      TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_PHONE: "0765673575",
+    });
+    const url = "https://example.test/v1/technoline/ivr/" + route + "?key=cb&PBXnum=0765673575&PBXextensionPath=/&PBXphone=0500000001&PBXcallId=phone-hk";
+    expect(await handleCallback(new Request(url + "&isaacPayExit=0"), env, settings(env), route))
+      .toMatchObject({ type: "goTo", goTo: "/" });
+    expect(await b.loadContext("phone-hk")).toMatchObject({ offer_call: null });
+    expect(await handleCallback(new Request(url), env, settings(env), "main"))
+      .toMatchObject({ name: "isaacMain" });
+  });
   it.each(["0", "ERROR", "HANGUP"])("releases an abandoned offer on %s for a later regular monthly purchase", async key => {
     await selectOffer();
     await salesOfferResponse(b, env, "/", {
