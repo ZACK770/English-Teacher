@@ -680,13 +680,15 @@ describe("sales offers", () => {
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner"))
       .toMatchObject({ name: "isaacPayConfirm" });
   });
-  async function acceptances(count: number) {
+  function paidBuyers(count: number) {
     for (let i = 0; i < count; i++) {
-      await b.save("sales-offers", { customer_id: "buyer-" + i, status: "accepted" }, "accepted-" + i);
+      sql.prepare(`INSERT INTO payment_orders(id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,created_at,updated_at)
+        VALUES (?,?,?,'school-offer-week','{}',2000,0,'paid',?,?)`)
+        .run("paid-" + i, "paid-call-" + i, "buyer-" + i, now.toISOString(), now.toISOString());
     }
   }
-  it("stops selection and dispatch after one hundred acceptances", async () => {
-    await acceptances(100);
+  it("stops selection and dispatch after one hundred paid customers", async () => {
+    paidBuyers(100);
     await selectSalesOffers(env);
     expect(await b.record("sales-offers", offerId)).toBeNull();
     await b.save("sales-offers", { customer_id: "learner", phone: "0501111111", status: "queued", expires_at: "2026-06-16T00:00:00Z" }, offerId);
@@ -695,17 +697,25 @@ describe("sales offers", () => {
     expect(await dispatchCallbacks(env)).toMatchObject({ sent: 0 });
     expect(fetch).not.toHaveBeenCalled();
   });
-  it("reserves the hundredth slot once and blocks a queued offer from becoming buyer 101", async () => {
+  it("allows purchase with 99 paid customers and blocks new purchases after the hundredth payment", async () => {
     await answered();
-    await acceptances(99);
+    paidBuyers(99);
     Object.assign(env, { NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner")).toMatchObject({ name: "isaacPayConfirm" });
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "1" }, "learner")).toMatchObject({ type: "creditCard" });
+    sql.prepare("UPDATE payment_orders SET state='paid' WHERE call_id='call'").run();
     await b.save("customers", { name: "Other", phone: "0502222222" }, "other");
     await b.save("sales-offers", { customer_id: "other", phone: "0502222222", call_id: "other-call", status: "answered", expires_at: "2026-06-16T00:00:00Z" }, "other-offer");
     await b.saveContext("other-call", { offer_call: "other-offer" });
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "other-call", isaacOffer: "1" }, "other")).toEqual({ type: "hangup" });
     expect(await new PaymentStore(b).orderForCall("other-call")).toBeNull();
+  });
+  it("does not count 100 unpaid acceptances or duplicate payments by the same customer", async () => {
+    for (let i = 0; i < 100; i++) await b.save("sales-offers", { customer_id: "unpaid-" + i, status: "accepted" }, "unpaid-" + i);
+    paidBuyers(100);
+    sql.prepare("UPDATE payment_orders SET customer_id='same-buyer'").run();
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toMatchObject({ status: "queued" });
   });
   it("can skip practice for a recognized offer call without changing ordinary inbound calls", async () => {
     await answered();

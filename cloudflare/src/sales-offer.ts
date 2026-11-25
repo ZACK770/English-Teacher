@@ -315,7 +315,13 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
     await b.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
     return { ...await recordedOfferMenu(env), removeParams: ["isaacPayConfirm", "isaacOffer"] };
   }
-  if (offer.status === "accepted") return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
+  if (offer.status === "accepted") {
+    if (p.isaacPayConfirm === "1" && !p.isaacPayStatus && !await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) {
+      await new PaymentStore(b).cancelSelection(p.PBXcallId);
+      return { type: "hangup" };
+    }
+    return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
+  }
   if (!["answered", "offered"].includes(offer.status)) return null;
   const choice = p.isaacOffer;
   if (choice && choice !== "1") {
@@ -326,7 +332,7 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
     const reserved = await b.db.prepare(`UPDATE console_records
       SET body=json_set(body,'$.status','accepted','$.accepted_at',COALESCE(json_extract(body,'$.accepted_at'),?)),updated_at=?
       WHERE kind='sales-offers' AND id=? AND json_extract(body,'$.status') IN ('answered','offered')
-      AND (${SALES_OFFER_CAP_SQL} OR json_extract(body,'$.accepted_at') IS NOT NULL)`)
+      AND ${SALES_OFFER_CAP_SQL}`)
       .bind(nowIso(), nowIso(), context.offer_call).run();
     if (!reserved.meta.changes) return { type: "hangup" };
     try {
@@ -336,7 +342,7 @@ export async function salesOfferResponse(b: BusinessStore, env: Env, base: strin
     }
     return paymentResponse(new PaymentStore(b), env, base, p, customerId, ["school-offer-week"]);
   }
-  if (!offer.accepted_at && !await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) return { type: "hangup" };
+  if (!await b.db.prepare(`SELECT 1 WHERE ${SALES_OFFER_CAP_SQL}`).first()) return { type: "hangup" };
   await b.save("sales-offers", { ...offer, status: "offered" }, context.offer_call);
   return recordedOfferMenu(env);
 }
