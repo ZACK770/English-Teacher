@@ -13,7 +13,8 @@ export const OFFER_GUIDANCE = 'This is a short next-day follow-up practice call 
 
 export function salesOfferAllowed(env: Env, phone: string): boolean {
   const normalized = normalizePhone(phone);
-  return !!normalized && (env.SALES_OFFER_MODE === "on" || env.SALES_OFFER_MODE === "allowlist" &&
+  return !!normalized && !phoneList(env.SALES_OFFER_EXCLUDE_PHONES).includes(normalized) &&
+    (env.SALES_OFFER_MODE === "on" || env.SALES_OFFER_MODE === "allowlist" &&
     (env.SALES_OFFER_ALLOWLIST ?? "").split(",").some(p => normalizePhone(p.trim()) === normalized));
 }
 
@@ -193,7 +194,7 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
     const configuredCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 4);
     const minCalls = Number.isInteger(configuredCalls) && configuredCalls > 0 ? configuredCalls : 4;
     const { results } = await env.DB.prepare(ROLLING_SALES_OFFER_CANDIDATES_SQL)
-      .bind(now.toISOString(), JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)), minCalls)
+      .bind(now.toISOString(), JSON.stringify([...phoneList(env.SALES_OFFER_TEST_PHONES), ...phoneList(env.SALES_OFFER_EXCLUDE_PHONES)]), minCalls)
       .all<{ customer_id: string; phone: string; last_call_at: string }>();
     let queued = 0;
     for (const row of results) {

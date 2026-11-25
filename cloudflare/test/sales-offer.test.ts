@@ -11,7 +11,7 @@ import { TutorSession } from "../src/session";
 import { ExistingMonthlyEnrollmentError, PaymentStore } from "../src/payments";
 import { SubscriptionStore } from "../src/subscriptions";
 import { handleCallback } from "../src/pbx";
-import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT, SALES_OFFER_RECORDING } from "../src/sales-offer";
+import { customerBought, enterSalesOffer, offerGift, offerSchedule, queueTestSalesOffer, salesOfferAllowed, salesOfferDialError, salesOfferResponse, selectSalesOffers, SALES_OFFER_TEXT, SALES_OFFER_RECORDING } from "../src/sales-offer";
 
 let sql: DatabaseSync, b: BusinessStore, env: Env;
 const now = new Date("2026-06-15T14:00:00Z");
@@ -206,6 +206,21 @@ describe("rolling sales offers", () => {
     sql.exec("UPDATE customers SET source='qa-test' WHERE id='learner'");
     await selectSalesOffers(env);
     expect(await b.record("sales-offers", offerId)).toBeNull();
+  });
+  it("excludes Isaac from customer selection and queued dialing with test calls disabled", async () => {
+    await b.save("customers", { name: "Isaac", phone: "0527180504" }, "learner");
+    phoneCalls("learner", 4, "2026-06-14T06:00:00Z");
+    env.SALES_OFFER_TEST_PHONES = "";
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).not.toBeNull();
+    env.SALES_OFFER_EXCLUDE_PHONES = "0527180504";
+    expect(await salesOfferDialError(env, offerId, "0527180504", now))
+      .toBe("Sales offer gate disabled for phone");
+    sql.prepare("DELETE FROM console_records WHERE kind='sales-offers'").run();
+    sql.prepare("DELETE FROM callback_requests").run();
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers", offerId)).toBeNull();
+    expect(salesOfferAllowed(env, "0527180504")).toBe(false);
   });
 });
 
