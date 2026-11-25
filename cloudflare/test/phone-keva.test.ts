@@ -131,6 +131,63 @@ async function activateOffer() {
 }
 
 describe("bound monthly sales offer billing", () => {
+  it.each(["dialed", "offered", "accepted"])("simulates POST offer1 → terms1 → card after %s, including a return within two hours", async status => {
+    Object.assign(env, {
+      SALES_OFFER_MODE: "on", SALES_OFFER_SKIP_PRACTICE: "1", SALES_OFFER_AUDIENCE: "rolling",
+      SALES_OFFER_ROLLING_START_AT: "2026-11-22T10:00:00.000Z",
+      TLIVR_CALLBACK_BODY_SECRET: "cb", TLIVR_PROJECT_ENABLED: "true", TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_PHONE: "0765673575",
+    });
+    const offerId = "simulation-offer";
+    const callId = status === "dialed" ? "outbound" : "returning";
+    await b.save("sales-offers", { customer_id: "c1", phone: "0500000001", call_id: "previous", status,
+      rolling: true, expires_at: "2026-11-22T21:59:59Z" }, offerId);
+    await b.saveContext("previous", { offer_call: offerId });
+    if (status === "accepted") await store.create("previous", "c1", SALES_OFFER_PACKAGE, false, env);
+    db.sql.prepare(`INSERT INTO callback_requests(id,phone,name,for_whom,goal,timing,consent_at,source,status,attempts,created_at,updated_at)
+      VALUES (?,'0500000001','','self','offer','now','','sales_offer','dialed',1,?,?)`)
+      .run(offerId, "2026-11-22T11:01:00Z", "2026-11-22T11:01:00Z");
+    const request = (params: Record<string, string>) => new Request("https://example.test/v1/technoline/ivr/main", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ callback_key: "cb", PBXnum: "0765673575", PBXextensionPath: "/", PBXphone: "0500000001", PBXcallId: callId, ...params }),
+    });
+    expect(await handleCallback(request({}), env, settings(env), "main")).toMatchObject({ name: "isaacOffer", enabledKeys: "1" });
+    expect(await handleCallback(request({ isaacOffer: "1" }), env, settings(env), "main"))
+      .toMatchObject({ name: "isaacPayConfirm", files: [{ text: SALES_OFFER_TERMS_TEXT }] });
+    expect(await handleCallback(request({ isaacOffer: "1", isaacPayConfirm: "1" }), env, settings(env), "main"))
+      .toMatchObject({ type: "creditCard", name: "isaacPayStatus", sum: 59, paymentsMode: "kevaMonthly" });
+    expect((await store.orderForCall(callId))!.amount_agorot).toBe(2000);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["main", "school"])("returns a paid direct offer on %s to main without reopening confirmation", async route => {
+    await activateOffer();
+    Object.assign(env, {
+      SALES_OFFER_SKIP_PRACTICE: "1", TLIVR_CALLBACK_SECRET: "cb", TLIVR_PROJECT_ENABLED: "true",
+      TLIVR_PROJECT_PATH: "/", TLIVR_SYSTEM_PHONE: "0765673575",
+    });
+    const url = "https://example.test/v1/technoline/ivr/" + route + "?key=cb&PBXnum=0765673575&PBXextensionPath=/&PBXphone=0500000001&PBXcallId=phone-hk";
+    expect(await handleCallback(new Request(url + "&isaacPayExit=0"), env, settings(env), route))
+      .toMatchObject({ type: "goTo", goTo: "/" });
+    expect(await b.loadContext("phone-hk")).toMatchObject({ offer_call: null });
+    expect(await handleCallback(new Request(url), env, settings(env), "main"))
+      .toMatchObject({ name: "isaacMain" });
+  });
+  it.each(["0", "ERROR", "HANGUP"])("releases an abandoned offer on %s for a later regular monthly purchase", async key => {
+    await selectOffer();
+    await salesOfferResponse(b, env, "/", {
+      PBXcallId: "phone-hk", ...(key === "HANGUP" ? { PBXcallStatus: key } : { isaacPayConfirm: key }),
+    }, "c1");
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("cancelled");
+    expect(await store.create("regular-next-call", "c1", "school-step", false, env)).toMatchObject({ state: "selected", package_id: "school-step" });
+  });
+
+  it("can select the offer again after backing out without issuing a card", async () => {
+    await selectOffer();
+    await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacPayConfirm: "0" }, "c1");
+    expect(await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1"))
+      .toMatchObject({ name: "isaacPayConfirm" });
+    expect((await store.orderForCall("phone-hk"))!.state).toBe("selected");
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("creates a 59 monthly keva, charges 20 now, and grants only the first calendar month", async () => {
     const module = await activateOffer();
     expect(module).toMatchObject({ type: "creditCard", paymentsMode: "kevaMonthly", sum: 59 });
