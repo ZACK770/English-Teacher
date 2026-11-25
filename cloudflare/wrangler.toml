@@ -8,6 +8,7 @@ workers_dev = true
 # Optional: GEMINI_PAID_TEACHER_API_KEY (paid allocations; falls back to GEMINI_API_KEY).
 
 [vars]
+SALES_OFFER_EXTENSION_ID = "14341"
 SALES_OFFER_MODE = "allowlist"
 SALES_OFFER_SKIP_PRACTICE = "1"
 SALES_OFFER_ALLOWLIST = "0527180504"

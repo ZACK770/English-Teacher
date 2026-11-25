@@ -65,6 +65,23 @@ function freeUsage(product: string, billed: number | null, reserved = billed ?? 
 }
 
 describe("rolling sales offers", () => {
+  it.each([
+    ["sales_offer", "14341", "14341"],
+    ["landing", "14341", "123"],
+    ["sales_offer", undefined, "123"],
+    ["sales_offer", "", "123"],
+  ])("dials source %s with offer override %s through extension %s", async (source, override, expected) => {
+    env.SALES_OFFER_EXTENSION_ID = override;
+    phoneCalls("learner", 4, "2026-06-12T12:00:00Z");
+    await selectSalesOffers(env);
+    sql.prepare("UPDATE callback_requests SET source=?").run(source);
+    expect(await dispatchCallbacks(env)).toMatchObject({ sent: 1 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]!.body)))
+      .toMatchObject({ messagesType: "extensionActivation", extensionActivation: expected });
+    expect(env.TLIVR_CALLBACK_EXTENSION_ID).toBe("123");
+  });
+
   function phoneCalls(customerId: string, count: number, lastAt: string) {
     const insert = sql.prepare("INSERT INTO call_customers VALUES (?,?,?,?,?)");
     for (let i = 0; i < count; i++) {
