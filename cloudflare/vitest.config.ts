@@ -8,5 +8,5 @@ export default defineConfig({
     { find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") },
     { find: /^react\/jsx-dev-runtime$/, replacement: require.resolve("react/jsx-dev-runtime") },
   ] },
-  test: { include: ["test/**/*.test.{ts,js}"] },
+  test: { include: ["test/**/*.test.{ts,js}", "../lab/src/**/*.test.ts"] },
 });
