@@ -29,9 +29,13 @@ async function verify(password: string, hash: string) {
 
 export async function adminIdentity(request: Request, env: Env): Promise<Identity | null> {
   if (secureEqual(bearer(request.headers.get("Authorization")), env.ADMIN_BEARER_SECRET)) return { id: "bearer", username: "bearer", role: "owner", bearer: true };
+  return adminSessionIdentity(request, env.DB);
+}
+
+export async function adminSessionIdentity(request: Request, db: D1Database): Promise<Identity | null> {
   const token = request.headers.get("Cookie")?.match(/(?:^|;\s*)admin_session=([a-f0-9]{64})(?:;|$)/)?.[1];
   if (!token) return null;
-  return env.DB.prepare("SELECT u.id,u.username,u.role FROM admin_sessions s JOIN admin_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0")
+  return db.prepare("SELECT u.id,u.username,u.role FROM admin_sessions s JOIN admin_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0")
     .bind(await sha256Hex(token), stamp()).first<Identity>();
 }
 export function requireOrigin(request: Request) {

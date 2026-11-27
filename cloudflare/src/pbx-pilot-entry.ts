@@ -1,15 +1,45 @@
+import { adminSessionIdentity } from "./admin-auth";
 import { type Env } from "./env";
 import { pilotSettingsPage } from "./pbx-pilot-settings-page";
+import { pilotLab } from "./pbx-pilot-lab";
 import { pilotLog } from "./pbx-pilot-log";
 export { CallSession } from "./call";
 
 export default {
-  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
-    const path = new URL(request.url).pathname;
+  async fetch(request: Request, env: Env & { ADMIN_DB?: D1Database }, ctx?: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.pathname;
     const configured = env.PBX_CASCADE_PILOT === "1" && !!env.TEST_TEACHER_CHANNEL_ID &&
       !!env.PBX_PILOT_SONIOX_KEY && !!env.PBX_PILOT_OPENROUTER_KEY && !!env.PBX_PILOT_INWORLD_KEY;
     if (path === "/healthz") return Response.json({ ok: true, configured });
-    if (path === "/pilot-settings" && request.method === "GET" && env.PBX_PILOT_ADMIN_TOKEN) return pilotSettingsPage();
+    const dashboardPath = "/dashboard/pilot-888";
+    if (path === "/pilot-settings" && request.method === "GET") {
+      return Response.redirect("https://speakcall.app" + dashboardPath, 302);
+    }
+    if ((path === dashboardPath || path.startsWith(dashboardPath + "/")) &&
+        (url.hostname === "speakcall.app" || url.hostname === "speakool.net")) {
+      if (path === dashboardPath && request.method === "GET") return pilotSettingsPage();
+      if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (!env.ADMIN_DB) return new Response("Pilot settings unavailable", { status: 503 });
+      const identity = await adminSessionIdentity(request, env.ADMIN_DB);
+      if (!identity) return new Response("Unauthorized", { status: 401 });
+      if (identity.role !== "owner") return new Response("Forbidden", { status: 403 });
+      if (path !== dashboardPath + "/settings") return pilotLab(request, env, path.slice(dashboardPath.length + 1));
+      if (!["GET", "PUT"].includes(request.method)) return new Response("Method not allowed", { status: 405 });
+      if (!env.PBX_PILOT_ADMIN_TOKEN) return new Response("Pilot settings unavailable", { status: 503 });
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer " + env.PBX_PILOT_ADMIN_TOKEN);
+      const settingsUrl = new URL("/v1/admin/pilot/settings", url);
+      if (request.method === "GET" && url.searchParams.get("export") === "1") settingsUrl.searchParams.set("export", "1");
+      const settingsRequest = new Request(settingsUrl, {
+        method: request.method,
+        headers,
+        body: request.method === "PUT" ? await request.arrayBuffer() : undefined,
+      });
+      return env.CALLS.get(env.CALLS.idFromName("extension-888"), { locationHint: "weur" }).fetch(settingsRequest);
+    }
     if (path === "/v1/admin/pilot/settings") {
       const call = env.CALLS.get(env.CALLS.idFromName("extension-888"), { locationHint: "weur" });
       return call.fetch(request);

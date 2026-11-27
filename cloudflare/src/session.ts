@@ -44,8 +44,10 @@ export class TutorSession {
   private partial = new Uint8Array();
   private carry: Uint8Array = new Uint8Array();
   private abort = new AbortController();
+  private pilotTurnEndedAt: number | null = null;
   private ai: GeminiLive | CascadeLive | null = null;
   private cascadeConfig: CascadeConfig | null = null;
+  private pilotTranscriptChunk = "";
   private reconnecting: Promise<void> | null = null;
   private reconnectAttempts = 0;
   private lastGeminiError = "";
@@ -204,10 +206,15 @@ export class TutorSession {
       if (cascadePilot) {
         const { PBX_PILOT_SONIOX_KEY, PBX_PILOT_OPENROUTER_KEY, PBX_PILOT_INWORLD_KEY } = this.env;
         if (!PBX_PILOT_SONIOX_KEY || !PBX_PILOT_OPENROUTER_KEY || !PBX_PILOT_INWORLD_KEY) throw new Error("Pilot engine is unconfigured");
+        const googleKey = this.env.PBX_PILOT_SPEECH === "google" ? this.env.PBX_PILOT_GOOGLE_TTS_KEY : undefined;
+        if (this.env.PBX_PILOT_SPEECH === "google" && !googleKey) throw new Error("Pilot Google TTS is unconfigured");
         this.cascadeConfig = {
           sonioxKey: PBX_PILOT_SONIOX_KEY,
           openrouterKey: PBX_PILOT_OPENROUTER_KEY,
           inworldKey: PBX_PILOT_INWORLD_KEY,
+          googleKey,
+          interruption: this.env.PBX_PILOT_INTERRUPTION,
+          endpointMs: this.env.PBX_PILOT_ENDPOINT_MS,
           model: this.env.PBX_PILOT_MODEL || "qwen/qwen3-235b-a22b-2507",
           voice: this.env.PBX_PILOT_VOICE || "Amos",
         };
@@ -278,7 +285,11 @@ export class TutorSession {
           if (await this.checkContentHold()) return;
         }
       }
-      await this.latency("session_started");
+      await this.latency("session_started", this.cascadeConfig ? {
+        model: this.cascadeConfig.model, voice: this.cascadeConfig.voice,
+        speech: this.cascadeConfig.googleKey ? "Google Standard" : "Inworld",
+        transcript_enabled: this.env.PBX_PILOT_CAPTURE === "1",
+      } : {});
       const defaults = profileId === this.s.adultStudentId ? adultControls(this.s.storeTranscripts) : controlsFromSettings(this.s.storeTranscripts);
       this.controls = await this.progress.loadControls(profileId, defaults);
       const callContext = await this.b.loadContext(this.callId);
@@ -616,7 +627,11 @@ export class TutorSession {
         if (this.reason || this.abort.signal.aborted) return;
         continue;
       }
-      if (event.type === "audio") {
+      if (event.type === "pilot_interruption") {
+        await this.latency("pilot_interruption_" + event.phase, { elapsed_ms: event.elapsed_ms }).catch(() => {});
+      } else if (event.type === "voice_activity" && this.cascadeConfig && event.activity === "end") {
+        this.pilotTurnEndedAt = Date.now();
+      } else if (event.type === "audio") {
         this.safety?.tutorAudio(event.pcm24k);
         if (this.safetyMuted) continue;
         if (event.pcm24k.byteLength) this.tutorAudioReceived = true;
@@ -636,10 +651,28 @@ export class TutorSession {
         this.output = [];
         this.partial = new Uint8Array();
         this.carry = new Uint8Array();
-        await this.latency("tutor_interrupted", queued);
+        let clearSent = false;
+        if (this.cascadeConfig?.interruption === "adaptive_clear" && !this.disconnected) {
+          try {
+            this.pbx.send(JSON.stringify({ type: "clear_audio" }));
+            clearSent = true;
+          } catch { /* Peer disconnected. */ }
+        }
+        if (this.ai instanceof CascadeLive) this.ai.acknowledgeInterrupt();
+        await this.latency("tutor_interrupted", { ...queued, clear_sent: clearSent, candidate_ms: event.pause_ms ?? null });
       } else if (event.type === "transcript") {
         if (this.safety?.transcript(event.role, event.rawText ?? event.text, event.finished) && !this.safetyMuted) {
           await this.blockForTutor(this.safety.criticalCandidate(event.finished));
+        }
+        if (this.cascadeConfig && this.env.PBX_PILOT_CAPTURE === "1" && event.role === "tutor") {
+          if (!this.safetyMuted) {
+            this.pilotTranscriptChunk += event.text;
+            if (event.finished || /[.!?…]\s*$/.test(this.pilotTranscriptChunk) || this.pilotTranscriptChunk.length >= 120) {
+              const chunk = this.pilotTranscriptChunk;
+              this.pilotTranscriptChunk = "";
+              await this.progress.logTurn(this.profileId, this.callId, "output", chunk, {}, true).catch(() => {});
+            }
+          } else this.pilotTranscriptChunk = "";
         }
         if (this.safetyMuted || !event.text) continue;
         const pending = this.pendingEmail;
@@ -650,7 +683,11 @@ export class TutorSession {
           else this.pendingEmail = null;
         }
         this.meter.transcript.push({ role: event.role, text: event.text });
-        if (this.controls?.store_transcripts) await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
+        if (this.cascadeConfig && this.env.PBX_PILOT_CAPTURE === "1") {
+          if (event.role === "learner") await this.progress.logTurn(this.profileId, this.callId, "input", event.text).catch(() => {});
+        } else if (this.controls?.store_transcripts) {
+          await this.progress.logTurn(this.profileId, this.callId, event.role === "learner" ? "input" : "output", event.text);
+        }
         if (event.role === "learner") {
           if (this.practiceReminders) this.reminderSpeech = (this.reminderSpeech + " " + (event.rawText ?? event.text)).trim().slice(-512);
           if (this.controls?.summary_callback) {
@@ -678,12 +715,20 @@ export class TutorSession {
         if (this.controls?.lesson) {
           await new LearningStore(this.env.DB).exposures(this.customerId, this.callId, this.controls.lesson.vocabulary, this.meter.transcript.filter(t => t.role === "tutor").map(t => t.text).join(" "));
         }
-      } else if (event.type === "usage") this.meter.recordUsage(event.usage);
-      else if (event.type === "tool_call") {
+      } else if (event.type === "usage") {
+        this.meter.recordUsage(event.usage);
+        if (this.cascadeConfig && typeof event.usage.cascade_input_tokens === "number") {
+          const totals = this.meter.usage(this.s);
+          await this.latency("pilot_usage", {
+            ...this.meter.cascadeCosts(), input: totals.input_text_tokens, output: totals.output_text_tokens,
+          }).catch(() => {});
+        }
+      } else if (event.type === "tool_call") {
         if (this.safetyMuted) continue;
         for (const call of event.calls) {
           const result = await this.recordTool(call);
           const saved = typeof result === "boolean" ? result : result.saved;
+          if (this.cascadeConfig) await this.latency("pilot_tool", { name: call.name, saved }).catch(() => {});
           if (call.name === "end_session" && saved && this.safety && await this.finishContentTurn(this.safety, false)) return;
           this.ai!.submitToolResult(call, saved, call.name === "prepare_email" ? {
             prepared: saved,
@@ -934,6 +979,10 @@ export class TutorSession {
       await sleep(FRAME_MS, this.abort.signal);
       if (this.abort.signal.aborted) return;
       if (this.safetyMuted) continue;
+      if (this.ai instanceof CascadeLive && this.ai.playbackPaused()) {
+        this.sendAudio(SILENCE_FRAME);
+        continue;
+      }
       const audio = this.output.shift();
       if (!audio && !this.tutorAudioReceived && greeting && offset < greeting.length) {
         const frame = new Uint8Array(FRAME_BYTES);
@@ -944,7 +993,14 @@ export class TutorSession {
       }
       if (!audio && withConnectingGreeting && this.meteredAt === null) continue;
       this.sendAudio(audio ?? SILENCE_FRAME);
-      if (audio) this.lastTutorAudio = Date.now();
+      if (audio) {
+        this.lastTutorAudio = Date.now();
+        if (this.pilotTurnEndedAt !== null) {
+          const elapsedMs = this.lastTutorAudio - this.pilotTurnEndedAt;
+          this.pilotTurnEndedAt = null;
+          void this.latency("pilot_turn_to_audio", { elapsed_ms: elapsedMs }).catch(() => {});
+        }
+      }
       if (audio && !this.firstSent) {
         this.firstSent = true;
         await markQuickIntro(this.b, this.callId, this.customerId);

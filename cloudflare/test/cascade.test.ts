@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { b64encode, wav } from "../src/audio";
 import { CascadeLive } from "../src/cascade";
 import { type Env, type Settings } from "../src/env";
 import { SessionMeter } from "../src/meter";
@@ -10,7 +11,7 @@ function sse(...chunks: object[]) {
   return new Response(chunks.map((chunk) => "data: " + JSON.stringify(chunk)).join("\n") + "\ndata: [DONE]\n");
 }
 
-function fixture() {
+function fixture(google = false, adaptive = false) {
   const listeners = new Map<string, (event: { data: string }) => void>();
   const socket = {
     accept: vi.fn(), send: vi.fn(), close: vi.fn(),
@@ -31,9 +32,12 @@ function fixture() {
         { usage: { cost: 0.00004, prompt_tokens: 100, completion_tokens: 7 } },
       );
     }
+    if (url.startsWith("https://texttospeech.googleapis.com/")) {
+      return Response.json({ audioContent: b64encode(wav(Uint8Array.of(1, 0, 2, 0), 24000)) });
+    }
     return new Response(JSON.stringify({ result: { audioContent: "AQACAA==" } }) + "\n");
   }) as typeof fetch;
-  const engine = new CascadeLive(config, { setup: {
+  const engine = new CascadeLive({ ...config, ...(google ? { googleKey: "mock-google", voice: "he-IL-Standard-B" } : {}), interruption: adaptive ? "adaptive" : undefined }, { setup: {
     systemInstruction: { parts: [{ text: "Original teacher instructions" }] },
     tools: [{ functionDeclarations: [{ name: "record_lesson_summary", parameters: { type: "object" } }] }],
   } }, request);
@@ -90,6 +94,54 @@ describe("isolated Technoline cascade", () => {
     expect(requestsToModel[0].body.messages[0]).toEqual({ role: "system", content: "Original teacher instructions" });
     expect(requestsToModel[1].body.messages).toContainEqual({ role: "tool", tool_call_id: "t1", content: '{"saved":true}' });
     engine.close();
+  });
+
+  it("sends Google Standard audio through the telephone cascade when selected", async () => {
+    const { engine, requests, result } = fixture(true);
+    await engine.connect();
+    try {
+      result({ tokens: [{ text: "Hello", is_final: true }, { text: "<end>", is_final: true }] });
+      const events = [];
+      for (let i = 0; i < 16; i++) {
+        const event = await engine.next();
+        events.push(event);
+        if (event.type === "tool_call") engine.submitToolResult(event.calls[0], true);
+        if (event.type === "turn_complete") break;
+      }
+      expect(events).toContainEqual({ type: "audio", pcm24k: Uint8Array.of(1, 0, 2, 0) });
+      expect(events).toContainEqual({ type: "usage", usage: { cascade_tts_usd: 0.00004 } });
+      expect(requests.find(({ url }) => url.includes("texttospeech.googleapis.com"))?.body).toMatchObject({
+        voice: { name: "he-IL-Standard-B", languageCode: "he-IL" },
+        audioConfig: { audioEncoding: "LINEAR16", sampleRateHertz: 24000 },
+      });
+      expect(requests.some(({ url }) => url.includes("api.inworld.ai"))).toBe(false);
+    } finally {
+      engine.close();
+    }
+  });
+
+  it("resumes after an unconfirmed noise and holds old audio until a confirmed interruption is drained", async () => {
+    const { engine, result } = fixture(false, true);
+    await engine.connect();
+    const loud = new Uint8Array(new Int16Array(1600).fill(3000).buffer);
+    try {
+      engine.startGreeting("Hello");
+      engine.sendAudio(loud);
+      expect(engine.playbackPaused()).toBe(true);
+      expect(await engine.next()).toMatchObject({ type: "pilot_interruption", phase: "candidate" });
+      expect(engine.playbackPaused(Date.now() + 500)).toBe(false);
+      expect(await engine.next()).toMatchObject({ type: "pilot_interruption", phase: "resumed" });
+      engine.sendAudio(new Uint8Array(3200));
+      engine.sendAudio(loud);
+      result({ tokens: [{ text: "Wait", is_final: false }] });
+      expect(await engine.next()).toMatchObject({ type: "pilot_interruption", phase: "candidate" });
+      expect(await engine.next()).toMatchObject({ type: "interrupted" });
+      expect(engine.playbackPaused()).toBe(true);
+      engine.acknowledgeInterrupt();
+      expect(engine.playbackPaused()).toBe(false);
+    } finally {
+      engine.close();
+    }
   });
 
   it("keeps cascade costs separate from Gemini prices", () => {

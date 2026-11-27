@@ -1,4 +1,6 @@
 import { b64decode, meanSquare } from "./audio";
+import { synthesizeGoogleStandard } from "./pbx-pilot-google";
+import type { PilotInterruption } from "./env";
 import { AsyncQueue } from "./async";
 import type { GeminiEvent, ToolCall } from "./gemini";
 
@@ -7,6 +9,9 @@ export type CascadeConfig = {
   sonioxKey: string;
   openrouterKey: string;
   inworldKey: string;
+  googleKey?: string;
+  interruption?: PilotInterruption;
+  endpointMs?: number;
   model: string;
   voice: string;
 };
@@ -67,6 +72,24 @@ export class CascadeLive {
   private speechFrames = 0;
   private audioUntil = 0;
   private learnerActive = false;
+  private pauseStarted: number | null = null;
+  private lastLoud = 0;
+  private holdOutputForInterrupt = false;
+  private candidateSuppressed = false;
+
+  private get adaptive() {
+    return this.config.interruption === "adaptive" || this.config.interruption === "adaptive_clear";
+  }
+
+  playbackPaused(now = Date.now()) {
+    if (this.pauseStarted !== null && (now - this.lastLoud >= 420 || now - this.pauseStarted >= 1100)) {
+      this.events.push({ type: "pilot_interruption", phase: "resumed", elapsed_ms: now - this.pauseStarted });
+      this.pauseStarted = null;
+    }
+    return this.adaptive && (this.pauseStarted !== null || this.holdOutputForInterrupt);
+  }
+
+  acknowledgeInterrupt() { this.holdOutputForInterrupt = false; }
 
   constructor(
     private readonly config: CascadeConfig,
@@ -98,7 +121,7 @@ export class CascadeLive {
       ?.map((language) => language.toLowerCase().split("-")[0])
       .filter((language) => /^[a-z]{2}$/.test(language));
     const terms = this.setup.inputAudioTranscription?.customVocabulary?.slice(0, 100);
-    const silenceMs = this.setup.realtimeInputConfig?.automaticActivityDetection?.silenceDurationMs ?? 500;
+    const silenceMs = this.config.endpointMs ?? this.setup.realtimeInputConfig?.automaticActivityDetection?.silenceDurationMs ?? 500;
     socket.send(JSON.stringify({
       model: "stt-rt-v6", audio_format: "pcm_s16le", num_channels: 1, sample_rate: 16000,
       language_hints: languages?.length ? [...new Set(languages)] : ["he", "en"],
@@ -118,7 +141,17 @@ export class CascadeLive {
     if (this.setup.realtimeInputConfig?.activityHandling !== "NO_INTERRUPTION" &&
         (this.generation || Date.now() < this.audioUntil)) {
       this.speechFrames = meanSquare(pcm) > 1200 ** 2 ? this.speechFrames + sampleSeconds : 0;
-      if (this.speechFrames >= 0.09) this.interrupt();
+      const now = Date.now();
+      if (this.speechFrames === 0) this.candidateSuppressed = false;
+      else this.lastLoud = now;
+      if (this.speechFrames < 0.09) return;
+      if (!this.adaptive && this.config.interruption !== "observe") {
+        this.interrupt();
+      } else if (this.pauseStarted === null && !this.candidateSuppressed) {
+        this.candidateSuppressed = true;
+        this.pauseStarted = now;
+        this.events.push({ type: "pilot_interruption", phase: "candidate", elapsed_ms: 0 });
+      }
     }
   }
 
@@ -141,12 +174,16 @@ export class CascadeLive {
   }
 
   private interrupt() {
+    const pauseMs = this.pauseStarted === null ? undefined : Date.now() - this.pauseStarted;
+    this.pauseStarted = null;
+    this.candidateSuppressed = false;
+    this.holdOutputForInterrupt = this.adaptive;
     this.generation?.abort();
     this.generation = null;
     this.audioUntil = 0;
     this.speechFrames = 0;
     this.events.discard((event) => event.type === "audio");
-    this.events.push({ type: "interrupted" });
+    this.events.push({ type: "interrupted", pause_ms: pauseMs });
   }
 
   private transcription(event: { error_code?: number; error_type?: string; tokens?: { text?: string; is_final?: boolean }[] }) {
@@ -159,6 +196,9 @@ export class CascadeLive {
     let partial = "";
     for (const token of event.tokens ?? []) {
       const text = token.text ?? "";
+      if (this.adaptive && this.pauseStarted !== null && !ENDPOINTS.has(text) && /[\p{L}\p{N}]/u.test(text)) {
+        this.interrupt();
+      }
       if (text && !ENDPOINTS.has(text) && !this.learnerActive) {
         this.learnerActive = true;
         this.events.push({ type: "voice_activity", activity: "start", offset_ms: null });
@@ -293,6 +333,17 @@ export class CascadeLive {
   }
 
   private async speak(text: string, signal: AbortSignal) {
+    if (this.config.googleKey) {
+      const pcm24k = await synthesizeGoogleStandard(
+        this.request, this.config.googleKey, this.config.voice, text,
+        AbortSignal.any([signal, AbortSignal.timeout(12000)]),
+      );
+      if (signal.aborted) return;
+      this.events.push({ type: "usage", usage: { cascade_tts_usd: Array.from(text).length * 4 / 1_000_000 } });
+      this.audioUntil = Math.max(Date.now(), this.audioUntil) + pcm24k.byteLength / 48;
+      this.events.push({ type: "audio", pcm24k });
+      return;
+    }
     const response = await this.request(SPEECH_URL, {
       method: "POST", signal, headers: { Authorization: "Basic " + this.config.inworldKey, "Content-Type": "application/json" },
       body: JSON.stringify({

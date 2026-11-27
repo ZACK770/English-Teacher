@@ -1,10 +1,16 @@
 import { TutorSession } from "./session";
-import { type Env, settings, randomHex, secureEqual } from "./env";
+import { type Env, type PilotInterruption, settings, randomHex, secureEqual } from "./env";
+import { controlsFromSettings } from "./controls";
+import { ProgressStore } from "./progress";
 import { pilotLog } from "./pbx-pilot-log";
 
-type PilotSettings = { model: string; voice: string };
+import { googleStandardVoices, synthesizeGoogleStandard } from "./pbx-pilot-google";
+
+type PilotSettings = { model: string; voice: string; capture?: boolean; interruption?: PilotInterruption; endpointMs?: number; speech?: "inworld" | "google" };
 type PilotVersions = { active: PilotSettings; previous?: PilotSettings };
 const PILOT_SETTINGS_KEY = "pilot-settings";
+const GOOGLE_KEY = "pilot-google-tts-key";
+const settingsHeaders = { "Cache-Control": "no-store" };
 
 export class CallSession {
   private session: TutorSession | null = null;
@@ -18,10 +24,41 @@ export class CallSession {
     if (!secureEqual(request.headers.get("Authorization") ?? "", "Bearer " + token)) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const defaults = { model: this.env.PBX_PILOT_MODEL || "qwen/qwen3-235b-a22b-2507", voice: this.env.PBX_PILOT_VOICE || "Amos" };
+    const defaults: PilotSettings = { model: this.env.PBX_PILOT_MODEL || "qwen/qwen3-235b-a22b-2507", voice: this.env.PBX_PILOT_VOICE || "Amos" };
     if (request.method === "GET") {
       const saved = await this.ctx.storage.get<PilotVersions>(PILOT_SETTINGS_KEY);
-      return Response.json(saved ?? { active: defaults }, { headers: { "Cache-Control": "no-store" } });
+      const versions = saved ?? { active: defaults };
+      const active = { ...versions.active, speech: versions.active.speech ?? "inworld", interruption: versions.active.interruption ?? "adaptive", capture: versions.active.capture !== false };
+      const headers = settingsHeaders;
+      if (new URL(request.url).searchParams.get("export") === "1") {
+        const controls = await new ProgressStore(this.env.DB).loadControls("isaac-basic", controlsFromSettings(settings(this.env).storeTranscripts));
+        const { model: _geminiModel, voice: _geminiVoice, ...teacher } = controls;
+        return Response.json({
+          schema_version: 1,
+          exported_at: new Date().toISOString(),
+          source: { extension: "888", profile_id: "isaac-basic", worker: "english-teacher-pilot-888" },
+          target: { extension: "1", status: "handoff_only" },
+          audio: { transport: "Technoline WebSocket", encoding: "PCM16", channels: 1, sample_rate_hz: 8000 },
+          pipeline: {
+            transcription: { provider: "Soniox" },
+            model: { provider: "OpenRouter", id: active.model },
+            speech: active.speech === "google"
+              ? { provider: "Google Cloud Text-to-Speech", model: "Standard", voice: active.voice }
+              : { provider: "Inworld", model: "inworld-tts-2-flash", voice: active.voice },
+          },
+          teacher,
+          turn_handling: { interruption: active.interruption, endpoint_ms: active.endpointMs ?? teacher.vad_silence_ms },
+          lab_transcript_enabled: active.capture,
+          integration_notes: [
+            "This is a snapshot of the saved pilot settings, not a production WebSocket or a deployment.",
+            "Keep extension 1 customer identity, lesson history, teacher tools and progress storage.",
+            "Use the production Technoline channel and the existing provider secret bindings. Do not reuse the isolated 888 endpoint or database.",
+            "Verify both a first and follow-up call before moving traffic. Browser-only provider previews are excluded.",
+          ],
+        }, { headers });
+      }
+      const googleConfigured = Boolean(await this.ctx.storage.get<string>(GOOGLE_KEY) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY);
+      return Response.json({ ...versions, active, googleConfigured }, { headers });
     }
     if (request.method !== "PUT") return new Response("Expected GET or PUT", { status: 405 });
     const body = await request.json<Record<string, unknown>>().catch(() => null);
@@ -29,17 +66,61 @@ export class CallSession {
       typeof body.model !== "string" || !/^[\w.-]+\/[\w.:-]+$/.test(body.model) || body.model.length > 150 ||
       typeof body.voice !== "string" || !body.voice.trim() || body.voice.length > 100
     ))) return Response.json({ error: "Supply model and voice, or rollback: true" }, { status: 400 });
+    const interruption = body.interruption;
+    const endpointMs = body.endpointMs;
+    if ((interruption !== undefined && !["legacy", "observe", "adaptive", "adaptive_clear"].includes(String(interruption))) ||
+        (endpointMs !== undefined && endpointMs !== null && ![500, 700, 1000, 1500].includes(Number(endpointMs)))) {
+      return Response.json({ error: "בחר הגדרות קטיעה וסוף תור מהרשימה." }, { status: 400, headers: settingsHeaders });
+    }
+    const speech = body.speech;
+    if (speech !== undefined && speech !== "inworld" && speech !== "google") {
+      return Response.json({ error: "בחר מנוע הקראה זמין." }, { status: 400, headers: settingsHeaders });
+    }
+    const key = typeof body.googleKey === "string" ? body.googleKey.trim() : "";
+    if (key && (speech !== "google" || key.length > 256 || !/^[A-Za-z0-9_-]+$/.test(key))) {
+      return Response.json({ error: "הדבק מפתח API תקין של Google Cloud בשדה מפתח Google לטלפון." }, { status: 400, headers: settingsHeaders });
+    }
+    if (speech === "google" && !googleStandardVoices.some(voice => voice.id === body.voice)) {
+      return Response.json({ error: "בחר קול Google Standard מהרשימה." }, { status: 400, headers: settingsHeaders });
+    }
+    if (key) {
+      try {
+        const voice = String(body.voice);
+        await synthesizeGoogleStandard((input, init) => fetch(input, init), key, voice, voice.startsWith("he-") ? "שלום" : "Hello", AbortSignal.timeout(8000));
+      } catch (error) {
+        const status = error instanceof Error ? /^google_tts_(\d+)$/.exec(error.message)?.[1] : undefined;
+        return Response.json({ error: "בדיקת מפתח Google נכשלה" + (status ? " (HTTP " + status + ")" : "") +
+          ". בדוק שהמפתח שייך לפרויקט עם Cloud Text-to-Speech API וחיוב פעיל." }, { status: 400, headers: settingsHeaders });
+      }
+    }
     return this.ctx.storage.transaction(async transaction => {
       const saved = await transaction.get<PilotVersions>(PILOT_SETTINGS_KEY);
-      const active = body.rollback === true ? saved?.previous : { model: body.model as string, voice: (body.voice as string).trim() };
-      if (!active) return Response.json({ error: "No previous settings" }, { status: 409 });
       const previous = saved?.active ?? defaults;
-      if (active.model === previous.model && active.voice === previous.voice) {
-        return Response.json(saved ?? { active: defaults });
+      const selected = body.rollback === true ? saved?.previous : {
+        model: body.model as string,
+        voice: (body.voice as string).trim(),
+        speech: speech ?? previous.speech,
+        interruption: (interruption as PilotInterruption | undefined) ?? previous.interruption,
+        endpointMs: endpointMs === null ? undefined : endpointMs === undefined ? previous.endpointMs : Number(endpointMs),
+        capture: typeof body.capture === "boolean" ? body.capture : previous.capture,
+      };
+      if (!selected) return Response.json({ error: "No previous settings" }, { status: 409 });
+      const active = { ...selected, interruption: selected.interruption ?? "adaptive", speech: selected.speech ?? "inworld", capture: selected.capture !== false };
+      const googleConfigured = Boolean(key || ((await transaction.get<string>(GOOGLE_KEY)) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY));
+      if (active.speech === "google" && !googleStandardVoices.some(voice => voice.id === active.voice)) {
+        return Response.json({ error: "בחר קול Google Standard מהרשימה." }, { status: 400, headers: settingsHeaders });
+      }
+      if (active.speech === "google" && !googleConfigured) {
+        return Response.json({ error: "הדבק פעם אחת מפתח Google Cloud בשדה מפתח Google לטלפון." }, { status: 400, headers: settingsHeaders });
+      }
+      if (key) await transaction.put(GOOGLE_KEY, key);
+      if (active.model === previous.model && active.voice === previous.voice && active.capture === (previous.capture !== false) && active.speech === (previous.speech ?? "inworld") &&
+          active.interruption === (previous.interruption ?? "adaptive") && active.endpointMs === previous.endpointMs) {
+        return Response.json({ ...saved, active, googleConfigured }, { headers: settingsHeaders });
       }
       const versions = { active, previous };
       await transaction.put(PILOT_SETTINGS_KEY, versions);
-      return Response.json(versions, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ ...versions, googleConfigured }, { headers: settingsHeaders });
     });
   }
 
@@ -77,8 +158,17 @@ export class CallSession {
       }
     }, 10000);
     const pilotVersions = isPilot ? await this.ctx.storage.get<PilotVersions>(PILOT_SETTINGS_KEY) : undefined;
-    const callEnv = pilotVersions ? {
-      ...this.env, PBX_PILOT_MODEL: pilotVersions.active.model, PBX_PILOT_VOICE: pilotVersions.active.voice,
+    const google = pilotVersions?.active.speech === "google";
+    const googleKey = google ? await this.ctx.storage.get<string>(GOOGLE_KEY) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY : undefined;
+    const callEnv: Env = isPilot ? {
+      ...this.env,
+      PBX_PILOT_MODEL: pilotVersions?.active.model ?? this.env.PBX_PILOT_MODEL,
+      PBX_PILOT_VOICE: pilotVersions?.active.voice ?? this.env.PBX_PILOT_VOICE,
+      PBX_PILOT_INTERRUPTION: pilotVersions?.active.interruption ?? "adaptive",
+      PBX_PILOT_ENDPOINT_MS: pilotVersions?.active.endpointMs,
+      PBX_PILOT_SPEECH: google ? "google" : "inworld",
+      PBX_PILOT_GOOGLE_TTS_KEY: googleKey,
+      PBX_PILOT_CAPTURE: pilotVersions?.active.capture === false ? "0" : "1",
     } : this.env;
     const s = settings(callEnv);
     const profile = request.headers.get("X-Profile");

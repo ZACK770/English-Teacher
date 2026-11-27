@@ -171,8 +171,8 @@ export class ProgressStore {
       .run();
   }
 
-  async logTurn(profileId: string, callId: string, direction: string, text: string, metadata: Record<string, unknown> = {}) {
-    const cleaned = text.trim();
+  async logTurn(profileId: string, callId: string, direction: string, text: string, metadata: Record<string, unknown> = {}, preserveSpacing = false) {
+    const cleaned = preserveSpacing ? text : text.trim();
     if (!cleaned) return;
     await this.db
       .prepare("INSERT INTO conversation_turns (created_at, profile_id, call_id, direction, text, metadata_json) VALUES (?,?,?,?,?,?)")

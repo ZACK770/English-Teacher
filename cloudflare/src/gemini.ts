@@ -2,7 +2,8 @@ import { b64decode, b64encode } from "./audio";
 
 export type GeminiEvent =
   | { type: "audio"; pcm24k: Uint8Array }
-  | { type: "interrupted" }
+  | { type: "interrupted"; pause_ms?: number }
+  | { type: "pilot_interruption"; phase: "candidate" | "resumed"; elapsed_ms: number }
   | { type: "transcript"; role: "learner" | "tutor"; text: string; rawText?: string; finished?: boolean }
   | { type: "interim_transcript"; text: string }
   | { type: "voice_activity"; activity: "start" | "end"; offset_ms: number | null }
