@@ -96,12 +96,18 @@ async function preview(request: Request, env: Env) {
     return json({ audio: audioContent, ms: Date.now() - start, characters: Array.from(body.text).length });
   }
   if (body.mode === "inworld" && voices.inworld.some(voice => voice.id === body.voice)) {
+    const language = body.language ?? "auto";
+    const modelId = body.ttsModel ?? "inworld-tts-2-flash";
+    if (!["auto", "ydd", "yi", "he", "en"].includes(String(language)) || typeof language !== "string" ||
+        !["inworld-tts-2-flash", "inworld-tts-2"].includes(String(modelId)) || typeof modelId !== "string") {
+      return json({ error: "בחר שפה ומודל Inworld נתמכים." }, 400);
+    }
     const credential = key || env.PBX_PILOT_INWORLD_KEY;
     if (!credential) return json({ error: "הדבק מפתח Inworld קיים בשדה מפתח ספק." }, 400);
     const start = Date.now();
     const response = await fetch("https://api.inworld.ai/tts/v1/voice", {
       method: "POST", signal, headers: { Authorization: "Basic " + credential, "Content-Type": "application/json" },
-      body: JSON.stringify({ text: body.text, voiceId: body.voice, modelId: "inworld-tts-2-flash", audioConfig: { audioEncoding: "MP3" } }),
+      body: JSON.stringify({ text: body.text, voiceId: body.voice, modelId, ...(language === "auto" ? {} : { language }), audioConfig: { audioEncoding: "MP3" } }),
     });
     if (!response.ok) return json({ error: "Inworld החזיר שגיאה " + response.status }, 502);
     const { audioContent } = await response.json<{ audioContent: string }>();

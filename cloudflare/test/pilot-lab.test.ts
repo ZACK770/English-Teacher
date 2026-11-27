@@ -29,6 +29,8 @@ describe("pilot voice lab", () => {
     expect(() => new Function(html.match(/<script>([\s\S]*?)<\/script>/)![1])).not.toThrow();
     expect(html).toContain('<select id="voice"');
     expect(html).toContain('Google Standard');
+    expect(html).toContain('<option value="ydd">');
+    expect(html).toContain('<option value="inworld-tts-2">');
     expect(html).not.toContain('id="token"');
     expect((await pilot.fetch(new Request(base + "/calls"), env)).status).toBe(401);
   });
@@ -153,4 +155,22 @@ describe("pilot voice lab", () => {
     expect(synthesize).toHaveBeenCalledWith("https://texttospeech.googleapis.com/v1/text:synthesize",
       expect.objectContaining({ headers: expect.objectContaining({ "X-Goog-Api-Key": "example-test-key" }) }));
   });
+  it("sends an explicit testing language and model to Inworld without modifying defaults", async () => {
+    const synthesize = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ audioContent: "dGVzdA==" }));
+    vi.stubGlobal("fetch", synthesize);
+    const env = { ...environment(), PBX_PILOT_INWORLD_KEY: "test-inworld" };
+    const send = (extra: object) => pilot.fetch(new Request(base + "/preview", {
+      method: "POST", headers: { Cookie: cookie, Origin: origin },
+      body: JSON.stringify({ mode: "inworld", voice: "Amos", text: "אַ גוטן טאָג", ...extra }),
+    }), env);
+    expect((await send({ language: "ydd", ttsModel: "inworld-tts-2" })).status).toBe(200);
+    expect(JSON.parse(String(synthesize.mock.calls[0][1].body))).toMatchObject({ language: "ydd", modelId: "inworld-tts-2", voiceId: "Amos" });
+    expect((await send({})).status).toBe(200);
+    expect(JSON.parse(String(synthesize.mock.calls[1][1].body))).not.toHaveProperty("language");
+    expect(JSON.parse(String(synthesize.mock.calls[1][1].body))).toMatchObject({ modelId: "inworld-tts-2-flash" });
+    expect((await send({ language: "invalid" })).status).toBe(400);
+    expect((await send({ ttsModel: "invalid" })).status).toBe(400);
+    expect(synthesize).toHaveBeenCalledTimes(2);
+  });
+
 });
