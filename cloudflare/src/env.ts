@@ -3,6 +3,9 @@ export type PilotInterruption = "legacy" | "observe" | "adaptive" | "adaptive_cl
 
 export interface Env {
   SCHOOL_VOICE_SETTINGS?: Fetcher;
+  LESSON_COACH_MODE?: "off" | "shadow" | "active";
+  LESSON_COACH_SEMANTIC_MODEL?: string;
+  LESSON_COACH_SEMANTIC_MODE?: "off" | "shadow" | "active";
   PBX_CASCADE_PILOT?: string;
   PBX_PILOT_SONIOX_KEY?: string;
   PBX_PILOT_OPENROUTER_KEY?: string;

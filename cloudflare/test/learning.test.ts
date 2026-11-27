@@ -463,7 +463,7 @@ describe("learner settings to Gemini", () => {
     const saved = await b.save(teachersKind("dana"), TeacherSchema.parse({ name: "Noa", base_bot: "teacher", personality: "warm", pace: "slow", topic: "business", level: "beginner", conversation_mode: "guided", correction_policy: "after_answer" }));
     await b.savePreference("dana", { active_teacher: saved.id, plan: { goal: "work", level: "beginner", difficulty: "speaking", minutes: 10, topic: "business" } });
     const before = await applyLearnerControls(b, "dana", { id: "teacher", role: "teacher" }, controlsFromSettings(false));
-    expect(before.custom_instructions).toContain("Changing direction");
+    expect(before.learner_instructions).toContain("Changing direction");
     expect(await saveIntake(b, "dana", "teacher", { goal: "work", level: "fluent", pace: "fast", conversation_mode: "roleplay", personality: "playful" })).toBe(true);
     const [teacher] = await b.list(teachersKind("dana"));
     expect(teacher).toMatchObject({ name: "Noa", level: "fluent", pace: "fast", conversation_mode: "roleplay", personality: "playful", topic: "business" });

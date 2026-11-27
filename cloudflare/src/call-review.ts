@@ -217,7 +217,7 @@ export async function syncCallReviewPhone(env: Env, now = Date.now()) {
 
 export async function callReviewReport(env: Env, now = Date.now()) {
   const since = iso(now - 7 * DAY);
-  const [coverage, findings, candidates, recent] = await env.DB.batch<Record<string, unknown>>([
+  const [coverage, findings, candidates, recent, coach, scoreChecks] = await env.DB.batch<Record<string, unknown>>([
     env.DB.prepare(`SELECT source,status,COUNT(*) AS logs,COALESCE(SUM(input_tokens),0) AS input_tokens,
       COALESCE(SUM(output_tokens),0) AS output_tokens,
       ROUND(COALESCE(SUM(input_tokens*${INPUT_USD_PER_MILLION}+output_tokens*${OUTPUT_USD_PER_MILLION}),0)/1000000,8) AS review_cost_usd
@@ -244,8 +244,23 @@ export async function callReviewReport(env: Env, now = Date.now()) {
     ORDER BY affected DESC,r.profile_id,code LIMIT 20`).bind(since),
     env.DB.prepare(`SELECT source, call_id, ended_at, profile_id, bot_version, status, findings,input_tokens,output_tokens
       FROM call_reviews WHERE ended_at>=?1 ORDER BY ended_at DESC LIMIT 40`).bind(since),
+    // The coach logs observations, not scores or verified learning outcomes. Keep shadow
+    // separate from applied interventions and group by teacher version / actual model.
+    env.DB.prepare(`SELECT substr(l.created_at,1,10) AS day, l.profile_id, p.bot_version, s.model,
+      json_extract(l.details_json,'$.version') AS version, json_extract(l.details_json,'$.mode') AS mode,
+      json_extract(l.details_json,'$.outcome') AS outcome, json_extract(l.details_json,'$.action') AS action,
+      COUNT(*) AS turns, COUNT(DISTINCT l.call_id) AS calls,
+      SUM(CASE WHEN json_extract(l.details_json,'$.applied')=1 THEN 1 ELSE 0 END) AS applied,
+      ROUND(AVG(json_extract(l.details_json,'$.elapsed_ms')),3) AS mean_ms
+      FROM latency_events l LEFT JOIN prompt_snapshots p ON p.call_id=l.call_id LEFT JOIN sessions s ON s.call_id=l.call_id
+      WHERE l.event_name IN ('lesson_coach_turn','lesson_coach_semantic') AND l.created_at>=?1 AND json_valid(l.details_json)
+      GROUP BY day,l.profile_id,p.bot_version,s.model,version,mode,outcome,action
+      ORDER BY day DESC,turns DESC LIMIT 500`).bind(since),
+    env.DB.prepare(`SELECT COUNT(*) AS checks, COALESCE(SUM(json_extract(details_json,'$.repetition_only_100')),0) AS suspect_scores
+      FROM latency_events WHERE event_name='lesson_coach_score_check' AND created_at>=?1 AND json_valid(details_json)`).bind(since),
   ]);
   return { since, review_model: REVIEW_MODEL, coverage: coverage.results, findings: findings.results,
+    lesson_coach: coach.results, lesson_coach_score_checks: scoreChecks.results[0] ?? { checks: 0, suspect_scores: 0 },
     prompt_candidates: candidates.results.flatMap(r => Object.hasOwn(tweaks, String(r.code)) ? [{
       ...r, evidence_call_ids: (JSON.parse(String(r.evidence_call_ids)) as string[]).slice(0, 5),
       proposed_instruction: tweaks[r.code as keyof typeof tweaks].en, proposed_instruction_he: tweaks[r.code as keyof typeof tweaks].he,

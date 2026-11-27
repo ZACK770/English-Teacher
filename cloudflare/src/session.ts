@@ -11,6 +11,7 @@ import { adultControls, controlsFromSettings, type TutorControls } from "./contr
 import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
 import { CascadeLive, type CascadeConfig } from "./cascade";
+import { coachMode, TranscriptCoach } from "./lesson-coach";
 import { pilotLog } from "./pbx-pilot-log";
 import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
 import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
@@ -651,7 +652,11 @@ export class TutorSession {
         if (this.reason || this.abort.signal.aborted) return;
         continue;
       }
-      if (event.type === "pilot_interruption") {
+      if (event.type === "lesson_coach") {
+        await this.latency("lesson_coach_turn", event.details).catch(() => {});
+      } else if (event.type === "lesson_coach_semantic") {
+        await this.latency("lesson_coach_semantic", event.details).catch(() => {});
+      } else if (event.type === "pilot_interruption") {
         await this.latency("pilot_interruption_" + event.phase, { elapsed_ms: event.elapsed_ms }).catch(() => {});
       } else if (event.type === "voice_activity" && this.cascadeConfig && event.activity === "end") {
         this.pilotTurnEndedAt = Date.now();
@@ -777,7 +782,18 @@ export class TutorSession {
   }
 
   private makeVoiceEngine(setup: Record<string, unknown>) {
-    return this.cascadeConfig ? new CascadeLive(this.cascadeConfig, setup) : new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
+    if (!this.cascadeConfig) return new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
+    const mode = coachMode(this.env.LESSON_COACH_MODE);
+    const plan = this.controls?.lesson;
+    // Only school lessons on the cascade; no translation, sales or payment flow changes.
+    const coach = mode && plan && !this.controls?.sales && !this.offerCall ? new TranscriptCoach(plan, mode) : undefined;
+    // Sending another transcript excerpt to a separate assessor is explicitly opt-in,
+    // and never done when the learner has disabled transcript storage.
+    const semanticMode = coachMode(this.env.LESSON_COACH_SEMANTIC_MODE);
+    const model = this.env.LESSON_COACH_SEMANTIC_MODEL?.trim();
+    const semantic = coach && this.controls?.store_transcripts && semanticMode && model
+      ? { model, mode: mode === "active" ? semanticMode : "shadow" as const } : undefined;
+    return new CascadeLive(this.cascadeConfig, setup, undefined, coach, () => !this.safetyMuted && this.output.length === 0 && this.partial.byteLength === 0, semantic);
   }
 
   private async reconnectGemini(preservePlayback = false) {
@@ -872,6 +888,13 @@ export class TutorSession {
       if (!this.controls?.lesson) return false;
       try {
         const saved = await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
+        // Compare the teacher's claims to independent local evidence, but never overwrite
+        // legitimate semantic assessments solely because the conservative observer abstained.
+        if (saved && this.ai instanceof CascadeLive && coachMode(this.env.LESSON_COACH_MODE)) {
+          const repeated = new Set(this.ai.repetitionOnlyTargets());
+          const suspect = Array.isArray(args.vocabulary) ? args.vocabulary.filter(v => v?.score === 100 && repeated.has(v?.word_id)).length : 0;
+          if (suspect) await this.latency("lesson_coach_score_check", { repetition_only_100: suspect }).catch(() => {});
+        }
         await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_result", { saved, vocabulary_count: Array.isArray(args.vocabulary) ? args.vocabulary.length : null, grammar_count: Array.isArray(args.grammar) ? args.grammar.length : null }).catch(() => {});
         return saved;
       } catch {
@@ -923,7 +946,8 @@ export class TutorSession {
           };
         });
         const access = this.portal ? "These override the requested direction when access is limited." : "Apply the level to conversational difficulty immediately; it does not change the language you speak. Access limits apply to curriculum, not to conversational difficulty. Continue assessing only the original targets until the next call.";
-        this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}. ${access} The full saved plan applies from the next call. Start or continue the lesson now.`);
+        if (lesson && this.ai instanceof CascadeLive) this.ai.updateCoachDelivery(lesson);
+        this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}, conversation_mode=${JSON.stringify(lesson?.conversation_mode)}, correction_policy=${JSON.stringify(lesson?.correction_policy)}. ${access} The full saved plan applies from the next call. Start or continue the lesson now.`);
       }
       return saved;
     }

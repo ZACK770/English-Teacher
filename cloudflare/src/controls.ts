@@ -32,6 +32,7 @@ export const TutorControlsSchema = z
     opening_message: z.string().min(10).max(2000).default(DEFAULT_OPENING_MESSAGE),
     learning_goal: z.string().max(2000).default(""),
     custom_instructions: z.string().max(5000).default(""),
+    required_template_instructions: z.string().max(5000).default(""),
     target_lesson_minutes: z.number().int().min(1).max(120).default(15),
     ending_policy: z
       .enum(["learner_only", "after_target_with_permission", "model_discretion"])
@@ -67,7 +68,7 @@ export const TutorControlsSchema = z
   })
   .refine((c) => c.context_target_tokens < c.context_trigger_tokens, "context target must be smaller than trigger");
 
-export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan; phone_lesson?: boolean; intake_pending?: boolean; sales?: boolean; summary_callback?: boolean; teacher_name?: string; teacher_female?: boolean };
+export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan; phone_lesson?: boolean; intake_pending?: boolean; sales?: boolean; summary_callback?: boolean; teacher_name?: string; teacher_female?: boolean; learner_instructions?: string };
 
 export function controlsFromSettings(storeTranscripts: boolean): TutorControls {
   return TutorControlsSchema.parse({ store_transcripts: storeTranscripts });
@@ -107,5 +108,11 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : ""].filter(Boolean).join("\n\n");
+  const required = c.required_template_instructions?.trim()
+    ? "REQUIRED TEMPLATE RULES (administrator-defined; subject to school content and runtime safeguards; override personal preferences and generic lesson defaults):\n" + c.required_template_instructions.trim()
+    : "";
+  const personal = c.learner_instructions?.trim()
+    ? "ACTIVE LEARNER PREFERENCES (application-resolved choices; adapt teaching style within school scope, enrolled curriculum, required template rules and access):\n" + c.learner_instructions.trim()
+    : "";
+  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), required, personal, history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : ""].filter(Boolean).join("\n\n");
 }

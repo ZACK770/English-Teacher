@@ -179,7 +179,7 @@ export async function applyLearnerControls(
     ...(p.minutes || plan.success ? { ending_policy: "after_target_with_permission" as const } : {}),
     custom_vocabulary: [...new Set([...controls.custom_vocabulary, ...lesson.vocabulary.map(t => t.text)])].slice(0, 100),
     opening_message: "Introduce yourself by name and welcome the learner by name if known, briefly in Hebrew, then begin the configured active lesson with one level-appropriate question. Respect its conversation mode and correction policy. Do not recite settings or scores.",
-    custom_instructions: controls.custom_instructions + "\n" + direction,
+    learner_instructions: direction,
   };
 }
 

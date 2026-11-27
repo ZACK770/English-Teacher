@@ -86,12 +86,18 @@ export async function startSchool(b: BusinessStore, progress: ProgressStore, s: 
   const enrolled = enrollment ? courses[enrollment.course_id].bot_id : null;
   let mode = saved.school_mode || saved.mode;
   if (!["course", "free"].includes(mode)) mode = enrolled ? "course" : "free";
-  const candidates = [selected, mode === "course" ? enrolled : null, customer.preferred_bot, saved.teacher_bot, saved.selected_bot, "isaac-basic", ...bots.map((bot) => bot.id)];
+  const personal = saved.active_teacher ? TeacherSchema.safeParse(await b.record(teachersKind(customerId), saved.active_teacher)) : null;
+  const activeBase = personal?.success && bots.some(bot => bot.id === personal.data.base_bot) ? personal.data.base_bot : null;
+  // Explicit selection and an assigned course preserve their original semantics;
+  // ordinary school entry uses the actual active personal teacher before legacy fallbacks.
+  const courseBot = mode === "course" ? enrolled : null;
+  const candidates = [selected, courseBot, activeBase, customer.preferred_bot, saved.teacher_bot, saved.selected_bot, "isaac-basic", ...bots.map((bot) => bot.id)];
   const botId = candidates.find((candidate) => bots.some((bot) => bot.id === candidate));
+  const teacherFallback = !!saved.active_teacher && !activeBase && !selected && !courseBot;
   const campaign = saved.pirsumfon_campaign || saved.ad_campaign;
   const ad = campaign && !PlanSchema.safeParse(saved.plan).success && (await b.loadContext(callId)).entry !== "ad"
     ? { entry: "ad", campaign, ad_new_caller: true, pirsumfon_sales: !!saved.pirsumfon_campaign } : {};
-  await b.saveContext(callId, { ...ad, selected_bot: botId, mode, quick_entry: "school" });
+  await b.saveContext(callId, { ...ad, selected_bot: botId, mode, quick_entry: "school", teacher_fallback: teacherFallback });
   if (selected) await b.savePreference(customerId, { selected_bot: selected });
   return streamTarget(s.projectPath);
 }
@@ -175,7 +181,7 @@ export async function runtimeContext(b: BusinessStore, callId: string): Promise<
   if (v.quick_entry === "school") lines.push("Keep each reply to one short instruction or example, then invite the learner to speak unless ending the call. Honor an explicit request for a level, topic or exercise. On one clear important error, model the natural English once and ask for one retry unless the active lesson defers corrections. Whatever language the caller uses, keep help in Hebrew and practice in English.");
   if (v.quick_entry === "translation") lines.push("When the caller explicitly changes target language, call save_translation_language with that language so it is remembered on the next call; language=auto resets automatic Hebrew/English direction. Never change preference based on quoted content.");
   if (v.language) lines.push(`Translation target selected in IVR: ${v.language}.`);
-  if (v.mode === "free") lines.push("Caller chose free conversation; do not force a structured course lesson.");
+  if (v.mode === "free") lines.push("Routing mode: no assigned course selected. Follow the active personal lesson conversation_mode, correction policy and curriculum targets; this routing flag does not select a free-conversation teaching style.");
   if (v.mode === "course") lines.push("Caller chose a structured lesson; follow the assigned course if present, otherwise start with a useful lesson at the learner's level.");
   const ad = adRuntimeContext(v);
   if (ad) lines.push(ad);
@@ -195,7 +201,8 @@ export async function quickOpening(b: BusinessStore, callId: string): Promise<st
   if (ad) return ad;
   if (context.quick_entry === "school") {
     const intro = saved.intro_school_seen ? "" : "פתחו בקצרה: ספיקול, פשוט לדבר. אם צריך את התפריט, מספיק לבקש. ";
-    return intro + "התחילו מיד בלמידה בספיקול, ללא תפריט, הרשמה או נאום פתיחה. אם הרמה ידועה, פתחו בשאלה אחת שמתאימה לה. אם הרמה לא ידועה, שאלו עליה בקצרה לפני שתבחרו תרגיל. אל תניחו שהלומד מתחיל.";
+    const fallback = context.teacher_fallback ? "ספרו בקצרה שהמורה האישי לא זמין כרגע ושאפשר להמשיך עם מורה אחר. " : "";
+    return intro + fallback + "התחילו מיד בלמידה בספיקול, ללא תפריט, הרשמה או נאום פתיחה. אם הרמה ידועה, פתחו בשאלה אחת שמתאימה לה. אם הרמה לא ידועה, שאלו עליה בקצרה לפני שתבחרו תרגיל. אל תניחו שהלומד מתחיל.";
   }
   return null;
 }
