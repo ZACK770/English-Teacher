@@ -1,6 +1,10 @@
 import { TutorSession } from "./session";
-import { type Env, settings, randomHex } from "./env";
+import { type Env, settings, randomHex, secureEqual } from "./env";
 import { pilotLog } from "./pbx-pilot-log";
+
+type PilotSettings = { model: string; voice: string };
+type PilotVersions = { active: PilotSettings; previous?: PilotSettings };
+const PILOT_SETTINGS_KEY = "pilot-settings";
 
 export class CallSession {
   private session: TutorSession | null = null;
@@ -8,7 +12,41 @@ export class CallSession {
 
   constructor(private ctx: DurableObjectState, private env: Env) {}
 
+  private async pilotSettings(request: Request): Promise<Response> {
+    const token = this.env.PBX_PILOT_ADMIN_TOKEN;
+    if (!token) return new Response("Not found", { status: 404 });
+    if (!secureEqual(request.headers.get("Authorization") ?? "", "Bearer " + token)) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const defaults = { model: this.env.PBX_PILOT_MODEL || "qwen/qwen3-235b-a22b-2507", voice: this.env.PBX_PILOT_VOICE || "Amos" };
+    if (request.method === "GET") {
+      const saved = await this.ctx.storage.get<PilotVersions>(PILOT_SETTINGS_KEY);
+      return Response.json(saved ?? { active: defaults }, { headers: { "Cache-Control": "no-store" } });
+    }
+    if (request.method !== "PUT") return new Response("Expected GET or PUT", { status: 405 });
+    const body = await request.json<Record<string, unknown>>().catch(() => null);
+    if (!body || (body.rollback !== true && (
+      typeof body.model !== "string" || !/^[\w.-]+\/[\w.:-]+$/.test(body.model) || body.model.length > 150 ||
+      typeof body.voice !== "string" || !body.voice.trim() || body.voice.length > 100
+    ))) return Response.json({ error: "Supply model and voice, or rollback: true" }, { status: 400 });
+    return this.ctx.storage.transaction(async transaction => {
+      const saved = await transaction.get<PilotVersions>(PILOT_SETTINGS_KEY);
+      const active = body.rollback === true ? saved?.previous : { model: body.model as string, voice: (body.voice as string).trim() };
+      if (!active) return Response.json({ error: "No previous settings" }, { status: 409 });
+      const previous = saved?.active ?? defaults;
+      if (active.model === previous.model && active.voice === previous.voice) {
+        return Response.json(saved ?? { active: defaults });
+      }
+      const versions = { active, previous };
+      await transaction.put(PILOT_SETTINGS_KEY, versions);
+      return Response.json(versions, { headers: { "Cache-Control": "no-store" } });
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
+    if (this.env.PBX_CASCADE_PILOT === "1" && new URL(request.url).pathname === "/v1/admin/pilot/settings") {
+      return this.pilotSettings(request);
+    }
     if (new URL(request.url).pathname === "/stop") {
       if (!this.session) return Response.json({ detail: "Session no longer active" }, { status: 404 });
       this.session.stop();
@@ -38,7 +76,11 @@ export class CallSession {
         server.close(1008, "Start frame timeout");
       }
     }, 10000);
-    const s = settings(this.env);
+    const pilotVersions = isPilot ? await this.ctx.storage.get<PilotVersions>(PILOT_SETTINGS_KEY) : undefined;
+    const callEnv = pilotVersions ? {
+      ...this.env, PBX_PILOT_MODEL: pilotVersions.active.model, PBX_PILOT_VOICE: pilotVersions.active.voice,
+    } : this.env;
+    const s = settings(callEnv);
     const profile = request.headers.get("X-Profile");
     let incoming: Promise<void> = Promise.resolve();
     const portalCustomer = new URL(request.url).pathname === "/v1/portal/voice" ? request.headers.get("X-Portal-Customer") : null;
@@ -78,7 +120,7 @@ export class CallSession {
         return;
       }
       trace("start_received");
-      const session = new TutorSession(server, this.env, s, this.ctx.id.toString(), request.headers.get("Authorization"));
+      const session = new TutorSession(server, callEnv, s, this.ctx.id.toString(), request.headers.get("Authorization"));
       this.session = session;
       this.ctx.waitUntil(session.run(event.data, profile, shared).catch(() => {
         try { server.close(1011, "Call failed"); } catch { /* peer closed */ }
