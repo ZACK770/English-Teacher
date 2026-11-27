@@ -1,5 +1,5 @@
 import { resolveTurnTuning, type TurnTuning } from "./turn-tuning";
-import { b64decode, meanSquare } from "./audio";
+import { b64decode, concat, meanSquare } from "./audio";
 import { synthesizeGoogleStandard } from "./pbx-pilot-google";
 import type { PilotInterruption } from "./env";
 import { AsyncQueue } from "./async";
@@ -66,6 +66,30 @@ async function* lines(response: Response): AsyncGenerator<string> {
   }
 }
 
+/** A fixed notice spoken independently of the failed conversation model/STT. */
+export async function synthesizeCascadeNotice(config: CascadeConfig, text: string, request: typeof fetch = fetch): Promise<{ pcm24k: Uint8Array; cost: number }> {
+  const signal = AbortSignal.timeout(7000);
+  if (config.googleKey) {
+    const pcm24k = await synthesizeGoogleStandard(request, config.googleKey, "he-IL-Standard-B", text, signal);
+    return { pcm24k, cost: Array.from(text).length * 4 / 1_000_000 };
+  }
+  const response = await request(SPEECH_URL, {
+    method: "POST", signal, headers: { Authorization: "Basic " + config.inworldKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voiceId: config.voice, modelId: "inworld-tts-2-flash", audioConfig: { audioEncoding: "PCM", sampleRateHertz: 24000 } }),
+  });
+  if (!response.ok) throw new Error("notice_tts_failed");
+  const parts: Uint8Array[] = [];
+  for await (const line of lines(response)) {
+    if (signal.aborted) throw new Error("notice_tts_timeout");
+    const data = JSON.parse(line);
+    if (data.error || data.result?.error) throw new Error("notice_tts_failed");
+    if (data.result?.audioContent) parts.push(b64decode(data.result.audioContent));
+  }
+  const pcm24k = concat(parts);
+  if (!pcm24k.length || pcm24k.byteLength % 2) throw new Error("notice_tts_empty");
+  return { pcm24k, cost: Array.from(text).length * 15 / 1_000_000 };
+}
+
 export class CascadeLive {
   readonly resumeHandle = null;
   private readonly events = new AsyncQueue<GeminiEvent>();
@@ -77,6 +101,7 @@ export class CascadeLive {
   private socket: WebSocket | null = null;
   private generation: AbortController | null = null;
   private closed = false;
+  private closureReason?: string;
   private learnerText = "";
   private speechFrames = 0;
   private audioUntil = 0;
@@ -126,10 +151,10 @@ export class CascadeLive {
     socket.accept();
     socket.addEventListener("message", (event) => {
       if (typeof event.data !== "string" || this.closed) return;
-      try { this.transcription(JSON.parse(event.data)); } catch { this.close(); }
+      try { this.transcription(JSON.parse(event.data)); } catch { this.close("soniox_invalid_message"); }
     });
-    socket.addEventListener("close", () => this.close());
-    socket.addEventListener("error", () => this.close());
+    socket.addEventListener("close", () => this.close("soniox_socket_closed"));
+    socket.addEventListener("error", () => this.close("soniox_socket_error"));
     const languages = this.setup.inputAudioTranscription?.languageCodes
       ?.map((language) => language.toLowerCase().split("-")[0])
       .filter((language) => /^[a-z]{2}$/.test(language));
@@ -144,7 +169,7 @@ export class CascadeLive {
   }
 
   next(): Promise<GeminiEvent> {
-    return this.events.next().then((event) => event ?? { type: "closed" });
+    return this.events.next().then((event) => event ?? { type: "closed", ...(this.closureReason ? { reason: this.closureReason } : {}) });
   }
 
   sendAudio(pcm: Uint8Array) {
@@ -182,8 +207,9 @@ export class CascadeLive {
     if (call.id) this.toolReplies.get(call.id)?.(result ?? { saved });
   }
 
-  close() {
+  close(reason?: string) {
     if (this.closed) return;
+    this.closureReason = reason;
     this.closed = true;
     this.generation?.abort();
     const socket = this.socket;
@@ -210,7 +236,7 @@ export class CascadeLive {
     if (event.error_code || event.error_type) {
       const code = event.error_type || String(event.error_code);
       console.warn("Teacher pilot Soniox", /^[a-z0-9_]{1,64}$/.test(code) ? code : "provider_error");
-      this.close();
+      this.close("soniox_provider_error");
       return;
     }
     let partial = "";
@@ -266,10 +292,12 @@ export class CascadeLive {
     // An optional, separately configured assessor gets only the ambiguous final turn.
     // Shadow never waits; active is bounded and must be separately validated.
     const semanticInput = this.coach?.takeSemanticCandidate();
-    void this.answerWithCoach(text, generation.signal, decision, semanticInput).catch(() => {
+    void this.answerWithCoach(text, generation.signal, decision, semanticInput).catch(error => {
       if (!generation.signal.aborted) {
-        console.warn("Teacher pilot response failed");
-        this.close();
+        const message = error instanceof Error ? error.message : "";
+        const cause = /^(?:openrouter_(?:\d{3}|stream)|inworld_(?:\d{3}|stream)|google_tts_(?:\d{3}|empty|invalid_audio))$/.test(message) ? message : "cascade_response_failed";
+        console.warn("Teacher pilot response failed", cause);
+        this.close(cause);
       }
     }).finally(() => {
       if (this.generation === generation) this.generation = null;

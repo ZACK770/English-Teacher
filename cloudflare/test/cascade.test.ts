@@ -62,6 +62,12 @@ describe("isolated Technoline cascade", () => {
     }
   });
 
+  it("reports a Soniox provider failure without recording provider data", async () => {
+    const { engine, result } = fixture();
+    await engine.connect();
+    result({ error_type: "rate_limit", error_code: 429 });
+    expect(await engine.next()).toEqual({ type:"closed", reason:"soniox_provider_error" });
+  });
   it("enforces local content blocking without production alert credentials", () => {
     expect(() => contentPolicy({ CONTENT_SAFETY_MODE: "on" } as Env)).toThrow();
     const turn = new ContentTurn(pilotContentPolicy());

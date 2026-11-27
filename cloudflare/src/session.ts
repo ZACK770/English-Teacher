@@ -10,7 +10,7 @@ import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
-import { CascadeLive, type CascadeConfig } from "./cascade";
+import { CascadeLive, synthesizeCascadeNotice, type CascadeConfig } from "./cascade";
 import { coachMode, TranscriptCoach } from "./lesson-coach";
 import { pilotLog } from "./pbx-pilot-log";
 import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
@@ -644,6 +644,7 @@ export class TutorSession {
       const event = await this.ai!.next();
       if (this.abort.signal.aborted) return;
       if (event.type === "closed") {
+        if (this.cascadeConfig && event.reason) await this.latency("cascade_provider_closed", { reason: event.reason }).catch(() => {});
         if (this.safetyMuted) { this.endForContent("content_blocked"); return; }
         this.safety?.interrupt();
         this.reconnecting = this.reconnectGemini();
@@ -842,9 +843,19 @@ export class TutorSession {
   }
 
   private async speakFinalMessage(text: string) {
-    if (this.cascadeConfig) return;
     try {
-      const pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+      let pcm: Uint8Array;
+      if (this.cascadeConfig) {
+        try {
+          const notice = await synthesizeCascadeNotice(this.cascadeConfig, text);
+          [pcm] = downsample24kTo8k(notice.pcm24k);
+          this.meter.recordUsage({ cascade_tts_usd: notice.cost });
+        } catch {
+          // The conversation TTS might be the failing provider; try independent Cloud TTS.
+          pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+        }
+      } else pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+      if (!pcm.length) throw new Error("empty_final_notice");
       for (let offset = 0; offset < pcm.length && !this.disconnected; offset += FRAME_BYTES) {
         const frame = new Uint8Array(FRAME_BYTES);
         frame.set(pcm.subarray(offset, offset + FRAME_BYTES));

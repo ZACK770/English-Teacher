@@ -10,7 +10,7 @@ import { NEUTRAL_HEBREW } from "../src/customer-language";
 import * as google from "../src/google";
 import { settings, type Env } from "../src/env";
 import { handleCallback } from "../src/pbx";
-import { FRAME_BYTES, FRAME_MS } from "../src/audio";
+import { FRAME_BYTES, FRAME_MS, b64encode } from "../src/audio";
 import { controlsFromSettings } from "../src/controls";
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
@@ -352,4 +352,31 @@ it("logs a failed independent prompt without preventing clean termination", asyn
   vi.spyOn(BasicTranslator.prototype, "speak").mockRejectedValue(new Error("tts offline"));
   await tutor.speakFinalMessage(CALL_FAILURE_MESSAGE);
   expect(tutor.progress.logDiagnostic).toHaveBeenCalledWith("", "call", "failure_prompt_failed");
+});
+
+it("plays an independent apology for a failed cascade call and does not call the conversation model", async () => {
+  vi.useFakeTimers();
+  const { tutor, pbx } = session();
+  tutor.cascadeConfig = { sonioxKey:"stt", openrouterKey:"llm", inworldKey:"tts", model:"mock", voice:"Amos" };
+  // 966 bytes at 24 kHz become 322 bytes at 8 kHz (two telephone frames).
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({result:{audioContent:b64encode(new Uint8Array(966).fill(1))}})+"\n"));
+  const playing = tutor.speakFinalMessage(CALL_FAILURE_MESSAGE);
+  await vi.runAllTimersAsync();
+  await playing;
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0][0]).toContain("api.inworld.ai/tts/");
+  expect(pbx.send).toHaveBeenCalledTimes(2);
+});
+
+it("falls back to independent Cloud TTS if cascade speech fails", async () => {
+  vi.useFakeTimers();
+  const { tutor, pbx } = session();
+  tutor.cascadeConfig = { sonioxKey:"stt", openrouterKey:"llm", inworldKey:"tts", model:"mock", voice:"Amos" };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null,{status:503}));
+  const fallback=vi.spyOn(BasicTranslator.prototype,"speak").mockResolvedValue(new Uint8Array(320).fill(1));
+  const playing = tutor.speakFinalMessage(CALL_FAILURE_MESSAGE);
+  await vi.runAllTimersAsync();
+  await playing;
+  expect(fallback).toHaveBeenCalledWith(CALL_FAILURE_MESSAGE,"he-IL");
+  expect(pbx.send).toHaveBeenCalledTimes(1);
 });

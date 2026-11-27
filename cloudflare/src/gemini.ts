@@ -14,7 +14,7 @@ export type GeminiEvent =
   | { type: "tool_call"; calls: ToolCall[] }
   | { type: "usage"; usage: Record<string, unknown> }
   | { type: "go_away"; detail: unknown }
-  | { type: "closed" };
+  | { type: "closed"; reason?: string };
 
 export interface ToolCall {
   id?: string;
