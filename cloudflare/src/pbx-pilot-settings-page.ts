@@ -64,6 +64,12 @@ audio{width:100%;margin-top:8px}
 </div>
 </section>
 <section>
+<h2>מורה בשלוחה 1</h2>
+<p id="school-status" class="status" role="status"></p>
+<button id="school-promote" disabled>החל את התמהיל השמור על שלוחה 1</button>
+<button id="school-gemini" class="secondary" disabled>חזור ל־Gemini Live</button>
+</section>
+<section>
 <h2>בדיקה בדפדפן</h2>
 <label for="mode">מה לבדוק</label>
 <select id="mode"><option value="model">תשובת מודל · OpenRouter</option><option value="inworld">קול · Inworld</option><option value="google">קול · Google Standard</option></select>
@@ -128,7 +134,11 @@ function phoneVoices(selected) {
   $('phone-google-key').placeholder = version.googleConfigured ? 'מפתח כבר שמור · השאר ריק כדי להשתמש בו' : 'הדבק פעם אחת את מפתח Google Cloud';
 }
 function applySettings(result) {
-  version = result;
+  const production = 'production' in result ? result.production : version?.production;
+  version = {...result, production};
+  write('school-status', production ? 'תמהיל פעיל בשלוחה 1 · ' + production.model + ' / ' + production.voice : 'Gemini Live פעיל בשלוחה 1');
+  $('school-promote').disabled = false;
+  $('school-gemini').disabled = !production;
   options('model', catalog.models, result.active.model);
   $('speech').value = result.active.speech || 'inworld';
   phoneVoices(result.active.voice);
@@ -345,6 +355,20 @@ $('use-google-phone').onclick = () => {
   $('save').scrollIntoView({block:'center'});
   $('save').focus();
 };
+async function school(mode) {
+  $('school-promote').disabled = $('school-gemini').disabled = true;
+  try {
+    const {production} = await api('settings', 'PUT', {production:mode});
+    applySettings({...version, production});
+    write('school-status', $('school-status').textContent + ' · מהחיוג הבא');
+  } catch (error) {
+    write('school-status', error.message);
+    $('school-promote').disabled = false;
+    $('school-gemini').disabled = !version.production;
+  }
+}
+$('school-promote').onclick = () => school('cascade');
+$('school-gemini').onclick = () => school('gemini');
 $('save').onclick = () => save(false);
 $('rollback').onclick = () => save(true);
 $('calls').onchange = refresh;

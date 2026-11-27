@@ -325,6 +325,8 @@ export async function handleCallback(request: Request, env: Env, s: Settings, ro
   else if (route === "ad" && p.isaacTeacher !== undefined) result = ivrResponse("school", p, copy, s.projectPath);
   else if (route === "ad") result = await startAdEntry(b, progress, s, callId, customerId, p.campaign);
   else if (offerEntry || (route === "main" && p.isaacMain === "1") || (route === "school" && [undefined, "1"].includes(p.isaacTeacher)) || (route === "mode" && ["1", "2"].includes(p.isaacMode))) {
+    await b.saveContext(callId, { primary_teacher_entry: system.phone === SPEAKCALL_PHONE &&
+      (path === extensionPath(system.base, "/1") || (route === "main" && p.isaacMain === "1")) });
     result = await startSchool(b, progress, s, callId, customerId);
   } else if ((route === "translator" && [undefined, "1", "START"].includes(p.isaacTranslation)) || route === "start-translation" || (route === "languages" && Object.hasOwn(languages, p.isaacLanguage))) {
     result = await startTranslation(b, progress, s, callId, customerId);

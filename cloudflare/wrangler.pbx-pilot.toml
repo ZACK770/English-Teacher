@@ -1,6 +1,6 @@
 name = "english-teacher-pilot-888"
 account_id = "da53b4cd888030bba791621ea1a39f8c"
-main = "src/pbx-pilot-entry.ts"
+main = "src/pbx-pilot-worker.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true

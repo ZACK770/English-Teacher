@@ -44,6 +44,7 @@ export class TutorSession {
   private partial = new Uint8Array();
   private carry: Uint8Array = new Uint8Array();
   private abort = new AbortController();
+  private crmUsageLoggedAt = 0;
   private pilotTurnEndedAt: number | null = null;
   private ai: GeminiLive | CascadeLive | null = null;
   private cascadeConfig: CascadeConfig | null = null;
@@ -185,12 +186,12 @@ export class TutorSession {
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let hardLimit: ReturnType<typeof setTimeout> | undefined;
     let geminiConnected = false;
+    const cascadePilot = this.env.PBX_CASCADE_PILOT === "1";
     try {
       if (this.abort.signal.aborted) return;
       const initial = JSON.parse(raw);
       let profileId = requestedProfile;
       const testChannel = !!this.env.TEST_TEACHER_CHANNEL_ID && initial.token === this.env.TEST_TEACHER_CHANNEL_ID;
-      const cascadePilot = this.env.PBX_CASCADE_PILOT === "1";
       if (cascadePilot && (!testChannel || shared || this.portal || profileId !== "isaac-basic")) {
         await pilotLog(this.env, "channel_mismatch", {
           token_present: typeof initial.token === "string" && initial.token.length > 0, channel_matches: testChannel,
@@ -295,6 +296,18 @@ export class TutorSession {
       const callContext = await this.b.loadContext(this.callId);
       this.offerCall = !!callContext.offer_call && !this.portal;
       const adCall = callContext.entry === "ad";
+      if (!cascadePilot && shared && !this.portal && bot.role === "teacher" && callContext.primary_teacher_entry &&
+          callContext.quick_entry === "school" && !adCall && !this.offerCall && this.env.SCHOOL_VOICE_SETTINGS) {
+        const selected = await this.env.SCHOOL_VOICE_SETTINGS.fetch("https://internal.invalid/settings", {
+          signal: AbortSignal.timeout(1500),
+        }).then(response => response.ok ? response.json<CascadeConfig | null>() : null).catch(() => null);
+        if (selected) {
+          this.cascadeConfig = selected;
+          await this.latency("school_voice_selected", { model: selected.model, voice: selected.voice,
+            speech: selected.googleKey ? "Google Standard" : "Inworld" });
+        }
+        this.controls = { ...this.controls, store_transcripts: true };
+      }
       this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall);
       const opening = await quickOpening(this.b, this.callId);
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
@@ -350,7 +363,7 @@ export class TutorSession {
       if (this.abort.signal.aborted) return;
       const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders, masteryDomain: this.masteryDomain });
-      if (!cascadePilot) releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
+      if (!this.cascadeConfig || allowance.mode === "basic") releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
@@ -365,6 +378,7 @@ export class TutorSession {
       if (this.controls.store_transcripts) await this.progress.savePromptSnapshot(profileId, this.callId, this.artifact);
       if (this.abort.signal.aborted) return;
       if (allowance.mode === "basic") {
+        this.cascadeConfig = null;
         this.controls = { ...this.controls, model: this.s.basicTranslatorModel };
         this.meteredAt = Date.now();
         clearTimeout(hardLimit);
@@ -372,11 +386,15 @@ export class TutorSession {
         await this.runTasks([this.basicListen(allowance.intro ?? ""), this.pacedOutput(), this.watchdog()]);
       } else {
         if (this.abort.signal.aborted) return;
-        if (!cascadePilot) {
+        if (!this.cascadeConfig) {
           const selected = await geminiKeyForCall(this.env, this.callId, adCall);
           this.s = { ...this.s, geminiKey: selected.key };
           await this.latency("gemini_connect_started", { tier: selected.tier });
+          if (callContext.primary_teacher_entry && !this.portal) {
+            await this.latency("school_voice_selected", { model: this.controls.model, voice: this.controls.voice, speech: "Gemini Live" });
+          }
         } else await this.latency("cascade_connect_started");
+        if (this.cascadeConfig) this.meter.useCascade();
         const ai = this.makeVoiceEngine(this.artifact.setup_message);
         this.ai = ai;
         const playback = !this.portal && bot.role === "teacher" && !this.offerCall ? this.pacedOutput(true) : undefined;
@@ -386,8 +404,8 @@ export class TutorSession {
         if (this.portal) this.pbx.send(JSON.stringify({ type: "ready" }));
         this.meteredAt = Date.now();
         this.lastHuman = Date.now();
-        await this.latency(cascadePilot ? "cascade_connected" : "gemini_connected");
-        geminiConnected = !cascadePilot;
+        await this.latency(this.cascadeConfig ? "cascade_connected" : "gemini_connected");
+        geminiConnected = !this.cascadeConfig;
         ai.startGreeting(this.controls.opening_message);
         if (allowance.mode === "free" || allowance.seconds <= 360) ai.addContext("APPLICATION NOTE: this call is limited to about " + Math.round(allowance.seconds / 60) + " minutes (" + (allowance.mode === "free" ? "free trial call" : "per-call limit of the learner's plan") + "). " + (this.controls.lesson ? "Do not announce this in the opening; answer briefly if asked." : "Mention this once, briefly and warmly in Hebrew, early in the call."));
         await this.latency("greeting_sent");
@@ -457,11 +475,11 @@ export class TutorSession {
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId);
         if (this.offerCall && !this.disconnected && !this.safetyMuted) this.returnPath = this.extension(SALES_EXTENSION_PATH);
-        const target = this.safetyMuted || this.cascadeConfig ? null : this.offerCall && !this.disconnected ? this.returnPath : this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
+        const target = this.safetyMuted || cascadePilot ? null : this.offerCall && !this.disconnected ? this.returnPath : this.finalMessage || this.reason === "customer_busy" ? null : this.returnPath || (this.controls?.session_end_action === "return_to_menu" ? (shared ? this.extension() : this.s.returnExtension) : null);
         if (!this.disconnected) {
           this.pbx.send(this.portal ? JSON.stringify({ type: "hangup", reason: this.reason }) : target ? transferCommand(target) : JSON.stringify({ type: "hangup" }));
         }
-        willCallWithSummary = !this.cascadeConfig && this.summaryCallbackRequested && !target && ["model:task_completed", "model:caller_requested", "caller_disconnected"].includes(this.reason);
+        willCallWithSummary = !cascadePilot && this.summaryCallbackRequested && !target && ["model:task_completed", "model:caller_requested", "caller_disconnected"].includes(this.reason);
       } finally {
         await budgetRelease;
         if (claimed) await this.progress.releaseCall(this.leaseCallId, this.ownerId).catch(() => {});
@@ -659,7 +677,7 @@ export class TutorSession {
           } catch { /* Peer disconnected. */ }
         }
         if (this.ai instanceof CascadeLive) this.ai.acknowledgeInterrupt();
-        await this.latency("tutor_interrupted", { ...queued, clear_sent: clearSent, candidate_ms: event.pause_ms ?? null });
+        await this.latency("tutor_interrupted", this.cascadeConfig ? { ...queued, clear_sent: clearSent, candidate_ms: event.pause_ms ?? null } : queued);
       } else if (event.type === "transcript") {
         if (this.safety?.transcript(event.role, event.rawText ?? event.text, event.finished) && !this.safetyMuted) {
           await this.blockForTutor(this.safety.criticalCandidate(event.finished));
@@ -722,6 +740,11 @@ export class TutorSession {
           await this.latency("pilot_usage", {
             ...this.meter.cascadeCosts(), input: totals.input_text_tokens, output: totals.output_text_tokens,
           }).catch(() => {});
+        } else if (!this.cascadeConfig && this.controls?.store_transcripts && Date.now() - this.crmUsageLoggedAt >= 3000) {
+          this.crmUsageLoggedAt = Date.now();
+          const totals = this.meter.usage(this.s);
+          await this.latency("crm_usage", { input: totals.input_text_tokens + totals.input_audio_tokens,
+            output: totals.output_text_tokens + totals.output_audio_tokens, total: totals.estimated_cost_usd }).catch(() => {});
         }
       } else if (event.type === "tool_call") {
         if (this.safetyMuted) continue;

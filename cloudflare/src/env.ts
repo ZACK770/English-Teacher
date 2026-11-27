@@ -1,6 +1,7 @@
 export type PilotInterruption = "legacy" | "observe" | "adaptive" | "adaptive_clear";
 
 export interface Env {
+  SCHOOL_VOICE_SETTINGS?: Fetcher;
   PBX_CASCADE_PILOT?: string;
   PBX_PILOT_SONIOX_KEY?: string;
   PBX_PILOT_OPENROUTER_KEY?: string;

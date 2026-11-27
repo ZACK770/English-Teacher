@@ -108,10 +108,72 @@ function SortButton({ field, active, direction, onSort, children }: { field: str
   return <button className="crm-sort" onClick={() => onSort(field)} aria-label={`מיון לפי ${String(children)}`}>{children}<span aria-hidden="true">{active === field ? direction === 'asc' ? ' ↑' : ' ↓' : ' ↕'}</span></button>;
 }
 
+type CallTurn = { role?: string; text?: string };
+type VoiceEvent = { event_name: string; since_call_start_ms: number; details: Record<string, unknown> };
+type VoiceDetails = { turns: CallTurn[]; events: VoiceEvent[]; summary: { model?: string; estimated_cost_usd?: number; input_text_tokens?: number; output_text_tokens?: number } | null };
+type ActiveCall = { call_id: string; started_at: string; customer_id: string; teacher: string; name?: string };
+
+function VoiceMeasurements({ details }: { details: VoiceDetails }) {
+  const events = details.events;
+  const model = events.slice().reverse().find(event => ['school_voice_selected','gemini_connect_started','session_started'].includes(event.event_name) && event.details.model);
+  const latency = events.find(event => event.event_name === 'first_audio_sent_to_phone');
+  const usage = events.slice().reverse().find(event => ['pilot_usage','cascade_usage','crm_usage'].includes(event.event_name))?.details;
+  const totals = events.slice().reverse().find(event => ['pilot_usage','crm_usage'].includes(event.event_name))?.details;
+  const usd = (value: unknown) => typeof value === 'number' ? '$' + value.toFixed(5) : '—';
+  const show = (value: unknown) => typeof value === 'number' || typeof value === 'string' ? String(value) : '—';
+  return <div className="crm-muted">
+    <p>מודל: {show(details.summary?.model || model?.details.model)} · קול: {show(model?.details.voice)} · שמע ראשון: {latency ? Math.round(latency.since_call_start_ms) + ' ms' : '—'}</p>
+    <p>טוקנים קלט / פלט: {show(details.summary?.input_text_tokens ?? totals?.input)} / {show(details.summary?.output_text_tokens ?? totals?.output)} · עלות AI: {usd(details.summary?.estimated_cost_usd ?? usage?.total)}</p>
+    {usage?.llm_reported_usd !== undefined && <p>מודל מדווח {usd(usage.llm_reported_usd)} · תמלול משוער {usd(usage.stt_estimated_usd)} · הקראה משוערת {usd(usage.tts_estimated_usd)}</p>}
+    <details><summary>אירועי שיחה וכלי מורה</summary>{events.map((event, i) => <p key={i}>{Math.round(event.since_call_start_ms)} ms · {event.event_name}{typeof event.details.name === 'string' ? ' · ' + event.details.name : ''}{typeof event.details.elapsed_ms === 'number' ? ' · ' + event.details.elapsed_ms + ' ms' : ''}</p>)}</details>
+  </div>;
+}
+
+function ActiveVoiceCalls({ customer }: { customer?: string }) {
+  const [calls, setCalls] = useState<ActiveCall[]>([]), [selected, setSelected] = useState(''), [details, setDetails] = useState<VoiceDetails | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const list = await read<{ calls: ActiveCall[] }>('active-calls' + (customer ? '/' + encodeURIComponent(customer) : ''));
+        if (stopped) return;
+        setCalls(list.calls);
+        if (selected) {
+          const result = await read<VoiceDetails>('calls/' + encodeURIComponent(selected) + '/details');
+          if (stopped) return;
+          setDetails(result);
+        }
+        setError('');
+      } catch (failure) {
+        if (!stopped) setError((failure as Error).message);
+      } finally {
+        if (!stopped) timer = setTimeout(poll, 3000);
+      }
+    }
+    void poll();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [customer, selected]);
+  return <section className="crm-call"><h2>שיחות פעילות</h2>{error && <p role="alert">{error}</p>}
+    <select aria-label="שיחה פעילה" value={selected} onChange={event => { setDetails(null); setSelected(event.target.value); }}>
+      <option value="">{calls.length ? 'בחר שיחה לצפייה בלייב' : 'אין שיחות פעילות'}</option>
+      {calls.map(call => <option key={call.call_id} value={call.call_id}>{call.name || call.teacher} · {date(call.started_at)}</option>)}
+      {selected && !calls.some(call => call.call_id === selected) && <option value={selected}>השיחה שנבחרה הסתיימה</option>}
+    </select>
+    {!customer && calls.find(call => call.call_id === selected) && <a href={base + '/' + encodeURIComponent(calls.find(call => call.call_id === selected)!.customer_id)}>כרטיס לקוח</a>}
+    {details && <><VoiceMeasurements details={details} /><div className="crm-transcript" aria-label="תמלול שיחה פעילה">
+      {details.turns.length === 0 && <p>ממתין לתמלול.</p>}
+      {mergeTranscriptSegments(details.turns).map((turn, i) => <div key={i}><b>{turn.role === 'learner' ? 'לומד/ת' : 'מורה'}</b><p dir="auto">{turn.text}</p></div>)}
+    </div></>}
+  </section>;
+}
+
 function CallCard({ call }: { call: Call }) {
   const [open, setOpen] = useState(false), [turns, setTurns] = useState<{ role?: string; text?: string }[] | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  async function toggle() { setOpen(!open); if (turns || busy || open) return; setBusy(true); setError(''); try { const result = await read<{ turns: { role?: string; text?: string }[] }>('calls/' + encodeURIComponent(call.call_id) + '/transcript'); setTurns(result.turns || []); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
-  return <article className="crm-call"><div className="crm-between"><div><span className="crm-eyebrow">שיחה עם {call.teacher}</span><h3>{date(call.started_at)}</h3></div><span className="crm-chip">{num(call.duration_seconds / 60)} דקות</span></div><p>{call.summary_he || 'לא נשמר סיכום לשיחה זו.'}</p>{call.success_he && <p className="crm-success">מה הצליח · {call.success_he}</p>}{call.next_step_he && <p>הצעד הבא · {call.next_step_he}</p>}<div className="crm-cost"><span>בינה מלאכותית <b>{money(call.ai_cost_ils)}</b><small>{call.ai_cost_usd.toFixed(4)} דולר · {call.cost_basis === 'gemini_usage_metadata' ? 'לפי דיווח אסימונים' : 'אומדן שימוש'}</small></span><span>טלפוניה — אומדן <b>{money(call.telephony_cost_ils)}</b><small>לפי עלות דקה חזויה, לא חיוב ספק</small></span><span>סה״כ משוער <b>{money(call.total_cost_ils)}</b></span></div><details className="crm-muted"><summary>פירוט אסימונים</summary>קלט טקסט: {call.input_text_tokens} · קלט קול: {call.input_audio_tokens} · פלט טקסט: {call.output_text_tokens} · פלט קול: {call.output_audio_tokens} · חשיבה: {call.thoughts_tokens}</details><div className="crm-between crm-call-footer">{call.recording ? <audio controls preload="none" aria-label="הקלטת השיחה" src={prefix + '/v1/admin/crm/recordings/' + encodeURIComponent(call.call_id) + '/audio'} /> : <span className="crm-muted">אין הקלטה זמינה</span>}{call.has_transcript ? <button className="crm-button" onClick={() => void toggle()} aria-expanded={open}>{open ? 'סגירת תמלול' : 'פתיחת תמלול'}</button> : <span className="crm-muted">לא נשמר תמלול</span>}</div>{open && <div className="crm-transcript" aria-live="polite" tabIndex={0} role="region" aria-label="תמלול השיחה">{busy && <p>טוענים תמלול…</p>}{error && <div role="alert">{error}</div>}{turns?.length === 0 && <p>התמלול ריק.</p>}{(turns && mergeTranscriptSegments(turns))?.map((t, i) => <div key={i}><b>{['learner', 'user'].includes(t.role || '') ? 'לומד/ת' : 'מורה'}</b><p dir="auto">{t.text}</p></div>)}</div>}</article>;
+  const [details, setDetails] = useState<VoiceDetails | null>(null);
+  async function toggle() { setOpen(!open); if (turns || busy || open) return; setBusy(true); setError(''); try { const result = await read<VoiceDetails>('calls/' + encodeURIComponent(call.call_id) + '/details'); setTurns(result.turns || []); setDetails(result); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
+  return <article className="crm-call"><div className="crm-between"><div><span className="crm-eyebrow">שיחה עם {call.teacher}</span><h3>{date(call.started_at)}</h3></div><span className="crm-chip">{num(call.duration_seconds / 60)} דקות</span></div><p>{call.summary_he || 'לא נשמר סיכום לשיחה זו.'}</p>{call.success_he && <p className="crm-success">מה הצליח · {call.success_he}</p>}{call.next_step_he && <p>הצעד הבא · {call.next_step_he}</p>}<div className="crm-cost"><span>בינה מלאכותית <b>{money(call.ai_cost_ils)}</b><small>{call.ai_cost_usd.toFixed(4)} דולר · {call.cost_basis === 'gemini_usage_metadata' ? 'לפי דיווח אסימונים' : 'אומדן שימוש'}</small></span><span>טלפוניה — אומדן <b>{money(call.telephony_cost_ils)}</b><small>לפי עלות דקה חזויה, לא חיוב ספק</small></span><span>סה״כ משוער <b>{money(call.total_cost_ils)}</b></span></div><details className="crm-muted"><summary>פירוט אסימונים</summary>קלט טקסט: {call.input_text_tokens} · קלט קול: {call.input_audio_tokens} · פלט טקסט: {call.output_text_tokens} · פלט קול: {call.output_audio_tokens} · חשיבה: {call.thoughts_tokens}</details><div className="crm-between crm-call-footer">{call.recording ? <audio controls preload="none" aria-label="הקלטת השיחה" src={prefix + '/v1/admin/crm/recordings/' + encodeURIComponent(call.call_id) + '/audio'} /> : <span className="crm-muted">אין הקלטה זמינה</span>}{<button className="crm-button" onClick={() => void toggle()} aria-expanded={open}>{open ? 'סגירת פרטי השיחה' : 'תמלול ופרטי השיחה'}</button>}</div>{open && <div className="crm-transcript" aria-live="polite" tabIndex={0} role="region" aria-label="תמלול השיחה">{details && <VoiceMeasurements details={details} />}{busy && <p>טוענים תמלול…</p>}{error && <div role="alert">{error}</div>}{turns?.length === 0 && <p>התמלול ריק.</p>}{(turns && mergeTranscriptSegments(turns))?.map((t, i) => <div key={i}><b>{['learner', 'user'].includes(t.role || '') ? 'לומד/ת' : 'מורה'}</b><p dir="auto">{t.text}</p></div>)}</div>}</article>;
 }
 
 export function Journey({ steps }: { steps: Step[] }) {
@@ -143,7 +205,7 @@ export function CrmPage() {
   const identity = useAdminIdentity();
   const id = location.pathname.startsWith(base + '/') ? location.pathname.slice(base.length + 1).replace(/\/$/, '') : '';
   const requested = new URLSearchParams(location.search).get('view');
-  const view = !id && !requested && !location.search ? 'today' : !id && (requested === 'teachers' || requested === 'returning' || requested === 'messages' || requested === 'analytics' || requested === 'call-reviews' || requested === 'costs' || requested === 'site' || requested === 'ads') ? requested : 'people';
+  const view = !id && !requested && !location.search ? 'today' : !id && (requested === 'active-calls' || requested === 'teachers' || requested === 'returning' || requested === 'messages' || requested === 'analytics' || requested === 'call-reviews' || requested === 'costs' || requested === 'site' || requested === 'ads') ? requested : 'people';
   const loadsCustomers = view === 'people' || view === 'analytics';
   const params = new URLSearchParams(location.search);
   const [access, setAccess] = useState(params.get('access') || '');
@@ -188,7 +250,10 @@ export function CrmPage() {
       {([['today', 'לטיפול היום'], ['people', 'כל הלקוחות'], ['teachers', 'הנחיות המורה'], ['returning', 'לקוחות חוזרים'], ['messages', 'הודעות קוליות'], ['analytics', 'פעילות בית הספר'], ['costs', 'עלויות ותובנות'], ['site', 'אנליטיקת אתר'], ['ads', 'פרסומות ומעקב']] as const).map(([key, label]) =>
         <a key={key} href={key === 'today' ? base : base + '?view=' + key} aria-current={view === key ? 'page' : undefined}>{label}</a>)}
       {identity?.role === 'owner' && <a href={base + '?view=call-reviews'} aria-current={view === 'call-reviews' ? 'page' : undefined}>סקירת שיחות</a>}
+      <a href={base + '?view=active-calls'} aria-current={view === 'active-calls' ? 'page' : undefined}>שיחות פעילות</a>
     </nav>
+    {view === 'active-calls' && <ActiveVoiceCalls />}
+    {view === 'people' && id && card && <ActiveVoiceCalls key={card.id} customer={card.id} />}
     {identity?.role === 'owner' && (view === 'teachers' || (view === 'people' && card)) &&
       <ContentSafetyPanel key={card?.id ?? 'teachers'} customerId={view === 'people' ? card?.id : undefined} request={api} />}
     {view === 'today' && <CarePanel request={api} base={base} />}{view === 'returning' && <ReturningPractice request={api} owner={identity?.role === 'owner'} base={base} />}

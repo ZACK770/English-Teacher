@@ -9,6 +9,7 @@ import { googleStandardVoices, synthesizeGoogleStandard } from "./pbx-pilot-goog
 type PilotSettings = { model: string; voice: string; capture?: boolean; interruption?: PilotInterruption; endpointMs?: number; speech?: "inworld" | "google" };
 type PilotVersions = { active: PilotSettings; previous?: PilotSettings };
 const PILOT_SETTINGS_KEY = "pilot-settings";
+const SCHOOL_SETTINGS = "school-teacher-settings";
 const GOOGLE_KEY = "pilot-google-tts-key";
 const settingsHeaders = { "Cache-Control": "no-store" };
 
@@ -28,6 +29,13 @@ export class CallSession {
     if (request.method === "GET") {
       const saved = await this.ctx.storage.get<PilotVersions>(PILOT_SETTINGS_KEY);
       const versions = saved ?? { active: defaults };
+      const production = await this.ctx.storage.get<PilotSettings>(SCHOOL_SETTINGS);
+      if (new URL(request.url).pathname === "/v1/internal/school-voice") {
+        const googleKey = production?.speech === "google" ? await this.ctx.storage.get<string>(GOOGLE_KEY) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY : undefined;
+        const { PBX_PILOT_SONIOX_KEY: sonioxKey, PBX_PILOT_OPENROUTER_KEY: openrouterKey, PBX_PILOT_INWORLD_KEY: inworldKey } = this.env;
+        const ready = production && sonioxKey && openrouterKey && inworldKey && (production.speech !== "google" || googleKey);
+        return Response.json(ready ? { ...production, sonioxKey, openrouterKey, inworldKey, googleKey } : null, { headers: settingsHeaders });
+      }
       const active = { ...versions.active, speech: versions.active.speech ?? "inworld", interruption: versions.active.interruption ?? "adaptive", capture: versions.active.capture !== false };
       const headers = settingsHeaders;
       if (new URL(request.url).searchParams.get("export") === "1") {
@@ -58,10 +66,26 @@ export class CallSession {
         }, { headers });
       }
       const googleConfigured = Boolean(await this.ctx.storage.get<string>(GOOGLE_KEY) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY);
-      return Response.json({ ...versions, active, googleConfigured }, { headers });
+      return Response.json({ ...versions, active, googleConfigured, production: production ?? null }, { headers });
     }
     if (request.method !== "PUT") return new Response("Expected GET or PUT", { status: 405 });
     const body = await request.json<Record<string, unknown>>().catch(() => null);
+    if (body?.production === "gemini") {
+      await this.ctx.storage.delete(SCHOOL_SETTINGS);
+      return Response.json({ production: null }, { headers: settingsHeaders });
+    }
+    if (body?.production === "cascade") {
+      return this.ctx.storage.transaction(async transaction => {
+        const saved = await transaction.get<PilotVersions>(PILOT_SETTINGS_KEY);
+        const active = saved?.active ?? defaults;
+        if (!this.env.PBX_PILOT_SONIOX_KEY || !this.env.PBX_PILOT_OPENROUTER_KEY || !this.env.PBX_PILOT_INWORLD_KEY ||
+            (active.speech === "google" && !(await transaction.get<string>(GOOGLE_KEY) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY))) {
+          return Response.json({ error: "חסר חיבור לספק בתמהיל 888." }, { status: 409, headers: settingsHeaders });
+        }
+        await transaction.put(SCHOOL_SETTINGS, { ...active, interruption: active.interruption ?? "adaptive" });
+        return Response.json({ production: active }, { headers: settingsHeaders });
+      });
+    }
     if (!body || (body.rollback !== true && (
       typeof body.model !== "string" || !/^[\w.-]+\/[\w.:-]+$/.test(body.model) || body.model.length > 150 ||
       typeof body.voice !== "string" || !body.voice.trim() || body.voice.length > 100
@@ -125,7 +149,7 @@ export class CallSession {
   }
 
   async fetch(request: Request): Promise<Response> {
-    if (this.env.PBX_CASCADE_PILOT === "1" && new URL(request.url).pathname === "/v1/admin/pilot/settings") {
+    if (this.env.PBX_CASCADE_PILOT === "1" && ["/v1/admin/pilot/settings", "/v1/internal/school-voice"].includes(new URL(request.url).pathname)) {
       return this.pilotSettings(request);
     }
     if (new URL(request.url).pathname === "/stop") {

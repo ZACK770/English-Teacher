@@ -57,6 +57,31 @@ describe("pilot voice lab", () => {
     expect(JSON.stringify(config)).not.toContain("test-provider");
   });
 
+  it("promotes a saved pilot snapshot and can return the production teacher to Gemini", async () => {
+    const values = new Map<string, unknown>([["pilot-settings", { active: { model: "qwen/test", voice: "Amos" } }]]);
+    const storage = {
+      get: async (key: string) => values.get(key),
+      put: async (key: string, value: unknown) => { values.set(key, value); },
+      delete: async (key: string) => values.delete(key),
+      transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(storage),
+    };
+    const env = { ...environment(), PBX_PILOT_ADMIN_TOKEN: "test-admin",
+      PBX_PILOT_SONIOX_KEY: "test-soniox", PBX_PILOT_OPENROUTER_KEY: "test-openrouter", PBX_PILOT_INWORLD_KEY: "test-inworld" };
+    const session = new CallSession({ storage } as unknown as DurableObjectState, env);
+    const headers = { Authorization: "Bearer test-admin" };
+    const choose = (production: string) => session.fetch(new Request(origin + "/v1/admin/pilot/settings", {
+      method: "PUT", headers, body: JSON.stringify({ production }),
+    }));
+    const readPrivate = () => session.fetch(new Request("https://internal.invalid/v1/internal/school-voice", { headers }));
+    const promotion = await choose("cascade");
+    expect(await promotion.text()).not.toContain("test-openrouter");
+    values.set("pilot-settings", { active: { model: "google/new-test", voice: "Eitan" } });
+    expect(await (await readPrivate()).json()).toMatchObject({ model: "qwen/test", openrouterKey: "test-openrouter" });
+    expect((await pilot.fetch(new Request(origin + "/v1/internal/school-voice", { headers }), env)).status).toBe(404);
+    expect(await (await choose("gemini")).json()).toEqual({ production: null });
+    expect(await (await readPrivate()).json()).toBeNull();
+  });
+
   it("checks the origin and uses a Google key only in the provider request", async () => {
     const synthesize = vi.fn(async () => Response.json({ audioContent: "dGVzdA==" }));
     vi.stubGlobal("fetch", synthesize);

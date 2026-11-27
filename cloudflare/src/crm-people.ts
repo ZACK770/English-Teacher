@@ -228,6 +228,48 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
     if (!sub) throw new HttpError(404, "המנוי לא נמצא");
     return Response.json(sub, { headers: { "Cache-Control": "no-store" } });
   }
+  const live = path.match(/^\/v1\/admin\/crm\/active-calls(?:\/([^/]+))?$/);
+  const detail = path.match(/^\/v1\/admin\/crm\/calls\/([^/]+)\/details$/);
+  if (live || detail) {
+    if (request.method !== "GET") throw new HttpError(405, "פעולה לא נתמכת");
+    const ok = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
+    if (live) {
+      const customer = live[1] ? decodeURIComponent(live[1]) : null;
+      const { results } = await env.DB.prepare(`
+        SELECT c.call_id, c.customer_id, c.created_at AS started_at,
+          COALESCE(b.label, c.bot_id) AS teacher, u.name
+        FROM active_calls a
+        JOIN call_customers c ON c.call_id=a.call_id OR
+          (instr(c.call_id, a.call_id || '~')=1 AND c.created_at>=strftime('%Y-%m-%dT%H:%M:%fZ', a.acquired_at, 'unixepoch'))
+        LEFT JOIN bots b ON b.id=c.bot_id LEFT JOIN customers u ON u.id=c.customer_id
+        WHERE a.lease_expires_at>? AND c.channel='phone' AND (? IS NULL OR c.customer_id=?)
+          AND EXISTS (SELECT 1 FROM latency_events e WHERE e.call_id=c.call_id AND e.event_name='session_started'
+            AND e.created_at>=strftime('%Y-%m-%dT%H:%M:%fZ', a.acquired_at, 'unixepoch'))
+        ORDER BY c.created_at DESC LIMIT 100
+      `).bind(Date.now() / 1000, customer, customer).all();
+      return ok({ calls: results });
+    }
+    const id = decodeURIComponent(detail![1]);
+    if (!await env.DB.prepare("SELECT 1 FROM call_customers WHERE call_id=? UNION ALL SELECT 1 FROM sessions WHERE call_id=? LIMIT 1").bind(id, id).first()) {
+      throw new HttpError(404, "השיחה לא נמצאה");
+    }
+    const [turns, events, session] = await env.DB.batch<Row>([
+      env.DB.prepare("SELECT direction,text FROM conversation_turns WHERE call_id=? ORDER BY id LIMIT 2000").bind(id),
+      env.DB.prepare(`SELECT event_name,since_call_start_ms,details_json FROM latency_events WHERE call_id=?
+        AND event_name IN ('session_started','school_voice_selected','gemini_connect_started','first_audio_sent_to_phone',
+        'tutor_interrupted','pilot_interruption_candidate','pilot_interruption_resumed','pilot_turn_to_audio','pilot_tool',
+        'pilot_usage','cascade_usage','session_saved','crm_usage') ORDER BY id LIMIT 1000`).bind(id),
+      env.DB.prepare(`SELECT model,duration_seconds,transcript_json,input_text_tokens,output_text_tokens,input_audio_tokens,
+        output_audio_tokens,thoughts_tokens,estimated_cost_usd,cost_basis FROM sessions WHERE call_id=?`).bind(id),
+    ]);
+    const stored = session.results[0];
+    const { transcript_json, ...summary } = stored ?? {};
+    return ok({
+      turns: parse(transcript_json, null) ?? turns.results.map(turn => ({ role: turn.direction === "input" ? "learner" : "tutor", text: turn.text })),
+      events: events.results.map(({ details_json, ...event }) => ({ ...event, details: parse(details_json, {}) })),
+      summary: stored ? summary : null,
+    });
+  }
   const match = path.match(/^\/v1\/admin\/crm\/(people(?:\/([^/]+))?|calls\/([^/]+)\/transcript|analytics|returning|calls)$/);
   if (!match) return null;
   if (request.method !== "GET" && !(request.method === "DELETE" && match[2])) throw new HttpError(405, "פעולה לא נתמכת");
