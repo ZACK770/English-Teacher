@@ -1,4 +1,5 @@
-import { b64encode, concat, downsample24kTo8k, FRAME_BYTES, meanSquare, wav, wavToPcm } from './audio';
+import { b64encode, concat, FRAME_BYTES, meanSquare, wav } from './audio';
+import { normalizedYiddishWav, telephoneYiddishFrames } from './yiddish-wav';
 import { parseStartFrame } from './technoline';
 import type { Env } from './env';
 
@@ -14,15 +15,15 @@ const sleep=(ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms));
 const headers=(env:Env)=>({Authorization:'Bearer '+env.YIDDISH_TOOLS_API_KEY});
 export async function yiddishSpeech(env:Env, text:string, voice:string, signal:AbortSignal) {
   const response=await fetch(api+'speech/stream',{method:'POST',headers:{...headers(env),'Content-Type':'application/json','Accept':'audio/wav','User-Agent':'SpeakCall/1.0'},body:JSON.stringify({text,voice}),signal});
-  if(!response.ok || !response.headers.get('Content-Type')?.includes('audio/wav')) throw new Error('tts_failed_'+response.status);
+  if(!response.ok) throw new Error('tts_failed_'+response.status);
+  if(!response.body || !/audio\/(?:x-)?wav|application\/octet-stream/i.test(response.headers.get('Content-Type')||'')) throw new Error('audio_format');
   return response;
 }
 export async function yiddishPreview(env:Env,text:string,voice:string) {
   if(!env.YIDDISH_TOOLS_API_KEY) return json({error:'Yiddish Tools אינו מוגדר בשרת'},503);
   const start=Date.now(); const response=await yiddishSpeech(env,text,voice,AbortSignal.timeout(15000));
-  const data=new Uint8Array(await response.arrayBuffer());
-  const pcm=wavToPcm(data); if(!pcm.length) throw new Error('empty_audio');
-  return json({audio:b64encode(wav(pcm,24000)),mime:'audio/wav',ms:Date.now()-start,characters:Array.from(text).length});
+  const {audio,durationSeconds}=await normalizedYiddishWav(response.body!);
+  return json({audio:b64encode(audio),mime:'audio/wav',ms:Date.now()-start,characters:Array.from(text).length,durationSeconds,bytes:audio.length});
 }
 async function transcribe(env:Env,pcm:Uint8Array,signal:AbortSignal) {
   const form=new FormData();form.set('audio',new Blob([wav(pcm,8000)],{type:'audio/wav'}),'turn.wav');form.set('enhance','0');
@@ -78,9 +79,17 @@ export class YiddishChannel {
       return json(await publicConfig(config));
     }
     if(path==='/preview'&&request.method==='POST') {
-      const b=await request.json<{text?:unknown;voice?:unknown}>().catch(()=>null);
-      if(!b||typeof b.text!=='string'||!b.text.trim()||b.text.length>1000||!isYiddishVoice(b.voice))return json({error:'הזן טקסט וקול תקינים'},400);
-      try{const result=await yiddishPreview(effective(config),b.text,b.voice);if(result.ok)await this.state.storage.delete('last_error');return result;}catch(error){return json({error:error instanceof Error&&/^tts_failed_\d{3}$/.test(error.message)?error.message:'ההקראה נכשלה'},502);}
+      const b=await request.json<{text?:unknown;voice?:unknown;speechKey?:unknown}>().catch(()=>null);
+      if(!b||typeof b.text!=='string'||!b.text.trim()||b.text.length>1000||!isYiddishVoice(b.voice)||(b.speechKey!==undefined&&(typeof b.speechKey!=='string'||b.speechKey.length<8||b.speechKey.length>512)))return json({error:'הזן טקסט, קול ומפתח תקינים'},400);
+      try{
+        const result=await yiddishPreview(effective({...config,...(typeof b.speechKey==='string'?{speechKey:b.speechKey}:{})}),b.text,b.voice);
+        if(result.ok){
+          if(typeof b.speechKey==='string'){const speechKey=b.speechKey;await this.state.storage.transaction(async tx=>{const latest=await tx.get<Config>('config')??config;await tx.put('config',{...latest,speechKey});});}
+          await this.state.storage.delete('last_error');
+        }
+        return result;
+      }catch(error){const reason=error instanceof Error&&/^tts_failed_\d{3}$|^audio_format$/.test(error.message)?error.message:'provider_error';await this.state.storage.put('last_error',reason);return json({error:reason==='tts_failed_401'?'Yiddish Tools דחה את המפתח (401). הדבק את מפתח הספק עצמו ולחץ האזן או שמור.':reason==='audio_format'?'הספק החזיר שמע בפורמט לא נתמך':reason},502);}
+
     }
     if(!path.startsWith('/v1/technoline/')||!channelId(id))return new Response('Not found',{status:404});
     const callEnv=effective(config);
@@ -92,17 +101,18 @@ export class YiddishChannel {
     const finish=()=>{if(closed)return;closed=true;abort.abort();clearTimeout(startTimer);clearTimeout(limitTimer);if(ownsCall)this.active=false;try{socket.close(1000,'Call ended');}catch{}};
     const startTimer=setTimeout(finish,5000),limitTimer=setTimeout(()=>{try{socket.send(JSON.stringify({type:'hangup'}));}finally{finish();}},300000);
     const speak=async(text:string)=>{
-      const res=await yiddishSpeech(callEnv,text,config.voice,abort.signal);const reader=res.body!.getReader();let pending:Uint8Array=new Uint8Array(),header:Uint8Array=new Uint8Array(),gotHeader=false,carry:Uint8Array=new Uint8Array(),odd:Uint8Array=new Uint8Array();let next=Date.now();
-      try{while(!closed){const {done,value}=await reader.read();if(done)break;let chunk=value;if(!gotHeader){header=concat([header,chunk]);if(header.length<44)continue;const view=new DataView(header.buffer);if(String.fromCharCode(...header.subarray(0,4))!=='RIFF'||view.getUint32(24,true)!==24000||view.getUint16(22,true)!==1||view.getUint16(34,true)!==16||String.fromCharCode(...header.subarray(36,40))!=='data')throw new Error('audio_format');chunk=header.subarray(44);gotHeader=true;}
-        const combined=concat([odd,chunk]);odd=combined.slice(combined.length-combined.length%2);const [pcm,remainder]=downsample24kTo8k(combined.subarray(0,combined.length-combined.length%2),carry);carry=remainder;pending=concat([pending,pcm]);while(pending.length>=FRAME_BYTES&&!closed){await sleep(Math.max(0,next-Date.now()));if(closed)break;socket.send(pending.slice(0,FRAME_BYTES));pending=pending.slice(FRAME_BYTES);next=Math.max(next+20,Date.now());}}
-        if(pending.length&&!closed){await sleep(Math.max(0,next-Date.now()));if(!closed){const frame=new Uint8Array(FRAME_BYTES);frame.set(pending);socket.send(frame);}}}finally{await reader.cancel().catch(()=>{});}
+      const res=await yiddishSpeech(callEnv,text,config.voice,AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]));let next=Date.now(),frames=0;
+      for await(const frame of telephoneYiddishFrames(res.body!)){
+        if(closed)break;await sleep(Math.max(0,next-Date.now()));if(closed)break;socket.send(frame);frames++;next=Math.max(next+20,Date.now());
+      }
+      if(!closed&&!frames)throw new Error('audio_format');
     };
     const fail=async(error?:unknown)=>{if(closed)return;const reason=error instanceof Error && /^(tts_failed_\d{3}|audio_format|stt_submit|stt_poll|stt_failed|stt_timeout|model_failed|empty_model)$/.test(error.message)?error.message:'provider_error';await this.state.storage.put('last_error',reason).catch(()=>{});try{await speak('אַנטשולדיקט, ס׳איז אַ טעכנישע פּראָבלעם. פּרוּווט ווידער שפּעטער.');}catch{}try{socket.send(JSON.stringify({type:'hangup',reason}));}finally{finish();}};
     const handle=async(pcm:Uint8Array)=>{busy=true;try{const text=await transcribe(callEnv,pcm,abort.signal);if(closed)return;if(!text){await speak('זאָג עס נאָך אַ מאָל, ביטע.');return;}history.push({role:'user',content:text});const reply=await teach(callEnv,history,abort.signal,config);history.push({role:'assistant',content:reply});await speak(reply);}catch(error){await fail(error);}finally{busy=false;}};
     socket.addEventListener('close',finish);socket.addEventListener('error',finish);
     socket.addEventListener('message',event=>{
       if(closed)return;
-      if(!started){if(typeof event.data!=='string'){finish();return;}try{parseStartFrame(event.data,token);}catch{finish();return;}if(this.active){finish();return;}this.active=true;ownsCall=true;started=true;clearTimeout(startTimer);busy=true;this.state.waitUntil(speak(config.greeting||DEFAULT_GREETING).catch(error=>{return fail(error);}).finally(()=>{busy=false;}));return;}
+      if(!started){if(typeof event.data!=='string'){finish();return;}try{parseStartFrame(event.data,token);}catch{finish();return;}if(this.active){finish();return;}this.active=true;ownsCall=true;started=true;clearTimeout(startTimer);busy=true;this.state.waitUntil(speak(config.greeting||DEFAULT_GREETING).then(()=>this.state.storage.delete('last_error')).catch(error=>{return fail(error);}).finally(()=>{busy=false;}));return;}
       if(typeof event.data==='string'){try{if(['stop','hangup','end'].includes(JSON.parse(event.data).type))finish();}catch{}return;}
       if(busy||!(event.data instanceof ArrayBuffer)||event.data.byteLength!==FRAME_BYTES)return;
       const frame=new Uint8Array(event.data);const loud=meanSquare(frame)>550*550;

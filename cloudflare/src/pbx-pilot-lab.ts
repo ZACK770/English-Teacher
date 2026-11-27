@@ -70,7 +70,7 @@ async function preview(request: Request, env: Env) {
   }
   const key = typeof body.key === "string" ? body.key.trim() : "";
   const signal = AbortSignal.timeout(12_000);
-  if (body.mode === "yiddish" && isYiddishVoice(body.voice)) return yiddishPreview(env, body.text, body.voice);
+  if (body.mode === "yiddish" && isYiddishVoice(body.voice)) return yiddishPreview({...env,YIDDISH_TOOLS_API_KEY:key||env.YIDDISH_TOOLS_API_KEY}, body.text, body.voice);
   if (body.mode === "model" && models.some(model => model.id === body.model)) {
     const credential = key || env.PBX_PILOT_OPENROUTER_KEY;
     if (!credential) return json({ error: "הדבק מפתח OpenRouter קיים בשדה מפתח ספק, או השאר ריק כשהוא מוגדר בשרת." }, 400);

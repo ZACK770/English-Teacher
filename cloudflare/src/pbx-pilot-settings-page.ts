@@ -35,7 +35,7 @@ fieldset{border:1px solid #e2e8ec;border-radius:12px;margin:16px 0;padding:14px}
 <header><h1>מעבדת הקול של ספיקול</h1><a href="/dashboard">ממשק הניהול</a></header>
 <div id="access" class="status" role="status"></div>
 <section><h2>מנהל ערוצי הקול</h2><div class="line"><button class="secondary" id="channel-english">אנגלית · 1 / 888</button><button class="secondary" id="channel-yiddish">ערוצים עצמאיים</button></div><p class="status">כל ערוץ עצמאי שומר הגדרות ומפתחות משלו. שינוי אינו משפיע על 1 או 888.</p><label for="channel-select">בחר ערוץ עצמאי לעריכה</label><select id="channel-select"><option value="yiddish">יידיש</option></select><details><summary>צור ערוץ חדש</summary><label for="new-channel-name">שם הערוץ</label><input id="new-channel-name" maxlength="60"><label for="new-channel-id">מזהה באנגלית (אותיות קטנות, ספרות ומקף)</label><input id="new-channel-id" dir="ltr" maxlength="40"><button id="create-channel">צור ערוץ</button></details><p id="channel-status" class="status"></p></section>
-<section id="yiddish-panel" hidden><h2 id="channel-heading">הגדרות ערוץ לחיוג הבא</h2><p>תמהיל Cascade · תמלול והקראה Yiddish Tools · מודל OpenRouter</p><label for="yiddish-model">מודל המורה</label><select id="yiddish-model"><option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option><option value="openai/gpt-4.1-mini">GPT-4.1 mini</option><option value="qwen/qwen3-235b-a22b-2507">Qwen 3 235B</option></select><label for="yiddish-voice">קול בטלפון</label><select id="yiddish-voice"></select><label for="yiddish-prompt">הנחיות המורה</label><textarea id="yiddish-prompt" maxlength="6000" rows="5"></textarea><label for="yiddish-greeting">משפט פתיחה</label><textarea id="yiddish-greeting" maxlength="500"></textarea><fieldset><legend>חיבורים קבועים לערוץ</legend><label for="yiddish-channel-token">אסימון אירוע start מטכנוליין</label><input id="yiddish-channel-token" type="password" autocomplete="off"><label for="yiddish-speech-key">מפתח API של Yiddish Tools</label><input id="yiddish-speech-key" type="password" autocomplete="off"><label for="yiddish-model-key">מפתח OpenRouter (אופציונלי אם מוגדר בשרת)</label><input id="yiddish-model-key" type="password" autocomplete="off"><p class="status">שדות ריקים בשמירה משאירים את הערכים הקיימים. המפתחות נשמרים בשרת ואינם מוצגים מחדש.</p></fieldset><label for="yiddish-wss">כתובת WSS · קבועה לערוץ</label><input id="yiddish-wss" dir="ltr" readonly><button id="copy-yiddish-wss" class="secondary">העתק כתובת</button><button id="yiddish-save" disabled>שמור לערוץ בלבד</button><label for="channel-sample">בדיקת שמע עם המפתח השמור</label><textarea id="channel-sample" maxlength="1000">שלום עליכם! ווי גייט עס דיר היינט?</textarea><button id="yiddish-listen" class="secondary">האזן לקול בדפדפן</button><audio id="channel-audio" controls hidden></audio><p id="yiddish-status" role="status"></p><p class="status">התמלול הניסיוני אינו בהזרמה ולכן תגובת המורה עשויה להתעכב.</p></section>
+<section id="yiddish-panel" hidden><h2 id="channel-heading">הגדרות ערוץ לחיוג הבא</h2><p>תמהיל Cascade · תמלול והקראה Yiddish Tools · מודל OpenRouter</p><label for="yiddish-model">מודל המורה</label><select id="yiddish-model"><option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option><option value="openai/gpt-4.1-mini">GPT-4.1 mini</option><option value="qwen/qwen3-235b-a22b-2507">Qwen 3 235B</option></select><label for="yiddish-voice">קול בטלפון</label><select id="yiddish-voice"></select><label for="yiddish-prompt">הנחיות המורה</label><textarea id="yiddish-prompt" maxlength="6000" rows="5"></textarea><label for="yiddish-greeting">משפט פתיחה</label><textarea id="yiddish-greeting" maxlength="500"></textarea><fieldset><legend>חיבורים קבועים לערוץ</legend><label for="yiddish-channel-token">אסימון אירוע start מטכנוליין</label><input id="yiddish-channel-token" type="password" autocomplete="off"><label for="yiddish-speech-key">מפתח API של Yiddish Tools</label><input id="yiddish-speech-key" type="password" autocomplete="off"><label for="yiddish-model-key">מפתח OpenRouter (אופציונלי אם מוגדר בשרת)</label><input id="yiddish-model-key" type="password" autocomplete="off"><p class="status">שדות ריקים בשמירה משאירים את הערכים הקיימים. המפתחות נשמרים בשרת ואינם מוצגים מחדש.</p></fieldset><label for="yiddish-wss">כתובת WSS · קבועה לערוץ</label><input id="yiddish-wss" dir="ltr" readonly><button id="copy-yiddish-wss" class="secondary">העתק כתובת</button><button id="yiddish-save" disabled>שמור לערוץ בלבד</button><label for="channel-sample">בדיקת שמע עם המפתח השמור</label><textarea id="channel-sample" maxlength="1000">שלום עליכם! ווי גייט עס דיר היינט?</textarea><button id="yiddish-listen" class="secondary">האזן לקול בדפדפן</button><audio id="channel-audio" controls preload="metadata" hidden></audio><a id="channel-download" download="speakcall-yiddish.wav" hidden>הורד קובץ WAV</a><p id="yiddish-status" role="status"></p><p class="status">התמלול הניסיוני אינו בהזרמה ולכן תגובת המורה עשויה להתעכב.</p></section>
 <div class="layout" id="english-layout">
 <div>
 <section>
@@ -104,7 +104,7 @@ fieldset{border:1px solid #e2e8ec;border-radius:12px;margin:16px 0;padding:14px}
 <label for="sample">טקסט לבדיקה</label><textarea id="sample" maxlength="1000">Yesterday I go to the store.</textarea>
 <button id="preview" disabled>הפעל בדיקה</button> <button class="secondary" id="use-google-phone" hidden>בחר את הקול הזה לטלפון</button>
 <div id="preview-status" class="status" role="status"></div>
-<div id="answer" dir="auto"></div><audio id="audio" controls hidden></audio>
+<div id="answer" dir="auto"></div><audio id="audio" controls preload="metadata" hidden></audio><a id="preview-download" hidden>הורד קובץ שמע</a>
 </section>
 </div>
 <section>
@@ -225,19 +225,30 @@ function updatePreview() {
   options('preview-choice', isModel ? catalog.models : catalog.voices[mode]);
   if (mode === 'yiddish') $('sample').value = 'שלום עליכם! ווי גייט עס דיר היינט? איך וויל לערנען מיט דיר אַ ביסל ייִדיש.';
   $('key').value = '';
-  $('key').placeholder = mode === 'google' ? 'הדבק כאן מפתח Google Cloud Text-to-Speech' : 'אופציונלי · החיבור הקיים כבר מוגדר';
+  $('key').placeholder = mode === 'google' ? 'הדבק כאן מפתח Google Cloud Text-to-Speech' : mode === 'yiddish' ? 'מפתח Yiddish Tools · יישמר בערוץ לאחר בדיקה מוצלחת' : 'אופציונלי · החיבור הקיים כבר מוגדר';
   $('prompt').hidden = $('prompt-label').hidden = !isModel;
   write('choice-label', isModel ? 'מודל' : 'קול');
+}
+function resetAudio(audioId,linkId){const audio=$(audioId),link=$(linkId);audio.pause();if(audio.dataset.url){URL.revokeObjectURL(audio.dataset.url);delete audio.dataset.url;}audio.removeAttribute('src');audio.hidden=true;link.removeAttribute('href');link.hidden=true;}
+async function presentAudio(data,audioId,linkId,statusId){
+  if(!data.audio)throw new Error('לא התקבלו נתוני שמע');resetAudio(audioId,linkId);
+  const audio=$(audioId),link=$(linkId);const mime=data.mime||'audio/mpeg';const raw=atob(data.audio);const bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));if(bytes.length<44)throw new Error('קובץ השמע שהתקבל ריק');
+  const url=URL.createObjectURL(new Blob([bytes],{type:mime}));audio.dataset.url=url;audio.hidden=false;link.href=url;link.download='speakcall-preview.'+(mime==='audio/wav'?'wav':'mp3');link.hidden=false;
+  const ready=new Promise((resolve,reject)=>{const cleanup=()=>{clearTimeout(timer);audio.removeEventListener('loadedmetadata',ok);audio.removeEventListener('error',fail);};const ok=()=>{cleanup();resolve();};const fail=()=>{cleanup();reject(new Error('הדפדפן לא הצליח לפענח את השמע. ניתן להוריד את הקובץ.'));};const timer=setTimeout(fail,7000);audio.addEventListener('loadedmetadata',ok,{once:true});audio.addEventListener('error',fail,{once:true});});
+  audio.src=url;audio.load();await ready;
+  const duration=Number.isFinite(audio.duration)?audio.duration:data.durationSeconds;
+  write(statusId,'שמע מוכן · '+(duration?duration.toFixed(1)+' שניות · ':'')+data.ms+' ms · לחץ על נגן או הורד את הקובץ');
+  try{await audio.play();}catch{ /* Safari/Chrome may require a second deliberate click. */ }
 }
 async function preview() {
   $('preview').disabled = true;
   write('preview-status', 'מחכה לתשובה מהספק…');
   write('answer', '');
-  $('audio').hidden = true;
-  $('audio').removeAttribute('src');
+  resetAudio('audio','preview-download');
   try {
     const mode = $('mode').value;
-    const data = await api('preview', 'POST', { mode, key:$('key').value, text:$('sample').value,
+    const enteredKey=$('key').value.trim();
+    const data = mode==='yiddish' ? await api(channelApi('preview'),'POST',{text:$('sample').value,voice:$('preview-choice').value,...(enteredKey?{speechKey:enteredKey}:{})}) : await api('preview', 'POST', { mode, key:$('key').value, text:$('sample').value,
       model:$('preview-choice').value, voice:$('preview-choice').value, prompt:$('prompt').value,
       ...(mode === 'inworld' ? {language:$('preview-language').value, ttsModel:$('preview-tts-model').value} : {}) });
     write('preview-status', data.ms + ' אלפיות שנייה' + (data.usage ?
@@ -245,11 +256,7 @@ async function preview() {
       (typeof data.usage.cost === 'number' ? ' · ' + money(data.usage.cost) : '') :
       data.characters ? ' · ' + data.characters + ' תווים' : ''));
     if (data.text) write('answer', data.text);
-    if (data.audio) {
-      $('audio').src = 'data:' + (data.mime || 'audio/mpeg') + ';base64,' + data.audio;
-      $('audio').hidden = false;
-      $('audio').play().catch(() => {});
-    }
+    if (data.audio) {if(mode==='yiddish'&&enteredKey){$('key').value='';$('yiddish-speech-key').placeholder='מפתח שמור · ריק לשמירתו';}await presentAudio(data,'audio','preview-download','preview-status');}
   } catch (error) { write('preview-status', error.message); }
   finally { $('preview').disabled = false; }
 }
@@ -448,7 +455,7 @@ $('channel-select').onchange=()=>{currentChannel=$('channel-select').value;$('ch
 $('create-channel').onclick=async()=>{try{const id=$('new-channel-id').value.trim();await api('channels','POST',{id,name:$('new-channel-name').value.trim()});currentChannel=id;await loadChannels();$('channel-yiddish').click();write('channel-status','הערוץ נוצר');}catch(error){write('channel-status',error.message);}};
 $('copy-yiddish-wss').onclick=()=>{navigator.clipboard.writeText($('yiddish-wss').value).catch(()=>{$('yiddish-wss').select();});};
 $('yiddish-save').onclick=async()=>{$('yiddish-save').disabled=true;try{const body={voice:$('yiddish-voice').value,model:$('yiddish-model').value,prompt:$('yiddish-prompt').value,greeting:$('yiddish-greeting').value};for(const [field,id] of [['token','yiddish-channel-token'],['speechKey','yiddish-speech-key'],['modelKey','yiddish-model-key']]){const value=$(id).value.trim();if(value)body[field]=value;}showChannelSettings(await api(channelApi('settings'),'PUT',body));}catch(error){write('yiddish-status',error.message);}finally{$('yiddish-save').disabled=false;}};
-$('yiddish-listen').onclick=async()=>{$('yiddish-listen').disabled=true;write('yiddish-status','ממתין לספק…');try{const result=await api(channelApi('preview'),'POST',{text:$('channel-sample').value,voice:$('yiddish-voice').value});$('channel-audio').hidden=false;$('channel-audio').src='data:'+result.mime+';base64,'+result.audio;await $('channel-audio').play().catch(()=>{});write('yiddish-status','שמע התקבל · '+result.ms+' ms');}catch(error){write('yiddish-status',error.message);}finally{$('yiddish-listen').disabled=false;}};
+$('yiddish-listen').onclick=async()=>{$('yiddish-listen').disabled=true;write('yiddish-status','ממתין לספק…');resetAudio('channel-audio','channel-download');try{const key=$('yiddish-speech-key').value.trim();const result=await api(channelApi('preview'),'POST',{text:$('channel-sample').value,voice:$('yiddish-voice').value,...(key?{speechKey:key}:{})});if(key){$('yiddish-speech-key').value='';$('yiddish-speech-key').placeholder='מפתח שמור · ריק לשמירתו';}await presentAudio(result,'channel-audio','channel-download','yiddish-status');}catch(error){write('yiddish-status',error.message);}finally{$('yiddish-listen').disabled=false;}};
 (async () => {
   try {
     const settings = await api('settings');
@@ -470,6 +477,6 @@ export function pilotSettingsPage(): Response {
   return new Response(html, { headers: {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src data:; frame-ancestors 'self'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src data: blob:; frame-ancestors 'self'",
   } });
 }
