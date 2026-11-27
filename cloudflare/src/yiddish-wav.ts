@@ -39,12 +39,14 @@ export async function normalizedYiddishWav(stream:ReadableStream<Uint8Array>) {
   const parts:Uint8Array[]=[];for await(const pcm of yiddishPcm(stream))parts.push(pcm);const data=concat(parts);return {audio:wav(data,24000),durationSeconds:data.length/48000};
 }
 
-export async function* telephoneYiddishFrames(stream:ReadableStream<Uint8Array>):AsyncGenerator<Uint8Array>{
+export async function* pcm24kTelephoneFrames(chunks:AsyncIterable<Uint8Array>):AsyncGenerator<Uint8Array>{
   let carry:Uint8Array=new Uint8Array(),pending:Uint8Array=new Uint8Array();
-  for await(const chunk of yiddishPcm(stream)){
+  for await(const chunk of chunks){
     const [pcm,remainder]=downsample24kTo8k(chunk,carry);carry=remainder;const combined=concat([pending,pcm]);let offset=0;
     while(offset+FRAME_BYTES<=combined.length){yield combined.slice(offset,offset+FRAME_BYTES);offset+=FRAME_BYTES;}
     pending=combined.slice(offset);
   }
   if(pending.length){const frame=new Uint8Array(FRAME_BYTES);frame.set(pending);yield frame;}
 }
+
+export function telephoneYiddishFrames(stream:ReadableStream<Uint8Array>){return pcm24kTelephoneFrames(yiddishPcm(stream));}
