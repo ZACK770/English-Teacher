@@ -35,6 +35,14 @@ export class AsyncQueue<T> {
 
   get size() { return this.bytes; }
 
+  discard(predicate: (value: T) => boolean) {
+    this.values = this.values.filter((value) => {
+      if (!predicate(value)) return true;
+      this.bytes -= this.sizeOf(value);
+      return false;
+    });
+  }
+
   next(signal?: AbortSignal): Promise<T | null> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     const value = this.values.shift();

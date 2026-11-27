@@ -20,8 +20,21 @@ export class SessionMeter {
   private outputText = 0;
   private outputAudio = 0;
   private thoughts = 0;
+  private cascade = false;
+  private cascadeLlm = 0;
+  private cascadeTts = 0;
+
+  useCascade() { this.cascade = true; }
 
   recordUsage(usage: Record<string, unknown>) {
+    if (this.cascade) {
+      const cost = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+      this.cascadeLlm += cost(usage.cascade_llm_usd);
+      this.cascadeTts += cost(usage.cascade_tts_usd);
+      this.inputText += number(usage.cascade_input_tokens);
+      this.outputText += number(usage.cascade_output_tokens);
+      return;
+    }
     const inputText = modality(usage.promptTokensDetails, "TEXT");
     const inputAudio = modality(usage.promptTokensDetails, "AUDIO");
     const outputText = modality(usage.responseTokensDetails, "TEXT");
@@ -61,7 +74,10 @@ export class SessionMeter {
   usage(s: Settings): UsageTotals {
     let cost: number;
     let basis: string;
-    if (this.inputText || this.inputAudio || this.outputText || this.outputAudio || this.thoughts) {
+    if (this.cascade) {
+      cost = this.cascadeCosts().total;
+      basis = "cascade_llm_reported_audio_estimated";
+    } else if (this.inputText || this.inputAudio || this.outputText || this.outputAudio || this.thoughts) {
       cost = (this.inputText * s.pricing.inputText + this.inputAudio * s.pricing.inputAudio + (this.outputText + this.thoughts) * s.pricing.outputText + this.outputAudio * s.pricing.outputAudio) / 1_000_000;
       basis = "gemini_usage_metadata";
     } else {
@@ -69,5 +85,11 @@ export class SessionMeter {
       basis = cost ? "audio_duration_estimate" : "none";
     }
     return { input_text_tokens: this.inputText, input_audio_tokens: this.inputAudio, output_text_tokens: this.outputText, output_audio_tokens: this.outputAudio, thoughts_tokens: this.thoughts, estimated_cost_usd: Math.round(cost * 1e8) / 1e8, cost_basis: basis };
+  }
+
+  cascadeCosts() {
+    const sttEstimated = this.inputAudioBytes * 0.12 / (32000 * 3600);
+    return { stt_estimated_usd: sttEstimated, llm_reported_usd: this.cascadeLlm,
+      tts_estimated_usd: this.cascadeTts, total: sttEstimated + this.cascadeLlm + this.cascadeTts };
   }
 }

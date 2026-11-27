@@ -1,0 +1,27 @@
+name = "english-teacher-pilot-888"
+account_id = "da53b4cd888030bba791621ea1a39f8c"
+main = "src/pbx-pilot-entry.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+keep_vars = true
+
+[vars]
+PBX_CASCADE_PILOT = "1"
+CONTENT_SAFETY_MODE = "on"
+STORE_TRANSCRIPTS = "0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "english-teacher-pilot-888"
+database_id = "d7ac0fcf-9eac-48bc-88f6-71789d3d691b"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "CALLS"
+class_name = "CallSession"
+
+[[migrations]]
+tag = "pilot-v1"
+new_sqlite_classes = ["CallSession"]

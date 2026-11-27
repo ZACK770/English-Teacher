@@ -1,8 +1,10 @@
 import { TutorSession } from "./session";
 import { type Env, settings, randomHex } from "./env";
+import { pilotLog } from "./pbx-pilot-log";
 
 export class CallSession {
   private session: TutorSession | null = null;
+  private pilotPending = false;
 
   constructor(private ctx: DurableObjectState, private env: Env) {}
 
@@ -13,12 +15,29 @@ export class CallSession {
       return Response.json({ stopping: true }, { status: 202 });
     }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("Expected WebSocket", { status: 426 });
-    if (this.session) return new Response("Call already active", { status: 409 });
+    const isPilot = this.env.PBX_CASCADE_PILOT === "1";
+    const trace = (stage: Parameters<typeof pilotLog>[1], details?: Parameters<typeof pilotLog>[2]) => {
+      if (isPilot) this.ctx.waitUntil(pilotLog(this.env, stage, details));
+    };
+    if (this.session || this.pilotPending) {
+      trace("socket_busy");
+      return new Response("Call already active", { status: 409 });
+    }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     server.accept();
+    trace("socket_accepted");
     let started = false;
-    const timeout = setTimeout(() => { if (!started) server.close(1008, "Start frame timeout"); }, 10000);
+    let expired = false;
+    if (isPilot) this.pilotPending = true;
+    const timeout = setTimeout(() => {
+      if (!started) {
+        expired = true;
+        trace("start_timeout");
+        if (isPilot) this.pilotPending = false;
+        server.close(1008, "Start frame timeout");
+      }
+    }, 10000);
     const s = settings(this.env);
     const profile = request.headers.get("X-Profile");
     let incoming: Promise<void> = Promise.resolve();
@@ -42,6 +61,7 @@ export class CallSession {
     }
     const shared = request.headers.get("X-Shared-Router") === "1";
     server.addEventListener("message", (event) => {
+      if (expired) return;
       if (started) {
         incoming = incoming.then(async () => {
           const data = event.data as string | ArrayBuffer | Blob;
@@ -50,16 +70,34 @@ export class CallSession {
         return;
       }
       started = true;
+      if (isPilot) this.pilotPending = false;
       clearTimeout(timeout);
-      if (typeof event.data !== "string" || event.data.length > 16384) { server.close(1008, "Invalid start frame"); return; }
+      if (typeof event.data !== "string" || event.data.length > 16384) {
+        trace("start_rejected", { text_frame: typeof event.data === "string" });
+        server.close(1008, "Invalid start frame");
+        return;
+      }
+      trace("start_received");
       const session = new TutorSession(server, this.env, s, this.ctx.id.toString(), request.headers.get("Authorization"));
       this.session = session;
       this.ctx.waitUntil(session.run(event.data, profile, shared).catch(() => {
         try { server.close(1011, "Call failed"); } catch { /* peer closed */ }
       }).finally(() => { this.session = null; }));
     });
-    server.addEventListener("close", event => { clearTimeout(timeout); this.session?.pbxClosed(event); });
-    server.addEventListener("error", () => { clearTimeout(timeout); this.session?.stop("pbx_transport_error", true); });
+    server.addEventListener("close", event => {
+      clearTimeout(timeout);
+      trace("socket_closed", { code: event.code, start_received: started });
+      if (expired) return;
+      if (isPilot && !started) this.pilotPending = false;
+      else this.session?.pbxClosed(event);
+    });
+    server.addEventListener("error", () => {
+      clearTimeout(timeout);
+      trace("socket_error", { start_received: started });
+      if (expired) return;
+      if (isPilot && !started) this.pilotPending = false;
+      else this.session?.stop("pbx_transport_error", true);
+    });
     return new Response(null, { status: 101, webSocket: client });
   }
 }

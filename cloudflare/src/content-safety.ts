@@ -2,6 +2,7 @@ import { b64encode, concat, wav } from "./audio";
 import { normalizedPhone } from "./business";
 import { type Env, HttpError } from "./env";
 import { CONTENT_SUSPENDED_MESSAGE, CONTENT_BLOCKED_MESSAGE } from "../../src/contentSafetyCopy";
+import { RESTRICTED_CONTENT } from "./content-rules";
 
 export const STRIKE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const GLOBAL = "teachers";
@@ -20,6 +21,13 @@ type AdminIdentity = { username: string; role: "owner" | "staff"; bearer?: boole
 const canonical = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\p{M}/gu, "");
 const words = (value: string) => canonical(value).match(/[\p{L}\p{N}]+/gu) ?? [];
 const phrase = (value: string) => words(value).join(" ");
+
+export function pilotContentPolicy(): Policy {
+  // Pilot calls enforce the published lesson rules locally. They never notify
+  // the production phone system or send audio to the incident verifier.
+  const topics = RESTRICTED_CONTENT.split(/[,/]/).map(phrase).filter(Boolean);
+  return { tutor: topics, learner: topics, critical: topics };
+}
 
 export function contentPolicy(env: Env): Policy | null {
   if (env.CONTENT_SAFETY_MODE !== "on") return null;

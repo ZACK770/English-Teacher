@@ -1,4 +1,10 @@
 export interface Env {
+  PBX_CASCADE_PILOT?: string;
+  PBX_PILOT_SONIOX_KEY?: string;
+  PBX_PILOT_OPENROUTER_KEY?: string;
+  PBX_PILOT_INWORLD_KEY?: string;
+  PBX_PILOT_MODEL?: string;
+  PBX_PILOT_VOICE?: string;
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";
   SALES_OFFER_EXTENSION_ID?: string;
   CONTENT_SAFETY_MODE?: "off" | "on";
