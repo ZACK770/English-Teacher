@@ -9,6 +9,7 @@ const plan: LessonPlan = {
     { id: "travel.water", text: "water", meaning_he: "מים", domain: "travel", level: "beginner" },
     { id: "travel.food", text: "food", meaning_he: "אוכל", domain: "travel", level: "beginner" },
     { id: "travel.home", text: "home", meaning_he: "בית", domain: "travel", level: "beginner" },
+    { id: "everyday.family", text: "family", meaning_he: "משפחה", domain: "everyday", level: "beginner" },
     { id: "travel.interview", text: "behavioral interview", meaning_he: "ריאיון המבוסס על התנהגות בעבר", domain: "travel", level: "fluent" },
   ],
 };
@@ -146,6 +147,22 @@ describe("independent final-transcript lesson coach", () => {
   it("accepts the contraction in the requested sentence as supported practice", () => {
     const c=coach();c.tutorCompleted('ננסה משפט עם "home": "I am going home". האם תוכל לומר את המשפט הזה?');
     expect(c.observeLearner("I'm going home.")).toMatchObject({outcome:"repeated",target_id:"travel.home"});
+  });
+  it("recognizes real-world direct feminine requests and a one-word difference, without awarding a score", () => {
+    const c=coach();c.tutorCompleted('בואי ננסה להשתמש ב-"family" במשפט. תגידי: "My family lives nearby."');
+    const d=c.observeLearner("My family live nearby.");
+    expect(d).toMatchObject({ outcome:"partial_repeat",target_id:"everyday.family",action:"scaffold" });
+    expect(d.directive).toContain("gender-neutral Hebrew");
+  });
+  it("does not praise sure in response to a direct quoted word request", () => {
+    const c=coach();c.tutorCompleted('אני רוצה שתגידי "home".');
+    expect(c.observeLearner("בוודאי.")).toMatchObject({outcome:"ack_only",action:"elicit_attempt"});
+    c.tutorCompleted('אחרי, "I am going home."');
+    expect(c.observeLearner("כן.")).toMatchObject({outcome:"ack_only",action:"change_exercise"});
+  });
+  it("recognizes clearly unmatched repetition without counting a failure or awarding a zero", () => {
+    const c=coach();c.tutorCompleted('תנסי שוב: "My family lives nearby."');
+    expect(c.observeLearner("Yesterday.")).toMatchObject({outcome:"unmatched_repeat",action:"scaffold",unsuccessful_attempts:0});
   });
   it("does not echo untrusted learner text in the system instructions", () => {
     const c = coach(); c.tutorCompleted(phrase);

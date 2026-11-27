@@ -7,12 +7,12 @@ import type { SemanticInput } from "./lesson-semantic-observer";
  * It never changes the curriculum, persisted settings, scores, or service entitlements.
  */
 export type CoachMode = "shadow" | "active";
-export const COACH_VERSION = "transcript-v2";
+export const COACH_VERSION = "transcript-v3";
 export function coachMode(value: string | undefined): CoachMode | undefined {
   return value === "shadow" || value === "active" ? value : undefined;
 }
 type Outcome = "unknown" | "service_request" | "help" | "stuck" | "too_easy" | "pace_request" |
-  "name_correction" | "feedback_request" | "ack_only" | "partial_repeat" | "mismatched_repeat" | "repeated" | "assisted_word" | "independent_word";
+  "name_correction" | "feedback_request" | "ack_only" | "partial_repeat" | "mismatched_repeat" | "unmatched_repeat" | "repeated" | "assisted_word" | "independent_word";
 type Action = "none" | "respect_request" | "explain" | "change_exercise" | "raise_challenge" |
   "slow_down" | "apologize" | "give_feedback" | "elicit_attempt" | "scaffold" | "independent_use" | "next_target";
 export interface CoachDecision {
@@ -37,10 +37,10 @@ const contains = (normalized: string, text: string) => {
   const value = normalize(text);
   return !!value && (" " + normalized + " ").includes(" " + value + " ");
 };
-const repeatCue = /(?:לחזור אחר|חזר(?:ו|י) אחר|חזור אחר|לומר (?:את |זאת|אותו|שוב|ככה|יחד|ביחד)|להגיד (?:את |זאת|אותו|שוב|ככה|יחד|ביחד)|(?:אפשר|ננסה|נסה|נסו|נסי|תנסו|תוכל(?:ו|י)?|תוכלו|יכול(?:ה|ים)?|יכולה) (?:לחזור|לומר|להגיד)|repeat after me|repeat (?:the|this|it|that)|say it again|try saying|(?:can|could) you (?:say|repeat))/i;
+const repeatCue = /(?:לחזור אחר|חזר(?:ו|י) אחר|חזור אחר|לומר (?:את |זאת|אותו|שוב|ככה|יחד|ביחד)|להגיד (?:את |זאת|אותו|שוב|ככה|יחד|ביחד)|(?:אפשר|ננסה|נסה|נסו|נסי|תנסו|תוכל(?:ו|י)?|תוכלו|יכול(?:ה|ים)?|יכולה) (?:לחזור|לומר|להגיד)|repeat after me|repeat (?:the|this|it|that)|say it again|try saying|(?:can|could) you (?:say|repeat)|(?:תגיד(?:י|ו)?|תאמר(?:י|ו)?|תנס(?:ה|י|ו)|נסה|נסי|נסו) (?:שוב|אחרי)|(?:תגיד(?:י|ו)?|תאמר(?:י|ו)?)\s*[:,"“״]|(?:^|[\n.!?]\s*)אחרי[, :]+(?=["“״]))/i;
 const recallCue = /(?:איך (?:אומרים|אומר(?:ים|ת|ים)?|תגיד(?:ו|י)?|תאמר(?:ו|י)?|היית(?:ם|ן)? אומר(?:ים|ת)?|אפשר לומר|אפשר להגיד)|מה (?:המילה|התרגום) באנגלית|how (?:do|would|can) you say|what is the english (?:word|translation))/i;
 const acknowledgment = /^(?:(?:yes|yeah|yep|ok|okay|sure|uh huh|mm hmm|mhm|hmm|um|uh|כן|אוקיי|בסדר|אה|הממ|הבנתי)\s*)+$/i;
-const capabilityOnly = /^(?:(?:מה הבעיה|אני יכול(?:ה)?|בטח שאני יכול(?:ה)?|ודאי שאני יכול(?:ה)?|כן|למה|מה|כמובן|i can|of course)\s*)+$/i;
+const capabilityOnly = /^(?:(?:מה הבעיה|אני יכול(?:ה)?|בטח שאני יכול(?:ה)?|ודאי שאני יכול(?:ה)?|כן|למה|מה|כמובן|בוודאי|ודאי|i can|of course)\s*)+$/i;
 const noAttempt = /^(?:לא|לא יודע(?:ת)?|לא מצליח(?:ה)?|i don'?t know|i can'?t|no)$/i;
 const requestPatterns: [Outcome, RegExp][] = [
   // Service and explicit direction changes remain with the existing trusted tools.
@@ -126,9 +126,13 @@ export class TranscriptCoach {
     const previousTutor = this.tutor;
     const exercise = identifyExercise(previousTutor, this.plan.vocabulary);
     const hasTutor = !!previousTutor;
+    const genderedPrompt = /(?:^|\s)(?:בואי|תגידי|תנסי|תוכלי|תרצי|תאמרי|נסי)(?:\s|[:!?.,]|$)/.test(previousTutor);
     this.tutor = ""; // an endpoint is consumed once, never count duplicate partial transcripts
     const target = exercise?.target;
     const finish = (outcome: Outcome, action: Action = "none", instruction?: string): CoachDecision => {
+      if (genderedPrompt && outcome !== "service_request") {
+        instruction = (instruction ? instruction + " " : "") + "Use the existing gender-neutral Hebrew policy: impersonal or infinitive phrasing; do not repeat the prior gendered form of address.";
+      }
       const correction = this.plan.correction_policy === "on_request" ? "Do not correct unless explicitly asked."
         : this.plan.correction_policy === "after_activity" ? "Do not correct or request a retry during the activity; defer feedback to its boundary. Help if explicitly requested."
         : "If appropriate give at most one brief correction after the answer.";
@@ -182,8 +186,12 @@ export class TranscriptCoach {
     for (let n = 1; n <= words.length / 2; n++) {
       if (words.length % n === 0 && words.every((w, i) => w === words[i % n])) { spoken = words.slice(0, n).join(" "); break; }
     }
+    const exampleWords = repeatExample?.split(" ") ?? [];
+    const responseWords = spoken.split(" ");
+    const oneSubstitution = exampleWords.length >= 3 && exampleWords.length === responseWords.length &&
+      exampleWords.filter((w,i)=>w!==responseWords[i]).length === 1 && /^[a-z' ]+$/.test(spoken);
     const partial = exercise.kind === "repeat" && repeatExample && spoken !== repeatExample &&
-      (repeatExample.startsWith(spoken + " ") || spoken === targetText) && /[a-z]/.test(spoken);
+      (repeatExample.startsWith(spoken + " ") || spoken === targetText || oneSubstitution) && /[a-z]/.test(spoken);
     const mismatch = exercise.kind === "repeat" && !matched && this.plan.vocabulary.some(t => t.id !== target?.id && contains(spoken, t.text)) && /^[a-z' ]+$/.test(spoken);
     const capabilityClaim = /(?:מה הבעיה|בטח שאני יכול|ודאי שאני יכול|אם אני יכול להגיד)/i.test(text) && /אני יכול/i.test(text);
     const ack = acknowledgment.test(text) || noAttempt.test(text) || capabilityOnly.test(text) || (exercise.kind === "repeat" && capabilityClaim);
@@ -213,6 +221,13 @@ export class TranscriptCoach {
       this.record(target.id, "independent_word");
       return finish("independent_word", "next_target",
         "The learner recalled the requested word without a supplied answer in the last question. Acknowledge specifically; progress to an independent use in context or the next remaining curriculum target. Do not claim lasting mastery.");
+    }
+    // A different recognizable-looking string is not the requested verbatim repetition.
+    // It may be ASR, a genuine error, or a legitimate attempt. Do not mark it wrong,
+    // increment the failure counter, or claim success; offer help without inventing evidence.
+    if (exercise.kind === "repeat" && /^[a-z' ]{2,120}$/.test(spoken) && responseWords.length <= 2 && !matched) {
+      return finish("unmatched_repeat","scaffold",
+        "The transcript does not contain the requested English output. Do not praise it as correct or pronounce it wrong; it may be recognition noise. Give one shorter direct practice prompt or clarify once, without a knowledge score.");
     }
     // Uncertain speech, synonyms, longer answers, pronunciation, and free conversation are
     // semantic judgments. The local monitor cannot reliably determine correctness.

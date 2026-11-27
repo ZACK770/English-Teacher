@@ -21,7 +21,7 @@ type Cost = { ai_estimated_usd: number | null; review_estimated_usd: number | nu
 const coachOutcomes: Record<string, string> = {
   unknown: 'ללא הכרעה מקומית', service_request: 'בקשת שירות', help: 'בקשת הסבר', stuck: 'תקיעות', too_easy: 'קל מדי',
   pace_request: 'בקשת שינוי קצב', name_correction: 'תיקון שם', feedback_request: 'בקשת משוב', ack_only: 'לא השלים את התרגיל',
-  partial_repeat: 'חזרה חלקית', mismatched_repeat: 'חזרה על יעד קודם במקום היעד הנוכחי', repeated: 'חזרה מודרכת', assisted_word: 'שליפה בסיוע', independent_word: 'שליפה ללא רמז מיידי',
+  partial_repeat: 'חזרה חלקית', mismatched_repeat: 'חזרה על יעד קודם במקום היעד הנוכחי', unmatched_repeat: 'התמלול אינו תואם את החזרה המבוקשת', repeated: 'חזרה מודרכת', assisted_word: 'שליפה בסיוע', independent_word: 'שליפה ללא רמז מיידי',
   correct: 'תשובה רלוונטית', partial: 'תשובה חלקית', mismatch: 'אי־התאמה', unclear: 'לא ברור', not_exercise: 'לא תרגיל', unavailable: 'המעריך לא זמין',
 };
 const coachActions: Record<string, string> = {
