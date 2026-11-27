@@ -66,18 +66,17 @@ describe("call-scoped tool availability", () => {
 });
 
 describe("compact application instruction contracts", () => {
-  it("limits current affairs and worldview discussion while allowing history practice, without adding the scope rule to translators", () => {
+  it("applies English-school scope with and without a loaded lesson", () => {
     const system = buildSystemInstruction(controls, "");
-    expect(system).toContain("Lesson scope outside translation");
+    expect(system).toContain("English-school scope");
     expect(system).toContain("no internet access");
     expect(system).toContain(HAREDI_CONTENT_RULE);
     expect(system).toContain("subject to the content rules above");
-    expect(system).toContain("current news, current politics or hashkafa (worldview), listen politely, correct only their English if needed without repeating restricted content, and return to the lesson");
-    expect(system).toContain("Do not take a position or add to the discussion");
-    expect(system).toContain("History, including past news and politics, is allowed for English practice");
-    expect(system).toContain("web search, general information, advice or code");
+    expect(system).toContain("Do not provide the off-topic answer before redirecting");
+    expect(system).toContain("This service is exclusively an English school");
+    expect(system).toContain("A question written or spoken in English is not automatically a language exercise");
     expect(system).toContain('"אני כאן רק כדי לתרגל אנגלית", then ask a neutral, level-appropriate question in English');
-    expect(buildSystemInstruction(controlsFromSettings(true), "")).not.toContain("Lesson scope outside translation");
+    expect(buildSystemInstruction(controlsFromSettings(true), "")).toContain("This service is exclusively an English school");
     expect(Object.keys(buildSetupPayload(controls, system, "teacher", s).setup.tools[0])).toEqual(["functionDeclarations"]);
   });
 

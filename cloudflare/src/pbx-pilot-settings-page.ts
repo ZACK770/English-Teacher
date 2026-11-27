@@ -44,7 +44,7 @@ audio{width:100%;margin-top:8px}
 </div>
 <label for="interruption">קטיעות בטלפון</label>
 <select id="interruption" disabled>
-<option value="adaptive">השהה ברעש וחזור אם אין דיבור מזוהה</option>
+<option value="adaptive">מאוזן · מילה מזוהה או חצי שנייה של צליל רציף</option>
 <option value="observe">תצפית בלבד עד סוף תור</option>
 <option value="legacy">קטיעה מיידית לפי עוצמה</option>
 <option value="adaptive_clear">השהיה וחידוש + ניקוי בטכנוליין (ניסיוני)</option>

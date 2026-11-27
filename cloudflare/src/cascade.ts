@@ -29,6 +29,10 @@ type Setup = {
 };
 type GeneratedTool = { id: string; type: "function"; function: { name: string; arguments: string } };
 
+// Acoustic evidence alone needs sustained sound; recognized speech may interrupt sooner.
+const ADAPTIVE_NOISE_PAUSE_SECONDS = 0.5;
+const RECOGNIZED_SPEECH_SECONDS = 0.09;
+
 const ENDPOINTS = new Set(["<end>", "<fin>"]);
 const STT_URL = "https://stt-rt.soniox.com/transcribe-websocket";
 const LLM_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -144,7 +148,8 @@ export class CascadeLive {
       const now = Date.now();
       if (this.speechFrames === 0) this.candidateSuppressed = false;
       else this.lastLoud = now;
-      if (this.speechFrames < 0.09) return;
+      const minimum = this.adaptive ? ADAPTIVE_NOISE_PAUSE_SECONDS : RECOGNIZED_SPEECH_SECONDS;
+      if (this.speechFrames + 1e-9 < minimum) return;
       if (!this.adaptive && this.config.interruption !== "observe") {
         this.interrupt();
       } else if (this.pauseStarted === null && !this.candidateSuppressed) {
@@ -152,6 +157,9 @@ export class CascadeLive {
         this.pauseStarted = now;
         this.events.push({ type: "pilot_interruption", phase: "candidate", elapsed_ms: 0 });
       }
+    } else {
+      this.speechFrames = 0;
+      this.candidateSuppressed = false;
     }
   }
 
@@ -196,7 +204,11 @@ export class CascadeLive {
     let partial = "";
     for (const token of event.tokens ?? []) {
       const text = token.text ?? "";
-      if (this.adaptive && this.pauseStarted !== null && !ENDPOINTS.has(text) && /[\p{L}\p{N}]/u.test(text)) {
+      const recognizedInterruption = this.speechFrames >= RECOGNIZED_SPEECH_SECONDS &&
+        (this.generation !== null || Date.now() < this.audioUntil);
+      if (this.adaptive && this.setup.realtimeInputConfig?.activityHandling !== "NO_INTERRUPTION" &&
+          (this.pauseStarted !== null || recognizedInterruption) &&
+          !ENDPOINTS.has(text) && /[\p{L}\p{N}]/u.test(text)) {
         this.interrupt();
       }
       if (text && !ENDPOINTS.has(text) && !this.learnerActive) {

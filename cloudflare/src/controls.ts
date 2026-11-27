@@ -107,5 +107,5 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [schoolIdentity, HAREDI_CONTENT_RULE, c.lesson ? LESSON_TOPIC_RULE : "", c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : ""].filter(Boolean).join("\n\n");
+  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : ""].filter(Boolean).join("\n\n");
 }

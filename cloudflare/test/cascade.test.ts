@@ -120,10 +120,33 @@ describe("isolated Technoline cascade", () => {
     }
   });
 
+  it("ignores short noises and separated bursts but accepts an early recognized word", async () => {
+    const { engine, result } = fixture(false, true);
+    await engine.connect();
+    const burst = new Uint8Array(new Int16Array(1600).fill(3000).buffer);
+    try {
+      engine.startGreeting("Hello");
+      for (let i = 0; i < 4; i++) {
+        engine.sendAudio(burst);
+        expect(engine.playbackPaused()).toBe(false);
+      }
+      engine.sendAudio(new Uint8Array(3200));
+      engine.sendAudio(burst);
+      expect(engine.playbackPaused()).toBe(false);
+      result({ tokens: [{ text: "Wait", is_final: false }] });
+      expect(await engine.next()).toMatchObject({ type: "interrupted" });
+      expect(engine.playbackPaused()).toBe(true);
+      engine.acknowledgeInterrupt();
+      expect(engine.playbackPaused()).toBe(false);
+    } finally {
+      engine.close();
+    }
+  });
+
   it("resumes after an unconfirmed noise and holds old audio until a confirmed interruption is drained", async () => {
     const { engine, result } = fixture(false, true);
     await engine.connect();
-    const loud = new Uint8Array(new Int16Array(1600).fill(3000).buffer);
+    const loud = new Uint8Array(new Int16Array(8000).fill(3000).buffer);
     try {
       engine.startGreeting("Hello");
       engine.sendAudio(loud);
