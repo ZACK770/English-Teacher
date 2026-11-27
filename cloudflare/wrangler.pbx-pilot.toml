@@ -34,3 +34,11 @@ class_name = "CallSession"
 [[migrations]]
 tag = "pilot-v1"
 new_sqlite_classes = ["CallSession"]
+
+[[durable_objects.bindings]]
+name = "YIDDISH_CHANNELS"
+class_name = "YiddishChannel"
+
+[[migrations]]
+tag = "yiddish-channel-v1"
+new_sqlite_classes = ["YiddishChannel"]

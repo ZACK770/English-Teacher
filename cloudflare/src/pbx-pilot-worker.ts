@@ -10,3 +10,5 @@ export class SchoolVoiceSettings extends WorkerEntrypoint<Env> {
     }));
   }
 }
+
+export { YiddishChannel } from "./yiddish-channel";

@@ -2,6 +2,9 @@ import type { TurnTuning } from "./turn-tuning";
 export type PilotInterruption = "legacy" | "observe" | "adaptive" | "adaptive_clear";
 
 export interface Env {
+  YIDDISH_TOOLS_API_KEY?: string;
+  YIDDISH_CHANNEL_TOKEN?: string;
+  YIDDISH_CHANNELS?: DurableObjectNamespace;
   SCHOOL_VOICE_SETTINGS?: Fetcher;
   CASCADE_BUDGET_MODE?: "off" | "on";
   CASCADE_MAX_CONCURRENT?: string;

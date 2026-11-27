@@ -34,7 +34,9 @@ fieldset{border:1px solid #e2e8ec;border-radius:12px;margin:16px 0;padding:14px}
 <main>
 <header><h1>מעבדת הקול של ספיקול</h1><a href="/dashboard">ממשק הניהול</a></header>
 <div id="access" class="status" role="status"></div>
-<div class="layout">
+<section><h2>ערוצי קול</h2><div class="line"><button class="secondary" id="channel-english">אנגלית · 1 / 888</button><button class="secondary" id="channel-yiddish">יידיש · פיילוט נפרד</button></div><p class="status">כל ערוץ שומר הגדרות משלו. שינוי בקול היידיש אינו משנה את 1 או 888.</p></section>
+<section id="yiddish-panel" hidden><h2>ערוץ יידיש · הגדרות לחיוג הבא</h2><p>Yiddish Tools · Gemini 2.5 Flash דרך OpenRouter · Cascade</p><label for="yiddish-voice">קול בטלפון</label><select id="yiddish-voice"></select><label for="yiddish-channel-token">אסימון הערוץ מטכנוליין (ריק לשמירת הקיים)</label><input id="yiddish-channel-token" type="password" autocomplete="off"><label for="yiddish-wss">כתובת WSS</label><input id="yiddish-wss" dir="ltr" readonly><button id="yiddish-save" disabled>שמור לערוץ בלבד</button><button id="yiddish-listen" class="secondary">האזן לקול בדפדפן</button><p id="yiddish-status" role="status"></p><p class="status">התמלול הניסיוני אינו בהזרמה, ולכן תגובת המורה עשויה להתעכב. המבטאים שאינם מסומנים טרם זוהו.</p></section>
+<div class="layout" id="english-layout">
 <div>
 <section>
 <h2>הגדרות לחיוג הבא ל־888</h2>
@@ -91,7 +93,7 @@ fieldset{border:1px solid #e2e8ec;border-radius:12px;margin:16px 0;padding:14px}
 <section>
 <h2>בדיקה בדפדפן</h2>
 <label for="mode">מה לבדוק</label>
-<select id="mode"><option value="model">תשובת מודל · OpenRouter</option><option value="inworld">קול · Inworld</option><option value="google">קול · Google Standard</option></select>
+<select id="mode"><option value="model">תשובת מודל · OpenRouter</option><option value="inworld">קול · Inworld</option><option value="google">קול · Google Standard</option><option value="yiddish">קול · Yiddish Tools</option></select>
 <label for="preview-choice" id="choice-label">מודל</label><select id="preview-choice"></select>
 <label for="preview-language" id="preview-language-label" hidden>שפת ההקראה (לבדיקה בלבד)</label>
 <select id="preview-language" hidden><option value="auto">זיהוי אוטומטי</option><option value="ydd">יידיש מזרחית (ydd)</option><option value="yi">יידיש כללית (yi)</option><option value="he">עברית</option><option value="en">אנגלית</option></select>
@@ -221,6 +223,7 @@ function updatePreview() {
   $('use-google-phone').hidden = mode !== 'google';
   for (const id of ['preview-language','preview-language-label','preview-tts-model','preview-tts-model-label']) $(id).hidden = mode !== 'inworld';
   options('preview-choice', isModel ? catalog.models : catalog.voices[mode]);
+  if (mode === 'yiddish') $('sample').value = 'שלום עליכם! ווי גייט עס דיר היינט? איך וויל לערנען מיט דיר אַ ביסל ייִדיש.';
   $('key').value = '';
   $('key').placeholder = mode === 'google' ? 'הדבק כאן מפתח Google Cloud Text-to-Speech' : 'אופציונלי · החיבור הקיים כבר מוגדר';
   $('prompt').hidden = $('prompt-label').hidden = !isModel;
@@ -243,7 +246,7 @@ async function preview() {
       data.characters ? ' · ' + data.characters + ' תווים' : ''));
     if (data.text) write('answer', data.text);
     if (data.audio) {
-      $('audio').src = 'data:audio/mpeg;base64,' + data.audio;
+      $('audio').src = 'data:' + (data.mime || 'audio/mpeg') + ';base64,' + data.audio;
       $('audio').hidden = false;
       $('audio').play().catch(() => {});
     }
@@ -434,6 +437,13 @@ $('calls').onchange = refresh;
 $('compare').onchange = compare;
 $('mode').onchange = () => { if (catalog) updatePreview(); };
 $('preview').onclick = preview;
+async function loadYiddish() {
+  try { const settings=await api('yiddish-settings'); options('yiddish-voice',catalog.voices.yiddish,settings.voice); $('yiddish-wss').value=settings.wss; $('yiddish-save').disabled=false; write('yiddish-status',settings.configured?'הערוץ מוגדר לחיבור · יש לאמת שיחה בטכנוליין':'נדרש אסימון ערוץ והגדרת ספקים'); } catch(error){write('yiddish-status',error.message);}
+}
+$('channel-yiddish').onclick=()=>{ $('yiddish-panel').hidden=false; $('mode').value='yiddish'; if(catalog){updatePreview();loadYiddish();} $('yiddish-panel').scrollIntoView({behavior:'smooth'}); };
+$('channel-english').onclick=()=>{ $('yiddish-panel').hidden=true; $('english-layout').scrollIntoView({behavior:'smooth'}); };
+$('yiddish-save').onclick=async()=>{ $('yiddish-save').disabled=true;try{const token=$('yiddish-channel-token').value.trim();const result=await api('yiddish-settings','PUT',{voice:$('yiddish-voice').value,...(token?{token}:{})});$('yiddish-channel-token').value='';write('yiddish-status',result.configured?'נשמר · הקול יחול בחיוג הבא':'נשמר · דרושה הגדרת ספק או אסימון');}catch(error){write('yiddish-status',error.message);}finally{$('yiddish-save').disabled=false;} };
+$('yiddish-listen').onclick=()=>{if(!catalog)return;$('mode').value='yiddish';updatePreview();$('preview-choice').value=$('yiddish-voice').value;preview();$('preview').scrollIntoView({behavior:'smooth'});};
 (async () => {
   try {
     const settings = await api('settings');

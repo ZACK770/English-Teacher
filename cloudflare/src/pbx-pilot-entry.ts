@@ -29,6 +29,10 @@ export default {
       const identity = await adminSessionIdentity(request, env.ADMIN_DB);
       if (!identity) return new Response("Unauthorized", { status: 401 });
       if (identity.role !== "owner") return new Response("Forbidden", { status: 403 });
+      if (path === dashboardPath + "/yiddish-settings" && ["GET","PUT"].includes(request.method)) {
+        if (!env.YIDDISH_CHANNELS) return new Response("Unavailable", { status: 503 });
+        return env.YIDDISH_CHANNELS.get(env.YIDDISH_CHANNELS.idFromName("yiddish"), { locationHint: "weur" }).fetch(new Request("https://internal.invalid/settings", { method: request.method, body: request.method === "PUT" ? await request.arrayBuffer() : undefined }));
+      }
       if (path !== dashboardPath + "/settings") return pilotLab(request, env, path.slice(dashboardPath.length + 1));
       if (!["GET", "PUT"].includes(request.method)) return new Response("Method not allowed", { status: 405 });
       if (!env.PBX_PILOT_ADMIN_TOKEN) return new Response("Pilot settings unavailable", { status: 503 });
@@ -47,6 +51,7 @@ export default {
       const call = env.CALLS.get(env.CALLS.idFromName("extension-888"), { locationHint: "weur" });
       return call.fetch(request);
     }
+    if (path === "/v1/technoline/yiddish" && env.YIDDISH_CHANNELS) return env.YIDDISH_CHANNELS.get(env.YIDDISH_CHANNELS.idFromName("yiddish"), { locationHint: "weur" }).fetch(request);
     if (path !== "/v1/technoline/pilot") return new Response("Not found", { status: 404 });
     const trace = (...args: Parameters<typeof pilotLog>) => { if (ctx) ctx.waitUntil(pilotLog(...args)); };
     if (!configured) {

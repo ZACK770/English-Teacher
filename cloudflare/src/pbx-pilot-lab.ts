@@ -1,3 +1,4 @@
+import { yiddishVoices, isYiddishVoice, yiddishPreview } from "./yiddish-channel";
 import type { Env } from "./env";
 import { googleStandardVoices } from "./pbx-pilot-google";
 
@@ -7,6 +8,7 @@ const models = [
   { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
 ];
 const voices = {
+  yiddish: yiddishVoices,
   inworld: [{ id: "Amos", name: "Amos" }],
   google: googleStandardVoices,
 };
@@ -68,6 +70,7 @@ async function preview(request: Request, env: Env) {
   }
   const key = typeof body.key === "string" ? body.key.trim() : "";
   const signal = AbortSignal.timeout(12_000);
+  if (body.mode === "yiddish" && isYiddishVoice(body.voice)) return yiddishPreview(env, body.text, body.voice);
   if (body.mode === "model" && models.some(model => model.id === body.model)) {
     const credential = key || env.PBX_PILOT_OPENROUTER_KEY;
     if (!credential) return json({ error: "הדבק מפתח OpenRouter קיים בשדה מפתח ספק, או השאר ריק כשהוא מוגדר בשרת." }, 400);
