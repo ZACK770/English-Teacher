@@ -159,3 +159,17 @@ it("does not change a guard refusal when diagnostic persistence fails", async ()
   tutor.finalSent = true;
   expect(await tutor.recordTool(complete)).toBe(true);
 });
+
+it("flushes a cascade sub-frame tail at turn completion, without waiting for the next response", async () => {
+  const tutor = session();
+  tutor.controls.lesson = undefined;
+  tutor.cascadeConfig = {};
+  tutor.partial = Uint8Array.of(1,2,3,4);
+  tutor.progress.logLatency = vi.fn().mockResolvedValue(undefined);
+  const events = [{type:"turn_complete"}];
+  tutor.ai = {next: vi.fn(async()=>{const event=events.shift();if(!event)tutor.abort.abort();return event;})};
+  await tutor.aiToOutput();
+  expect(tutor.partial.byteLength).toBe(0);
+  expect(tutor.output).toHaveLength(1);
+  expect([...tutor.output[0].slice(0,5)]).toEqual([1,2,3,4,0]);
+});

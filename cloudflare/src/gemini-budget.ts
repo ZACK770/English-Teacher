@@ -8,6 +8,7 @@ const FAILURE_STREAK_ALERT = 3;
 const FAILURE_STREAK_GAP_MS = 30 * 60_000;
 const FAILURE_ALERT_EVERY_MS = 60 * 60_000;
 export const BUDGET_GUARD_NAME = "speakcall-v2";
+export const CASCADE_BUDGET_GUARD_NAME = "speakcall-cascade-v1";
 
 export type BudgetDenial = "system_busy" | "gemini_budget_reached" | "gemini_guard_unavailable";
 export const budgetMessage: Record<BudgetDenial, string> = {
@@ -220,8 +221,8 @@ export class GeminiBudget {
   }
 }
 
-async function callGuard(env: Env, op: Operation | Outcome, id = "", cost = 0, error?: string, paid?: boolean) {
-  const stub = env.GEMINI_BUDGET.getByName(BUDGET_GUARD_NAME, { locationHint: "weur" });
+async function callGuard(env: Env, op: Operation | Outcome, id = "", cost = 0, error?: string, paid?: boolean, bucket = BUDGET_GUARD_NAME) {
+  const stub = env.GEMINI_BUDGET.getByName(bucket, { locationHint: "weur" });
   const request = stub.fetch("https://budget.internal/" + op, {
     method: "POST", body: JSON.stringify({ id, cost, error, paid, config: guardConfig(env) }),
   });
@@ -243,13 +244,13 @@ export async function reportGeminiOutcome(env: Env, ok: boolean, error = "") {
   await callGuard(env, ok ? "success" : "failure", "", 0, ok ? undefined : error.slice(0, 200)).catch(() => undefined);
 }
 
-export async function acquireGeminiBudget(env: Env, cost: () => number, stop: (reason: BudgetDenial) => void, { paid = false }: { paid?: boolean } = {}) {
+export async function acquireGeminiBudget(env: Env, cost: () => number, stop: (reason: BudgetDenial) => void, { paid = false, bucket = BUDGET_GUARD_NAME }: { paid?: boolean; bucket?: string } = {}) {
   const id = crypto.randomUUID();
   const unavailable = "gemini_guard_unavailable";
   async function check(op: "acquire" | "check") {
     const start = Date.now();
     try {
-      const response = await callGuard(env, op, id, cost(), undefined, paid);
+      const response = await callGuard(env, op, id, cost(), undefined, paid, bucket);
       if (!response.ok || Date.now() >= start + LOCAL_DEADLINE_MS) throw new GeminiBudgetError(unavailable);
       const { denial } = await response.json<{ denial?: BudgetDenial }>();
       if (denial) throw new GeminiBudgetError(denial);
@@ -291,6 +292,19 @@ export async function acquireGeminiBudget(env: Env, cost: () => number, stop: (r
     closed = true;
     clearTimeout(heartbeat);
     clearTimeout(deadline);
-    await callGuard(env, "release", id, cost()).catch(() => {});
+    await callGuard(env, "release", id, cost(), undefined, paid, bucket).catch(() => {});
   };
+}
+
+/** Separate opt-in hard spending and concurrent-call limit for the full cascade.
+ * Uses combined measured/estimated STT+LLM+TTS cost and a conservative floor.
+ * Paid lessons do not bypass this provider-solvency guard. The existing Gemini
+ * and paid-access behavior is unchanged. This is not the providers' actual balance. */
+export async function acquireCascadeBudget(env: Env, cost: () => number, stop: (reason: BudgetDenial) => void) {
+  const configured: Env = { ...env,
+    GEMINI_MAX_CONCURRENT: env.CASCADE_MAX_CONCURRENT ?? "10",
+    GEMINI_DAILY_BUDGET_USD: env.CASCADE_DAILY_BUDGET_USD ?? "20",
+    GEMINI_RESERVE_USD_PER_MINUTE: env.CASCADE_RESERVE_USD_PER_MINUTE ?? "0.03",
+  };
+  return acquireGeminiBudget(configured,cost,stop,{paid:false,bucket:CASCADE_BUDGET_GUARD_NAME});
 }

@@ -13,14 +13,27 @@ type Report = {
   findings: { code: string; logs: number }[];
   prompt_candidates: Candidate[];
   recent: Review[];
+  lesson_coach?: { day: string; profile_id: string; bot_version: number | null; model: string | null; version: string; mode: string; outcome: string; action: string | null; turns: number; calls: number; applied: number; mean_ms: number | null }[];
+  lesson_coach_score_checks?: { checks: number; suspect_scores: number };
 };
 type Cost = { ai_estimated_usd: number | null; review_estimated_usd: number | null; phone: { navigation_seconds: number; estimated_ils: number | null } | null };
 
+const coachOutcomes: Record<string, string> = {
+  unknown: 'ללא הכרעה מקומית', service_request: 'בקשת שירות', help: 'בקשת הסבר', stuck: 'תקיעות', too_easy: 'קל מדי',
+  pace_request: 'בקשת שינוי קצב', name_correction: 'תיקון שם', feedback_request: 'בקשת משוב', ack_only: 'לא השלים את התרגיל',
+  partial_repeat: 'חזרה חלקית', mismatched_repeat: 'חזרה על יעד קודם במקום היעד הנוכחי', unmatched_repeat: 'התמלול אינו תואם את החזרה המבוקשת', repeated: 'חזרה מודרכת', assisted_word: 'שליפה בסיוע', independent_word: 'שליפה ללא רמז מיידי',
+  correct: 'תשובה רלוונטית', partial: 'תשובה חלקית', mismatch: 'אי־התאמה', unclear: 'לא ברור', not_exercise: 'לא תרגיל', unavailable: 'המעריך לא זמין',
+};
+const coachActions: Record<string, string> = {
+  none: 'ללא התערבות', explain: 'הסבר', change_exercise: 'שינוי גישה', raise_challenge: 'העלאת אתגר', slow_down: 'האטה',
+  apologize: 'תיקון שם', give_feedback: 'משוב', elicit_attempt: 'עידוד ניסיון', scaffold: 'רמז', independent_use: 'שימוש עצמאי', next_target: 'התקדמות',
+};
 const endpoint = '/v1/admin/call-reviews';
 const sourceLabels: Record<Source, string> = { ai: 'שיחת AI', ivr: 'תפריט טלפוני' };
 const statusLabels: Record<Status, string> = { reviewed: 'התמליל נבדק', rules_only: 'נבדק לפי כללים', no_transcript: 'אין תמליל', pending: 'ממתין לבדיקה', failed: 'הבדיקה נכשלה' };
 const findingLabels = new Map(Object.entries({
   content_drift: 'המורה גלש לנושא שאינו מתאים לשיעור',
+  unsupported_praise: 'שבח ללא תשובה מוכחת', repetition_loop: 'חזרה על תרגיל ללא התקדמות', wrong_gender_address: 'פנייה במין דקדוקי שגוי',
   long_reply: 'תשובה ארוכה מדי', no_practice: 'חסר תרגול בדיבור', missed_correction: 'תיקון חסר',
   wrong_level: 'רמה לא מתאימה', wrong_language: 'שפה לא מתאימה', missed_request: 'בקשת תלמיד לא נענתה',
   menu_confusion: 'הנחיית תפריט שגויה', call_failed: 'שיחה נכשלה', call_lease_lost: 'הקצאת שיחה אבדה',
@@ -82,7 +95,7 @@ export function CallReviewsReport({ report, request }: { report: Report; request
   const transcript = report.coverage.filter(r => r.status === 'reviewed');
   const reviewed = transcript.reduce((sum, r) => sum + r.logs, 0);
   const mean = reviewed ? transcript.reduce((sum, r) => sum + r.review_cost_usd, 0) / reviewed : null;
-  if (!report.coverage.length) return <p className="crm-empty">עדיין אין נתוני סקירה לתקופה הזו.</p>;
+  if (!report.coverage.length && !report.lesson_coach?.length) return <p className="crm-empty">עדיין אין נתוני סקירה לתקופה הזו.</p>;
   return <>
     <div className="crm-kpis">
       <div><span>לוגים בדוח</span><strong>{number.format(report.coverage.reduce((sum, r) => sum + r.logs, 0))}</strong></div>
@@ -97,6 +110,17 @@ export function CallReviewsReport({ report, request }: { report: Report; request
       <h2>ממצאים</h2>
       {report.findings.length ? <ul>{report.findings.map(r => <li key={r.code}>{finding(r.code)}: {number.format(r.logs)} לוגים</li>)}</ul> : <p className="crm-muted">לא סומנו ממצאים בלוגים שנבדקו.</p>}
     </section>
+    {!!report.lesson_coach?.length && <section className="crm-review-section">
+      <h2>מנהל שיעור — מעקב בזמן אמת</h2>
+      <p className="crm-muted">תצפיות נפרדות מהציון. מצב צל אינו משנה את השיחה; הוראה שנשלחה למודל אינה הוכחה שהמודל ביצע אותה. מקרים לא ברורים אינם כישלונות.</p>
+      <p>בדיקות הדורשות אימות של ציון 100 אחרי חזרה בלבד: {number.format(report.lesson_coach_score_checks?.suspect_scores ?? 0)}</p>
+      <div className="crm-table-scroll"><table aria-label="תצפיות מנהל שיעור"><thead><tr>
+      <th>יום (UTC)</th><th>מורה/גרסה</th><th>מצב</th><th>תצפית</th><th>פעולה</th><th>סבבים</th><th>נשלחו הנחיות</th><th>זמן זיהוי (מ״ש)</th>
+      </tr></thead><tbody>{report.lesson_coach.map((r, i) => <tr key={i}>
+        <td>{r.day}</td><td><bdi>{r.profile_id} · {r.bot_version ?? '—'} · {r.model ?? '—'} · {r.version}</bdi></td><td>{r.mode === 'shadow' ? 'צל' : 'פעיל'}</td>
+        <td>{coachOutcomes[r.outcome] ?? r.outcome}</td><td>{r.action ? (coachActions[r.action] ?? r.action) : "—"}</td><td>{r.turns}</td><td>{r.applied}</td><td>{r.mean_ms ?? '—'}</td>
+      </tr>)}</tbody></table></div>
+    </section>}
     <section className="crm-review-section">
       <h2>מועמדים לכוונון המורה</h2>
       {report.prompt_candidates.length ? <ul>{report.prompt_candidates.map(r => <li key={JSON.stringify([r.profile_id, r.bot_version, r.code])}>

@@ -184,9 +184,9 @@ describe("quick teacher direction", () => {
     expect((await request("/v1/portal/preferences", tokenA, { trial_setup: "selected", level: "intermediate", personality: "focused" })).status).toBe(200);
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.lesson?.level).toBe("intermediate");
-    expect(c.custom_instructions).toContain("Personality: focused.");
+    expect(c.learner_instructions).toContain("Personality: focused.");
     expect(c.intake_pending).toBe(false);
-    expect(c.custom_instructions).not.toContain("First call: before practising");
+    expect(c.learner_instructions).not.toContain("First call: before practising");
     await b.saveContext("web-trial", await b.loadContext("preferences:learner-a"));
     expect(await runtimeContext(b, "web-trial")).not.toContain("destination: main");
   });
@@ -195,9 +195,9 @@ describe("quick teacher direction", () => {
     expect((await request("/v1/portal/preferences", tokenA, { trial_setup: "skipped" })).status).toBe(200);
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.lesson?.level).toBe("beginner");
-    expect(c.custom_instructions).toContain("Personality: warm.");
+    expect(c.learner_instructions).toContain("Personality: warm.");
     expect(c.intake_pending).toBe(false);
-    expect(c.custom_instructions).not.toContain("First call: before practising");
+    expect(c.learner_instructions).not.toContain("First call: before practising");
   });
 
   it("preserves the trial style when a spoken pace change creates a teacher", async () => {
@@ -210,7 +210,7 @@ describe("quick teacher direction", () => {
     await b.savePreference("learner-a", { trial_setup: "selected", level: "fluent" });
     const c = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(c.lesson?.level).toBe("intermediate");
-    expect(c.custom_instructions).toContain("Omit level unless the learner explicitly asks to change it.");
+    expect(c.learner_instructions).toContain("Omit level unless the learner explicitly asks to change it.");
     expect(await saveIntake(b, "learner-a", "student", { goal: "other", pace: "slow" })).toBe(true);
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ level: "fluent", pace: "slow" });
   });
@@ -222,7 +222,7 @@ describe("quick teacher direction", () => {
     const defaults = controlsFromSettings(true);
     session.controls = await applyLearnerControls(b, "learner-a", bot, defaults, undefined, "phone");
     expect(session.controls).toMatchObject({ intake_pending: true, lesson: { level: "beginner" } });
-    expect(session.controls.custom_instructions).toContain("the configured level is provisional");
+    expect(session.controls.learner_instructions).toContain("the configured level is provisional");
     session.ai = { addContext: vi.fn() };
     expect(await session.recordTool({ name: "save_intake", args: { goal: "work", level: "fluent", topic: "business" } })).toBe(true);
     expect(session.ai.addContext).toHaveBeenCalledWith(expect.stringContaining('topic="everyday", level="fluent"'));
@@ -231,7 +231,7 @@ describe("quick teacher direction", () => {
     const web = await applyLearnerControls(b, "learner-a", bot, defaults);
     expect(phone).toMatchObject({ intake_pending: false, model: defaults.model, voice: "Puck", lesson: { level: "fluent", topic: "everyday", vocabulary: web.lesson?.vocabulary } });
     expect(web.lesson?.level).toBe("intermediate");
-    expect(phone.custom_instructions).toContain("not elementary greetings or repeat-after-me drills");
+    expect(phone.learner_instructions).toContain("not elementary greetings or repeat-after-me drills");
   });
 
   it.each([false, true])("saves a pace change for a browser teacher, with active phone teacher=%s", async hasPhoneTeacher => {
@@ -1562,6 +1562,23 @@ describe("real learner portal", () => {
     expect(await session.recordTool({ name: "record_learning_observation", args: { skill: "vocabulary", result: "test", correction: "", score: 5 } })).toBe(false);
     expect((await new LearningStore(env.DB).history("learner-a", "vocabulary", target))[0]).toMatchObject({ score: 50 });
   });
+  it("omits a perfect score based solely on supplied repetition, while saving a different observed result", async () => {
+    const controls=await applyLearnerControls(b,"learner-a",{id:"student",role:"teacher"},controlsFromSettings(false),undefined,"phone");
+    await new LearningStore(env.DB).begin("learner-a","guarded-call",controls.lesson!);
+    env.LESSON_COACH_MODE="active";
+    const session=new TutorSession({send:vi.fn(),close:vi.fn()} as unknown as WebSocket,env,settings(env),"owner") as any;
+    session.controls=controls;session.customerId="learner-a";session.callId="guarded-call";
+    const {CascadeLive}=await import("../src/cascade");const {TranscriptCoach}=await import("../src/lesson-coach");
+    const [word,other]=controls.lesson!.vocabulary;
+    const coach=new TranscriptCoach(controls.lesson!,"active");
+    coach.tutorCompleted(`אפשר לחזור אחריי: "${word.text}"?`);coach.observeLearner(word.text);
+    expect(coach.knownAssistedOnlyTargets()).toContain(word.id);
+    session.ai=new CascadeLive({sonioxKey:"mock",openrouterKey:"mock",inworldKey:"mock",voice:"Amos",model:"test"},{},undefined,coach);
+    const result=await session.recordTool({name:"report_learning_batch",args:{activity_id:"practice-1",vocabulary:[{word_id:word.id,score:100},{word_id:other.id,score:50}]}});
+    expect(result).toMatchObject({saved:true,omitted_vocabulary_ids:[word.id],reason:"assisted_only"});
+    expect(await new LearningStore(env.DB).history("learner-a","vocabulary",word.id)).toEqual([]);
+    expect((await new LearningStore(env.DB).history("learner-a","vocabulary",other.id))[0]).toMatchObject({score:50});
+  });
   it.each(["direct", "legacy", "shared", "test", "web"] as const)("enforces phone activation for the %s stream", async (stream) => {
     env.TLIVR_ROUTER_CHANNEL = "router-channel";
     env.TEST_TEACHER_CHANNEL_ID = "test-teacher-channel";
@@ -1641,9 +1658,38 @@ describe("real learner portal", () => {
     const controls = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
     expect(controls.voice).toBe("Puck");
     expect(controls.custom_vocabulary).toEqual(["appointment", "opportunity"]);
-    expect(controls.custom_instructions).toContain("playful");
-    expect(controls.custom_instructions).toContain("slow");
-    expect(controls.custom_instructions).toContain("business");
+    expect(controls.learner_instructions).toContain("playful");
+    expect(controls.learner_instructions).toContain("slow");
+    expect(controls.learner_instructions).toContain("business");
+  });
+  it("keeps the active personal teacher ahead of legacy fallbacks on ordinary entry, while honoring explicit selection", async () => {
+    await progress.createBot({ id: "personal-base", label: "Personal base", role: "teacher", description: "", audience: "general", channel_id: "personal-channel", phone_enabled: true, web_enabled: true, enabled: true }, controlsFromSettings(false));
+    const teacher = await b.save(teachersKind("learner-a"), TeacherSchema.parse({ name: "Personal", base_bot: "personal-base", conversation_mode: "guided" }));
+    await b.savePreference("learner-a", { active_teacher: teacher.id, teacher_bot: "student", selected_bot: "student", mode: "free" });
+    await startSchool(b, progress, settings(env), "active-personal", "learner-a");
+    expect(await b.loadContext("active-personal")).toMatchObject({ selected_bot: "personal-base", teacher_fallback: false });
+    expect(await runtimeContext(b, "active-personal")).toContain("does not select a free-conversation teaching style");
+    await startSchool(b, progress, settings(env), "explicit-base", "learner-a", "student");
+    expect(await b.loadContext("explicit-base")).toMatchObject({ selected_bot: "student" });
+    db.sql.prepare("UPDATE bots SET phone_enabled=0 WHERE id='personal-base'").run();
+    await startSchool(b, progress, settings(env), "fallback-base", "learner-a");
+    expect(await b.loadContext("fallback-base")).toMatchObject({ selected_bot: "student", teacher_fallback: true });
+    expect(await quickOpening(b, "fallback-base")).toContain("המורה האישי לא זמין");
+    expect(await b.loadContext("preferences:learner-a")).toMatchObject({ active_teacher: teacher.id });
+  });
+  it("separates mandatory template guidance from personal choices while retaining both and school scope", async () => {
+    const c = await applyLearnerControls(b, "learner-a", { id:"student", role:"teacher" }, {
+      ...controlsFromSettings(false), custom_instructions:"Original CRM guidance.", required_template_instructions:"Do not teach the topic of cats."
+    });
+    expect(c.custom_instructions).toBe("Original CRM guidance.");
+    expect(c.learner_instructions).toContain("SpeakCall learner preferences");
+    const instruction = buildSystemInstruction(c, "Previous learning notes");
+    expect(instruction).toContain("REQUIRED TEMPLATE RULES");
+    expect(instruction).toContain("Do not teach the topic of cats.");
+    expect(instruction).toContain("ACTIVE LEARNER PREFERENCES");
+    expect(instruction).toContain("English-school scope");
+    expect(instruction).toContain("subject to school and required template rules");
+    expect(instruction).toContain("TARGET VOCABULARY");
   });
   it("routes a root-menu system and the existing /99 system with their own extension bases", async () => {
     const pbxEnv = { ...env, TLIVR_PROJECT_ENABLED: "true", TLIVR_CALLBACK_SECRET: "cb", TLIVR_SYSTEM_PHONE: "0765673575,0765674434", TLIVR_PROJECT_PATH: "/99,/" } as Env;
@@ -2024,20 +2070,20 @@ describe("real learner portal", () => {
     expect((await call("pick", "&isaacBotChoice=1")).goTo).toBe("/7");
     expect(await b.loadContext("preferences:learner-a")).toMatchObject({ active_teacher: teacher.id, topic: "business", pace: "slow" });
     const named = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
-    expect(named.custom_instructions).toContain('"Dana"');
-    expect(named.custom_instructions).toContain('"Learner A"');
+    expect(named.learner_instructions).toContain('"Dana"');
+    expect(named.learner_instructions).toContain('"Learner A"');
     await call("pick-default");
     expect((await call("pick-default", "&isaacBotChoice=2")).goTo).toBe("/7");
     expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe("");
     const fallback = await applyLearnerControls(b, "learner-a", { id: "student", role: "teacher" }, controlsFromSettings(false));
-    expect(fallback.custom_instructions).toContain('"יַנקי" (quoted data); pronounce it "Yankee"');
+    expect(fallback.learner_instructions).toContain('"יַנקי" (quoted data); pronounce it "Yankee"');
     for (let i = 0; i < 9; i++) await b.save(teachersKind("learner-a"), { ...config, name: "T" + i });
     const first = JSON.stringify(await call("paged"));
     expect(first).toContain("למורים נוספים הקישו 9");
     expect(JSON.stringify(await call("paged", "&isaacBotChoice=9"))).toContain("יַנקי מצוות ספיקול");
     await b.save("customers", { name: "לקוח מהטלפון", phone: "0500000003", source: "missed-call", preferred_bot: "", notes: "" }, "learner-c");
     const anon = await applyLearnerControls(b, "learner-c", { id: "student", role: "teacher" }, controlsFromSettings(false));
-    expect(anon.custom_instructions).toContain("name is unknown");
+    expect(anon.learner_instructions).toContain("name is unknown");
   });
   it("does not let another learner select, preview, or delete a private teacher or read a word list", async () => {
     const teacher = await b.save(teachersKind("learner-a"), config);
@@ -2070,7 +2116,7 @@ describe("real learner portal", () => {
     const defaults = controlsFromSettings(false);
     const base = await applyLearnerControls(b, "learner-a", bot, defaults, "");
     expect(base.voice).toBe("Puck");
-    expect(base.custom_instructions).not.toContain("Personality: playful");
+    expect(base.learner_instructions).not.toContain("Personality: playful");
     expect((await applyLearnerControls(b, "learner-a", bot, defaults)).voice).toBe("Puck");
     expect((await applyLearnerControls(b, "learner-a", bot, defaults, teacher.id)).voice).toBe("Puck");
     expect((await b.loadContext("preferences:learner-a")).active_teacher).toBe(teacher.id);

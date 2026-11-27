@@ -11,6 +11,7 @@ import {
   LESSON_SUMMARY_TOOL,
   OBSERVATION_TOOL,
   PHONE_INTAKE_TOOL,
+  SAVE_LEARNER_NAME_TOOL,
   TRANSLATION_LANGUAGE_TOOL,
 } from "./tools";
 
@@ -49,6 +50,7 @@ export function buildSetupPayload(c: TutorControls, systemInstruction: string, p
   const tools: Record<string, unknown>[] = c.lesson
     ? [...(c.lesson.vocabulary.length + c.lesson.grammar.length ? [learningTool(c.lesson)] : []), LESSON_SUMMARY_TOOL, END_SESSION_TOOL, c.phone_lesson ? PHONE_INTAKE_TOOL : INTAKE_TOOL, ...salesTools, ...(c.summary_callback ? [SUMMARY_CALLBACK_TOOL] : []), ...(call.practiceReminders && call.customerId && !call.customerId.startsWith("anonymous-") ? [PRACTICE_REMINDER_TOOL] : [])]
     : [OBSERVATION_TOOL, LESSON_SUMMARY_TOOL, END_SESSION_TOOL, TRANSLATION_LANGUAGE_TOOL];
+  if (c.lesson && c.phone_lesson && call.customerId && !call.customerId.startsWith("anonymous-")) tools.push(SAVE_LEARNER_NAME_TOOL);
   if (c.lesson && call.masteryDomain && call.customerId && !call.customerId.startsWith("anonymous-")) tools.push(MASTERY_DOMAIN_TOOL);
   return {
     setup: {

@@ -1,9 +1,12 @@
 import { resolveTurnTuning, type TurnTuning } from "./turn-tuning";
-import { b64decode, meanSquare } from "./audio";
+import { b64decode, concat, meanSquare } from "./audio";
 import { synthesizeGoogleStandard } from "./pbx-pilot-google";
 import type { PilotInterruption } from "./env";
 import { AsyncQueue } from "./async";
 import type { GeminiEvent, ToolCall } from "./gemini";
+import type { TranscriptCoach, CoachDecision } from "./lesson-coach";
+import type { LessonPlan } from "./learning";
+import { assessSemantic, semanticDirective, type SemanticInput } from "./lesson-semantic-observer";
 
 type Message = Record<string, unknown>;
 export type CascadeConfig = {
@@ -63,6 +66,30 @@ async function* lines(response: Response): AsyncGenerator<string> {
   }
 }
 
+/** A fixed notice spoken independently of the failed conversation model/STT. */
+export async function synthesizeCascadeNotice(config: CascadeConfig, text: string, request: typeof fetch = fetch): Promise<{ pcm24k: Uint8Array; cost: number }> {
+  const signal = AbortSignal.timeout(7000);
+  if (config.googleKey) {
+    const pcm24k = await synthesizeGoogleStandard(request, config.googleKey, "he-IL-Standard-B", text, signal);
+    return { pcm24k, cost: Array.from(text).length * 4 / 1_000_000 };
+  }
+  const response = await request(SPEECH_URL, {
+    method: "POST", signal, headers: { Authorization: "Basic " + config.inworldKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voiceId: config.voice, modelId: "inworld-tts-2-flash", audioConfig: { audioEncoding: "PCM", sampleRateHertz: 24000 } }),
+  });
+  if (!response.ok) throw new Error("notice_tts_failed");
+  const parts: Uint8Array[] = [];
+  for await (const line of lines(response)) {
+    if (signal.aborted) throw new Error("notice_tts_timeout");
+    const data = JSON.parse(line);
+    if (data.error || data.result?.error) throw new Error("notice_tts_failed");
+    if (data.result?.audioContent) parts.push(b64decode(data.result.audioContent));
+  }
+  const pcm24k = concat(parts);
+  if (!pcm24k.length || pcm24k.byteLength % 2) throw new Error("notice_tts_empty");
+  return { pcm24k, cost: Array.from(text).length * 15 / 1_000_000 };
+}
+
 export class CascadeLive {
   readonly resumeHandle = null;
   private readonly events = new AsyncQueue<GeminiEvent>();
@@ -74,6 +101,7 @@ export class CascadeLive {
   private socket: WebSocket | null = null;
   private generation: AbortController | null = null;
   private closed = false;
+  private closureReason?: string;
   private learnerText = "";
   private speechFrames = 0;
   private audioUntil = 0;
@@ -101,6 +129,9 @@ export class CascadeLive {
     private readonly config: CascadeConfig,
     setup: Setup,
     private readonly request: typeof fetch = (input, init) => globalThis.fetch(input, init),
+    private readonly coach?: TranscriptCoach,
+    private readonly tutorPlaybackDrained: () => boolean = () => true,
+    private readonly semantic?: { model: string; mode: "shadow" | "active" },
   ) {
     this.setup = setup.setup ?? {};
     this.tuning = resolveTurnTuning(config.tuning);
@@ -120,10 +151,10 @@ export class CascadeLive {
     socket.accept();
     socket.addEventListener("message", (event) => {
       if (typeof event.data !== "string" || this.closed) return;
-      try { this.transcription(JSON.parse(event.data)); } catch { this.close(); }
+      try { this.transcription(JSON.parse(event.data)); } catch { this.close("soniox_invalid_message"); }
     });
-    socket.addEventListener("close", () => this.close());
-    socket.addEventListener("error", () => this.close());
+    socket.addEventListener("close", () => this.close("soniox_socket_closed"));
+    socket.addEventListener("error", () => this.close("soniox_socket_error"));
     const languages = this.setup.inputAudioTranscription?.languageCodes
       ?.map((language) => language.toLowerCase().split("-")[0])
       .filter((language) => /^[a-z]{2}$/.test(language));
@@ -138,7 +169,7 @@ export class CascadeLive {
   }
 
   next(): Promise<GeminiEvent> {
-    return this.events.next().then((event) => event ?? { type: "closed" });
+    return this.events.next().then((event) => event ?? { type: "closed", ...(this.closureReason ? { reason: this.closureReason } : {}) });
   }
 
   sendAudio(pcm: Uint8Array) {
@@ -169,13 +200,17 @@ export class CascadeLive {
   startGreeting(text: string) { this.prompt(text); }
   addContext(text: string) { this.context.push(text); }
   prompt(text: string) { this.launch(text); }
+  updateCoachDelivery(plan: Pick<LessonPlan, "level" | "conversation_mode" | "correction_policy">) { this.coach?.updateDelivery(plan); }
+  repetitionOnlyTargets() { return this.coach?.repetitionOnlyTargets() ?? []; }
+  knownAssistedOnlyTargets() { return this.coach?.knownAssistedOnlyTargets() ?? []; }
 
   submitToolResult(call: ToolCall, saved: boolean, result?: Message) {
     if (call.id) this.toolReplies.get(call.id)?.(result ?? { saved });
   }
 
-  close() {
+  close(reason?: string) {
     if (this.closed) return;
+    this.closureReason = reason;
     this.closed = true;
     this.generation?.abort();
     const socket = this.socket;
@@ -185,6 +220,7 @@ export class CascadeLive {
   }
 
   private interrupt() {
+    this.coach?.tutorInterrupted();
     const pauseMs = this.pauseStarted === null ? undefined : Date.now() - this.pauseStarted;
     this.pauseStarted = null;
     this.candidateSuppressed = false;
@@ -201,7 +237,7 @@ export class CascadeLive {
     if (event.error_code || event.error_type) {
       const code = event.error_type || String(event.error_code);
       console.warn("Teacher pilot Soniox", /^[a-z0-9_]{1,64}$/.test(code) ? code : "provider_error");
-      this.close();
+      this.close("soniox_provider_error");
       return;
     }
     let partial = "";
@@ -225,35 +261,80 @@ export class CascadeLive {
         if (!utterance) continue;
         this.events.push({ type: "voice_activity", activity: "end", offset_ms: null });
         this.events.push({ type: "transcript", role: "learner", text: utterance, finished: true });
-        this.launch(utterance);
+        this.launch(utterance, true);
       } else if (token.is_final) this.learnerText += text;
       else partial += text;
     }
     if (partial) this.events.push({ type: "interim_transcript", text: this.learnerText + partial });
   }
 
-  private launch(text: string) {
+  private launch(text: string, learner = false) {
     if (!text.trim() || this.closed) return;
     if (this.generation || Date.now() < this.audioUntil) this.interrupt();
+    // Soniox has emitted a final endpoint, and the next LLM request has not begun.
+    // No extra provider call or delay; the coach consumes only the previous complete turn.
+    let decision: CoachDecision | undefined;
+    if (learner && this.coach) {
+      const started = performance.now();
+      try {
+        if (!this.tutorPlaybackDrained()) this.coach.tutorInterrupted();
+        decision = this.coach.observeLearner(text);
+        const { directive, ...details } = decision;
+        this.events.push({ type: "lesson_coach", details: {
+          ...details, applied: decision.mode === "active" && !!directive, elapsed_ms: performance.now() - started
+        } });
+      } catch {
+        // Observation must not prevent a lesson from continuing.
+        console.warn("Lesson coach observation failed");
+      }
+    }
     const generation = new AbortController();
     this.generation = generation;
-    void this.answer(text, generation.signal).catch(() => {
+    // An optional, separately configured assessor gets only the ambiguous final turn.
+    // Shadow never waits; active is bounded and must be separately validated.
+    const semanticInput = this.coach?.takeSemanticCandidate();
+    void this.answerWithCoach(text, generation.signal, decision, semanticInput).catch(error => {
       if (!generation.signal.aborted) {
-        console.warn("Teacher pilot response failed");
-        this.close();
+        const message = error instanceof Error ? error.message : "";
+        const cause = /^(?:openrouter_(?:\d{3}|stream)|inworld_(?:\d{3}|stream)|google_tts_(?:\d{3}|empty|invalid_audio))$/.test(message) ? message : "cascade_response_failed";
+        console.warn("Teacher pilot response failed", cause);
+        this.close(cause);
       }
     }).finally(() => {
       if (this.generation === generation) this.generation = null;
     });
   }
 
-  private async answer(text: string, signal: AbortSignal) {
+  private async answerWithCoach(text: string, signal: AbortSignal, decision?: CoachDecision, input?: SemanticInput) {
+    let guidance = decision?.mode === "active" ? decision.directive : undefined;
+    if (this.semantic && input && decision?.outcome === "unknown") {
+      const settings = this.semantic;
+      const observe = async () => {
+        const started = Date.now();
+        const result = await assessSemantic(input, settings.model, this.config.openrouterKey, signal, this.request);
+        const directive = semanticDirective(result, input);
+        if (!signal.aborted) this.events.push({ type: "lesson_coach_semantic", details: {
+          version: "semantic-v1", turn: decision.turn, mode: settings.mode,
+          outcome: result?.outcome ?? "unavailable", confidence: result?.confidence ?? "low",
+          applied: settings.mode === "active" && decision.mode === "active" && !!directive,
+          elapsed_ms: Date.now() - started,
+        } });
+        return directive;
+      };
+      if (settings.mode === "active" && decision.mode === "active") guidance = await observe();
+      else void observe().catch(() => {}); // no extra wait or teacher self-report in shadow
+    }
+    if (!signal.aborted) await this.answer(text, signal, guidance);
+  }
+
+  private async answer(text: string, signal: AbortSignal, guidance?: string) {
     const system = this.setup.systemInstruction?.parts?.map((part) => part.text ?? "").join("\n") ?? "";
     const tools = (this.setup.tools ?? []).flatMap((group) => group.functionDeclarations ?? [])
       .map(({ name, description, parameters }) => ({
         type: "function", function: { name, description, parameters: parameters ?? { type: "object" } },
       }));
     this.history.push({ role: "user", content: text });
+    let spokenText = "";
     for (let step = 0; step < 5; step++) {
       const response = await this.request(LLM_URL, {
         method: "POST", signal, headers: {
@@ -261,7 +342,7 @@ export class CascadeLive {
         },
         body: JSON.stringify({
           model: this.config.model, messages: [
-            { role: "system", content: [system, ...this.context].join("\n\n") }, ...this.history,
+            { role: "system", content: [system, ...this.context, ...(guidance ? [guidance] : [])].join("\n\n") }, ...this.history,
           ],
           ...(tools.length ? { tools } : {}),
           temperature: this.setup.generationConfig?.temperature,
@@ -310,9 +391,11 @@ export class CascadeLive {
       if (pending) queueSpeech(pending);
       await speech;
       if (signal.aborted) return;
+      spokenText += " " + fullText;
       const toolCalls = [...calls.values()].filter((call) => call.id && tools.some((tool) => tool.function.name === call.function.name));
       if (!toolCalls.length) {
         this.history.push({ role: "assistant", content: fullText });
+        this.coach?.tutorCompleted(spokenText);
         this.events.push({ type: "transcript", role: "tutor", text: "", finished: true });
         this.events.push({ type: "turn_complete" });
         return;

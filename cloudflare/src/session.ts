@@ -10,10 +10,11 @@ import { callWithLessonSummary, canCallWithLessonSummary, lessonSummaryAudioText
 import { adultControls, controlsFromSettings, type TutorControls } from "./controls";
 import { type Env, type Settings, bearer, extensionPath, HttpError, paymentsConfigured, randomHex, secureEqual, sha256Hex, withinBase } from "./env";
 import { GeminiLive, type ToolCall } from "./gemini";
-import { CascadeLive, type CascadeConfig } from "./cascade";
+import { CascadeLive, synthesizeCascadeNotice, type CascadeConfig } from "./cascade";
+import { coachMode, TranscriptCoach } from "./lesson-coach";
 import { pilotLog } from "./pbx-pilot-log";
 import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
-import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
+import { acquireGeminiBudget, acquireCascadeBudget, budgetMessage, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { CallRecorder } from "./recordings";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
@@ -24,8 +25,8 @@ import { masteryDomainGuidance, saveMasteryDomain } from "./mastery-domain";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { OFFER_GUIDANCE, offerGift, salesOfferTestPhone, SALES_EXTENSION_PATH } from "./sales-offer";
 import { parseStartFrame, transferCommand } from "./technoline";
-import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
-import { LearningStore } from "./learning";
+import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake, saveLearnerName } from "./learner";
+import { LearningStore, validateLearningBatch } from "./learning";
 import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 
 export const SILENCE_NUDGE_MS = 7000;
@@ -310,7 +311,7 @@ export class TutorSession {
         }
         this.controls = { ...this.controls, store_transcripts: true };
       }
-      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall);
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall, this.cascadeConfig?.voice);
       const opening = await quickOpening(this.b, this.callId);
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
       if (this.controls.lesson && !this.portal) {
@@ -366,6 +367,10 @@ export class TutorSession {
       const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders, masteryDomain: this.masteryDomain });
       if (!this.cascadeConfig || allowance.mode === "basic") releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
+      else if (this.env.CASCADE_BUDGET_MODE === "on") releaseBudget = await acquireCascadeBudget(this.env, () => this.meter.cascadeCosts().total, reason => {
+        this.finalMessage = budgetMessage[reason];
+        this.stop(reason);
+      });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
@@ -430,6 +435,7 @@ export class TutorSession {
       }
       if (error instanceof GeminiBudgetError) {
         this.reason ||= error.reason;
+        if (this.cascadeConfig) this.finalMessage = budgetMessage[error.reason];
         return;
       }
       if (!this.reason) this.reason = "call_failed";
@@ -643,6 +649,7 @@ export class TutorSession {
       const event = await this.ai!.next();
       if (this.abort.signal.aborted) return;
       if (event.type === "closed") {
+        if (this.cascadeConfig && event.reason) await this.latency("cascade_provider_closed", { reason: event.reason }).catch(() => {});
         if (this.safetyMuted) { this.endForContent("content_blocked"); return; }
         this.safety?.interrupt();
         this.reconnecting = this.reconnectGemini();
@@ -651,7 +658,11 @@ export class TutorSession {
         if (this.reason || this.abort.signal.aborted) return;
         continue;
       }
-      if (event.type === "pilot_interruption") {
+      if (event.type === "lesson_coach") {
+        await this.latency("lesson_coach_turn", event.details).catch(() => {});
+      } else if (event.type === "lesson_coach_semantic") {
+        await this.latency("lesson_coach_semantic", event.details).catch(() => {});
+      } else if (event.type === "pilot_interruption") {
         await this.latency("pilot_interruption_" + event.phase, { elapsed_ms: event.elapsed_ms }).catch(() => {});
       } else if (event.type === "voice_activity" && this.cascadeConfig && event.activity === "end") {
         this.pilotTurnEndedAt = Date.now();
@@ -724,6 +735,10 @@ export class TutorSession {
         }
       } else if (event.type === "turn_complete") {
         if (this.safety && await this.finishContentTurn(this.safety)) return;
+        // Cascade speech often ends with a sub-frame tail. Pad it now, otherwise
+        // it stays in partial forever and the next genuinely heard answer is
+        // incorrectly rejected by the lesson observer's playback gate.
+        if (this.cascadeConfig && this.partial.length) this.enqueue(new Uint8Array(FRAME_BYTES - this.partial.length));
         this.summaryCallbackSpeech = "";
         this.reminderSpeech = "";
         const pending = this.pendingEmail;
@@ -777,7 +792,18 @@ export class TutorSession {
   }
 
   private makeVoiceEngine(setup: Record<string, unknown>) {
-    return this.cascadeConfig ? new CascadeLive(this.cascadeConfig, setup) : new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
+    if (!this.cascadeConfig) return new GeminiLive(this.s.geminiLiveUrl, this.s.geminiKey, setup);
+    const mode = coachMode(this.env.LESSON_COACH_MODE);
+    const plan = this.controls?.lesson;
+    // Only school lessons on the cascade; no translation, sales or payment flow changes.
+    const coach = mode && plan && !this.controls?.sales && !this.offerCall ? new TranscriptCoach(plan, mode) : undefined;
+    // Sending another transcript excerpt to a separate assessor is explicitly opt-in,
+    // and never done when the learner has disabled transcript storage.
+    const semanticMode = coachMode(this.env.LESSON_COACH_SEMANTIC_MODE);
+    const model = this.env.LESSON_COACH_SEMANTIC_MODEL?.trim();
+    const semantic = coach && this.controls?.store_transcripts && semanticMode && model
+      ? { model, mode: mode === "active" ? semanticMode : "shadow" as const } : undefined;
+    return new CascadeLive(this.cascadeConfig, setup, undefined, coach, () => !this.safetyMuted && this.output.length === 0 && this.partial.byteLength === 0, semantic);
   }
 
   private async reconnectGemini(preservePlayback = false) {
@@ -822,9 +848,19 @@ export class TutorSession {
   }
 
   private async speakFinalMessage(text: string) {
-    if (this.cascadeConfig) return;
     try {
-      const pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+      let pcm: Uint8Array;
+      if (this.cascadeConfig) {
+        try {
+          const notice = await synthesizeCascadeNotice(this.cascadeConfig, text);
+          [pcm] = downsample24kTo8k(notice.pcm24k);
+          this.meter.recordUsage({ cascade_tts_usd: notice.cost });
+        } catch {
+          // The conversation TTS might be the failing provider; try independent Cloud TTS.
+          pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+        }
+      } else pcm = await new BasicTranslator(this.env, this.s).speak(text, "he-IL");
+      if (!pcm.length) throw new Error("empty_final_notice");
       for (let offset = 0; offset < pcm.length && !this.disconnected; offset += FRAME_BYTES) {
         const frame = new Uint8Array(FRAME_BYTES);
         frame.set(pcm.subarray(offset, offset + FRAME_BYTES));
@@ -837,7 +873,7 @@ export class TutorSession {
     }
   }
 
-  private async recordTool(call: ToolCall): Promise<SalesToolResult | { saved: false; reason: "confirmation_required"; next_step: string }> {
+  private async recordTool(call: ToolCall): Promise<SalesToolResult | { saved: false; reason: "confirmation_required"; next_step: string } | { saved: boolean; omitted_vocabulary_ids: string[]; reason: "assisted_only" }> {
     const args = call.args ?? {};
     if (call.name === "save_mastery_domain") {
       if (!this.masteryDomain || !this.controls?.lesson) return false;
@@ -871,7 +907,21 @@ export class TutorSession {
     if (call.name === "report_learning_batch") {
       if (!this.controls?.lesson) return false;
       try {
-        const saved = await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
+        const batch = validateLearningBatch(args,this.controls.lesson);
+        if (!batch) return false;
+        const guarded = this.ai instanceof CascadeLive && coachMode(this.env.LESSON_COACH_MODE) === "active";
+        const assisted = new Set(guarded && this.ai instanceof CascadeLive ? this.ai.knownAssistedOnlyTargets() : []);
+        const omitted = batch.vocabulary.filter(v=>v.score === 100 && assisted.has(v.word_id)).map(v=>v.word_id);
+        const remaining = {...batch,vocabulary:batch.vocabulary.filter(v=>!omitted.includes(v.word_id))};
+        // Never assign a zero for missing independent evidence, or suppress an ambiguous
+        // contextual response. Explicitly supported repetition alone cannot prove 100.
+        const saved = omitted.length && !remaining.vocabulary.length && !remaining.grammar.length ? false
+          : await new LearningStore(this.env.DB).record(this.customerId, this.callId, remaining);
+        if (omitted.length) {
+          await this.latency("lesson_coach_score_check", { repetition_only_100: omitted.length, omitted: omitted.length }).catch(() => {});
+          this.ai?.addContext("APPLICATION NOTE: the application omitted claimed independent scores where the observed evidence was supplied repetition only. Do not tell the learner that this proves failure. Continue naturally; seek independent recall later rather than re-submitting the same grade.");
+          return {saved,omitted_vocabulary_ids:omitted,reason:"assisted_only"};
+        }
         await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_result", { saved, vocabulary_count: Array.isArray(args.vocabulary) ? args.vocabulary.length : null, grammar_count: Array.isArray(args.grammar) ? args.grammar.length : null }).catch(() => {});
         return saved;
       } catch {
@@ -901,16 +951,28 @@ export class TutorSession {
       await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, ...(typeof result === "boolean" ? { saved: result } : result) }).catch(() => {});
       return result;
     }
+    if (call.name === "save_learner_name") {
+      if (!this.controls?.phone_lesson || !this.controls.lesson) return false;
+      const saved = await saveLearnerName(this.b, this.customerId, args.name, this.meter.transcript).catch(() => false);
+      if (saved) this.ai?.addContext("APPLICATION NOTE: the learner explicitly provided their actual first name and it was saved. Use it naturally; do not ask for it again.");
+      await this.progress.logDiagnostic(this.profileId, this.callId, "learner_name_saved", { saved }).catch(() => {});
+      return saved;
+    }
     if (call.name === "save_intake") {
+      // Save verified phone names even when the rest of intake is incomplete; do not
+      // let a later model-invented value overwrite the real name via the legacy tool.
+      const { learner_name, ...remainingArgs } = args;
+      const intakeArgs = this.controls?.phone_lesson ? remainingArgs : args;
+      if (this.controls?.phone_lesson && learner_name !== undefined) await saveLearnerName(this.b, this.customerId, learner_name, this.meter.transcript).catch(() => false);
       const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
       const goal = typeof args.goal === "string" && this.controls?.intake_pending ? goalFromLearnerSpeech(args.goal, heard) : args.goal;
       const previewTeacher = this.portal?.teacherId;
-      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal }, { lessonBotId: this.profileId, previewTeacher, allowLower: this.controls?.phone_lesson });
+      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...intakeArgs, goal }, { lessonBotId: this.profileId, previewTeacher, allowLower: this.controls?.phone_lesson });
       await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) {
         const controls = this.controls = { ...this.controls, intake_pending: false };
         const bot = { id: this.profileId, role: "teacher" } as const;
-        const refresh = (teacher?: string) => applyLearnerControls(this.b, this.customerId, bot, controls, teacher, this.portal ? "web" : "phone");
+        const refresh = (teacher?: string) => applyLearnerControls(this.b, this.customerId, bot, controls, teacher, this.portal ? "web" : "phone", false, this.cascadeConfig?.voice);
         const lesson = await refresh(previewTeacher).then(c => c.lesson).catch(async error => {
           if (!previewTeacher || !(error instanceof HttpError) || error.status !== 404) throw error;
           const previous = controls.lesson;
@@ -923,7 +985,8 @@ export class TutorSession {
           };
         });
         const access = this.portal ? "These override the requested direction when access is limited." : "Apply the level to conversational difficulty immediately; it does not change the language you speak. Access limits apply to curriculum, not to conversational difficulty. Continue assessing only the original targets until the next call.";
-        this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}. ${access} The full saved plan applies from the next call. Start or continue the lesson now.`);
+        if (lesson && this.ai instanceof CascadeLive) this.ai.updateCoachDelivery(lesson);
+        this.ai?.addContext(`APPLICATION NOTE: lesson direction saved (the same settings the website shows). For the rest of this call use the effective topic=${JSON.stringify(lesson?.topic)}, level=${JSON.stringify(lesson?.level)}, conversation_mode=${JSON.stringify(lesson?.conversation_mode)}, correction_policy=${JSON.stringify(lesson?.correction_policy)}. ${access} The full saved plan applies from the next call. Start or continue the lesson now.`);
       }
       return saved;
     }

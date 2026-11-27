@@ -32,6 +32,7 @@ export const TutorControlsSchema = z
     opening_message: z.string().min(10).max(2000).default(DEFAULT_OPENING_MESSAGE),
     learning_goal: z.string().max(2000).default(""),
     custom_instructions: z.string().max(5000).default(""),
+    required_template_instructions: z.string().max(5000).default(""),
     target_lesson_minutes: z.number().int().min(1).max(120).default(15),
     ending_policy: z
       .enum(["learner_only", "after_target_with_permission", "model_discretion"])
@@ -67,7 +68,7 @@ export const TutorControlsSchema = z
   })
   .refine((c) => c.context_target_tokens < c.context_trigger_tokens, "context target must be smaller than trigger");
 
-export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan; phone_lesson?: boolean; intake_pending?: boolean; sales?: boolean; summary_callback?: boolean; teacher_name?: string; teacher_female?: boolean };
+export type TutorControls = z.output<typeof TutorControlsSchema> & { lesson?: LessonPlan; phone_lesson?: boolean; intake_pending?: boolean; sales?: boolean; summary_callback?: boolean; teacher_name?: string; teacher_female?: boolean; learner_instructions?: string };
 
 export function controlsFromSettings(storeTranscripts: boolean): TutorControls {
   return TutorControlsSchema.parse({ store_transcripts: storeTranscripts });
@@ -107,5 +108,13 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   ];
   if (c.learning_goal.trim()) controls.push(`- Current learning goal: ${c.learning_goal.trim()}`);
   if (c.custom_instructions.trim()) controls.push(`- Additional administrator instructions: ${c.custom_instructions.trim()}`);
-  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : ""].filter(Boolean).join("\n\n");
+  const required = c.required_template_instructions?.trim()
+    ? "REQUIRED TEMPLATE RULES (administrator-defined; subject to school content and runtime safeguards; override personal preferences and generic lesson defaults):\n" + c.required_template_instructions.trim()
+    : "";
+  const personal = c.learner_instructions?.trim()
+    ? "ACTIVE LEARNER PREFERENCES (application-resolved choices; adapt teaching style within school scope, enrolled curriculum, required template rules and access):\n" + c.learner_instructions.trim()
+    : "";
+  const spokenHebrew = c.phone_lesson && typeof c.teacher_female === "boolean"
+    ? `HEBREW VOICE AND ADDRESS (authoritative, including greetings, practice, feedback and closing): The tutor speaks about themself in ${c.teacher_female ? 'feminine Hebrew (אני יודעת, אני שמחה, אני יכולה)' : 'masculine Hebrew (אני יודע, אני שמח, אני יכול)'}. Never use the opposite form for the tutor. The caller’s gender is not inferred from the tutor voice or name. Address the caller with natural neutral forms: "אפשר לומר", "ננסה שוב", "מעולה", "מה התשובה?" instead of "תגידי", "תגיד", "בואי", "בוא", "מוכנה", or "מוכן". Give roleplay tasks without assigning the caller a gender. These distinct rules override conflicting examples and prior context; preserve legitimate quoted English and in-character roles.` : "";
+  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), required, personal, history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : "", spokenHebrew].filter(Boolean).join("\n\n");
 }

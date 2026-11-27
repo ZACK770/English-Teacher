@@ -1,4 +1,5 @@
 import { b64decode, b64encode } from "./audio";
+import type { CoachEvent } from "./lesson-coach";
 
 export type GeminiEvent =
   | { type: "audio"; pcm24k: Uint8Array }
@@ -7,11 +8,13 @@ export type GeminiEvent =
   | { type: "transcript"; role: "learner" | "tutor"; text: string; rawText?: string; finished?: boolean }
   | { type: "interim_transcript"; text: string }
   | { type: "voice_activity"; activity: "start" | "end"; offset_ms: number | null }
+  | { type: "lesson_coach"; details: CoachEvent }
+  | { type: "lesson_coach_semantic"; details: { version: string; turn: number; mode: string; outcome: string; confidence: string; applied: boolean; elapsed_ms: number } }
   | { type: "turn_complete" }
   | { type: "tool_call"; calls: ToolCall[] }
   | { type: "usage"; usage: Record<string, unknown> }
   | { type: "go_away"; detail: unknown }
-  | { type: "closed" };
+  | { type: "closed"; reason?: string };
 
 export interface ToolCall {
   id?: string;

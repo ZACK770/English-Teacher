@@ -63,6 +63,12 @@ describe("finished-call review", () => {
     expect(sampleTutorTranscript("not a transcript")).toEqual([]);
   });
 
+  it("preserves the preceding task to distinguish acknowledgement from actual successful practice", () => {
+    const excerpts=sampleTutorTranscript(JSON.stringify([
+      {role:"tutor",text:'Please say "water".'},{role:"learner",text:"Yes."},{role:"tutor",text:"Perfect, you said it!"},
+    ]));
+    expect(excerpts[1]).toEqual({previous_tutor:'Please say "water".',learner:"Yes.",tutor:"Perfect, you said it!"});
+  });
   it("only spends on teacher transcripts and reports a repeated issue without changing prompts", async () => {
     const fetch = vi.fn(async () => judge("no_practice", 1));
     vi.stubGlobal("fetch", fetch);
@@ -87,6 +93,23 @@ describe("finished-call review", () => {
       evidence_call_ids: expect.arrayContaining(["a", "b", "c"]),
     })]);
     expect(sql.prepare("SELECT active_version FROM bots WHERE id='coach'").get()?.active_version).toBe(1);
+  });
+
+  it("reports shadow and active coach observations separately, and marks score checks only as suspect", async () => {
+    session("a");
+    const insert = sql.prepare(`INSERT INTO latency_events(created_at,profile_id,call_id,event_name,since_call_start_ms,since_previous_ms,details_json)
+      VALUES (?,'coach','a',?,50,50,?)`);
+    insert.run(time,"lesson_coach_turn",JSON.stringify({version:"transcript-v1",mode:"shadow",outcome:"ack_only",action:"elicit_attempt",applied:false,elapsed_ms:0.2}));
+    insert.run(time,"lesson_coach_turn",JSON.stringify({version:"transcript-v1",mode:"active",outcome:"ack_only",action:"elicit_attempt",applied:true,elapsed_ms:0.4}));
+    insert.run(time,"lesson_coach_semantic",JSON.stringify({version:"semantic-v1",mode:"shadow",outcome:"partial",applied:false,elapsed_ms:400}));
+    insert.run(time,"lesson_coach_score_check",JSON.stringify({repetition_only_100:1}));
+    const report = await callReviewReport(env, now);
+    expect(report.lesson_coach).toEqual(expect.arrayContaining([
+      expect.objectContaining({mode:"shadow",version:"transcript-v1",turns:1,applied:0,bot_version:1}),
+      expect.objectContaining({mode:"active",version:"transcript-v1",turns:1,applied:1}),
+      expect.objectContaining({mode:"shadow",version:"semantic-v1",outcome:"partial",turns:1,applied:0}),
+    ]));
+    expect(report.lesson_coach_score_checks).toEqual({checks:1,suspect_scores:1});
   });
 
   it("does not count invalid provider output as a success and retains its token counts", async () => {

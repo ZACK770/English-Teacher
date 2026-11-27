@@ -23,7 +23,9 @@ export async function recordedOfferMenu(env: Env) {
   return menu;
 }
 
-export const SALES_OFFER_TERMS_TEXT = "שימו לב: בהטבת בלאק פריידיי הינכם זכאים להטבת חודש ראשון. בסוף החודש המנוי ממשיך אוטומטית כמנוי סטארט במחירו הקבוע. אם לא תרצו להמשיך, ניתן לבטל את המנוי בשלוחה 3 בתוך שלושים הימים הראשונים, ולא תחויבו על חודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.";
+/** Read the exact amounts from the order snapshot before explicit payment consent. */
+export const salesOfferTerms = (firstPrice: number, renewalPrice: number) => `החודש הראשון רק ${firstPrice} שקלים. לאחר מכן המנוי מתחדש אוטומטית במחיר ${renewalPrice} שקלים לחודש באשראי. אפשר לבטל בשלוחה 3 בתוך שלושים הימים הראשונים כדי שלא להתחייב לחודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.`;
+export const SALES_OFFER_TERMS_TEXT = salesOfferTerms(20,59);
 export const SALES_OFFER_BUYERS_SQL = "SELECT DISTINCT customer_id FROM payment_orders WHERE package_id='school-offer-week' AND state='paid'";
 export const SALES_OFFER_CAP_SQL = `(SELECT COUNT(*) FROM (${SALES_OFFER_BUYERS_SQL}))<100`;
 export const isSalesOfferPackage = (id: string) => id === SALES_OFFER_PACKAGE;
