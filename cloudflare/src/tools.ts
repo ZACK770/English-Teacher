@@ -72,6 +72,12 @@ export const LESSON_SUMMARY_TOOL = {
   }
 };
 
+export const SAVE_LEARNER_NAME_TOOL = {
+  name: "save_learner_name",
+  description: "Save the actual first name the caller explicitly stated or corrected, not a role-play or translated example; independent of goal/level intake.",
+  parameters: { type: "object", properties: { name: { type: "string", description: "First name exactly as caller provided it" } }, required: ["name"] },
+};
+
 export const INTAKE_TOOL = {
   "name": "save_intake",
   "description": "Save lesson direction: first intake needs goal/level; later send goal plus only requested changes.",

@@ -792,7 +792,7 @@ describe("sales offers", () => {
     Object.assign(env, { NEDARIM_PHONE_ENABLED: "true", NEDARIM_MOSAD_ID: "7019554", NEDARIM_API_KEY: "test", NEDARIM_WEBHOOK_SECRET: "test", NEDARIM_PHONE_TERMINAL: "test" });
     const terms = await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner");
     expect(terms).toMatchObject({ name: "isaacPayConfirm", enabledKeys: "0,1" });
-    expect(terms?.files[0].text).toBe("שימו לב: בהטבת בלאק פריידיי הינכם זכאים להטבת חודש ראשון. בסוף החודש המנוי ממשיך אוטומטית כמנוי סטארט במחירו הקבוע. אם לא תרצו להמשיך, ניתן לבטל את המנוי בשלוחה 3 בתוך שלושים הימים הראשונים, ולא תחויבו על חודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.");
+    expect(terms?.files[0].text).toBe("החודש הראשון רק 20 שקלים. לאחר מכן המנוי מתחדש אוטומטית במחיר 59 שקלים לחודש באשראי. אפשר לבטל בשלוחה 3 בתוך שלושים הימים הראשונים כדי שלא להתחייב לחודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.");
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1", isaacPayConfirm: "0" }, "learner"))
       .toMatchObject({ name: "isaacOffer", enabledKeys: "1", removeParams: ["isaacPayConfirm", "isaacOffer"] });
     expect(await salesOfferResponse(b, env, "/", { PBXcallId: "call", isaacOffer: "1" }, "learner"))
@@ -845,5 +845,27 @@ describe("sales offers", () => {
     const ordinary = new Request("https://example.test/v1/technoline/ivr/main?key=cb&PBXnum=0765673575&PBXextensionPath=/&PBXphone=0502222222&PBXcallId=ordinary");
     expect(await handleCallback(ordinary, env, settings(env), "main"))
       .not.toMatchObject({ name: "isaacOffer" });
+  });
+});
+
+
+describe("engaged learner campaign audience", () => {
+  it("requires real recent telephone teacher practice, not IVR visits, and deduplicates call segments", async () => {
+    env.SALES_OFFER_AUDIENCE="engaged";
+    await tutorCalls("learner",3,160,"translator");
+    await tutorCalls("learner",2,160,"teacher");
+    sql.prepare("UPDATE sessions SET ended_at=?,learner_turns=3 WHERE student_id='learner'").run("2026-06-14T12:00:00Z");
+    sql.exec("UPDATE sessions SET learner_turns=1 WHERE call_id LIKE '%teacher-%'");
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers",offerId)).toBeNull();
+    sql.exec("UPDATE sessions SET learner_turns=3 WHERE call_id LIKE '%teacher-%'");
+    // A second actual telephone call, not two segments of one call, is required.
+    sql.exec("UPDATE sessions SET call_id='same~two' WHERE call_id='learner-teacher-1'; UPDATE call_customers SET call_id='same~two' WHERE call_id='learner-teacher-1'; UPDATE sessions SET call_id='same~one' WHERE call_id='learner-teacher-0'; UPDATE call_customers SET call_id='same~one' WHERE call_id='learner-teacher-0'");
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers",offerId)).toBeNull();
+    sql.exec("UPDATE sessions SET call_id='different' WHERE call_id='same~two'; UPDATE call_customers SET call_id='different' WHERE call_id='same~two'");
+    await selectSalesOffers(env);
+    expect(await b.record("sales-offers",offerId)).toMatchObject({status:"queued"});
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

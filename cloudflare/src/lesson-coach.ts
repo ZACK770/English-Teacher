@@ -7,7 +7,7 @@ import type { SemanticInput } from "./lesson-semantic-observer";
  * It never changes the curriculum, persisted settings, scores, or service entitlements.
  */
 export type CoachMode = "shadow" | "active";
-export const COACH_VERSION = "transcript-v3";
+export const COACH_VERSION = "transcript-v4";
 export function coachMode(value: string | undefined): CoachMode | undefined {
   return value === "shadow" || value === "active" ? value : undefined;
 }
@@ -98,6 +98,7 @@ export class TranscriptCoach {
   private readonly lastSupplied = new Map<string, number>();
   private lastTarget?: string;
   private unsuccessful = 0;
+  private readonly uncertainOccurrences = new Set<string>();
   private readonly evidence = new Map<string, Set<"repeated" | "independent_word">>();
   constructor(private plan: LessonPlan, readonly mode: CoachMode) {}
 
@@ -130,6 +131,11 @@ export class TranscriptCoach {
     this.tutor = ""; // an endpoint is consumed once, never count duplicate partial transcripts
     const target = exercise?.target;
     const finish = (outcome: Outcome, action: Action = "none", instruction?: string): CoachDecision => {
+      // A target in an unclassified learner turn may be valid independent speech.
+      // Never let a conservative observer's abstention disqualify it.
+      if (outcome === "unknown") for (const word of this.plan.vocabulary) {
+        if (contains(text,word.text)) this.uncertainOccurrences.add(word.id);
+      }
       if (genderedPrompt && outcome !== "service_request") {
         instruction = (instruction ? instruction + " " : "") + "Use the existing gender-neutral Hebrew policy: impersonal or infinitive phrasing; do not repeat the prior gendered form of address.";
       }
@@ -242,8 +248,12 @@ export class TranscriptCoach {
     this.evidence.set(id, prior);
   }
 
-  /** Diagnostic only: lack of independent evidence is not a reason to reject a valid score. */
+  /** Explicitly detected supported practice; missing evidence alone is never a rejection. */
   repetitionOnlyTargets(): string[] {
     return [...this.evidence].filter(([, e]) => e.has("repeated") && !e.has("independent_word")).map(([id]) => id);
+  }
+  // Only positive evidence of repeated supplied material, with no other plausible use.
+  knownAssistedOnlyTargets(): string[] {
+    return this.repetitionOnlyTargets().filter(id => !this.uncertainOccurrences.has(id));
   }
 }

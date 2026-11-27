@@ -14,7 +14,7 @@ import { CascadeLive, synthesizeCascadeNotice, type CascadeConfig } from "./casc
 import { coachMode, TranscriptCoach } from "./lesson-coach";
 import { pilotLog } from "./pbx-pilot-log";
 import { geminiKeyForCall, hasPaidReceipt } from "./gemini-key";
-import { acquireGeminiBudget, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
+import { acquireGeminiBudget, acquireCascadeBudget, budgetMessage, GeminiBudgetError, isGeminiError, reportGeminiOutcome } from "./gemini-budget";
 import { SessionMeter } from "./meter";
 import { CallRecorder } from "./recordings";
 import { markQuickIntro, quickOpening, runtimeContext, startSchool } from "./pbx";
@@ -25,8 +25,8 @@ import { masteryDomainGuidance, saveMasteryDomain } from "./mastery-domain";
 import { compilePrompt, type PromptArtifact } from "./prompt";
 import { OFFER_GUIDANCE, offerGift, salesOfferTestPhone, SALES_EXTENSION_PATH } from "./sales-offer";
 import { parseStartFrame, transferCommand } from "./technoline";
-import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake } from "./learner";
-import { LearningStore } from "./learning";
+import { applyLearnerControls, goalFromLearnerSpeech, phoneTeacherFor, saveIntake, saveLearnerName } from "./learner";
+import { LearningStore, validateLearningBatch } from "./learning";
 import { CALL_FAILURE_MESSAGE, HIDDEN_CALLER_MESSAGE, visiblePhone } from "./phone";
 
 export const SILENCE_NUDGE_MS = 7000;
@@ -367,6 +367,10 @@ export class TutorSession {
       const paid = allowance.mode === "paid" && await hasPaidReceipt(this.env, this.callId);
       this.artifact = await compilePrompt(this.controls, history, profileId, this.s, { customerId: this.customerId, practiceReminders: this.practiceReminders, masteryDomain: this.masteryDomain });
       if (!this.cascadeConfig || allowance.mode === "basic") releaseBudget = await acquireGeminiBudget(this.env, () => this.basicGeminiCost || this.meter.usage(this.s).estimated_cost_usd, reason => this.stop(reason), { paid });
+      else if (this.env.CASCADE_BUDGET_MODE === "on") releaseBudget = await acquireCascadeBudget(this.env, () => this.meter.cascadeCosts().total, reason => {
+        this.finalMessage = budgetMessage[reason];
+        this.stop(reason);
+      });
       if (this.abort.signal.aborted) return;
       if (this.controls.lesson) {
         await new LearningStore(this.env.DB).begin(this.customerId, this.callId, this.controls.lesson);
@@ -431,6 +435,7 @@ export class TutorSession {
       }
       if (error instanceof GeminiBudgetError) {
         this.reason ||= error.reason;
+        if (this.cascadeConfig) this.finalMessage = budgetMessage[error.reason];
         return;
       }
       if (!this.reason) this.reason = "call_failed";
@@ -868,7 +873,7 @@ export class TutorSession {
     }
   }
 
-  private async recordTool(call: ToolCall): Promise<SalesToolResult | { saved: false; reason: "confirmation_required"; next_step: string }> {
+  private async recordTool(call: ToolCall): Promise<SalesToolResult | { saved: false; reason: "confirmation_required"; next_step: string } | { saved: boolean; omitted_vocabulary_ids: string[]; reason: "assisted_only" }> {
     const args = call.args ?? {};
     if (call.name === "save_mastery_domain") {
       if (!this.masteryDomain || !this.controls?.lesson) return false;
@@ -902,13 +907,20 @@ export class TutorSession {
     if (call.name === "report_learning_batch") {
       if (!this.controls?.lesson) return false;
       try {
-        const saved = await new LearningStore(this.env.DB).record(this.customerId, this.callId, args);
-        // Compare the teacher's claims to independent local evidence, but never overwrite
-        // legitimate semantic assessments solely because the conservative observer abstained.
-        if (saved && this.ai instanceof CascadeLive && coachMode(this.env.LESSON_COACH_MODE)) {
-          const repeated = new Set(this.ai.repetitionOnlyTargets());
-          const suspect = Array.isArray(args.vocabulary) ? args.vocabulary.filter(v => v?.score === 100 && repeated.has(v?.word_id)).length : 0;
-          if (suspect) await this.latency("lesson_coach_score_check", { repetition_only_100: suspect }).catch(() => {});
+        const batch = validateLearningBatch(args,this.controls.lesson);
+        if (!batch) return false;
+        const guarded = this.ai instanceof CascadeLive && coachMode(this.env.LESSON_COACH_MODE) === "active";
+        const assisted = new Set(guarded && this.ai instanceof CascadeLive ? this.ai.knownAssistedOnlyTargets() : []);
+        const omitted = batch.vocabulary.filter(v=>v.score === 100 && assisted.has(v.word_id)).map(v=>v.word_id);
+        const remaining = {...batch,vocabulary:batch.vocabulary.filter(v=>!omitted.includes(v.word_id))};
+        // Never assign a zero for missing independent evidence, or suppress an ambiguous
+        // contextual response. Explicitly supported repetition alone cannot prove 100.
+        const saved = omitted.length && !remaining.vocabulary.length && !remaining.grammar.length ? false
+          : await new LearningStore(this.env.DB).record(this.customerId, this.callId, remaining);
+        if (omitted.length) {
+          await this.latency("lesson_coach_score_check", { repetition_only_100: omitted.length, omitted: omitted.length }).catch(() => {});
+          this.ai?.addContext("APPLICATION NOTE: the application omitted claimed independent scores where the observed evidence was supplied repetition only. Do not tell the learner that this proves failure. Continue naturally; seek independent recall later rather than re-submitting the same grade.");
+          return {saved,omitted_vocabulary_ids:omitted,reason:"assisted_only"};
         }
         await this.progress.logDiagnostic(this.profileId, this.callId, "learning_batch_result", { saved, vocabulary_count: Array.isArray(args.vocabulary) ? args.vocabulary.length : null, grammar_count: Array.isArray(args.grammar) ? args.grammar.length : null }).catch(() => {});
         return saved;
@@ -939,11 +951,23 @@ export class TutorSession {
       await this.progress.logDiagnostic(this.profileId, this.callId, "sales_tool", { tool: call.name, ...(typeof result === "boolean" ? { saved: result } : result) }).catch(() => {});
       return result;
     }
+    if (call.name === "save_learner_name") {
+      if (!this.controls?.phone_lesson || !this.controls.lesson) return false;
+      const saved = await saveLearnerName(this.b, this.customerId, args.name, this.meter.transcript).catch(() => false);
+      if (saved) this.ai?.addContext("APPLICATION NOTE: the learner explicitly provided their actual first name and it was saved. Use it naturally; do not ask for it again.");
+      await this.progress.logDiagnostic(this.profileId, this.callId, "learner_name_saved", { saved }).catch(() => {});
+      return saved;
+    }
     if (call.name === "save_intake") {
+      // Save verified phone names even when the rest of intake is incomplete; do not
+      // let a later model-invented value overwrite the real name via the legacy tool.
+      const { learner_name, ...remainingArgs } = args;
+      const intakeArgs = this.controls?.phone_lesson ? remainingArgs : args;
+      if (this.controls?.phone_lesson && learner_name !== undefined) await saveLearnerName(this.b, this.customerId, learner_name, this.meter.transcript).catch(() => false);
       const heard = this.meter.transcript.filter(t => t.role === "learner").map(t => t.text).join(" ");
       const goal = typeof args.goal === "string" && this.controls?.intake_pending ? goalFromLearnerSpeech(args.goal, heard) : args.goal;
       const previewTeacher = this.portal?.teacherId;
-      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...args, goal }, { lessonBotId: this.profileId, previewTeacher, allowLower: this.controls?.phone_lesson });
+      const saved = await saveIntake(this.b, this.customerId, await phoneTeacherFor(this.progress, this.profileId), { ...intakeArgs, goal }, { lessonBotId: this.profileId, previewTeacher, allowLower: this.controls?.phone_lesson });
       await this.progress.logDiagnostic(this.profileId, this.callId, "intake_saved", { saved, goal, model_goal: args.goal, level: args.level, topic: args.topic ?? null }).catch(() => {});
       if (saved && this.controls) {
         const controls = this.controls = { ...this.controls, intake_pending: false };

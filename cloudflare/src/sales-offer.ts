@@ -171,6 +171,17 @@ export async function queueTestSalesOffer(env: Env, rawPhone: string, at: Date) 
   return queueOffer(b, env, customerId, phone, nowIso(), scheduleAt(at), new Date());
 }
 
+/** An explicit opt-in audience for real recent telephone lessons, rather than IVR visits.
+ * Segments of a single parent telephone call count as one call; only meaningful practice counts. */
+export const ENGAGED_SALES_CANDIDATES_SQL = `SELECT customer_id, ?1 AS dropped_at FROM (
+  SELECT c.customer_id, CASE WHEN instr(s.call_id,'~')>0 THEN substr(s.call_id,1,instr(s.call_id,'~')-1) ELSE s.call_id END AS parent_call,
+    SUM(s.duration_seconds) AS seconds
+  FROM sessions s JOIN call_customers c ON c.call_id=s.call_id JOIN bots b ON b.id=c.bot_id AND b.role='teacher'
+  WHERE c.channel='phone' AND s.duration_seconds>=60 AND s.learner_turns>=3
+    AND julianday(s.ended_at) BETWEEN julianday(?1)-7 AND julianday(?1)
+  GROUP BY c.customer_id,parent_call
+) GROUP BY customer_id HAVING COUNT(*)>=?2 AND SUM(seconds)>=?3`;
+
 export async function selectSalesOffers(env: Env, now = new Date()) {
   if (!["on", "allowlist"].includes(env.SALES_OFFER_MODE ?? "")) return;
   const testAt = new Date(env.SALES_OFFER_TEST_AT ?? "");
@@ -204,13 +215,15 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
     }
     return;
   }
-  if (!["dropoffs", "high_interest", "quota_exhausted"].includes(audience)) return;
-  const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? 3);
-  const minMinutes = Number(env.SALES_OFFER_MIN_TUTOR_MINUTES ?? 0);
-  if (audience === "high_interest" && (env.SALES_OFFER_MIN_TUTOR_CALLS?.trim() === "" || env.SALES_OFFER_MIN_TUTOR_MINUTES?.trim() === "" ||
+  if (!["dropoffs", "high_interest", "engaged", "quota_exhausted"].includes(audience)) return;
+  const minCalls = Number(env.SALES_OFFER_MIN_TUTOR_CALLS ?? (audience === "engaged" ? 2 : 3));
+  const minMinutes = Number(env.SALES_OFFER_MIN_TUTOR_MINUTES ?? (audience === "engaged" ? 5 : 0));
+  const practiceAudience = audience === "high_interest" || audience === "engaged";
+  if (practiceAudience && (env.SALES_OFFER_MIN_TUTOR_CALLS?.trim() === "" || env.SALES_OFFER_MIN_TUTOR_MINUTES?.trim() === "" ||
     !Number.isInteger(minCalls) || minCalls < 0 || !Number.isFinite(minMinutes) || minMinutes < 0)) return;
   const b = new BusinessStore(env.DB);
   const candidates = audience === "quota_exhausted" ? QUOTA_EXHAUSTED_CANDIDATES_SQL
+    : audience === "engaged" ? ENGAGED_SALES_CANDIDATES_SQL
     : audience === "high_interest" ? `SELECT COALESCE(c.customer_id,s.student_id) AS customer_id, ?1 AS dropped_at
     FROM sessions s LEFT JOIN call_customers c ON c.call_id=s.call_id
     LEFT JOIN prompt_snapshots p ON p.call_id=s.call_id
@@ -229,8 +242,8 @@ export async function selectSalesOffers(env: Env, now = new Date()) {
       NOT ${buyerSql("t.customer_id", "?1")} AND NOT EXISTS(
         SELECT 1 FROM console_records WHERE kind='sales-offers' AND json_extract(body,'$.customer_id')=t.customer_id)))
     ORDER BY t.customer_id LIMIT 100`)
-    .bind(now.toISOString(), audience === "high_interest" ? minCalls : new Date(+now - 36 * 3600000).toISOString(),
-      audience === "high_interest" ? minMinutes * 60 : 0, JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)),
+    .bind(now.toISOString(), practiceAudience ? minCalls : new Date(+now - 36 * 3600000).toISOString(),
+      practiceAudience ? minMinutes * 60 : 0, JSON.stringify(phoneList(env.SALES_OFFER_TEST_PHONES)),
       JSON.stringify(phoneList(env.SALES_OFFER_ALLOWLIST)), env.SALES_OFFER_MODE).all<{ customer_id: string; dropped_at: string; phone: string }>();
   for (const row of results) {
     await queueOffer(b, env, row.customer_id, row.phone, row.dropped_at, offerSchedule(new Date(row.dropped_at)), now);

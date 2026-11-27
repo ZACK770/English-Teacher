@@ -300,7 +300,7 @@ describe("bound monthly sales offer billing", () => {
     await b.save("sales-offers", { customer_id: "c1", phone: "0500000001", call_id: "phone-hk", status: "answered", expires_at: "2026-11-22T21:59:59Z" }, "offer");
     await b.saveContext("phone-hk", { offer_call: "offer" });
     const terms = await salesOfferResponse(b, env, "/", { PBXcallId: "phone-hk", isaacOffer: "1" }, "c1");
-    const text = "שימו לב: בהטבת בלאק פריידיי הינכם זכאים להטבת חודש ראשון. בסוף החודש המנוי ממשיך אוטומטית כמנוי סטארט במחירו הקבוע. אם לא תרצו להמשיך, ניתן לבטל את המנוי בשלוחה 3 בתוך שלושים הימים הראשונים, ולא תחויבו על חודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.";
+    const text = "החודש הראשון רק 20 שקלים. לאחר מכן המנוי מתחדש אוטומטית במחיר 59 שקלים לחודש באשראי. אפשר לבטל בשלוחה 3 בתוך שלושים הימים הראשונים כדי שלא להתחייב לחודש נוסף. לאישור והמשך לתשלום הקישו 1. לחזרה הקישו 0.";
     expect(terms).toMatchObject({ type: "simpleMenu", name: "isaacPayConfirm", enabledKeys: "0,1", files: [{ text }] });
     expect((await store.orderForCall("phone-hk"))!.state).toBe("selected");
     for (const key of [undefined, "2", "9"]) {

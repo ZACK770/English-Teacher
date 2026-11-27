@@ -1562,6 +1562,23 @@ describe("real learner portal", () => {
     expect(await session.recordTool({ name: "record_learning_observation", args: { skill: "vocabulary", result: "test", correction: "", score: 5 } })).toBe(false);
     expect((await new LearningStore(env.DB).history("learner-a", "vocabulary", target))[0]).toMatchObject({ score: 50 });
   });
+  it("omits a perfect score based solely on supplied repetition, while saving a different observed result", async () => {
+    const controls=await applyLearnerControls(b,"learner-a",{id:"student",role:"teacher"},controlsFromSettings(false),undefined,"phone");
+    await new LearningStore(env.DB).begin("learner-a","guarded-call",controls.lesson!);
+    env.LESSON_COACH_MODE="active";
+    const session=new TutorSession({send:vi.fn(),close:vi.fn()} as unknown as WebSocket,env,settings(env),"owner") as any;
+    session.controls=controls;session.customerId="learner-a";session.callId="guarded-call";
+    const {CascadeLive}=await import("../src/cascade");const {TranscriptCoach}=await import("../src/lesson-coach");
+    const [word,other]=controls.lesson!.vocabulary;
+    const coach=new TranscriptCoach(controls.lesson!,"active");
+    coach.tutorCompleted(`אפשר לחזור אחריי: "${word.text}"?`);coach.observeLearner(word.text);
+    expect(coach.knownAssistedOnlyTargets()).toContain(word.id);
+    session.ai=new CascadeLive({sonioxKey:"mock",openrouterKey:"mock",inworldKey:"mock",voice:"Amos",model:"test"},{},undefined,coach);
+    const result=await session.recordTool({name:"report_learning_batch",args:{activity_id:"practice-1",vocabulary:[{word_id:word.id,score:100},{word_id:other.id,score:50}]}});
+    expect(result).toMatchObject({saved:true,omitted_vocabulary_ids:[word.id],reason:"assisted_only"});
+    expect(await new LearningStore(env.DB).history("learner-a","vocabulary",word.id)).toEqual([]);
+    expect((await new LearningStore(env.DB).history("learner-a","vocabulary",other.id))[0]).toMatchObject({score:50});
+  });
   it.each(["direct", "legacy", "shared", "test", "web"] as const)("enforces phone activation for the %s stream", async (stream) => {
     env.TLIVR_ROUTER_CHANNEL = "router-channel";
     env.TEST_TEACHER_CHANNEL_ID = "test-teacher-channel";

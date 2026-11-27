@@ -7,7 +7,7 @@ import { syllabus } from "../src/syllabus";
 import { VOCABULARY_BANKS } from "../src/vocabulary/index";
 import { BusinessStore } from "../src/business";
 import { ProgressStore } from "../src/progress";
-import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, TeacherSchema, teachersKind } from "../src/learner";
+import { applyLearnerControls, goalFromLearnerSpeech, LearnerPreferencesSchema, phoneTeacherFor, saveIntake, saveLearnerName, TeacherSchema, teachersKind } from "../src/learner";
 import { buildSystemInstruction, controlsFromSettings } from "../src/controls";
 import { buildSetupPayload } from "../src/prompt";
 import { settings } from "../src/env";
@@ -567,5 +567,55 @@ describe("recommended vocabulary when no specific topic was chosen", () => {
     const lesson = await lessonFor();
     expect(lesson.topic).toBe("cars");
     expect(lesson.vocabulary.every(t => t.domain === "cars")).toBe(true);
+  });
+});
+
+
+describe("phone continuity across lessons", () => {
+  it("reserves two previously practiced words, one focus slot and never reviews a merely assigned word", async () => {
+    const pool = vocabularyCatalog.filter(t => t.domain === "everyday" && t.level === "beginner").slice(0,8);
+    const [a, b, never, next] = pool;
+    await store.begin("alice", "previous", {...plan, vocabulary:[a,b,never]});
+    await store.record("alice", "previous", {activity_id:"practice-1",vocabulary:[{word_id:a.id,score:100}]});
+    await store.exposures("alice", "previous", [a,b,never], b.text);
+    const nextPlan = await store.withReview("alice", [never,next,...pool.slice(4,5)], pool, 3, "beginner");
+    expect(new Set(nextPlan.review_vocabulary_ids)).toEqual(new Set([a.id,b.id]));
+    expect(nextPlan.vocabulary).toHaveLength(3);
+    expect(nextPlan.vocabulary.slice(0,2).map(t=>t.id)).toEqual(nextPlan.review_vocabulary_ids);
+    expect(nextPlan.vocabulary.at(-1)?.id).toBe(never.id);
+  });
+  it("does not copy previous practice across accounts, topics or custom lists", async () => {
+    await store.begin("alice", "previous", plan);
+    await store.record("alice", "previous", result());
+    expect((await store.withReview("dana",plan.vocabulary,plan.vocabulary,3)).review_vocabulary_ids).toEqual([]);
+    const other = vocabularyCatalog.filter(t=>t.domain==="everyday").slice(0,3);
+    expect((await store.withReview("alice",other,other,3)).review_vocabulary_ids).toEqual([]);
+  });
+  it("loads review IDs into the actual telephone plan and asks for recall in a meaningful context", async () => {
+    const pool = vocabularyCatalog.filter(t=>t.domain==="everyday" && t.level==="beginner").slice(0,3);
+    await b.savePreference("alice", {topic:"everyday",level:"beginner",learning_load:"light"});
+    await store.begin("alice","prior",{...plan,vocabulary:pool});
+    await store.record("alice","prior",{activity_id:"practice-1",vocabulary:pool.slice(0,2).map(t=>({word_id:t.id,score:100}))});
+    const controls = await applyLearnerControls(b,"alice",{id:"teacher",role:"teacher"},controlsFromSettings(false),undefined,"phone");
+    expect(controls.lesson?.review_vocabulary_ids).toHaveLength(2);
+    expect(controls.lesson?.vocabulary).toHaveLength(3);
+    expect(buildSystemInstruction(controls,"")).toContain("one short realistic exchange");
+  });
+  it("saves the name independently without a goal or level and preserves other preferences", async () => {
+    await b.savePreference("alice",{pace:"slow"});
+    expect(await saveLearnerName(b,"alice","אייזיק",[{role:"learner",text:"קוראים לי אייזיק."}])).toBe(true);
+    const p=await b.loadContext("preferences:alice");expect(p).toMatchObject({learner_name:"אייזיק",pace:"slow"});expect(p.plan).toBeUndefined();
+    const controls=await applyLearnerControls(b,"alice",{id:"teacher",role:"teacher"},controlsFromSettings(false),undefined,"phone");
+    expect(controls.learner_instructions).toContain('"אייזיק"');
+    expect(buildSetupPayload(controls,"test","teacher",settings({} as any),{customerId:"alice"}).setup.tools[0].functionDeclarations.map(t=>t.name)).toContain("save_learner_name");
+  });
+  it("accepts an answer to a name question, never an invented name, translated phrase or old contradicted identity", async () => {
+    const t=(role:string,text:string)=>({role,text});
+    expect(await saveLearnerName(b,"alice","אייזיק",[t("tutor","איך קוראים לך?"),t("learner","אייזיק")])).toBe(true);
+    expect(await saveLearnerName(b,"alice","David",[t("tutor","Repeat after me: my name is David"),t("learner","My name is David")])).toBe(false);
+    expect(await saveLearnerName(b,"alice","משה",[t("learner","לא קוראים לי משה")])).toBe(false);
+    expect(await saveLearnerName(b,"alice","משה",[t("learner","קוראים לי משה"),t("tutor","הבנתי"),t("learner","קוראים לי אייזיק")])).toBe(false);
+    expect(await saveLearnerName(b,"alice","שרה",[t("learner","לא קוראים לי אייזיק, קוראים לי שרה")])).toBe(true);
+    expect((await b.loadContext("preferences:alice")).learner_name).toBe("שרה");
   });
 });

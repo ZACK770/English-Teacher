@@ -63,6 +63,12 @@ describe("finished-call review", () => {
     expect(sampleTutorTranscript("not a transcript")).toEqual([]);
   });
 
+  it("preserves the preceding task to distinguish acknowledgement from actual successful practice", () => {
+    const excerpts=sampleTutorTranscript(JSON.stringify([
+      {role:"tutor",text:'Please say "water".'},{role:"learner",text:"Yes."},{role:"tutor",text:"Perfect, you said it!"},
+    ]));
+    expect(excerpts[1]).toEqual({previous_tutor:'Please say "water".',learner:"Yes.",tutor:"Perfect, you said it!"});
+  });
   it("only spends on teacher transcripts and reports a repeated issue without changing prompts", async () => {
     const fetch = vi.fn(async () => judge("no_practice", 1));
     vi.stubGlobal("fetch", fetch);

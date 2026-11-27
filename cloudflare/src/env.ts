@@ -3,6 +3,10 @@ export type PilotInterruption = "legacy" | "observe" | "adaptive" | "adaptive_cl
 
 export interface Env {
   SCHOOL_VOICE_SETTINGS?: Fetcher;
+  CASCADE_BUDGET_MODE?: "off" | "on";
+  CASCADE_MAX_CONCURRENT?: string;
+  CASCADE_DAILY_BUDGET_USD?: string;
+  CASCADE_RESERVE_USD_PER_MINUTE?: string;
   LESSON_COACH_MODE?: "off" | "shadow" | "active";
   LESSON_COACH_SEMANTIC_MODEL?: string;
   LESSON_COACH_SEMANTIC_MODE?: "off" | "shadow" | "active";
@@ -29,7 +33,7 @@ export interface Env {
   SALES_OFFER_SKIP_PRACTICE?: string;
   SALES_OFFER_ALLOWLIST?: string;
   SALES_OFFER_PRACTICE_MINUTES?: string;
-  SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest" | "quota_exhausted" | "rolling";
+  SALES_OFFER_AUDIENCE?: "dropoffs" | "high_interest" | "engaged" | "quota_exhausted" | "rolling";
   SALES_OFFER_ROLLING_START_AT?: string;
   SALES_OFFER_MIN_TUTOR_CALLS?: string;
   SALES_OFFER_MIN_TUTOR_MINUTES?: string;

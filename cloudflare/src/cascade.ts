@@ -202,6 +202,7 @@ export class CascadeLive {
   prompt(text: string) { this.launch(text); }
   updateCoachDelivery(plan: Pick<LessonPlan, "level" | "conversation_mode" | "correction_policy">) { this.coach?.updateDelivery(plan); }
   repetitionOnlyTargets() { return this.coach?.repetitionOnlyTargets() ?? []; }
+  knownAssistedOnlyTargets() { return this.coach?.knownAssistedOnlyTargets() ?? []; }
 
   submitToolResult(call: ToolCall, saved: boolean, result?: Message) {
     if (call.id) this.toolReplies.get(call.id)?.(result ?? { saved });

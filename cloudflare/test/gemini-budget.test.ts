@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { acquireGeminiBudget, applyBudget, applyGeminiOutcome, budgetConfig, GeminiBudget, newBudgetLedger, reportGeminiOutcome } from "../src/gemini-budget";
+import { acquireCascadeBudget, CASCADE_BUDGET_GUARD_NAME, acquireGeminiBudget, applyBudget, applyGeminiOutcome, budgetConfig, GeminiBudget, newBudgetLedger, reportGeminiOutcome } from "../src/gemini-budget";
 
 const now = Date.parse("2026-11-19T12:00:00Z");
 const limits = budgetConfig({} as Env);
@@ -225,4 +225,17 @@ it("emails the failure alert address when Gemini calls keep failing", async () =
   expect(send).toHaveBeenCalledOnce();
   expect(send.mock.calls[0][0]).toMatchObject({ to: "owner@example.com", from: "alerts@speakcall.app" });
   expect(send.mock.calls[0][0].text).toContain("quota-detail-7731");
+});
+
+
+it("uses a separate cascade bucket, combined cost and hard limit even for paid calls", async () => {
+  vi.useFakeTimers();
+  const stopped=vi.fn();
+  const fetch=vi.fn().mockResolvedValueOnce(Response.json({})).mockResolvedValueOnce(Response.json({denial:"gemini_budget_reached"})).mockResolvedValueOnce(Response.json({}));
+  const getByName=vi.fn((_name:string)=>({fetch}));
+  const env={GEMINI_BUDGET:{getByName},CASCADE_DAILY_BUDGET_USD:"5",CASCADE_MAX_CONCURRENT:"3",GEMINI_DAILY_BUDGET_USD:"99"} as unknown as Env;
+  const release=await acquireCascadeBudget(env,()=>0.06,stopped);
+  expect(getByName.mock.calls.every(c=>c[0]===CASCADE_BUDGET_GUARD_NAME)).toBe(true);
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({paid:false,cost:0.06,config:{GEMINI_DAILY_BUDGET_USD:"5",GEMINI_MAX_CONCURRENT:"3",GEMINI_RESERVE_USD_PER_MINUTE:"0.03"}});
+  await vi.advanceTimersByTimeAsync(10000);expect(stopped).toHaveBeenCalledWith("gemini_budget_reached");await release();
 });

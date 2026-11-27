@@ -48,6 +48,13 @@ describe("independent final-transcript lesson coach", () => {
     expect(c.observeLearner("I have a reservation.")).toMatchObject({ outcome: "repeated", action: "independent_use" });
     expect(c.repetitionOnlyTargets()).toEqual(["travel.reservation"]);
   });
+  it("only guards explicit assisted-only evidence, never later ambiguous contextual use", () => {
+    const c=coach();c.tutorCompleted(phrase);c.observeLearner("I have a reservation.");
+    expect(c.knownAssistedOnlyTargets()).toEqual(["travel.reservation"]);
+    c.tutorCompleted("Tell me about your arrival at the hotel.");
+    c.observeLearner("My reservation was for tonight.");
+    expect(c.knownAssistedOnlyTargets()).toEqual([]);
+  });
   it("distinguishes immediate aided recall from a cold word recall", () => {
     const c = coach(); c.tutorCompleted(phrase); c.observeLearner("I have a reservation");
     c.tutorCompleted("איך אומרים הזמנה באנגלית?");
