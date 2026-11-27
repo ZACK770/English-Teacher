@@ -729,6 +729,10 @@ export class TutorSession {
         }
       } else if (event.type === "turn_complete") {
         if (this.safety && await this.finishContentTurn(this.safety)) return;
+        // Cascade speech often ends with a sub-frame tail. Pad it now, otherwise
+        // it stays in partial forever and the next genuinely heard answer is
+        // incorrectly rejected by the lesson observer's playback gate.
+        if (this.cascadeConfig && this.partial.length) this.enqueue(new Uint8Array(FRAME_BYTES - this.partial.length));
         this.summaryCallbackSpeech = "";
         this.reminderSpeech = "";
         const pending = this.pendingEmail;

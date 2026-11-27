@@ -7,6 +7,8 @@ const plan: LessonPlan = {
   closing_activity: "roleplay", topic: "travel", grammar: [], vocabulary: [
     { id: "travel.reservation", text: "reservation", meaning_he: "הזמנה", domain: "travel", level: "beginner" },
     { id: "travel.water", text: "water", meaning_he: "מים", domain: "travel", level: "beginner" },
+    { id: "travel.food", text: "food", meaning_he: "אוכל", domain: "travel", level: "beginner" },
+    { id: "travel.home", text: "home", meaning_he: "בית", domain: "travel", level: "beginner" },
     { id: "travel.interview", text: "behavioral interview", meaning_he: "ריאיון המבוסס על התנהגות בעבר", domain: "travel", level: "fluent" },
   ],
 };
@@ -113,6 +115,37 @@ describe("independent final-transcript lesson coach", () => {
     const c = coach(); c.updateDelivery({ level: "intermediate", conversation_mode: "conversation", correction_policy: "on_request" });
     c.tutorCompleted(phrase);
     expect(c.observeLearner("Yes").directive).toContain("Do not correct unless explicitly asked");
+  });
+  it.each(["זה נורא קל. אולי תתקדם איתי לשאלות קשות יותר?", "תאתגר אותי קצת.", "You speak with me like I'm a little boy."])("detects a real-world request to raise the challenge: %s", text => {
+    const c=coach();
+    expect(c.observeLearner(text)).toMatchObject({outcome:"too_easy",action:"raise_challenge"});
+    expect(c.observeLearner(text).directive).toContain("Stop isolated-word repetition");
+  });
+  it("does not count a claim of ability instead of speaking the requested word", () => {
+    const c=coach(); c.tutorCompleted('נתחיל עם המילה "water" שזה "מים". האם תוכל לומר "water"?');
+    expect(c.observeLearner("מה הבעיה? אני יכול. כן, למה?")).toMatchObject({outcome:"ack_only",target_id:"travel.water",prompt_available:true});
+    c.tutorCompleted('האם תוכל לומר "food"?');
+    expect(c.observeLearner('מה הבעיה? בטח שאני יכול. אם אני יכול להגיד water, אני לא יכול להגיד food? ודאי שאני יכול.')).toMatchObject({outcome:"ack_only",target_id:"travel.food"});
+  });
+  it("uses the final task, not a previously mentioned target in praise", () => {
+    const c=coach();c.tutorCompleted('יפה, אמרת "water". עכשיו נתרגל את המילה "food". האם תוכל לומר "food"?');
+    expect(c.observeLearner("אה, food, food.")).toMatchObject({outcome:"repeated",target_id:"travel.food"});
+  });
+  it("recognizes a word with a polite Hebrew suffix, without awarding mastery", () => {
+    const c=coach();c.tutorCompleted('המילה "water". האם תוכל לומר "water"?');
+    expect(c.observeLearner("Water, בבקשה.")).toMatchObject({outcome:"repeated",target_id:"travel.water"});
+  });
+  it("does not mark a shorter repeated sentence as a complete longer requested sentence", () => {
+    const c=coach();c.tutorCompleted('ננסה לומר "I want water, please". כלומר "אני רוצה מים בבקשה". האם תוכל לומר את המשפט המלא?');
+    expect(c.observeLearner("I want water. I want water.")).toMatchObject({outcome:"partial_repeat",target_id:"travel.water"});
+  });
+  it("recognizes a repeated previous target rather than the current target", () => {
+    const c=coach();c.tutorCompleted('עכשיו המילה "home". האם תוכל לומר "home"?');
+    expect(c.observeLearner("The food is good.")).toMatchObject({outcome:"mismatched_repeat",target_id:"travel.home"});
+  });
+  it("accepts the contraction in the requested sentence as supported practice", () => {
+    const c=coach();c.tutorCompleted('ננסה משפט עם "home": "I am going home". האם תוכל לומר את המשפט הזה?');
+    expect(c.observeLearner("I'm going home.")).toMatchObject({outcome:"repeated",target_id:"travel.home"});
   });
   it("does not echo untrusted learner text in the system instructions", () => {
     const c = coach(); c.tutorCompleted(phrase);
