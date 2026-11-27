@@ -1,4 +1,5 @@
 import { type Env } from "./env";
+import { pilotSettingsPage } from "./pbx-pilot-settings-page";
 import { pilotLog } from "./pbx-pilot-log";
 export { CallSession } from "./call";
 
@@ -8,6 +9,11 @@ export default {
     const configured = env.PBX_CASCADE_PILOT === "1" && !!env.TEST_TEACHER_CHANNEL_ID &&
       !!env.PBX_PILOT_SONIOX_KEY && !!env.PBX_PILOT_OPENROUTER_KEY && !!env.PBX_PILOT_INWORLD_KEY;
     if (path === "/healthz") return Response.json({ ok: true, configured });
+    if (path === "/pilot-settings" && request.method === "GET" && env.PBX_PILOT_ADMIN_TOKEN) return pilotSettingsPage();
+    if (path === "/v1/admin/pilot/settings") {
+      const call = env.CALLS.get(env.CALLS.idFromName("extension-888"), { locationHint: "weur" });
+      return call.fetch(request);
+    }
     if (path !== "/v1/technoline/pilot") return new Response("Not found", { status: 404 });
     const trace = (...args: Parameters<typeof pilotLog>) => { if (ctx) ctx.waitUntil(pilotLog(...args)); };
     if (!configured) {

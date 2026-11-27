@@ -3,6 +3,7 @@ export interface Env {
   PBX_PILOT_SONIOX_KEY?: string;
   PBX_PILOT_OPENROUTER_KEY?: string;
   PBX_PILOT_INWORLD_KEY?: string;
+  PBX_PILOT_ADMIN_TOKEN?: string;
   PBX_PILOT_MODEL?: string;
   PBX_PILOT_VOICE?: string;
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";
