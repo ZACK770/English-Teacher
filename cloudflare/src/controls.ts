@@ -114,5 +114,7 @@ export function buildSystemInstruction(c: TutorControls, history: string): strin
   const personal = c.learner_instructions?.trim()
     ? "ACTIVE LEARNER PREFERENCES (application-resolved choices; adapt teaching style within school scope, enrolled curriculum, required template rules and access):\n" + c.learner_instructions.trim()
     : "";
-  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), required, personal, history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : ""].filter(Boolean).join("\n\n");
+  const spokenHebrew = c.phone_lesson && typeof c.teacher_female === "boolean"
+    ? `HEBREW VOICE AND ADDRESS (authoritative, including greetings, practice, feedback and closing): The tutor speaks about themself in ${c.teacher_female ? 'feminine Hebrew (אני יודעת, אני שמחה, אני יכולה)' : 'masculine Hebrew (אני יודע, אני שמח, אני יכול)'}. Never use the opposite form for the tutor. The caller’s gender is not inferred from the tutor voice or name. Address the caller with natural neutral forms: "אפשר לומר", "ננסה שוב", "מעולה", "מה התשובה?" instead of "תגידי", "תגיד", "בואי", "בוא", "מוכנה", or "מוכן". Give roleplay tasks without assigning the caller a gender. These distinct rules override conflicting examples and prior context; preserve legitimate quoted English and in-character roles.` : "";
+  return [schoolIdentity, HAREDI_CONTENT_RULE, LESSON_TOPIC_RULE, c.base_prompt.trim(), controls.join("\n"), required, personal, history.trim(), c.lesson ? lessonInstruction(c.lesson, c.phone_lesson) : "", spokenHebrew].filter(Boolean).join("\n\n");
 }

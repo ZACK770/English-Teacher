@@ -80,6 +80,13 @@ describe("compact application instruction contracts", () => {
     expect(Object.keys(buildSetupPayload(controls, system, "teacher", s).setup.tools[0])).toEqual(["functionDeclarations"]);
   });
 
+  it("distinguishes the tutor voice gender from neutral address of the caller", () => {
+    for (const female of [false, true]) {
+      const prompt = buildSystemInstruction({...controls, phone_lesson:true, teacher_female:female}, "Prior learner notes");
+      expect(prompt).toContain(female ? "feminine Hebrew (אני יודעת" : "masculine Hebrew (אני יודע");
+      expect(prompt).toContain("Address the caller with natural neutral forms");
+    }
+  });
   it("retains administrator/persona/history rules verbatim and all-role lifecycle safeguards", () => {
     const c = { ...controls, base_prompt: "Hebrew/Haredi-appropriate content only. Never ask for passwords.", custom_instructions: "Keep all safety rules intact." };
     const system = buildSystemInstruction(c, "Prior learner notes");

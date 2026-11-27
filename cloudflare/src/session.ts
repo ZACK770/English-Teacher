@@ -311,7 +311,7 @@ export class TutorSession {
         }
         this.controls = { ...this.controls, store_transcripts: true };
       }
-      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall);
+      this.controls = await applyLearnerControls(this.b, this.customerId, bot, this.controls, this.portal?.teacherId, this.portal ? "web" : "phone", adCall, this.cascadeConfig?.voice);
       const opening = await quickOpening(this.b, this.callId);
       if (this.controls.lesson && adCall) this.controls = { ...this.controls, sales: true };
       if (this.controls.lesson && !this.portal) {
@@ -937,7 +937,7 @@ export class TutorSession {
       if (saved && this.controls) {
         const controls = this.controls = { ...this.controls, intake_pending: false };
         const bot = { id: this.profileId, role: "teacher" } as const;
-        const refresh = (teacher?: string) => applyLearnerControls(this.b, this.customerId, bot, controls, teacher, this.portal ? "web" : "phone");
+        const refresh = (teacher?: string) => applyLearnerControls(this.b, this.customerId, bot, controls, teacher, this.portal ? "web" : "phone", false, this.cascadeConfig?.voice);
         const lesson = await refresh(previewTeacher).then(c => c.lesson).catch(async error => {
           if (!previewTeacher || !(error instanceof HttpError) || error.status !== 404) throw error;
           const previous = controls.lesson;
