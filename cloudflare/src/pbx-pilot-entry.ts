@@ -18,7 +18,10 @@ export default {
     }
     if ((path === dashboardPath || path.startsWith(dashboardPath + "/")) &&
         (url.hostname === "speakcall.app" || url.hostname === "speakool.net")) {
-      if (path === dashboardPath && request.method === "GET") return pilotSettingsPage();
+      if (path === dashboardPath && request.method === "GET") {
+        if (url.searchParams.get("embedded") !== "1") return Response.redirect(url.origin + "/dashboard/crm?view=voice-lab", 302);
+        return pilotSettingsPage();
+      }
       if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) {
         return new Response("Forbidden", { status: 403 });
       }

@@ -87,10 +87,10 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
     {error && <p role="alert">{error}</p>}
     <button className="bg-[#c0f67d] text-[#111a1a] p-3 rounded w-full" type="submit">כניסה</button>
   </form></main>;
-  return <AdminIdentityContext.Provider value={identity}><header dir="rtl" className="bg-slate-900 text-white p-3 flex flex-wrap gap-5 items-center">
+  return <AdminIdentityContext.Provider value={identity}><header dir="rtl" className="sc-account-bar">
     <span>{identity.username}</span>
     {identity.role === 'owner' && <button onClick={() => setPanel(!panel)}>{panel ? 'חזרה ללוח הניהול' : 'משתמשים ויומן פעולות'}</button>}
     <button onClick={async () => { try { await adminApi('auth/logout', 'POST'); setIdentity(null); setPanel(false); setError(''); } catch (e) { setError((e as Error).message); } }}>יציאה</button>
     {error && <span role="alert">{error}</span>}
-  </header>{panel ? <AdminUsers /> : children}</AdminIdentityContext.Provider>;
+  </header>{children}{panel && <div className="sc-account-overlay" role="dialog" aria-modal="true" aria-label="משתמשים ויומן פעולות"><button className="sc-account-close" onClick={() => setPanel(false)}>סגירה</button><AdminUsers /></div>}</AdminIdentityContext.Provider>;
 }

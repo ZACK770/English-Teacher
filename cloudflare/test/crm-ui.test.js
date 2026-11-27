@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-vi.mock("lucide-react", () => ({ Megaphone: () => null }));
+vi.mock("lucide-react", () => Object.fromEntries(["LayoutDashboard","Users","Phone","Wallet","AudioLines","BookOpen","BarChart3","Megaphone","MessageSquare","ListChecks","Search","Menu","ChevronLeft","Activity","SlidersHorizontal"].map(name=>[name,()=>null])));
 
 let CrmPage, Journey, CustomerCount, DeleteCustomer, AdminIdentityContext, resetErrorMessage, ResetConfirmationHint, CallReviewsReport, CallReviewCosts, TeacherSettingsPanel, parseTeacherSettings, ResetTrialButton;
 beforeAll(async () => {
@@ -21,7 +21,7 @@ describe("CRM teacher settings and trial reset", () => {
   it("links the teacher section from CRM and renders Hebrew RTL controls", () => {
     const page = renderToStaticMarkup(createElement(CrmPage));
     expect(page).toContain('/dashboard/crm?view=teachers');
-    expect(page).toContain('הנחיות המורה');
+    expect(page).toContain('מורים והנחיות');
     const html = renderToStaticMarkup(createElement(TeacherSettingsPanel, { request: vi.fn() }));
     expect(html).toContain('dir="rtl"'); expect(html).toContain('בחירת בוט'); expect(html).toContain('טוענים הגדרות');
     const reset = renderToStaticMarkup(createElement(ResetTrialButton, { customerId: 'person1', request: vi.fn(), onReset: vi.fn() }));

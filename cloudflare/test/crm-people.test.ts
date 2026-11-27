@@ -958,3 +958,29 @@ it("keeps internal notes off the queue and records completion without dispatchin
   expect((await write({id:task.id,action:"close",title:"שוב"})).status).toBe(409);
   expect(sql.prepare("SELECT COUNT(*) AS n FROM callback_requests").get()?.n).toBe(0);
 });
+
+describe('canonical CRM payment records', () => {
+  function receipt(id: string, customerId = 'person1') {
+    sql.prepare("INSERT INTO sales_receipts(id,customer_id,package_id,product,reference,amount_ils,vat_rate,minutes,expires_at,created_at) VALUES (?,?, 'p1','school',?,59,.18,100,?,?)").run(id,customerId,'ref-'+id,now,now);
+  }
+  it('requires authentication and distinguishes recorded entitlement, confirmed payment, and reversal', async () => {
+    customer(); receipt('recorded'); receipt('paid'); receipt('reversed');
+    sql.prepare("INSERT INTO payment_orders(id,call_id,customer_id,package_id,snapshot,amount_agorot,vat_rate,state,transaction_id,receipt_id,created_at,updated_at) VALUES ('p','call','person1','p1','{}',5900,.18,'paid','tx','paid',?,?)").run(now,now);
+    sql.prepare("UPDATE sales_receipts SET payment_reversed_at=? WHERE id='reversed'").run(now);
+    expect((await request('payments',false)).status).toBe(401);
+    const response = await request('payments'); expect(response.status).toBe(200);
+    const {items} = await response.json() as any;
+    expect(items.map((row: any)=>[row.id,row.state])).toEqual([['paid','verified'],['recorded','recorded'],['reversed','reversed']]);
+    expect(items[0]).toMatchObject({customer_id:'person1',customer_name:'יעל כהן',phone:'0501234567',amount_ils:59});
+  });
+  it('scopes records by customer and id and returns recurring amounts in shekels', async () => {
+    customer(); customer('person2','0509999999'); receipt('one'); receipt('two','person2');
+    const data = await (await request('payments?customer=person1&id=two')).json() as any;
+    expect(data.items).toEqual([]);
+    sql.prepare("INSERT INTO standing_orders(id,customer_id,package_id,snapshot,monthly_agorot,first_order_id,state,created_at,updated_at) VALUES ('standing','person1','p1','{}',5900,'initial','active',?,?)").run(now,now);
+    const recurring = await (await request('payments?kind=standing&customer=person1')).json() as any;
+    expect(recurring.items).toHaveLength(1);
+    expect(recurring.items[0]).toMatchObject({id:'standing',amount_ils:59,state:'active',customer_name:'יעל כהן'});
+    expect((await request('payments',true,'POST')).status).toBe(405);
+  });
+});

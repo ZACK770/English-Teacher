@@ -100,7 +100,7 @@ function SubscriptionCard({ sub, admin, act, changeAccess }: { sub: Subscription
   const [phone, setPhone] = useState("");
   const active = sub.status === "active";
   const path = "/" + sub.id;
-  return <article className="subscription-card">
+  return <article className="subscription-card" id={"subscription-"+sub.id}>
     <div className="subscription-heading"><strong>{sub.plan_name}</strong><span>{statuses[sub.status] || "לא ידוע"}</span></div>
     {sub.access_suspended_at && <p className="subscription-error">הגישה דרך המנוי הושעתה על ידי מנהל.</p>}
     {changeAccess && (sub.status !== "expired" || sub.access_suspended_at) && <div className="subscription-actions">
@@ -129,7 +129,7 @@ function SubscriptionCard({ sub, admin, act, changeAccess }: { sub: Subscription
         <div className="subscription-actions"><label>אסמכתת חיוב<input value={reference} onChange={e => setReference(e.target.value)} maxLength={150} /></label><button type="button" disabled={!["active", "paused", "past_due"].includes(sub.status) || !reference.trim()} onClick={() => void act(path + "/renewal", { reference })}>רישום חיוב חודשי</button><button type="button" disabled={!active || sub.guarantee_status !== "pending"} onClick={() => void act(path + "/evaluate-guarantee")}>הערכת אחריות</button></div>
         <h4>בני משפחה ({sub.members.length}/4)</h4>
         {!sub.members.length && <p>אין בני משפחה נוספים.</p>}
-        {sub.members.map(m => <div className="subscription-member" key={m.customer_id}><span>{m.name} · <bdi>{m.phone}</bdi></span><button type="button" onClick={() => void act(path + "/members/" + m.customer_id, undefined, "DELETE")}>הסרת בן משפחה</button></div>)}
+        {sub.members.map(m => <div className="subscription-member" key={m.customer_id}><span>{admin ? <a href={(location.pathname.startsWith("/english/") ? "/english" : "")+"/dashboard/crm/"+encodeURIComponent(m.customer_id)+"?tab=payments"}>{m.name}</a> : m.name} · <bdi>{m.phone}</bdi></span><button type="button" onClick={() => void act(path + "/members/" + m.customer_id, undefined, "DELETE")}>הסרת בן משפחה</button></div>)}
         <div className="subscription-actions"><label>שם בן המשפחה<input value={name} onChange={e => setName(e.target.value)} maxLength={100} /></label><label>טלפון<input type="tel" dir="ltr" value={phone} onChange={e => setPhone(e.target.value)} maxLength={40} /></label><button type="button" disabled={!active || sub.members.length >= 4 || !name.trim() || phone.length < 8} onClick={() => void act(path + "/members", { name, phone })}>הוספת בן משפחה</button></div>
       </>}
     </>}

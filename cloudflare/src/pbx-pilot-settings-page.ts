@@ -5,12 +5,12 @@ const html = `<!doctype html>
 <title>מעבדת הקול של ספיקול</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#eef3f2;color:#152c29;font:16px system-ui,sans-serif}
-main{max-width:1250px;margin:auto;padding:30px 20px}
+body{margin:0;background:#f6f8fa;color:#243640;font:14px system-ui,sans-serif}
+main{max-width:1600px;margin:auto;padding:0 2px 16px}main>header{display:none}
 header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
 h1{font-size:clamp(1.7rem,4vw,2.5rem);margin:0}h2{font-size:1.2rem;margin:0 0 12px}
 a{color:#12604d}.layout{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,1.8fr);gap:16px}
-section{min-width:0;background:white;border:1px solid #d6e2de;border-radius:14px;padding:18px;margin-bottom:16px}
+section{min-width:0;background:white;border:1px solid #e2e8ec;border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 3px 12px #163b4a04}
 label{display:block;margin:10px 0 5px;font-weight:600}
 select,input,textarea,button{font:inherit}select,input:not([type=checkbox]),textarea{display:block;width:100%;background:#fff;color:inherit;padding:8px;border:1px solid #a7bdb6;border-radius:7px}
 textarea{min-height:72px;resize:vertical}
@@ -108,7 +108,7 @@ const $ = id => document.getElementById(id);
 const base = '/dashboard/pilot-888/';
 let catalog, version, lastSummary, comparisonSummary, selectedCall = '', lastEvent = 0, lastTurn = 0, captureEnabled, polling = false, authorized = false;
 const money = value => '$' + Number(value).toFixed(5);
-const date = value => new Date(value).toLocaleString('he-IL');
+const date = value => new Date(value).toLocaleString('he-IL',{timeZone:'Asia/Jerusalem'});
 const write = (id, text) => { $(id).textContent = text; };
 async function api(path, method = 'GET', body) {
   const response = await fetch(base + path, { method, cache: 'no-store',
@@ -395,6 +395,6 @@ export function pilotSettingsPage(): Response {
   return new Response(html, { headers: {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src data:; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src data:; frame-ancestors 'self'",
   } });
 }

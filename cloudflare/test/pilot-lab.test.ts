@@ -17,7 +17,11 @@ afterEach(() => vi.unstubAllGlobals());
 describe("pilot voice lab", () => {
   it("renders the unified interface without a pilot key input and rejects unauthenticated history", async () => {
     const env = environment();
-    const page = await pilot.fetch(new Request(base), env);
+    const redirect = await pilot.fetch(new Request(base), env);
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("Location")).toBe(origin+"/dashboard/crm?view=voice-lab");
+    const page = await pilot.fetch(new Request(base+"?embedded=1"), env);
+    expect(page.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'self'");
     const html = await page.text();
     expect(html).toContain('<select id="model"');
     expect(html).toContain('<select id="voice"');

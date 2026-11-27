@@ -1,0 +1,9 @@
+# Unified CRM workspace
+
+The business console remains `/dashboard/crm`. A persistent RTL shell navigates existing views without reloading the admin session. Customer records use `/dashboard/crm/:customerId?tab=overview|calls|practice|payments|service|journey|settings`. Browser back/forward and direct links are supported; customer-list return links retain filters, sorting and pagination.
+
+The workspace uses existing customers, sessions, subscriptions, receipts and standing orders. No new tables or duplicate business entities were introduced. `/v1/admin/crm/payments` is an authenticated read-only paginated projection of `sales_receipts` and `standing_orders`, joined to the canonical customer data. It supports customer/id filtering. A recorded entitlement is not labeled as paid: verified status uses the same provider-confirmation conditions as CRM revenue; reversals are shown separately. Customer summaries expose a link to their latest verified receipt. Family members, teachers, calls, payment records and customer cards link to the corresponding existing records.
+
+The voice laboratory is integrated at `?view=voice-lab`. Its existing `/dashboard/pilot-888` route redirects into the workspace; `?embedded=1` serves the operational lab inside a same-origin frame and uses the existing owner session. The controls, provider calls, saved settings, promotion to extension 1, Gemini Live fallback, telemetry and history retain their existing backend behavior. This redesign does not change a live teacher configuration or start any calls. Cost estimates remain marked as estimates.
+
+Frontend build: `npm run build`. Worker type check: `cd cloudflare && npm run typecheck`. Relevant regression suites: `crm-people.test.ts`, `crm-ui.test.js`, `pilot-lab.test.ts`, `subscription-ui.test.js`. Local visual verification uses fixtures outside this repository; those fixtures and their server are never part of the production build.
