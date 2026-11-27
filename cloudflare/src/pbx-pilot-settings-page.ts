@@ -1,3 +1,4 @@
+import { DEFAULT_TURN_TUNING } from "./turn-tuning";
 const html = `<!doctype html>
 <html lang="he" dir="rtl">
 <meta charset="utf-8">
@@ -25,6 +26,8 @@ button.secondary{background:#e6efec;color:#164236}button:disabled{opacity:.5;cur
 .feed p{margin:6px 0;white-space:pre-wrap}
 .log{font-size:.88rem;margin-top:10px}
 audio{width:100%;margin-top:8px}
+#comparison{white-space:pre-line}#turn-metrics{display:block;padding:12px;background:#eaf3ef;border-radius:10px}
+fieldset{border:1px solid #e2e8ec;border-radius:12px;margin:16px 0;padding:14px}fieldset:disabled{opacity:.55}legend{font-weight:700}output{float:left;color:#147d72;font-variant-numeric:tabular-nums}input[type=range]{accent-color:#147d72;padding:4px!important;direction:ltr}fieldset .status{margin:4px 0 14px;font-size:12px}
 @media(max-width:780px){.layout{grid-template-columns:1fr}main{padding:16px}}
 </style>
 <main>
@@ -44,13 +47,28 @@ audio{width:100%;margin-top:8px}
 </div>
 <label for="interruption">קטיעות בטלפון</label>
 <select id="interruption" disabled>
-<option value="adaptive">מאוזן · מילה מזוהה או חצי שנייה של צליל רציף</option>
+<option value="adaptive">מאוזן · זיהוי מילה או צליל רציף לפי המחוונים</option>
 <option value="observe">תצפית בלבד עד סוף תור</option>
 <option value="legacy">קטיעה מיידית לפי עוצמה</option>
 <option value="adaptive_clear">השהיה וחידוש + ניקוי בטכנוליין (ניסיוני)</option>
 </select>
+<fieldset id="tuning-fields" disabled>
+<legend>כוונון זיהוי דיבור</legend>
+<p class="status">חל על מצבי הקטיעה המאוזנים בתמהיל. שינוי חל בחיוג הבא ל־888 לאחר שמירה; לשלוחה 1 יש להחיל את התמהיל השמור.</p>
+<label for="energyThreshold">סף עוצמה <output id="energyThreshold-value"></output></label>
+<input id="energyThreshold" type="range" min="400" max="4000" step="100" aria-describedby="energy-help">
+<p id="energy-help" class="status">גבוה יותר מתעלם מרעשים חלשים, אך עלול לפספס דיבור חלש. יחידות עוצמה דיגיטליות, לא דציבלים.</p>
+<label for="minSoundMs">משך צליל לפני השהיה <output id="minSoundMs-value"></output></label>
+<input id="minSoundMs" type="range" min="200" max="1200" step="50" aria-describedby="sound-help">
+<p id="sound-help" class="status">ארוך יותר מסנן נשיפות ורעשים קצרים. מילה שזוהתה בתמלול יכולה לקטוע מוקדם יותר.</p>
+<label for="resumeSilenceMs">שקט לפני חזרה לדיבור <output id="resumeSilenceMs-value"></output></label>
+<input id="resumeSilenceMs" type="range" min="200" max="1000" step="20" aria-describedby="resume-help">
+<p id="resume-help" class="status">זמן ההמתנה אחרי שהרעש נחלש, אם לא זוהתה מילה. נמוך יותר חוזר מהר. ההשהיה מוגבלת בכל מקרה ל־1,100 מילישניות.</p>
+<button id="reset-tuning" class="secondary" type="button">חזור לערכים המומלצים</button>
+</fieldset>
 <label for="endpoint">שתיקה לזיהוי סוף תור</label>
 <select id="endpoint" disabled><option value="">לפי הגדרת המורה</option><option value="500">500 ms</option><option value="700">700 ms</option><option value="1000">1,000 ms</option><option value="1500">1,500 ms</option></select>
+<p class="status">שתיקה ארוכה יותר מאפשרת לחשוב באמצע משפט, אך מאריכה את ההמתנה לתשובת המורה.</p>
 <label class="line"><input id="capture" type="checkbox" disabled> תמלול שיחות הבדיקה והצגתן בהיסטוריה</label>
 <div class="line"><button id="save" disabled>שמור לחיוג הבא</button><button class="secondary" id="rollback" disabled>חזור לגרסה הקודמת</button></div>
 <div id="settings-status" class="status" role="status"></div>
@@ -94,6 +112,9 @@ audio{width:100%;margin-top:8px}
 </div>
 <div id="cost-detail" class="status"></div>
 <div id="summary" class="status"></div>
+<h2>מדדי קטיעה ותגובה</h2><div id="turn-metrics" class="metrics" aria-live="polite"></div>
+<p class="status">חזרה לדיבור מציינת השהיה ללא אישור דיבור מהתמלול. מספר נמוך יותר לבדו אינו מעיד על שיחה טובה יותר.</p>
+<div id="call-tuning" class="status"></div>
 <label for="compare">השווה מול שיחה</label><select id="compare"><option value="">בחר שיחה שהסתיימה</option></select>
 <div id="comparison" class="status" role="status"></div>
 <h2>תמלול</h2>
@@ -106,6 +127,29 @@ audio{width:100%;margin-top:8px}
 <script>
 const $ = id => document.getElementById(id);
 const base = '/dashboard/pilot-888/';
+const tuningDefaults = ${JSON.stringify(DEFAULT_TURN_TUNING)};
+const tuningKeys = Object.keys(tuningDefaults);
+function readTuning() { return Object.fromEntries(tuningKeys.map(key => [key, Number($(key).value)])); }
+function setTuning(values) {
+  for (const key of tuningKeys) { $(key).value = values?.[key] ?? tuningDefaults[key]; showTuningValue(key); }
+}
+function showTuningValue(key) { $(key + '-value').textContent = $(key).value + (key === 'energyThreshold' ? '' : ' ms'); }
+function enableTuning() { $('tuning-fields').disabled = !version || !['adaptive','adaptive_clear'].includes($('interruption').value); }
+function tuningChanged() { return tuningKeys.some(key => readTuning()[key] !== (version.active.tuning?.[key] ?? tuningDefaults[key])); }
+function measurementText(measurements, summary) {
+  if (!measurements?.events_count) return 'אין מדידות שמורות';
+  const rate = summary?.duration_seconds ? (measurements.interruptions * 60 / summary.duration_seconds).toFixed(2) : null;
+  return measurements.pauses + ' השהיות · ' + measurements.resumes + ' חזרות · ' + measurements.interruptions + ' קטיעות' +
+    (rate === null ? '' : ' · ' + rate + ' קטיעות לדקה') +
+    (measurements.response_ms == null ? '' : ' · תגובה ממוצעת ' + Math.round(measurements.response_ms) + ' ms');
+}
+function configurationText(row) {
+  let settings; try { settings = JSON.parse(row?.details_json || '{}'); } catch { return 'הגדרות השיחה אינן זמינות'; }
+  if (!settings.tuning) return 'המחוונים לא תועדו בשיחה זו';
+  return 'בשיחה זו: סף ' + settings.tuning.energyThreshold + ' · צליל רציף ' + settings.tuning.minSoundMs +
+    ' ms · חזרה אחרי ' + settings.tuning.resumeSilenceMs + ' ms · סוף תור ' + settings.endpoint_ms + ' ms';
+}
+let currentMeasurements, comparisonMeasurements, comparisonConfiguration;
 let catalog, version, lastSummary, comparisonSummary, selectedCall = '', lastEvent = 0, lastTurn = 0, captureEnabled, polling = false, authorized = false;
 const money = value => '$' + Number(value).toFixed(5);
 const date = value => new Date(value).toLocaleString('he-IL',{timeZone:'Asia/Jerusalem'});
@@ -145,6 +189,7 @@ function applySettings(result) {
   $('capture').checked = Boolean(result.active.capture);
   $('interruption').value = result.active.interruption || 'adaptive';
   $('endpoint').value = result.active.endpointMs ?? '';
+  setTuning(result.active.tuning); enableTuning();
   for (const id of ['model','speech','voice','interruption','endpoint','capture','save','export']) $(id).disabled = false;
   $('rollback').disabled = !result.previous;
 }
@@ -153,7 +198,7 @@ async function save(rollback) {
   try {
     applySettings(await api('settings', 'PUT', rollback ? {rollback:true} : {
       model:$('model').value, voice:$('voice').value, capture:$('capture').checked, speech:$('speech').value,
-      interruption:$('interruption').value, endpointMs:$('endpoint').value ? Number($('endpoint').value) : null,
+      tuning:readTuning(), interruption:$('interruption').value, endpointMs:$('endpoint').value ? Number($('endpoint').value) : null,
       googleKey:$('speech').value === 'google' ? $('phone-google-key').value : undefined }));
     $('phone-google-key').value = '';
     $('handoff').hidden = true;
@@ -224,23 +269,23 @@ const eventLabels = {
 };
 function showComparison() {
   const baseline = comparisonSummary;
-  if (!baseline) { write('comparison', ''); return; }
+  if (!baseline) { write('comparison', comparisonMeasurements ? measurementText(comparisonMeasurements, null) : ''); return; }
   const delta = lastSummary ? lastSummary.estimated_cost_usd - baseline.estimated_cost_usd : null;
   write('comparison', 'שיחת ההשוואה · ' + (baseline.model || 'מודל לא נרשם') +
     ' · ' + baseline.duration_seconds + ' שניות · ' + baseline.input_text_tokens + ' / ' + baseline.output_text_tokens +
     ' טוקנים · ' + money(baseline.estimated_cost_usd) +
     (baseline.duration_seconds ? ' · ' + money(baseline.estimated_cost_usd * 3600 / baseline.duration_seconds) + ' לשעה' : '') +
-    (delta === null ? '' : ' · הפרש בעלות הכוללת של השיחה הנבחרת ' + (delta < 0 ? '−' : '+') + money(Math.abs(delta))));
+    (delta === null ? '' : ' · הפרש בעלות הכוללת של השיחה הנבחרת ' + (delta < 0 ? '−' : '+') + money(Math.abs(delta))) + String.fromCharCode(10) + measurementText(comparisonMeasurements, baseline) + String.fromCharCode(10) + configurationText(comparisonConfiguration));
 }
 async function compare() {
-  comparisonSummary = null;
+  comparisonSummary = null; comparisonMeasurements = null; comparisonConfiguration = null;
   const id = $('compare').value;
   showComparison();
   if (!id) return;
   try {
     const result = await api('calls?id=' + encodeURIComponent(id) + '&after=9007199254740991&afterTurn=9007199254740991');
     if ($('compare').value !== id) return;
-    comparisonSummary = result.summary;
+    comparisonSummary = result.summary; comparisonMeasurements = result.measurements; comparisonConfiguration = result.configuration;
     showComparison();
     if (!comparisonSummary) write('comparison', 'לא נשמר סיכום לשיחה זו.');
   } catch (error) { write('comparison', error.message); }
@@ -269,10 +314,13 @@ async function refresh() {
       captureEnabled = undefined;
       lastSummary = null;
       showComparison();
-      for (const id of ['transcript','events','summary','cost-detail']) write(id, '');
+      for (const id of ['transcript','events','summary','cost-detail','turn-metrics','call-tuning']) write(id, '');
       for (const id of ['active-config','cost','tokens','latency']) write(id, '—');
     }
     const result = await api('calls?id=' + encodeURIComponent(selectedCall) + '&after=' + lastEvent + '&afterTurn=' + lastTurn);
+    currentMeasurements = result.measurements;
+    write('turn-metrics', measurementText(currentMeasurements, result.summary));
+    write('call-tuning', configurationText(result.configuration));
     write('live-status', (call.ended ? 'שיחה שהסתיימה' : 'טרם תועד סיום') + ' · ' + date(call.started_at));
     for (const event of result.events) {
       lastEvent = event.id;
@@ -317,7 +365,7 @@ async function refresh() {
 $('export').onclick = async () => {
   if ($('speech').value !== (version.active.speech || 'inworld') || $('model').value !== version.active.model || $('voice').value !== version.active.voice ||
       $('interruption').value !== (version.active.interruption || 'adaptive') ||
-      $('endpoint').value !== String(version.active.endpointMs ?? '') ||
+      $('endpoint').value !== String(version.active.endpointMs ?? '') || tuningChanged() ||
       $('capture').checked !== Boolean(version.active.capture)) {
     write('export-status', 'שמור את השינויים לפני הייצוא.');
     return;
@@ -356,6 +404,7 @@ $('use-google-phone').onclick = () => {
   $('save').focus();
 };
 async function school(mode) {
+  if (mode === 'cascade' && tuningChanged()) { write('school-status','שמור תחילה את המחוונים, ואז החל את התמהיל על שלוחה 1.'); return; }
   $('school-promote').disabled = $('school-gemini').disabled = true;
   try {
     const {production} = await api('settings', 'PUT', {production:mode});
@@ -367,6 +416,9 @@ async function school(mode) {
     $('school-gemini').disabled = !version.production;
   }
 }
+for (const key of tuningKeys) $(key).oninput = () => showTuningValue(key);
+$('interruption').onchange = enableTuning;
+$('reset-tuning').onclick = () => { setTuning(tuningDefaults); write('settings-status','הערכים המומלצים הוצגו. לחץ שמור לחיוג הבא כדי להחיל.'); };
 $('school-promote').onclick = () => school('cascade');
 $('school-gemini').onclick = () => school('gemini');
 $('save').onclick = () => save(false);

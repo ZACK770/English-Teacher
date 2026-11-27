@@ -1,3 +1,4 @@
+import { resolveTurnTuning } from "./turn-tuning";
 import { hasEligibleSummaryCallResponse, isEmailConfirmation, matchesEmailReadBack, normalizeSalesEmail, PHONE_NUMBER_GUIDANCE, recordSalesTool, revokesSummaryCall, SALES_TOOL_NAMES, type SalesToolResult, SUMMARY_CALLBACK_GUIDANCE } from "./ad-entry";
 import { AsyncQueue, sleep } from "./async";
 import { QUOTA_EXTENSION_PATH } from "../../src/pbx-paths";
@@ -216,6 +217,7 @@ export class TutorSession {
           googleKey,
           interruption: this.env.PBX_PILOT_INTERRUPTION,
           endpointMs: this.env.PBX_PILOT_ENDPOINT_MS,
+          tuning: this.env.PBX_PILOT_TUNING,
           model: this.env.PBX_PILOT_MODEL || "qwen/qwen3-235b-a22b-2507",
           voice: this.env.PBX_PILOT_VOICE || "Amos",
         };
@@ -393,7 +395,11 @@ export class TutorSession {
           if (callContext.primary_teacher_entry && !this.portal) {
             await this.latency("school_voice_selected", { model: this.controls.model, voice: this.controls.voice, speech: "Gemini Live" });
           }
-        } else await this.latency("cascade_connect_started");
+        } else await this.latency("cascade_connect_started", {
+          tuning: resolveTurnTuning(this.cascadeConfig.tuning),
+          interruption: this.cascadeConfig.interruption,
+          endpoint_ms: this.cascadeConfig.endpointMs ?? this.controls.vad_silence_ms,
+        });
         if (this.cascadeConfig) this.meter.useCascade();
         const ai = this.makeVoiceEngine(this.artifact.setup_message);
         this.ai = ai;

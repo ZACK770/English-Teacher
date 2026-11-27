@@ -21,9 +21,9 @@ describe("CRM teacher settings and trial reset", () => {
   it("links the teacher section from CRM and renders Hebrew RTL controls", () => {
     const page = renderToStaticMarkup(createElement(CrmPage));
     expect(page).toContain('/dashboard/crm?view=teachers');
-    expect(page).toContain('מורים והנחיות');
+    expect(page).toContain('תבניות מורה');
     const html = renderToStaticMarkup(createElement(TeacherSettingsPanel, { request: vi.fn() }));
-    expect(html).toContain('dir="rtl"'); expect(html).toContain('בחירת בוט'); expect(html).toContain('טוענים הגדרות');
+    expect(html).toContain('dir="rtl"'); expect(html).toContain('בחירת תבנית בסיס'); expect(html).toContain('טוענים הגדרות');
     const reset = renderToStaticMarkup(createElement(ResetTrialButton, { customerId: 'person1', request: vi.fn(), onReset: vi.fn() }));
     expect(reset).toContain('אפס ניסיון'); expect(reset).toContain('אישור איפוס ניסיון'); expect(reset).toContain('מנויים, תשלומים ופרטי הלקוח לא ישתנו');
   });

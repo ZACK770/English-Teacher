@@ -37,7 +37,7 @@ async function calls(db: D1Database, id: string | null, after: number, afterTurn
     return json({ calls: results });
   }
   if (id.length > 160) return json({ error: "מזהה השיחה אינו תקין." }, 400);
-  const [events, turns, summary] = await db.batch([
+  const [events, turns, summary, measurements, configuration] = await db.batch([
     db.prepare(`SELECT id, created_at, event_name, since_call_start_ms, details_json FROM latency_events
       WHERE call_id=? AND profile_id='isaac-basic' AND id>? ORDER BY id LIMIT 200`).bind(id, after),
     db.prepare(`SELECT id, created_at, direction, text FROM conversation_turns
@@ -45,8 +45,18 @@ async function calls(db: D1Database, id: string | null, after: number, afterTurn
     db.prepare(`SELECT duration_seconds, model, learner_turns, tutor_turns, summary_he, success_he, next_step_he,
       input_text_tokens, output_text_tokens, estimated_cost_usd, cost_basis FROM sessions
       WHERE call_id=? AND EXISTS (SELECT 1 FROM latency_events WHERE call_id=? AND profile_id='isaac-basic')`).bind(id, id),
+    db.prepare(`SELECT COUNT(*) AS events_count,
+      SUM(event_name='pilot_interruption_candidate') AS pauses,
+      SUM(event_name='pilot_interruption_resumed') AS resumes,
+      SUM(event_name='tutor_interrupted') AS interruptions,
+      AVG(CASE WHEN event_name='pilot_turn_to_audio' AND json_valid(details_json)
+        THEN json_extract(details_json,'$.elapsed_ms') END) AS response_ms
+      FROM latency_events WHERE call_id=? AND profile_id='isaac-basic'`).bind(id),
+    db.prepare(`SELECT details_json FROM latency_events WHERE call_id=? AND profile_id='isaac-basic'
+      AND event_name='cascade_connect_started' ORDER BY id LIMIT 1`).bind(id),
   ]);
-  return json({ events: events.results, turns: turns.results, summary: summary.results[0] ?? null });
+  return json({ events: events.results, turns: turns.results, summary: summary.results[0] ?? null,
+    measurements: measurements.results[0] ?? null, configuration: configuration.results[0] ?? null });
 }
 
 async function preview(request: Request, env: Env) {

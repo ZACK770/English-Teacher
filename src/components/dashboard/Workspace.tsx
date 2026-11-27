@@ -3,7 +3,7 @@ import { LayoutDashboard, Users, Phone, Wallet, AudioLines, BookOpen, BarChart3,
 
 const groups = [
   { name: 'סביבת עבודה', items: [['today','לטיפול היום',LayoutDashboard],['people','לקוחות',Users],['active-calls','שיחות פעילות',Phone],['messages','הודעות ושירות',MessageSquare],['payments','תשלומים והוראות קבע',Wallet]] },
-  { name: 'הוראה וקול', items: [['teachers','מורים והנחיות',BookOpen],['voice-lab','מעבדת הקול',AudioLines],['returning','תרגול והתמדה',Activity],['call-reviews','סקירת שיחות',ListChecks]] },
+  { name: 'הוראה וקול', items: [['teachers','תבניות מורה',BookOpen],['voice-lab','מעבדת הקול',AudioLines],['returning','תרגול והתמדה',Activity],['call-reviews','סקירת שיחות',ListChecks]] },
   { name: 'ניהול וצמיחה', items: [['ads','פרסומות ומעקב',Megaphone],['analytics','פעילות בית הספר',BarChart3],['costs','עלויות ותובנות',Wallet],['site','אנליטיקת אתר',SlidersHorizontal]] },
 ] as const;
 export const workspaceTitles = Object.fromEntries(groups.flatMap(group => group.items.map(([key,label]) => [key,label])));

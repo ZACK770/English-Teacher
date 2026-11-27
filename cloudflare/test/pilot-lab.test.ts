@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import pilot, { CallSession } from "../src/pbx-pilot-entry";
@@ -24,6 +25,8 @@ describe("pilot voice lab", () => {
     expect(page.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'self'");
     const html = await page.text();
     expect(html).toContain('<select id="model"');
+    expect(html).toContain('id="minSoundMs" type="range"');
+    expect(() => new Function(html.match(/<script>([\s\S]*?)<\/script>/)![1])).not.toThrow();
     expect(html).toContain('<select id="voice"');
     expect(html).toContain('Google Standard');
     expect(html).not.toContain('id="token"');
@@ -84,6 +87,55 @@ describe("pilot voice lab", () => {
     expect((await pilot.fetch(new Request(origin + "/v1/internal/school-voice", { headers }), env)).status).toBe(404);
     expect(await (await choose("gemini")).json()).toEqual({ production: null });
     expect(await (await readPrivate()).json()).toBeNull();
+  });
+
+  it("persists tuning, restores it and promotes the saved snapshot", async () => {
+    const values = new Map<string, any>();
+    const storage = {
+      get: async (key: string) => values.get(key),
+      put: async (key: string, value: unknown) => { values.set(key, value); },
+      transaction: async (fn: any) => fn(storage),
+    };
+    const env = { ...environment(), PBX_PILOT_ADMIN_TOKEN: "test-admin", PBX_PILOT_SONIOX_KEY: "stt",
+      PBX_PILOT_OPENROUTER_KEY: "llm", PBX_PILOT_INWORLD_KEY: "tts" };
+    const session = new CallSession({storage} as unknown as DurableObjectState, env);
+    const update = (body: object) => session.fetch(new Request(origin+"/v1/admin/pilot/settings", {
+      method:"PUT", headers:{Authorization:"Bearer test-admin"}, body:JSON.stringify(body),
+    }));
+    const tuning = {energyThreshold:1800,minSoundMs:700,resumeSilenceMs:600};
+    expect((await update({model:"qwen/test",voice:"Amos",tuning:{...tuning,minSoundMs:1}})).status).toBe(400);
+    expect(values.size).toBe(0);
+    expect(await (await update({model:"qwen/test",voice:"Amos",tuning})).json()).toMatchObject({active:{tuning}});
+    await update({production:"cascade"});
+    await update({model:"qwen/test",voice:"Amos",tuning:{...tuning,minSoundMs:900}});
+    expect(values.get("school-teacher-settings").tuning).toEqual(tuning);
+    expect(await (await update({rollback:true})).json()).toMatchObject({active:{tuning}});
+  });
+
+  it("measures the entire call even when the event feed is paginated", async () => {
+    const sql = new DatabaseSync(":memory:");
+    sql.exec(`CREATE TABLE latency_events(id INTEGER PRIMARY KEY,call_id TEXT,profile_id TEXT,created_at TEXT,event_name TEXT,since_call_start_ms INTEGER,details_json TEXT);
+      CREATE TABLE conversation_turns(id INTEGER,call_id TEXT,profile_id TEXT,created_at TEXT,direction TEXT,text TEXT);
+      CREATE TABLE sessions(call_id TEXT,duration_seconds INTEGER,model TEXT,learner_turns INTEGER,tutor_turns INTEGER,summary_he TEXT,success_he TEXT,next_step_he TEXT,input_text_tokens INTEGER,output_text_tokens INTEGER,estimated_cost_usd REAL,cost_basis TEXT);`);
+    const add = sql.prepare("INSERT INTO latency_events(call_id,profile_id,event_name,details_json) VALUES ('call','isaac-basic',?,?)");
+    for (let i=0;i<202;i++) add.run("pilot_interruption_candidate","{}");
+    add.run("pilot_interruption_resumed","{}");
+    add.run("tutor_interrupted","{}");
+    add.run("pilot_turn_to_audio",JSON.stringify({elapsed_ms:800}));
+    add.run("pilot_turn_to_audio",JSON.stringify({elapsed_ms:1200}));
+    add.run("cascade_connect_started",JSON.stringify({tuning:{minSoundMs:700}}));
+    const db = {
+      prepare(query: string) { return {bind: (...args: any[]) => ({all: async () => ({results:sql.prepare(query).all(...args)})})}; },
+      batch: (statements: any[]) => Promise.all(statements.map(statement=>statement.all())),
+    };
+    try {
+      const response = await pilot.fetch(new Request(base+"/calls?id=call",{headers:{Cookie:cookie}}), {...environment(),DB:db} as any);
+      const result = await response.json() as any;
+      expect(response.status).toBe(200);
+      expect(result.events).toHaveLength(200);
+      expect(result.measurements).toMatchObject({pauses:202,resumes:1,interruptions:1,response_ms:1000});
+      expect(JSON.parse(result.configuration.details_json)).toEqual({tuning:{minSoundMs:700}});
+    } finally { sql.close(); }
   });
 
   it("checks the origin and uses a Google key only in the provider request", async () => {

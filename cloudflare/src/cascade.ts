@@ -1,3 +1,4 @@
+import { resolveTurnTuning, type TurnTuning } from "./turn-tuning";
 import { b64decode, meanSquare } from "./audio";
 import { synthesizeGoogleStandard } from "./pbx-pilot-google";
 import type { PilotInterruption } from "./env";
@@ -12,6 +13,7 @@ export type CascadeConfig = {
   googleKey?: string;
   interruption?: PilotInterruption;
   endpointMs?: number;
+  tuning?: TurnTuning;
   model: string;
   voice: string;
 };
@@ -30,7 +32,6 @@ type Setup = {
 type GeneratedTool = { id: string; type: "function"; function: { name: string; arguments: string } };
 
 // Acoustic evidence alone needs sustained sound; recognized speech may interrupt sooner.
-const ADAPTIVE_NOISE_PAUSE_SECONDS = 0.5;
 const RECOGNIZED_SPEECH_SECONDS = 0.09;
 
 const ENDPOINTS = new Set(["<end>", "<fin>"]);
@@ -68,6 +69,7 @@ export class CascadeLive {
   private readonly history: Message[] = [];
   private readonly context: string[] = [];
   private readonly toolReplies = new Map<string, (value: Message) => void>();
+  private readonly tuning: TurnTuning;
   private readonly setup: NonNullable<Setup["setup"]>;
   private socket: WebSocket | null = null;
   private generation: AbortController | null = null;
@@ -86,7 +88,7 @@ export class CascadeLive {
   }
 
   playbackPaused(now = Date.now()) {
-    if (this.pauseStarted !== null && (now - this.lastLoud >= 420 || now - this.pauseStarted >= 1100)) {
+    if (this.pauseStarted !== null && (now - this.lastLoud >= this.tuning.resumeSilenceMs || now - this.pauseStarted >= 1100)) {
       this.events.push({ type: "pilot_interruption", phase: "resumed", elapsed_ms: now - this.pauseStarted });
       this.pauseStarted = null;
     }
@@ -101,6 +103,7 @@ export class CascadeLive {
     private readonly request: typeof fetch = (input, init) => globalThis.fetch(input, init),
   ) {
     this.setup = setup.setup ?? {};
+    this.tuning = resolveTurnTuning(config.tuning);
   }
 
   async connect(timeoutMs = 10000) {
@@ -144,11 +147,11 @@ export class CascadeLive {
     const sampleSeconds = pcm.byteLength / 32000;
     if (this.setup.realtimeInputConfig?.activityHandling !== "NO_INTERRUPTION" &&
         (this.generation || Date.now() < this.audioUntil)) {
-      this.speechFrames = meanSquare(pcm) > 1200 ** 2 ? this.speechFrames + sampleSeconds : 0;
+      this.speechFrames = meanSquare(pcm) > this.tuning.energyThreshold ** 2 ? this.speechFrames + sampleSeconds : 0;
       const now = Date.now();
       if (this.speechFrames === 0) this.candidateSuppressed = false;
       else this.lastLoud = now;
-      const minimum = this.adaptive ? ADAPTIVE_NOISE_PAUSE_SECONDS : RECOGNIZED_SPEECH_SECONDS;
+      const minimum = this.adaptive ? this.tuning.minSoundMs / 1000 : RECOGNIZED_SPEECH_SECONDS;
       if (this.speechFrames + 1e-9 < minimum) return;
       if (!this.adaptive && this.config.interruption !== "observe") {
         this.interrupt();

@@ -11,7 +11,7 @@ function sse(...chunks: object[]) {
   return new Response(chunks.map((chunk) => "data: " + JSON.stringify(chunk)).join("\n") + "\ndata: [DONE]\n");
 }
 
-function fixture(google = false, adaptive = false) {
+function fixture(google = false, adaptive = false, tuning?: { energyThreshold: number; minSoundMs: number; resumeSilenceMs: number }) {
   const listeners = new Map<string, (event: { data: string }) => void>();
   const socket = {
     accept: vi.fn(), send: vi.fn(), close: vi.fn(),
@@ -37,7 +37,7 @@ function fixture(google = false, adaptive = false) {
     }
     return new Response(JSON.stringify({ result: { audioContent: "AQACAA==" } }) + "\n");
   }) as typeof fetch;
-  const engine = new CascadeLive({ ...config, ...(google ? { googleKey: "mock-google", voice: "he-IL-Standard-B" } : {}), interruption: adaptive ? "adaptive" : undefined }, { setup: {
+  const engine = new CascadeLive({ ...config, ...(google ? { googleKey: "mock-google", voice: "he-IL-Standard-B" } : {}), interruption: adaptive ? "adaptive" : undefined, tuning }, { setup: {
     systemInstruction: { parts: [{ text: "Original teacher instructions" }] },
     tools: [{ functionDeclarations: [{ name: "record_lesson_summary", parameters: { type: "object" } }] }],
   } }, request);
@@ -141,6 +141,23 @@ describe("isolated Technoline cascade", () => {
     } finally {
       engine.close();
     }
+  });
+
+  it("uses the selected energy, minimum duration and resume interval", async () => {
+    const { engine } = fixture(false, true, { energyThreshold: 3500, minSoundMs: 200, resumeSilenceMs: 800 });
+    await engine.connect();
+    try {
+      engine.startGreeting("Hello");
+      engine.sendAudio(new Uint8Array(new Int16Array(16000).fill(3000).buffer));
+      expect(engine.playbackPaused()).toBe(false);
+      const strong = new Uint8Array(new Int16Array(1600).fill(4000).buffer);
+      engine.sendAudio(strong);
+      expect(engine.playbackPaused()).toBe(false);
+      engine.sendAudio(strong);
+      expect(engine.playbackPaused()).toBe(true);
+      expect(engine.playbackPaused(Date.now() + 600)).toBe(true);
+      expect(engine.playbackPaused(Date.now() + 850)).toBe(false);
+    } finally { engine.close(); }
   });
 
   it("resumes after an unconfirmed noise and holds old audio until a confirmed interruption is drained", async () => {

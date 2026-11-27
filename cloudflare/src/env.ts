@@ -1,3 +1,4 @@
+import type { TurnTuning } from "./turn-tuning";
 export type PilotInterruption = "legacy" | "observe" | "adaptive" | "adaptive_clear";
 
 export interface Env {
@@ -12,6 +13,7 @@ export interface Env {
   PBX_PILOT_CAPTURE?: string;
   PBX_PILOT_INTERRUPTION?: PilotInterruption;
   PBX_PILOT_ENDPOINT_MS?: number;
+  PBX_PILOT_TUNING?: TurnTuning;
   PBX_PILOT_SPEECH?: "inworld" | "google";
   PBX_PILOT_GOOGLE_TTS_KEY?: string;
   SALES_OFFER_MODE?: "off" | "allowlist" | "on";

@@ -1,3 +1,4 @@
+import { TurnTuningSchema, resolveTurnTuning, type TurnTuning } from "./turn-tuning";
 import { TutorSession } from "./session";
 import { type Env, type PilotInterruption, settings, randomHex, secureEqual } from "./env";
 import { controlsFromSettings } from "./controls";
@@ -6,7 +7,7 @@ import { pilotLog } from "./pbx-pilot-log";
 
 import { googleStandardVoices, synthesizeGoogleStandard } from "./pbx-pilot-google";
 
-type PilotSettings = { model: string; voice: string; capture?: boolean; interruption?: PilotInterruption; endpointMs?: number; speech?: "inworld" | "google" };
+type PilotSettings = { model: string; voice: string; capture?: boolean; interruption?: PilotInterruption; endpointMs?: number; tuning?: TurnTuning; speech?: "inworld" | "google" };
 type PilotVersions = { active: PilotSettings; previous?: PilotSettings };
 const PILOT_SETTINGS_KEY = "pilot-settings";
 const SCHOOL_SETTINGS = "school-teacher-settings";
@@ -36,7 +37,7 @@ export class CallSession {
         const ready = production && sonioxKey && openrouterKey && inworldKey && (production.speech !== "google" || googleKey);
         return Response.json(ready ? { ...production, sonioxKey, openrouterKey, inworldKey, googleKey } : null, { headers: settingsHeaders });
       }
-      const active = { ...versions.active, speech: versions.active.speech ?? "inworld", interruption: versions.active.interruption ?? "adaptive", capture: versions.active.capture !== false };
+      const active = { ...versions.active, tuning: resolveTurnTuning(versions.active.tuning), speech: versions.active.speech ?? "inworld", interruption: versions.active.interruption ?? "adaptive", capture: versions.active.capture !== false };
       const headers = settingsHeaders;
       if (new URL(request.url).searchParams.get("export") === "1") {
         const controls = await new ProgressStore(this.env.DB).loadControls("isaac-basic", controlsFromSettings(settings(this.env).storeTranscripts));
@@ -55,7 +56,7 @@ export class CallSession {
               : { provider: "Inworld", model: "inworld-tts-2-flash", voice: active.voice },
           },
           teacher,
-          turn_handling: { interruption: active.interruption, endpoint_ms: active.endpointMs ?? teacher.vad_silence_ms },
+          turn_handling: { interruption: active.interruption, endpoint_ms: active.endpointMs ?? teacher.vad_silence_ms, tuning: resolveTurnTuning(active.tuning) },
           lab_transcript_enabled: active.capture,
           integration_notes: [
             "This is a snapshot of the saved pilot settings, not a production WebSocket or a deployment.",
@@ -92,6 +93,8 @@ export class CallSession {
     ))) return Response.json({ error: "Supply model and voice, or rollback: true" }, { status: 400 });
     const interruption = body.interruption;
     const endpointMs = body.endpointMs;
+    const tuning = body.tuning === undefined ? undefined : TurnTuningSchema.safeParse(body.tuning);
+    if (tuning && !tuning.success) return Response.json({ error: "ערכי הכוונון מחוץ לטווח הנתמך." }, { status: 400, headers: settingsHeaders });
     if ((interruption !== undefined && !["legacy", "observe", "adaptive", "adaptive_clear"].includes(String(interruption))) ||
         (endpointMs !== undefined && endpointMs !== null && ![500, 700, 1000, 1500].includes(Number(endpointMs)))) {
       return Response.json({ error: "בחר הגדרות קטיעה וסוף תור מהרשימה." }, { status: 400, headers: settingsHeaders });
@@ -126,10 +129,11 @@ export class CallSession {
         speech: speech ?? previous.speech,
         interruption: (interruption as PilotInterruption | undefined) ?? previous.interruption,
         endpointMs: endpointMs === null ? undefined : endpointMs === undefined ? previous.endpointMs : Number(endpointMs),
+        tuning: tuning?.success ? tuning.data : previous.tuning,
         capture: typeof body.capture === "boolean" ? body.capture : previous.capture,
       };
       if (!selected) return Response.json({ error: "No previous settings" }, { status: 409 });
-      const active = { ...selected, interruption: selected.interruption ?? "adaptive", speech: selected.speech ?? "inworld", capture: selected.capture !== false };
+      const active = { ...selected, tuning: resolveTurnTuning(selected.tuning), interruption: selected.interruption ?? "adaptive", speech: selected.speech ?? "inworld", capture: selected.capture !== false };
       const googleConfigured = Boolean(key || ((await transaction.get<string>(GOOGLE_KEY)) ?? this.env.PBX_PILOT_GOOGLE_TTS_KEY));
       if (active.speech === "google" && !googleStandardVoices.some(voice => voice.id === active.voice)) {
         return Response.json({ error: "בחר קול Google Standard מהרשימה." }, { status: 400, headers: settingsHeaders });
@@ -139,7 +143,8 @@ export class CallSession {
       }
       if (key) await transaction.put(GOOGLE_KEY, key);
       if (active.model === previous.model && active.voice === previous.voice && active.capture === (previous.capture !== false) && active.speech === (previous.speech ?? "inworld") &&
-          active.interruption === (previous.interruption ?? "adaptive") && active.endpointMs === previous.endpointMs) {
+          active.interruption === (previous.interruption ?? "adaptive") && active.endpointMs === previous.endpointMs &&
+          JSON.stringify(active.tuning) === JSON.stringify(resolveTurnTuning(previous.tuning))) {
         return Response.json({ ...saved, active, googleConfigured }, { headers: settingsHeaders });
       }
       const versions = { active, previous };
@@ -190,6 +195,7 @@ export class CallSession {
       PBX_PILOT_VOICE: pilotVersions?.active.voice ?? this.env.PBX_PILOT_VOICE,
       PBX_PILOT_INTERRUPTION: pilotVersions?.active.interruption ?? "adaptive",
       PBX_PILOT_ENDPOINT_MS: pilotVersions?.active.endpointMs,
+      PBX_PILOT_TUNING: resolveTurnTuning(pilotVersions?.active.tuning),
       PBX_PILOT_SPEECH: google ? "google" : "inworld",
       PBX_PILOT_GOOGLE_TTS_KEY: googleKey,
       PBX_PILOT_CAPTURE: pilotVersions?.active.capture === false ? "0" : "1",
