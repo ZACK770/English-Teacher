@@ -15,6 +15,7 @@ section{min-width:0;background:white;border:1px solid #e2e8ec;border-radius:16px
 label{display:block;margin:10px 0 5px;font-weight:600}
 select,input,textarea,button{font:inherit}select,input:not([type=checkbox]),textarea{display:block;width:100%;background:#fff;color:inherit;padding:8px;border:1px solid #a7bdb6;border-radius:7px}
 textarea{min-height:72px;resize:vertical}
+#preview-language[hidden],#preview-language-label[hidden],#preview-tts-model[hidden],#preview-tts-model-label[hidden]{display:none}
 button{background:#136150;color:#fff;border:0;border-radius:7px;padding:8px 13px;margin:7px 0;cursor:pointer}
 button.secondary{background:#e6efec;color:#164236}button:disabled{opacity:.5;cursor:default}
 .line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -92,6 +93,10 @@ fieldset{border:1px solid #e2e8ec;border-radius:12px;margin:16px 0;padding:14px}
 <label for="mode">מה לבדוק</label>
 <select id="mode"><option value="model">תשובת מודל · OpenRouter</option><option value="inworld">קול · Inworld</option><option value="google">קול · Google Standard</option></select>
 <label for="preview-choice" id="choice-label">מודל</label><select id="preview-choice"></select>
+<label for="preview-language" id="preview-language-label" hidden>שפת ההקראה (לבדיקה בלבד)</label>
+<select id="preview-language" hidden><option value="auto">זיהוי אוטומטי</option><option value="ydd">יידיש מזרחית (ydd)</option><option value="yi">יידיש כללית (yi)</option><option value="he">עברית</option><option value="en">אנגלית</option></select>
+<label for="preview-tts-model" id="preview-tts-model-label" hidden>מודל Inworld (לבדיקה בלבד)</label>
+<select id="preview-tts-model" hidden><option value="inworld-tts-2-flash">TTS-2 Flash</option><option value="inworld-tts-2">TTS-2</option></select>
 <label for="key">מפתח ספק</label><input id="key" type="password" autocomplete="off" placeholder="אופציונלי · החיבור הקיים כבר מוגדר">
 <label for="prompt" id="prompt-label">הנחיות לניסוי</label><textarea id="prompt">אתה מורה לאנגלית. תן תיקון קצר, ואז בקש מהלומד לנסות שוב.</textarea>
 <label for="sample">טקסט לבדיקה</label><textarea id="sample" maxlength="1000">Yesterday I go to the store.</textarea>
@@ -214,6 +219,7 @@ function updatePreview() {
   const mode = $('mode').value;
   const isModel = mode === 'model';
   $('use-google-phone').hidden = mode !== 'google';
+  for (const id of ['preview-language','preview-language-label','preview-tts-model','preview-tts-model-label']) $(id).hidden = mode !== 'inworld';
   options('preview-choice', isModel ? catalog.models : catalog.voices[mode]);
   $('key').value = '';
   $('key').placeholder = mode === 'google' ? 'הדבק כאן מפתח Google Cloud Text-to-Speech' : 'אופציונלי · החיבור הקיים כבר מוגדר';
@@ -229,7 +235,8 @@ async function preview() {
   try {
     const mode = $('mode').value;
     const data = await api('preview', 'POST', { mode, key:$('key').value, text:$('sample').value,
-      model:$('preview-choice').value, voice:$('preview-choice').value, prompt:$('prompt').value });
+      model:$('preview-choice').value, voice:$('preview-choice').value, prompt:$('prompt').value,
+      ...(mode === 'inworld' ? {language:$('preview-language').value, ttsModel:$('preview-tts-model').value} : {}) });
     write('preview-status', data.ms + ' אלפיות שנייה' + (data.usage ?
       ' · קלט ' + (data.usage.prompt_tokens ?? '—') + ' · פלט ' + (data.usage.completion_tokens ?? '—') +
       (typeof data.usage.cost === 'number' ? ' · ' + money(data.usage.cost) : '') :
