@@ -972,6 +972,8 @@ describe('canonical CRM payment records', () => {
     const {items} = await response.json() as any;
     expect(items.map((row: any)=>[row.id,row.state])).toEqual([['paid','verified'],['recorded','recorded'],['reversed','reversed']]);
     expect(items[0]).toMatchObject({customer_id:'person1',customer_name:'יעל כהן',phone:'0501234567',amount_ils:59});
+    const person = await (await request('people/person1')).json();
+    expect(person).toMatchObject({verified_revenue_ils:59, latest_payment:{id:'paid',amount_ils:59}});
   });
   it('scopes records by customer and id and returns recurring amounts in shekels', async () => {
     customer(); customer('person2','0509999999'); receipt('one'); receipt('two','person2');

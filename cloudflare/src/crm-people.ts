@@ -133,7 +133,8 @@ function personDetails(data: Data, p: Row) {
   });
   const status = deriveStatus({ paid: receipts.length > 0 || subscriptions.some(s => s.status === "active"), callback, offered: events.some(e => e.kind === "sales-followups" || (e.kind === "ivr-events" && e.route === "sales")), activity: times.length > 0, longest: Math.max(0, ...sessions.map(s => n(s.duration_seconds))), last: last_activity || "", sessions: sessions.length });
   const lastPayment = paymentOrders.at(-1);
-  const latestReceipt = [...receipts].sort((a,b)=>stamp(b).localeCompare(stamp(a)))[0];
+  const verifiedReceipts = receipts.filter(r => r.verified_payment);
+  const latestReceipt = [...verifiedReceipts].sort((a, b) => stamp(b).localeCompare(stamp(a)))[0];
   const familySubscriptions = data.familySubscriptions.get(p.id) || [];
   const candidates = subscriptions.length ? subscriptions : familySubscriptions;
   const sub = candidates.filter(s => s.status === "active").at(-1) || candidates.at(-1);
@@ -143,7 +144,7 @@ function personDetails(data: Data, p: Row) {
   const subscription = { id: sub?.id || null, plan_name: sub?.plan_name || null, status: sub?.status || null, current_period_end: sub?.current_period_end || null, access };
   const nedarim = { id: order?.id || null, state: order?.state || "none", amount: order ? n(order.monthly_agorot) / 100 : null, last_refusal_at: order?.last_refusal_at || null, keva_id_present: !!order?.keva_id };
   const summary = { id: p.id, name: p.name || "ללא שם", phone: p.phone || "", email: p.email || "", notes: p.notes || "", channels: [...new Set([...(p.phone ? ["phone"] : []), ...sessions.map(s => s.channel).filter(Boolean), ...(p.email ? ["web"] : [])])], first_seen, last_activity, ad_source, track, minutes_used: safe(sessions.reduce((a, s) => a + n(s.duration_seconds) / 60, 0)), calls_count: sessions.length, total_cost_ils: safe(calls.reduce((a, c) => a + c.total_cost_ils, 0)), revenue_ils: safe(receipts.reduce((a, r) => a + n(r.amount_ils), 0)), status, status_label: STATUS_LABELS[status], card_payment: { available: data.cardPaymentAvailable, orders: paymentOrders.length, paid: paymentOrders.filter(o => o.state === "paid").length, latest_state: lastPayment?.state || "none", latest_at: lastPayment?.updated_at || null } };
-  return { summary: { ...summary, subscription, nedarim, latest_payment: latestReceipt ? { id: latestReceipt.id, amount_ils: n(latestReceipt.amount_ils), at: stamp(latestReceipt) } : null, current_streak: data.practice.get(p.id)?.current_streak || 0, practice_days_30: data.practice.get(p.id)?.practice_days_30 || 0 }, times, callback };
+  return { summary: { ...summary, subscription, nedarim, verified_revenue_ils: safe(verifiedReceipts.reduce((sum, receipt) => sum + n(receipt.amount_ils), 0)), latest_payment: latestReceipt ? { id: latestReceipt.id, amount_ils: n(latestReceipt.amount_ils), at: stamp(latestReceipt) } : null, current_streak: data.practice.get(p.id)?.current_streak || 0, practice_days_30: data.practice.get(p.id)?.practice_days_30 || 0 }, times, callback };
 }
 function person(data: Data, p: Row) {
   return personDetails(data, p).summary;
@@ -346,7 +347,7 @@ export async function crmPeople(request: Request, env: Env, path: string, actor?
   const subscriptionAccess = params.get("access") || "";
   if (subscriptionAccess && !["open", "suspended", "payment_hold", "inactive", "none"].includes(subscriptionAccess)) throw new HttpError(422, "מסנן מנוי לא תקין");
   const limit = Number(params.get("limit") || 50), cursor = params.get("cursor") || "", status = params.get("status") || "", q = (params.get("q") || "").trim().toLowerCase(), source = params.get("source") || "", sort = params.get("sort") || "last_activity", direction = params.get("direction") === "asc" ? "asc" : "desc";
-  const sortable = new Set(["current_streak", "practice_days_30", "name", "status", "ad_source", "track", "first_seen", "last_activity", "calls_count", "minutes_used", "total_cost_ils", "revenue_ils"]);
+  const sortable = new Set(["current_streak", "practice_days_30", "name", "status", "ad_source", "track", "first_seen", "last_activity", "calls_count", "minutes_used", "total_cost_ils", "revenue_ils", "verified_revenue_ils"]);
   if (!Number.isInteger(limit) || limit < 1 || limit > 200 || (status && !Object.hasOwn(STATUS_LABELS, status)) || !sortable.has(sort)) throw new HttpError(422, "מסנן לא תקין");
   const terms = q.split(/\s+/).filter(Boolean);
   let rows = [...data.people.values()].map(p => person(data, p)).filter(p => {
