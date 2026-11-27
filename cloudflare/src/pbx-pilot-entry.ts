@@ -34,8 +34,8 @@ export default {
         if (!env.YIDDISH_CHANNELS) return new Response("Unavailable", { status: 503 });
         return env.YIDDISH_CHANNELS.get(env.YIDDISH_CHANNELS.idFromName("registry"), { locationHint: "weur" }).fetch(new Request("https://internal.invalid/registry", { method:request.method,body:request.method==="POST"?await request.arrayBuffer():undefined }));
       }
-      const channelRoute=path.match(/\/channels\/([a-z][a-z0-9-]{1,39})\/(settings|preview)$/);
-      if ((path === dashboardPath + "/yiddish-settings" && ["GET","PUT"].includes(request.method)) || (channelRoute&&channelId(channelRoute[1])&&((channelRoute[2]==="settings"&&["GET","PUT"].includes(request.method))||(channelRoute[2]==="preview"&&request.method==="POST")))) {
+      const channelRoute=path.match(/\/channels\/([a-z][a-z0-9-]{1,39})\/(settings|preview|calls)$/);
+      if ((path === dashboardPath + "/yiddish-settings" && ["GET","PUT"].includes(request.method)) || (channelRoute&&channelId(channelRoute[1])&&((channelRoute[2]==="settings"&&["GET","PUT"].includes(request.method))||(channelRoute[2]==="preview"&&request.method==="POST")||(channelRoute[2]==="calls"&&request.method==="GET")))) {
         if (!env.YIDDISH_CHANNELS) return new Response("Unavailable", { status: 503 });
         const id=channelRoute?.[1]||"yiddish";const action=channelRoute?.[2]||"settings";
         const registry=await env.YIDDISH_CHANNELS.get(env.YIDDISH_CHANNELS.idFromName("registry")).fetch("https://internal.invalid/registry");const {channels}=await registry.json<{channels:{id:string}[]}>();if(!channels.some(c=>c.id===id))return new Response("Not found",{status:404});
